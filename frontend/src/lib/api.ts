@@ -36,6 +36,7 @@ import type {
   DefinitionKind,
   DefinitionsCheckReport,
   DefinitionsExportResult,
+  DefinitionsStatus,
   DefinitionSource,
   FinalizeResult,
   MigrationItemDetail,
@@ -793,6 +794,7 @@ export const api = {
     // export of database agents/workflows into definition files.
     check: () => request<DefinitionsCheckReport>(`/api/definitions/check`),
     // The migration from database-declared to file-declared agents and workflows.
+    status: () => request<DefinitionsStatus>(`/api/definitions/status`),
     migration: () => request<MigrationPreview>(`/api/definitions/migration`),
     migrate: (acknowledge: boolean) =>
       request<MigrationResult>(`/api/definitions/migrate`, {

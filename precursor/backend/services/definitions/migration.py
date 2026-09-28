@@ -42,6 +42,7 @@ from precursor.backend.schemas.definitions_api import (
     DefinitionIssue,
     DefinitionKind,
     DefinitionsExportResult,
+    DefinitionsStatus,
     DefinitionsWorkspaceRef,
     FinalizedRecord,
     FinalizeResult,
@@ -903,4 +904,38 @@ async def finalize(session: AsyncSession, *, confirm: bool) -> FinalizeResult:
         finalized=FinalizedRecord(**record),
         written=len(exported.written),
         issues=exported.issues,
+    )
+
+
+async def status(session: AsyncSession) -> DefinitionsStatus:
+    """How many agents and workflows are still declared by the database.
+
+    Before the migration, every active one; after it, the ones with no file (a
+    leftover the export writes). After the cleanup there is nothing left to
+    migrate — a missing file is an error there, reported by the check.
+    """
+    from sqlalchemy import func
+
+    if overlay.finalized() is not None:
+        return DefinitionsStatus(stage="finalized", forced=overlay.source_forced())
+    agents_q = select(AgentSession.export_id).where(
+        AgentSession.inline.is_(False), AgentSession.archived_at.is_(None)
+    )
+    workflows_q = select(Workflow.export_id).where(Workflow.archived_at.is_(None))
+    if not overlay.files_mode():
+        agents = (
+            await session.execute(select(func.count()).select_from(agents_q.subquery()))
+        ).scalar_one()
+        workflows = (
+            await session.execute(select(func.count()).select_from(workflows_q.subquery()))
+        ).scalar_one()
+        return DefinitionsStatus(stage="database", agents=agents, workflows=workflows)
+    dset = overlay.current_definitions()
+    agent_ids = (await session.execute(agents_q)).scalars().all()
+    workflow_ids = (await session.execute(workflows_q)).scalars().all()
+    return DefinitionsStatus(
+        stage="files",
+        forced=overlay.source_forced(),
+        agents=sum(1 for i in agent_ids if not dset.by_id.get(i or "")),
+        workflows=sum(1 for i in workflow_ids if not dset.by_id.get(i or "")),
     )

@@ -287,6 +287,14 @@ curl -s localhost:8000/api/definitions/check | jq '{ok, error_count, warning_cou
 
 ## Migrating an install
 
+Until then, the **Agents** and **Workflows** homes open with an invitation to
+migrate: how many agents and workflows the database still declares, a **Start
+the migration** button that opens the wizard, and **Not now**, which hides it
+for a week (per browser). After the switch it only comes back for leftovers — an
+agent or workflow with no file yet — with a **Write their files** button (the
+export). After the cleanup it's gone for good. `GET /api/definitions/status`
+backs it: `{stage, forced, agents, workflows}`, cheap enough for every visit.
+
 **Settings → Definition files** is a wizard that moves an install from
 database-declared to file-declared agents and workflows, one step at a time:
 **Overview** → **Review** → **Migrate** → **Try it out** → **Clean up** →

@@ -175,6 +175,10 @@ are the per-version history; releasing does not rewrite this file.
     no longer possible. The wizard then confirms the migration is finished.
     The choice survives restarts; `PRECURSOR_DEFINITIONS_SOURCE=files` still
     forces files mode.
+  - **Invitation to migrate.** The Agents and Workflows homes open with a
+    banner while the database still declares agents or workflows, leading to
+    the wizard ("Not now" hides it for a week). After the switch it only
+    offers to write the files of leftovers; after the cleanup it's gone.
   - **Fixed in files mode:** the stall watchdog read its timeout from the
     database instead of the workflow's file; agents stamped from a blueprint
     got no file; search didn't find prompts that only the files held; titles

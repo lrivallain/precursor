@@ -1070,6 +1070,15 @@ export interface DefinitionFileReport {
 
 // --- Migration (database → files, and back) ---------------------------------
 
+/** Cheap summary for the Agents and Workflows homes: anything left to migrate? */
+export interface DefinitionsStatus {
+  stage: "database" | "files" | "finalized";
+  forced: boolean;
+  /** Active agents / workflows still declared by the database. */
+  agents: number;
+  workflows: number;
+}
+
 export interface DefinitionsWorkspaceRef {
   id: number;
   slug: string;

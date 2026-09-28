@@ -49,7 +49,10 @@ give editors completion.
 
 ## Getting there from today's data
 
-Open **Settings → Definition files**. A wizard takes you through it:
+While the database still declares them, the **Agents** and **Workflows** homes
+open with an invitation to migrate — **Start the migration** takes you to the
+wizard; **Not now** hides it for a week. Or open **Settings → Definition
+files** directly. The wizard takes you through it:
 
 1. **Overview** — what's declared today, where the files will go (the
    **Agents & workflows** workspace), what stays in the database, and anything

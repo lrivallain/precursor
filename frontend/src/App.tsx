@@ -105,6 +105,10 @@ export default function App() {
   // Agent setup and recovery land on the Agents category rather than making
   // the user hunt for the relevant toggle or runtime controls.
   const openAgentSettings = useCallback(() => openSettingsAt("agents"), [openSettingsAt]);
+  const openDefinitionsWizard = useCallback(
+    () => openSettingsAt("definitions"),
+    [openSettingsAt],
+  );
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   // Vertical-nav choice, shared with the sidebar. Drives whether the home
@@ -837,6 +841,7 @@ export default function App() {
             <WorkflowsMain
               controller={workflowsCtl}
               onOpenSettings={openAgentSettings}
+              onOpenMigration={openDefinitionsWizard}
               onOpenAgent={(id) => void agentsCtl.openAgent(id)}
             />
           ) : (
@@ -844,6 +849,7 @@ export default function App() {
               controller={agentsCtl}
               onOpenWorkflow={(id) => void workflowsCtl.openWorkflow(id)}
               onOpenSettings={openAgentSettings}
+              onOpenMigration={openDefinitionsWizard}
               onSetRole={setRoleForActive}
             />
           )}

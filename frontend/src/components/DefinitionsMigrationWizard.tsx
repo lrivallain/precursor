@@ -16,6 +16,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { api, apiErrorMessage } from "../lib/api";
+import { notifyDefinitionsChanged } from "../lib/definitionsEvents";
 import { openWorkspaceFile } from "../lib/workspaceLink";
 import type {
   DefinitionsCheckReport,
@@ -687,7 +688,10 @@ function MigrateStep({
     try {
       const r = await api.definitions.migrate(true);
       setResult(r);
-      if (r.ok) onMigrated();
+      if (r.ok) {
+        notifyDefinitionsChanged();
+        onMigrated();
+      }
     } catch (e) {
       setError(apiErrorMessage(e));
     } finally {
@@ -821,6 +825,7 @@ function TryStep({
     setError(null);
     try {
       await api.definitions.revert();
+      notifyDefinitionsChanged();
       onReverted();
     } catch (e) {
       setError(apiErrorMessage(e));
@@ -943,7 +948,10 @@ function CleanupStep({
     setIssues([]);
     try {
       const r = await api.definitions.finalize();
-      if (r.ok) onFinalized();
+      if (r.ok) {
+        notifyDefinitionsChanged();
+        onFinalized();
+      }
       else setIssues(r.issues.map((i) => i.message));
     } catch (e) {
       setError(apiErrorMessage(e));

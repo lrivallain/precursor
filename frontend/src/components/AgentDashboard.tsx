@@ -42,6 +42,7 @@ import type {
   WorkflowSummary,
 } from "../lib/types";
 import { api } from "../lib/api";
+import { DefinitionsMigrationBanner } from "./DefinitionsMigrationBanner";
 import { AgentStatusBadge } from "./AgentStatusBadge";
 import { AgentMedallion } from "./AgentMedallion";
 import { ImportDialog } from "./ImportDialog";
@@ -63,6 +64,8 @@ interface AgentDashboardProps {
   /** Refresh + focus the agent an imported YAML file produced. */
   onImported?: (result: TransferImportResult) => void;
   onOpenWorkflow?: (workflowId: number) => void;
+  /** Opens Settings → Definition files (the migration wizard). */
+  onOpenMigration?: () => void;
 }
 
 // Compact token count for the header rollup (e.g. 12.4k, 3.1M).
@@ -118,6 +121,7 @@ export function AgentDashboard({
   onNew,
   onImported,
   onOpenWorkflow,
+  onOpenMigration,
 }: AgentDashboardProps) {
   const groups = useMemo(
     () => groupAgentsByWorkflow(agents, showWorkflowAgents),
@@ -210,6 +214,9 @@ export function AgentDashboard({
 
   return (
     <div className="@container flex h-full flex-col overflow-hidden bg-gradient-to-b from-transparent to-surface/30">
+      {onOpenMigration && (
+        <DefinitionsMigrationBanner onOpenWizard={onOpenMigration} refreshKey={agents.length} />
+      )}
       {/* Control-tower header: title + KPI stat tiles. */}
       <div className="border-b border-border px-4 pb-3 pt-4">
         <div className="mb-3 flex flex-wrap items-center gap-2">

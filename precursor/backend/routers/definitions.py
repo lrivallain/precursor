@@ -23,6 +23,7 @@ from precursor.backend.schemas.definitions_api import (
     DefinitionsCheckReport,
     DefinitionsExportResult,
     DefinitionSource,
+    DefinitionsStatus,
     FinalizeRequest,
     FinalizeResult,
     MigrationItemDetail,
@@ -160,6 +161,12 @@ async def definition_file_issues(
 
 
 # --- Migration ------------------------------------------------------------
+
+
+@router.get("/status", response_model=DefinitionsStatus)
+async def definitions_status(session: AsyncSession = Depends(get_session)) -> DefinitionsStatus:
+    """Whether agents or workflows are still declared by the database (cheap)."""
+    return await migration.status(session)
 
 
 @router.get("/migration", response_model=MigrationPreview)

@@ -288,3 +288,15 @@ class FinalizeResult(BaseModel):
     finalized: FinalizedRecord | None = None
     written: int = 0
     issues: list[DefinitionIssue] = []
+
+
+class DefinitionsStatus(BaseModel):
+    """Cheap summary for the Agents and Workflows homes: is there anything to migrate?"""
+
+    stage: Literal["database", "files", "finalized"]
+    # PRECURSOR_DEFINITIONS_SOURCE=files forces files mode.
+    forced: bool = False
+    # Active (not archived) agents and workflows the database still declares:
+    # all of them before the migration; those without a file after it.
+    agents: int = 0
+    workflows: int = 0

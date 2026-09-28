@@ -11,6 +11,7 @@ import json
 import shutil
 import uuid
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -631,3 +632,44 @@ async def test_names_edited_in_files_reach_the_searchable_column(env: Path) -> N
         _write(env, path, {**_load(env, path), "title": "Renamed on disk"})
         client.get("/api/agents")
     assert await _raw("agent_sessions", ids["writer"], "title") == ("Renamed on disk",)
+
+
+# --- Status (the homes' invitation banner) ----------------------------------
+
+
+async def test_the_status_counts_what_is_left_to_migrate(env: Path) -> None:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentSession, Workflow
+
+    ids = await _seed()
+    async with SessionLocal() as session:
+        archived = AgentSession(
+            title="Old", task_prompt="p", status="waiting", archived_at=datetime.now(UTC)
+        )
+        session.add(archived)
+        await session.commit()
+    with TestClient(create_app()) as client:
+        before = client.get("/api/definitions/status").json()
+        # Listed, active ones only: the step's private agent and the archived
+        # agent aren't "your agents".
+        assert before == {"stage": "database", "forced": False, "agents": 2, "workflows": 1}
+
+        client.post("/api/definitions/migrate", json={"acknowledge": True})
+        assert client.get("/api/definitions/status").json()["agents"] == 0
+
+        # A row that somehow got no file after the switch: a leftover to write.
+        async with SessionLocal() as session:
+            session.add(
+                AgentSession(title=f"Stray {ids['tag']}", task_prompt="p", status="waiting")
+            )
+            await session.commit()
+        leftover = client.get("/api/definitions/status").json()
+        assert (leftover["stage"], leftover["agents"], leftover["workflows"]) == ("files", 1, 0)
+        assert client.post("/api/definitions/export").status_code == 200
+        assert client.get("/api/definitions/status").json()["agents"] == 0
+
+        client.post("/api/definitions/finalize", json={"confirm": True})
+        done = client.get("/api/definitions/status").json()
+    assert (done["stage"], done["agents"], done["workflows"]) == ("finalized", 0, 0)
+    async with SessionLocal() as session:
+        assert await session.get(Workflow, ids["workflow"]) is not None
