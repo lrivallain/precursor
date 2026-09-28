@@ -95,6 +95,11 @@ def _cmd_install(args: argparse.Namespace) -> int:
                 # A Windows Run entry only fires at the next login; launchd and
                 # systemd have already started the icon by now.
                 autostart.launch(autostart.TRAY)
+        elif not autostart.graphical_session():
+            print(
+                "Tray autostart skipped — no graphical session (DISPLAY / WAYLAND_DISPLAY "
+                "unset). Re-run `precursor service install` from the desktop to add it."
+            )
         else:
             print("Tray autostart skipped — the `tray` extra is not installed.")
 
@@ -112,6 +117,15 @@ def _cmd_install(args: argparse.Namespace) -> int:
     if not status.running:
         status = supervisor.start()
     _print_status(status, as_json=False)
+    # Checked only without a desktop: there, "starts at login, stops at logout"
+    # is exactly what a login item promises. Over SSH onto a server it means
+    # Precursor dies with the shell that installed it and never boots.
+    if not autostart.graphical_session() and autostart.lingering() is False:
+        print(
+            "\nNote: systemd stops your user units when you log out, so Precursor only "
+            "runs while you are logged in.\n"
+            "To keep it running and start it at boot:  loginctl enable-linger"
+        )
     return 0
 
 

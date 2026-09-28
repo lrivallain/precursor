@@ -28,6 +28,18 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Fixed
 
+- **Linux: a first install no longer fails to start.** The systemd units run in
+  the data directory, but nothing created it when port `8000` was free. systemd
+  then refused to start the app (`status=200/CHDIR`) and the installer reported
+  "did not come up on port 8000", pointing at a log that didn't exist. Writing
+  a login item now creates its working directory.
+- **Linux servers: no crash-looping tray.** The tray unit was registered
+  whenever the `tray` extra was installed, which it is by default. Over SSH onto
+  a headless box it crashed every 30 seconds for want of a display. The
+  installer now skips it when there is no `DISPLAY` or `WAYLAND_DISPLAY`, and
+  says so. With no desktop and lingering off, it also warns that Precursor stops
+  at logout and suggests `loginctl enable-linger`. See
+  [On a Linux server](website/guide/installation.md#on-a-linux-server).
 - **Windows: no console window left on screen.** The login items were
   Startup-folder `.cmd` files that ran the console script, so a terminal window
   stayed open for as long as Precursor ran, and closing it killed the app. They

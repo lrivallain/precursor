@@ -121,16 +121,54 @@ class AutostartInfo:
         return self.installed and self.kind in ("launchd", "systemd")
 
 
+def graphical_session() -> bool:
+    """Whether a tray icon would have a desktop to appear on.
+
+    A logged-in macOS or Windows user always has one. On Linux the icon needs
+    an X11 or Wayland display, and an install over SSH onto a server has
+    neither — the default ``tray`` extra is still there, so without this check
+    the tray unit would crash on every start, forever.
+    """
+    if _kind() != "systemd":
+        return True
+    return bool(os.environ.get("WAYLAND_DISPLAY") or os.environ.get("DISPLAY"))
+
+
 def tray_supported() -> bool:
     """Whether registering the tray makes sense on this install.
 
-    The GUI bindings ship behind the ``tray`` extra, so a headless or
-    server-side install has none — and a login item that fails on every boot is
-    worse than no login item at all.
+    The GUI bindings ship behind the ``tray`` extra, and the icon needs a
+    desktop session — a headless or server-side install lacks one or both, and
+    a login item that fails on every boot is worse than no login item at all.
     """
     from precursor.backend import tray
 
-    return tray.gui_available()
+    return graphical_session() and tray.gui_available()
+
+
+def lingering() -> bool | None:
+    """Whether systemd keeps this user's units running with nobody logged in.
+
+    Without it a user unit only lives as long as a login session: on a server
+    reached over SSH, Precursor stops at logout and doesn't come back at boot.
+    ``None`` where that doesn't apply, or ``loginctl`` can't say.
+    """
+    if _kind() != "systemd":
+        return None
+    try:
+        result = subprocess.run(
+            ["loginctl", "show-user", str(os.getuid()), "--property=Linger", "--value"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    value = result.stdout.strip()
+    if result.returncode != 0 or value not in ("yes", "no"):
+        return None
+    return value == "yes"
 
 
 def _launch_command(unit: Unit) -> list[str]:
@@ -261,6 +299,19 @@ def _windows_info(unit: Unit) -> AutostartInfo:  # pragma: no cover - Windows-on
     )
 
 
+def _ensure_working_dir() -> Path:
+    """:func:`working_dir`, created if missing — every login item runs in it.
+
+    A fresh install whose default port was free has written nothing there yet,
+    and a missing working directory fails the start outright: systemd with
+    ``status=200/CHDIR`` before Precursor runs at all, Windows with "The
+    directory name is invalid".
+    """
+    cwd = working_dir()
+    cwd.mkdir(parents=True, exist_ok=True)
+    return cwd
+
+
 def launch(unit: Unit) -> None:
     """Start a registered unit now, the way the login item will at next login.
 
@@ -268,10 +319,7 @@ def launch(unit: Unit) -> None:
     entry fires at the next login, whereas launchd (RunAtLoad) and systemd
     (``--now``) start the unit as part of registering it.
     """
-    cwd = working_dir()
-    # A fresh install has written nothing yet, and a missing working directory
-    # fails the spawn outright ("The directory name is invalid").
-    cwd.mkdir(parents=True, exist_ok=True)
+    cwd = _ensure_working_dir()
     subprocess.Popen(
         windows_command(unit) if os.name == "nt" else _launch_command(unit),
         cwd=str(cwd),
@@ -317,7 +365,7 @@ def _write_launchd(unit: Unit, path: Path) -> None:
         "KeepAlive": {"SuccessfulExit": False},
         "ThrottleInterval": 30,
         "ProcessType": "Interactive",
-        "WorkingDirectory": str(working_dir()),
+        "WorkingDirectory": str(_ensure_working_dir()),
         "StandardOutPath": str(logs / f"launchd.{unit.key}.out.log"),
         "StandardErrorPath": str(logs / f"launchd.{unit.key}.err.log"),
         # launchd hands the agent a bare PATH; `precursor service update` and
@@ -331,6 +379,7 @@ def _write_launchd(unit: Unit, path: Path) -> None:
 
 def _write_systemd(unit: Unit, path: Path) -> None:
     exec_start = " ".join(_launch_command(unit))
+    cwd = _ensure_working_dir()
     path.parent.mkdir(parents=True, exist_ok=True)
     # `default.target` rather than `graphical-session.target` even for the tray:
     # not every desktop reaches the latter for user units, and an icon that
@@ -344,7 +393,7 @@ def _write_systemd(unit: Unit, path: Path) -> None:
         "[Service]\n"
         "Type=simple\n"
         f"ExecStart={exec_start}\n"
-        f"WorkingDirectory={working_dir()}\n"
+        f"WorkingDirectory={cwd}\n"
         "Restart=on-failure\n"
         "RestartSec=30\n"
         "\n"
