@@ -51,6 +51,7 @@ import type {
   FileDiff,
   FileVersions,
   GitActionResult,
+  GitBranches,
   GitCommitDetail,
   GitHubIssue,
   GitLog,
@@ -1505,6 +1506,22 @@ export const api = {
       if (opts.path) q.set("path", opts.path);
       return request<GitLog>(`/api/workspaces/${workspaceId}/git/log?${q}`);
     },
+    // Local branches and the remote's (asked of the remote itself).
+    gitBranches: (workspaceId: number) =>
+      request<GitBranches>(`/api/workspaces/${workspaceId}/git/branches`),
+    // Check out a branch (local, or only on the remote). 409 names what stands
+    // in the way: nothing is ever forced or stashed.
+    gitSwitch: (workspaceId: number, name: string) =>
+      request<GitActionResult>(`/api/workspaces/${workspaceId}/git/switch`, {
+        method: "POST",
+        body: JSON.stringify({ name }),
+      }),
+    // Create a branch from HEAD and check it out (unpublished until pushed).
+    gitCreateBranch: (workspaceId: number, name: string) =>
+      request<GitActionResult>(`/api/workspaces/${workspaceId}/git/branches`, {
+        method: "POST",
+        body: JSON.stringify({ name }),
+      }),
     // One commit: message, first parent and changed files.
     gitCommitDetail: (workspaceId: number, sha: string) =>
       request<GitCommitDetail>(`/api/workspaces/${workspaceId}/git/commits/${sha}`),

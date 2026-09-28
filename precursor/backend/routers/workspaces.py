@@ -22,6 +22,7 @@ from precursor.backend.config import DEFINITIONS_WORKSPACE_SLUG, get_settings
 from precursor.backend.db import get_session
 from precursor.backend.models import Workspace
 from precursor.backend.schemas import (
+    BranchRequest,
     CommitRequest,
     FileContent,
     FileCreate,
@@ -32,6 +33,7 @@ from precursor.backend.schemas import (
     FileWrite,
     FolderCreate,
     GitActionResult,
+    GitBranches,
     GitCommitDetail,
     GitLog,
     GitStatus,
@@ -601,6 +603,81 @@ async def git_file_versions(
         return await git.file_versions(root, path, original_rel=original_path, base=base, head=head)
     except (git.GitError, fs.UnsafePathError) as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+
+
+@router.get("/{workspace_id}/git/branches", response_model=GitBranches)
+async def git_branches(
+    workspace_id: int, session: AsyncSession = Depends(get_session)
+) -> GitBranches:
+    """Local branches and the remote's (asked of the remote: a single-branch
+    clone doesn't know them). ``remote_error`` says why the latter is empty."""
+    ws = await _get_git_workspace(workspace_id, session)
+    token = await resolve_github_token(session)
+    try:
+        return await git.branches(workspace_root(ws), token)
+    except git.GitError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+
+
+def _branch_error(exc: git.GitError) -> HTTPException:
+    if isinstance(exc, git.GitRefused):
+        return HTTPException(status.HTTP_409_CONFLICT, str(exc))
+    if isinstance(exc, git.GitNotFound):
+        return HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+    return HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+async def _after_branch_change(ws: Workspace, root: Path, session: AsyncSession) -> GitStatus:
+    await _checked_out_branch(ws, root, session)  # Workspace.branch follows
+    await _after_tree_change(root, session)
+    return await git.status(root, ws.subdir)
+
+
+@router.post("/{workspace_id}/git/switch", response_model=GitActionResult)
+async def git_switch(
+    workspace_id: int,
+    payload: BranchRequest,
+    session: AsyncSession = Depends(get_session),
+) -> GitActionResult:
+    """Check out another branch, local or only on the remote.
+
+    409 when anything uncommitted could be lost (the files are named), during a
+    merge, or on a detached HEAD: nothing is ever forced, discarded or stashed.
+    """
+    ws = await _get_git_workspace(workspace_id, session)
+    root = workspace_root(ws)
+    token = await resolve_github_token(session)
+    try:
+        await git.switch(root, payload.name, token)
+        st = await _after_branch_change(ws, root, session)
+    except git.GitError as exc:
+        raise _branch_error(exc) from exc
+    return GitActionResult(
+        ok=True, detail=f"Switched to {st.branch}.", local_path=str(root), status=st
+    )
+
+
+@router.post(
+    "/{workspace_id}/git/branches",
+    response_model=GitActionResult,
+    status_code=status.HTTP_201_CREATED,
+)
+async def git_create_branch(
+    workspace_id: int,
+    payload: BranchRequest,
+    session: AsyncSession = Depends(get_session),
+) -> GitActionResult:
+    """Create a branch from HEAD and check it out. It isn't published (no
+    upstream) until pushed. 409 if the name is taken here or on the remote."""
+    ws = await _get_git_workspace(workspace_id, session)
+    root = workspace_root(ws)
+    token = await resolve_github_token(session)
+    try:
+        await git.create_branch(root, payload.name, token)
+        st = await _after_branch_change(ws, root, session)
+    except git.GitError as exc:
+        raise _branch_error(exc) from exc
+    return GitActionResult(ok=True, detail=f"Created {st.branch}.", local_path=str(root), status=st)
 
 
 @router.get("/{workspace_id}/git/log", response_model=GitLog)

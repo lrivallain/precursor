@@ -2072,6 +2072,22 @@ export interface FileDiff {
   binary: boolean;
 }
 
+export interface GitBranch {
+  name: string;
+  /** Its upstream on origin; null while unpublished. */
+  upstream: string | null;
+}
+
+export interface GitBranches {
+  /** The checked-out branch; null on a detached HEAD. */
+  current: string | null;
+  local: GitBranch[];
+  /** Branch names on origin (local or not). */
+  remote: string[];
+  /** Why the remote's branches couldn't be listed. */
+  remote_error: string | null;
+}
+
 export interface GitCommit {
   sha: string;
   short_sha: string;

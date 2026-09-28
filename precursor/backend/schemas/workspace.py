@@ -172,6 +172,26 @@ class GitCommitDetail(GitCommit):
     files: list[GitCommitFile] = Field(default_factory=list)
 
 
+class GitBranch(BaseModel):
+    name: str
+    # Its upstream on origin (published); None while unpublished.
+    upstream: str | None = None
+
+
+class GitBranches(BaseModel):
+    # The checked-out branch; None on a detached HEAD.
+    current: str | None = None
+    local: list[GitBranch] = Field(default_factory=list)
+    # Branch names on origin (whether or not they exist locally).
+    remote: list[str] = Field(default_factory=list)
+    # Why the remote's branches couldn't be listed (offline, auth…).
+    remote_error: str | None = None
+
+
+class BranchRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+
+
 class GitActionResult(BaseModel):
     ok: bool
     # Human-readable summary or the captured git stderr/stdout on failure.

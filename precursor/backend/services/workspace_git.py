@@ -26,6 +26,8 @@ from pathlib import Path, PurePosixPath
 
 from precursor.backend.schemas.workspace import (
     FileVersions,
+    GitBranch,
+    GitBranches,
     GitCommit,
     GitCommitDetail,
     GitCommitFile,
@@ -56,6 +58,10 @@ class GitInputError(GitError):
 
 class GitNotFound(GitError):
     """A well-formed revision this repository doesn't have."""
+
+
+class GitRefused(GitError):
+    """An operation that would lose work or can't run in the current state."""
 
 
 def git_available() -> bool:
@@ -486,6 +492,168 @@ async def commit_detail(path: Path, rev: str) -> GitCommitDetail:
             files.append(GitCommitFile(status=status[0], path=raw[i + 1]))
             i += 2
     return GitCommitDetail(**commit.model_dump(), body=body, parent=parent, files=files)
+
+
+# --- Branches -------------------------------------------------------------------------
+
+
+async def _local_branches(path: Path) -> list[GitBranch]:
+    out = await _git(
+        ["for-each-ref", "--format=%(refname:short)%09%(upstream:short)", "refs/heads"],
+        cwd=path,
+        what="Could not list branches",
+    )
+    local: list[GitBranch] = []
+    for line in out.splitlines():
+        name, _, upstream = line.partition("\t")
+        try:
+            check_branch(name)
+        except GitInputError:
+            continue
+        # Only an upstream on origin counts as published (see status()).
+        local.append(
+            GitBranch(name=name, upstream=upstream if upstream.startswith("origin/") else None)
+        )
+    return local
+
+
+async def remote_branches(path: Path, token: str | None) -> list[str]:
+    """Branch names on ``origin``, asked of the remote itself.
+
+    A single-branch clone knows only the branch it was cloned with, so the
+    remote-tracking refs can't answer this. Any name ``check_branch`` refuses is
+    left out: a remote can hold refs no one should type into git.
+    """
+    code, out, err = await _run_git(["ls-remote", "--heads", "origin"], cwd=path, token=token)
+    if code != 0:
+        raise GitError(f"Could not list the remote's branches: {(err or out).strip()}")
+    names: list[str] = []
+    for line in out.splitlines():
+        _sha, _, ref = line.partition("\t")
+        name = ref.removeprefix("refs/heads/")
+        if name == ref:
+            continue
+        try:
+            names.append(check_branch(name))
+        except GitInputError:
+            logger.warning("Ignoring a remote branch with an unusable name: %r", name)
+    return sorted(names)
+
+
+async def branches(path: Path, token: str | None) -> GitBranches:
+    """Local branches, and the remote's (unreachable remote: local ones only)."""
+    local = await _local_branches(path)
+    remote: list[str] = []
+    remote_error: str | None = None
+    try:
+        remote = await remote_branches(path, token)
+    except GitError as exc:
+        remote_error = str(exc)
+    return GitBranches(
+        current=await current_branch(path),
+        local=local,
+        remote=remote,
+        remote_error=remote_error,
+    )
+
+
+async def _local_exists(path: Path, branch: str) -> bool:
+    code, _out, _err = await _run_git(
+        ["show-ref", "--verify", "--quiet", f"refs/heads/{branch}"], cwd=path
+    )
+    return code == 0
+
+
+def _names(paths: list[str], limit: int = 8) -> str:
+    shown = ", ".join(paths[:limit])
+    return shown + (f" and {len(paths) - limit} more" if len(paths) > limit else "")
+
+
+def _overwritten(detail: str) -> list[str]:
+    """The files git lists when a switch would overwrite them."""
+    files: list[str] = []
+    listing = False
+    for line in detail.splitlines():
+        if "would be overwritten" in line:
+            listing = True
+        elif listing and line.startswith("\t"):
+            files.append(line.strip())
+        elif listing:
+            listing = False
+    return files
+
+
+async def _guard_switch(path: Path) -> GitStatus:
+    """Refuse a switch that could lose work or can't run from here."""
+    st = await status(path)
+    if st.merging:
+        raise GitRefused("A merge is in progress — finish or abort it first.")
+    if st.detached:
+        raise GitRefused("The working copy is on a detached HEAD — check out a branch first.")
+    changed = [f.path for f in st.files if f.code != "??"]
+    if changed:
+        raise GitRefused(
+            f"Commit or discard your changes before switching branches: {_names(changed)}."
+        )
+    return st
+
+
+async def _run_switch(path: Path, args: list[str]) -> None:
+    code, out, err = await _run_git(["switch", *args], cwd=path)
+    if code == 0:
+        return
+    detail = (err or out).strip()
+    blocked = _overwritten(detail)
+    if blocked:
+        # Untracked files the other branch has: git stops rather than overwrite.
+        raise GitRefused(
+            "These new files would be overwritten by the other branch's — "
+            f"move or delete them first: {_names(blocked)}."
+        )
+    raise GitError(f"Could not switch: {detail}", stderr=err)
+
+
+async def switch(path: Path, branch: str, token: str | None) -> None:
+    """Check out ``branch``: a local one, or one only the remote has.
+
+    Never forces, discards or stashes: any uncommitted change to a tracked file
+    refuses the switch, and so do untracked files the branch would overwrite.
+    """
+    branch = check_branch(branch)
+    await _guard_switch(path)
+    if await _local_exists(path, branch):
+        await _run_switch(path, ["--no-guess", branch])
+        return
+    if branch not in await remote_branches(path, token):
+        raise GitNotFound(f"No branch named {branch!r} here or on the remote")
+    fetched, detail = await fetch(path, branch, token)  # tracks it first (_track)
+    if not fetched:
+        raise GitError(f"Could not fetch {branch}: {detail}")
+    await _run_switch(path, ["--no-guess", "--track", "-c", branch, f"origin/{branch}"])
+
+
+async def create_branch(path: Path, branch: str, token: str | None) -> None:
+    """Create ``branch`` from HEAD and check it out; it stays unpublished.
+
+    ``--no-track``: with ``branch.autoSetupMerge=always`` git would otherwise
+    make it track the branch it started from. Uncommitted changes come along
+    (HEAD doesn't move, so nothing is overwritten); a merge in progress refuses.
+    """
+    branch = check_branch(branch)
+    if (await status(path)).merging:
+        raise GitRefused("A merge is in progress — finish or abort it first.")
+    if await _local_exists(path, branch):
+        raise GitRefused(f"A branch named {branch!r} already exists — switch to it instead.")
+    try:
+        on_remote = branch in await remote_branches(path, token)
+    except GitError:
+        # Offline: a local branch is still fine; publishing it will tell.
+        on_remote = False
+    if on_remote:
+        raise GitRefused(
+            f"The remote already has a branch named {branch!r} — switch to it instead."
+        )
+    await _run_switch(path, ["--no-track", "-c", branch])
 
 
 def push_rejected(detail: str) -> bool:

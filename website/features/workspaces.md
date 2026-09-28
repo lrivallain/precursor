@@ -35,9 +35,9 @@ remote:
 - **Pushing:** commits that aren't on the remote yet show as **Push 2**.
 - **New branches:** a branch that isn't on the remote yet is marked **not
   published**, and **Publish** pushes it and tracks it from then on.
-- **Branch switches outside Precursor:** Pull and Push always use the branch
-  that is checked out, even if you switched it in a terminal or VS Code. With no
-  branch checked out (a detached HEAD), both are off.
+- **Branches:** see [Branches](#branches) below. Pull and Push always use the
+  branch that is checked out, even if you switched it in a terminal or VS Code.
+  With no branch checked out (a detached HEAD), both are off.
 
 Pull only fast-forwards. When your branch and the remote have both moved on,
 Precursor stops and shows where to resolve it (`git status` in the working
@@ -46,6 +46,33 @@ copy, or **Open in VS Code**).
 Paths from the app are checked before git sees them. Git's pathspec magic, such
 as `:/`, is taken as a plain file name, and git never waits on a password
 prompt. The token is added to each command and never written to the clone.
+
+## Branches
+
+The branch name in the bar opens the branch picker:
+
+- **Branches:** those in this working copy. The one checked out is ticked, and
+  a branch not pushed yet is marked **not published**.
+- **On the remote:** branches only the remote has. Picking one fetches it and
+  creates a local branch that tracks it, even in a clone made from a single
+  branch.
+- **Create:** type a new name and choose **Create**. The branch starts from the
+  current commit, and any uncommitted changes come along. It stays local until
+  you **Publish** it. A name already taken, here or on the remote, isn't
+  offered.
+
+<Screenshot src="/screenshots/workspaces-branches.png" alt="The branch picker open under the branch name, listing local branches and branches only on the remote" caption="Switching or creating a branch." />
+
+Switching never throws work away. It is refused while there are uncommitted
+changes (the message names the files), while a merge is in progress, or with
+no branch checked out. Commit, discard or move those changes first; Precursor
+never forces the switch or stashes them for you. New files that the other
+branch would overwrite stop it too.
+
+If the file open in the editor has unsaved edits, you're asked before
+switching. After the switch the file is reloaded from the new branch, or
+closed if that branch doesn't have it. If the remote can't be reached, the
+picker still lists your local branches.
 
 ## Reviewing and committing
 

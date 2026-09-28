@@ -103,6 +103,7 @@ from precursor.backend.schemas.topic_summary import (
     TopicSummaryVisibility,
 )
 from precursor.backend.schemas.workspace import (
+    BranchRequest,
     CommitRequest,
     FileContent,
     FileCreate,
@@ -113,6 +114,7 @@ from precursor.backend.schemas.workspace import (
     FileWrite,
     FolderCreate,
     GitActionResult,
+    GitBranches,
     GitCommit,
     GitCommitDetail,
     GitCommitFile,
@@ -139,6 +141,7 @@ __all__ = [
     "AgentStateWrite",
     "AttachmentRead",
     "AttendeesUpdate",
+    "BranchRequest",
     "ChatCreate",
     "ChatRead",
     "ChatRequest",
@@ -158,6 +161,7 @@ __all__ = [
     "FileWrite",
     "FolderCreate",
     "GitActionResult",
+    "GitBranches",
     "GitCommit",
     "GitCommitDetail",
     "GitCommitFile",

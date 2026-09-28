@@ -153,6 +153,28 @@ _HANDBOOK_HISTORY: list[tuple[str, str, str, dict[str, str]]] = [
     ),
 ]
 
+# Branches only the remote has (the clone is single-branch), for the picker.
+_HANDBOOK_REMOTE_BRANCHES: list[tuple[str, str, str, dict[str, str]]] = [
+    (
+        "release/2026.10",
+        "2026-09-24T16:20:00+02:00",
+        "Cut the October release notes",
+        {
+            "releases.md": "# Releases\n\n1. Freeze the branch on Wednesday.\n"
+            "2. Run the load test against staging.\n3. Publish the engineering digest.\n"
+            "4. Tag the release.\n"
+        },
+    ),
+    (
+        "drafts/incident-template",
+        "2026-09-25T10:05:00+02:00",
+        "Draft an incident report template",
+        {
+            "incident-template.md": "# Incident report\n\n## Impact\n\n## Timeline\n\n## Follow-ups\n"
+        },
+    ),
+]
+
 _HANDBOOK_EDITS = {
     "README.md": "# Team handbook\n\nHow the platform team works: on-call, releases and reviews.\n\n"
     "- [On-call](on-call.md)\n- [Releases](releases.md)\n- [Incident reviews](incident-review.md)\n",
@@ -183,7 +205,8 @@ def seed_handbook_repo(data_dir: Path) -> str:
     remotes.mkdir(parents=True)
     _git(remotes, "init", "--bare", "--initial-branch=main", str(bare))
     _git(remotes, "init", "--initial-branch=main", str(seed))
-    for author, date, message, files in _HANDBOOK_HISTORY:
+
+    def commit(author: str, date: str, message: str, files: dict[str, str]) -> None:
         for name, text in files.items():
             (seed / name).write_text(text, encoding="utf-8")
         who, email = author[: author.index(" <")], author[author.index("<") + 1 : -1]
@@ -197,13 +220,21 @@ def seed_handbook_repo(data_dir: Path) -> str:
         }
         _git(seed, "add", "-A", env=env)
         _git(seed, "commit", "-m", message, env=env)
-    _git(seed, "push", str(bare), "main")
+
+    for author, date, message, files in _HANDBOOK_HISTORY:
+        commit(author, date, message, files)
+    for branch, date, message, files in _HANDBOOK_REMOTE_BRANCHES:
+        _git(seed, "switch", "-c", branch, "main")
+        commit("Sam Rivera <sam@example.com>", date, message, files)
+    _git(seed, "push", str(bare), "main", *(b for b, *_ in _HANDBOOK_REMOTE_BRANCHES))
     shutil.rmtree(seed)
 
     url = bare.resolve().as_uri()
     clone = data_dir / "workspaces" / "handbook"
     shutil.rmtree(clone, ignore_errors=True)
     _git(data_dir, "clone", "--branch", "main", "--single-branch", url, str(clone))
+    # A local branch not pushed yet.
+    _git(clone, "branch", "--no-track", "notes/onboarding")
     for name, text in _HANDBOOK_EDITS.items():
         (clone / name).write_text(text, encoding="utf-8")
     return url

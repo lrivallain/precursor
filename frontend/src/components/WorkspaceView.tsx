@@ -16,7 +16,6 @@ import {
   FileCode2,
   FolderOpen,
   FolderPlus,
-  GitBranch,
   History,
   Loader2,
   Pencil,
@@ -39,6 +38,7 @@ import { FileTree } from "./FileTree";
 import { ChangesPanel, GitDiffPane, discardPrompt } from "./GitChanges";
 import type { DiffTarget } from "./GitChanges";
 import { HistoryPanel } from "./GitHistory";
+import { BranchPicker } from "./BranchPicker";
 import { DrawioEditor } from "./DrawioEditor";
 import {
   DefinitionFileIssues,
@@ -221,6 +221,9 @@ export function WorkspaceView({
   // A pull or push git couldn't do on its own.
   const [conflict, setConflict] = useState<{ detail: string; path: string } | null>(null);
   const [gutter, setGutter] = useState<LineChange[]>([]);
+  // Bumped when the branch changes: the editor starts afresh, so no undo step
+  // can bring the other branch's text back into the buffer.
+  const [editorGeneration, setEditorGeneration] = useState(0);
   // Inline create-in-tree state (VS Code style): an input row appears at the
   // target parent ("" = root) until the user confirms or cancels. No modal.
   const [pendingCreate, setPendingCreate] = useState<{
@@ -548,8 +551,39 @@ export function WorkspaceView({
       } catch {
         setActivePath(null);
         onPathChange(null);
+        setContent("");
+        setSavedContent("");
       }
     }
+  }
+
+  // Switch or create a branch. An unsaved buffer is given up first (with the
+  // user's say-so), so nothing from one branch can be saved onto another.
+  async function changeBranch(run: () => Promise<GitActionResult>): Promise<boolean> {
+    if (
+      dirty &&
+      !(await confirmAction({
+        message: "Discard unsaved changes? Switching branches reloads the open file.",
+        confirmLabel: "Discard changes",
+        variant: "warning",
+      }))
+    )
+      return false;
+    setError(null);
+    setConflict(null);
+    try {
+      await run();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      return false;
+    }
+    setDiff(null);
+    await afterGitChange();
+    // After the reload, so the fresh editor starts from the new branch's text
+    // with an empty undo stack.
+    setEditorGeneration((g) => g + 1);
+    void fetchRemote();
+    return true;
   }
 
   async function commitFiles(
@@ -631,6 +665,10 @@ export function WorkspaceView({
             await refreshStatus();
           }}
           onAfterSync={afterGitChange}
+          onSwitchBranch={(name) => changeBranch(() => api.workspaces.gitSwitch(area.id, name))}
+          onCreateBranch={(name) =>
+            changeBranch(() => api.workspaces.gitCreateBranch(area.id, name))
+          }
           onConflict={setConflict}
           onShowChanges={() => {
             setLeftTab("changes");
@@ -960,7 +998,7 @@ export function WorkspaceView({
                           }
                         >
                           <CodeEditor
-                            key={`${area.slug}/${activePath}`}
+                            key={`${area.slug}/${activePath}#${editorGeneration}`}
                             modelKey={`${area.slug}/${activePath}`}
                             path={activePath}
                             value={content}
@@ -1132,6 +1170,8 @@ function GitBar({
   fetchError,
   onRefresh,
   onAfterSync,
+  onSwitchBranch,
+  onCreateBranch,
   onConflict,
   onShowChanges,
   onDeleted,
@@ -1145,6 +1185,8 @@ function GitBar({
   fetchError: string | null;
   onRefresh: () => Promise<void>;
   onAfterSync: () => Promise<void>;
+  onSwitchBranch: (name: string) => Promise<boolean>;
+  onCreateBranch: (name: string) => Promise<boolean>;
   onConflict: (conflict: { detail: string; path: string } | null) => void;
   /** Show the Changes list (the review and commit). */
   onShowChanges: () => void;
@@ -1235,19 +1277,13 @@ function GitBar({
       {/* Wraps on phones, like the file header, rather than pushing Pull and
           Push off-screen. */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-1.5 border-b border-border bg-surface/40 text-sm md:h-10 md:flex-nowrap md:py-0">
-        <span className="inline-flex items-center gap-1.5 text-muted">
-          <GitBranch size={14} />
-          {detached ? (
-            <span
-              className="text-amber-500"
-              data-tooltip="No branch is checked out, so Pull and Push are off. Check one out in a terminal or VS Code."
-            >
-              detached HEAD
-            </span>
-          ) : (
-            (status?.branch ?? area.branch)
-          )}
-        </span>
+        <BranchPicker
+          workspaceId={area.id}
+          current={status?.branch ?? area.branch}
+          detached={detached}
+          onSwitch={onSwitchBranch}
+          onCreate={onCreateBranch}
+        />
         {unpublished && (
           <span
             className="rounded border border-border px-1.5 text-xs text-muted"

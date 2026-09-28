@@ -15,6 +15,23 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Changed
 
+- **Git workspaces switch and create branches.** The branch name in the git bar
+  opens a picker.
+  - **What it lists:** local branches (unpublished ones marked) and the
+    branches only the remote has. Picking a remote one creates a local branch
+    that tracks it, even in a single-branch clone.
+  - **Creating:** a new branch starts from the current commit and stays local
+    until published.
+  - **Nothing is lost:** switching is refused while anything is uncommitted
+    (the files are named), during a merge, or on a detached HEAD. Nothing is
+    ever forced or stashed.
+  - **The open file:** unsaved edits ask first. After the switch the file is
+    reloaded, or closed if the branch doesn't have it.
+  - **Robustness:** remote branch names git wouldn't accept are never listed,
+    and a new branch never tracks the one it started from, even with
+    `branch.autoSetupMerge=always`.
+  - **API:** new `GET`/`POST /api/workspaces/{id}/git/branches` and
+    `POST /git/switch`.
 - **Git workspaces have a History tab.**
   - **Browsing:** the branch's commits, newest first, with **Load more**. A
     commit opens to its message and changed files, and each file's diff

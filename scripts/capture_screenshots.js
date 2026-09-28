@@ -330,6 +330,21 @@ const scenes = {
     },
   },
 
+  // The git bar's branch picker, open: local branches (one unpublished) and
+  // the ones only the remote has.
+  "workspaces-branches": {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await page.goto(`${BASE}/ws/handbook/README.md`, { waitUntil: "networkidle" });
+      await page.getByRole("heading", { name: "Team handbook", exact: true }).waitFor();
+      await page.getByRole("button", { name: /Switch or create a branch/ }).click();
+      await page.getByRole("dialog", { name: "Branches" }).getByText("On the remote").waitFor();
+      await page.mouse.move(1200, 900);
+      await sleep(400);
+      return undefined;
+    },
+  },
+
   "agents-setup": {
     viewport: { width: 1200, height: 800 },
     async go(page) {

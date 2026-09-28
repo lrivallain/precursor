@@ -18,9 +18,9 @@ from fastapi.testclient import TestClient
 from precursor.backend.services import workspace_git as git
 
 
-def run(cwd: Path, *args: str) -> str:
+def run(cwd: Path, *args: str, check: bool = True) -> str:
     return subprocess.run(
-        ["git", *args], cwd=cwd, check=True, capture_output=True, text=True
+        ["git", *args], cwd=cwd, check=check, capture_output=True, text=True
     ).stdout
 
 
@@ -512,6 +512,130 @@ async def test_file_versions_of_a_commit_use_the_resolved_parent(
     assert (root.original, root.modified) == (None, "# Notes\n\nfirst line\n")
 
 
+# --- Branches ------------------------------------------------------------------------
+
+
+def _remote_branch(remote: str, tmp_path: Path, name: str, file: str) -> None:
+    """Push a branch to the remote from another clone."""
+    other = _other_clone(remote, tmp_path, f"other-{name.replace('/', '-')}")
+    run(other, "switch", "-c", name)
+    _commit_and_push(other, file, f"{name}\n", f"Work on {name}")
+
+
+async def test_branches_lists_local_and_remote(remote: str, tmp_path: Path) -> None:
+    repo = await _clone(remote, tmp_path / "ws")
+    _remote_branch(remote, tmp_path, "feature/x", "x.md")
+    listed = await git.branches(repo, None)
+    assert listed.current == "main"
+    assert [(b.name, b.upstream) for b in listed.local] == [("main", "origin/main")]
+    assert listed.remote == ["feature/x", "main"] and listed.remote_error is None
+
+
+async def test_unusable_remote_branch_names_are_not_listed(remote: str, tmp_path: Path) -> None:
+    repo = await _clone(remote, tmp_path / "ws")
+    bare = Path(remote.removeprefix("file://"))
+    sha = run(tmp_path, f"--git-dir={bare}", "rev-parse", "main").strip()
+    # A name git itself accepts but no one should pass to git on a command line.
+    run(tmp_path, f"--git-dir={bare}", "update-ref", "refs/heads/--upload-pack=pwned", sha)
+    (bare / "refs" / "heads" / "a..b").write_text(sha + "\n", encoding="utf-8")
+    assert await git.remote_branches(repo, None) == ["main"]
+    with pytest.raises(git.GitInputError):
+        await git.switch(repo, "--upload-pack=pwned", None)
+    assert not (repo / "pwned").exists()
+
+
+async def test_switching_to_a_branch_only_the_remote_has(remote: str, tmp_path: Path) -> None:
+    repo = await _clone(remote, tmp_path / "ws")  # single-branch: knows only main
+    _remote_branch(remote, tmp_path, "feature", "f.md")
+    await git.switch(repo, "feature", None)
+    st = await git.status(repo)
+    assert (st.branch, st.upstream, st.ahead, st.behind) == ("feature", "origin/feature", 0, 0)
+    assert (repo / "f.md").read_text(encoding="utf-8") == "feature\n"
+    await git.switch(repo, "main", None)
+    assert not (repo / "f.md").exists() and await git.current_branch(repo) == "main"
+
+
+async def test_switching_is_refused_with_uncommitted_changes(remote: str, tmp_path: Path) -> None:
+    repo = await _clone(remote, tmp_path / "ws")
+    run(repo, "branch", "other")
+    (repo / "README.md").write_text("edited\n", encoding="utf-8")
+    with pytest.raises(git.GitRefused, match=r"README\.md"):
+        await git.switch(repo, "other", None)
+    run(repo, "add", "README.md")  # staged counts too
+    with pytest.raises(git.GitRefused, match=r"README\.md"):
+        await git.switch(repo, "other", None)
+    assert await git.current_branch(repo) == "main"
+    assert (repo / "README.md").read_text(encoding="utf-8") == "edited\n"
+
+
+async def test_untracked_files_block_only_when_they_would_be_overwritten(
+    remote: str, tmp_path: Path
+) -> None:
+    repo = await _clone(remote, tmp_path / "ws")
+    _remote_branch(remote, tmp_path, "feature", "f.md")
+    (repo / "notes.txt").write_text("mine\n", encoding="utf-8")  # the branch lacks it
+    (repo / "f.md").write_text("my own f\n", encoding="utf-8")  # the branch has one
+    with pytest.raises(git.GitRefused, match=r"f\.md"):
+        await git.switch(repo, "feature", None)
+    assert (repo / "f.md").read_text(encoding="utf-8") == "my own f\n"
+    (repo / "f.md").unlink()
+    await git.switch(repo, "feature", None)
+    assert (repo / "notes.txt").read_text(encoding="utf-8") == "mine\n"  # carried along
+
+
+async def test_switching_is_refused_while_merging_or_detached(remote: str, tmp_path: Path) -> None:
+    repo = await _clone(remote, tmp_path / "ws")
+    run(repo, "branch", "other")
+    run(repo, "checkout", "--detach")
+    with pytest.raises(git.GitRefused, match="detached"):
+        await git.switch(repo, "other", None)
+    run(repo, "switch", "main")
+    _commit_and_push(_other_clone(remote, tmp_path), "README.md", "# Notes\n\ntheirs\n", "Theirs")
+    (repo / "README.md").write_text("# Notes\n\nours\n", encoding="utf-8")
+    run(repo, "commit", "-am", "Ours")
+    await git.fetch(repo, "main", None)
+    subprocess.run(["git", "merge", "origin/main"], cwd=repo, capture_output=True)
+    with pytest.raises(git.GitRefused, match="merge"):
+        await git.switch(repo, "other", None)
+    with pytest.raises(git.GitRefused, match="merge"):
+        await git.create_branch(repo, "new", None)
+
+
+async def test_create_then_publish_even_with_autosetupmerge(remote: str, tmp_path: Path) -> None:
+    repo = await _clone(remote, tmp_path / "ws")
+    run(repo, "config", "branch.autoSetupMerge", "always")
+    (repo / "wip.md").write_text("wip\n", encoding="utf-8")  # comes along
+    await git.create_branch(repo, "draft/one", None)
+    st = await git.status(repo)
+    assert (st.branch, st.upstream) == ("draft/one", None)
+    assert run(repo, "config", "--get-all", "branch.draft/one.merge", check=False) == ""
+    assert [f.path for f in st.files] == ["wip.md"]
+    await git.commit_all(repo, "WIP")
+    ok, detail = await git.push(repo, "draft/one", None)
+    assert ok and "Published" in detail
+    assert (await git.status(repo)).upstream == "origin/draft/one"
+
+
+async def test_create_refuses_a_taken_name(remote: str, tmp_path: Path) -> None:
+    repo = await _clone(remote, tmp_path / "ws")
+    run(repo, "branch", "local-only")
+    _remote_branch(remote, tmp_path, "theirs", "t.md")
+    with pytest.raises(git.GitRefused, match="already exists"):
+        await git.create_branch(repo, "local-only", None)
+    with pytest.raises(git.GitRefused, match="remote already has"):
+        await git.create_branch(repo, "theirs", None)
+    for bad in ("-x", "a..b", "HEAD", "a b"):
+        with pytest.raises(git.GitInputError):
+            await git.create_branch(repo, bad, None)
+    assert await git.current_branch(repo) == "main"
+
+
+async def test_switching_to_an_unknown_branch(remote: str, tmp_path: Path) -> None:
+    repo = await _clone(remote, tmp_path / "ws")
+    with pytest.raises(git.GitNotFound):
+        await git.switch(repo, "nowhere", None)
+
+
 # --- API ---------------------------------------------------------------------------
 
 
@@ -603,6 +727,55 @@ def test_api_follows_a_branch_switched_outside(client: TestClient, remote: str) 
         assert resp.json()["ok"] and resp.json()["status"]["upstream"] == "origin/elsewhere"
         [row] = [w for w in client.get("/api/workspaces").json() if w["id"] == ws["id"]]
         assert row["branch"] == "elsewhere"
+    finally:
+        client.delete(base)
+
+
+def test_api_switch_and_create_branches(
+    client: TestClient, remote: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from precursor.backend.config import get_settings
+    from precursor.backend.routers import workspaces as router
+
+    refreshed: list[bool] = []
+
+    async def record(_session: Any) -> None:
+        refreshed.append(True)
+
+    monkeypatch.setattr(router, "_holds_definitions", lambda _root: True)
+    monkeypatch.setattr(router.definition_anchors, "refresh", record)
+    _remote_branch(remote, tmp_path, "feature", "f.md")
+    ws = _workspace(client, remote, "Git branches")
+    base = f"/api/workspaces/{ws['id']}"
+    repo = Path(get_settings().workspaces_dir) / ws["slug"]
+
+    def row_branch() -> str:
+        [row] = [w for w in client.get("/api/workspaces").json() if w["id"] == ws["id"]]
+        return str(row["branch"])
+
+    try:
+        listed = client.get(f"{base}/git/branches").json()
+        assert listed["current"] == "main" and "feature" in listed["remote"]
+
+        (repo / "README.md").write_text("dirty\n", encoding="utf-8")
+        resp = client.post(f"{base}/git/switch", json={"name": "feature"})
+        assert resp.status_code == 409 and "README.md" in resp.json()["detail"]
+        assert refreshed == []
+        run(repo, "checkout", "--", "README.md")
+
+        resp = client.post(f"{base}/git/switch", json={"name": "feature"})
+        assert resp.status_code == 200 and resp.json()["status"]["branch"] == "feature"
+        assert row_branch() == "feature" and refreshed == [True]
+
+        assert client.post(f"{base}/git/switch", json={"name": "nope"}).status_code == 404
+        assert client.post(f"{base}/git/switch", json={"name": "a..b"}).status_code == 400
+
+        resp = client.post(f"{base}/git/branches", json={"name": "draft"})
+        assert resp.status_code == 201
+        assert resp.json()["status"]["upstream"] is None and row_branch() == "draft"
+        assert client.post(f"{base}/git/branches", json={"name": "main"}).status_code == 409
+        resp = client.post(f"{base}/git/push")
+        assert resp.json()["ok"] and resp.json()["status"]["upstream"] == "origin/draft"
     finally:
         client.delete(base)
 
