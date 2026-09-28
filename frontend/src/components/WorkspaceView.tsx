@@ -17,6 +17,7 @@ import {
   FolderOpen,
   FolderPlus,
   GitBranch,
+  History,
   Loader2,
   Pencil,
   RefreshCw,
@@ -36,6 +37,8 @@ import { ResizeHandle } from "./ResizeHandle";
 import { WorkspaceChat } from "./WorkspaceChat";
 import { FileTree } from "./FileTree";
 import { ChangesPanel, GitDiffPane, discardPrompt } from "./GitChanges";
+import type { DiffTarget } from "./GitChanges";
+import { HistoryPanel } from "./GitHistory";
 import { DrawioEditor } from "./DrawioEditor";
 import {
   DefinitionFileIssues,
@@ -131,7 +134,8 @@ function PaneTab({
 
 // Which list the left pane shows in a git workspace (per browser).
 const LEFT_TAB_KEY = "precursor:workspace:leftTab";
-type LeftTab = "files" | "changes";
+type LeftTab = "files" | "changes" | "history";
+const LEFT_TABS: LeftTab[] = ["files", "changes", "history"];
 
 const VSCODE_HINT =
   "\nOpens the server's copy, so VS Code must run on the same computer.";
@@ -205,12 +209,15 @@ export function WorkspaceView({
   // a preview, keeping its undo history, scroll and cursor.
   const [editorFor, setEditorFor] = useState<string | null>(null);
   const editorHandle = useRef<CodeEditorHandle | null>(null);
-  const [leftTabPref, setLeftTabPref] = useState<LeftTab>(() =>
-    localStorage.getItem(LEFT_TAB_KEY) === "changes" ? "changes" : "files",
-  );
+  const [leftTabPref, setLeftTabPref] = useState<LeftTab>(() => {
+    const stored = localStorage.getItem(LEFT_TAB_KEY) as LeftTab | null;
+    return stored && LEFT_TABS.includes(stored) ? stored : "files";
+  });
+  // History limited to one file (its repository path), from "File history".
+  const [historyPath, setHistoryPath] = useState<string | null>(null);
   // The changed file whose diff fills the main area (over the editor, which
   // stays mounted underneath).
-  const [diffFile, setDiffFile] = useState<GitFileStatus | null>(null);
+  const [diff, setDiff] = useState<DiffTarget | null>(null);
   // A pull or push git couldn't do on its own.
   const [conflict, setConflict] = useState<{ detail: string; path: string } | null>(null);
   const [gutter, setGutter] = useState<LineChange[]>([]);
@@ -267,7 +274,7 @@ export function WorkspaceView({
   // list → detail flow: the tree owns the width until a file is opened, and
   // the editor's back button returns to it.
   const narrow = useIsNarrow();
-  const detailOpen = activePath !== null || diffFile !== null;
+  const detailOpen = activePath !== null || diff !== null;
   const showFiles = !narrow || !detailOpen;
   const showEditor = !narrow || detailOpen;
 
@@ -312,7 +319,8 @@ export function WorkspaceView({
 
   useEffect(() => {
     setFetchError(null);
-    setDiffFile(null);
+    setDiff(null);
+    setHistoryPath(null);
     setConflict(null);
     void fetchRemote();
   }, [fetchRemote]);
@@ -320,11 +328,13 @@ export function WorkspaceView({
   // The diff follows the file's status; it closes once the file has no
   // changes left (committed, discarded).
   useEffect(() => {
-    setDiffFile((open) => {
-      if (!open) return open;
-      const now = status?.files.find((f) => f.path === open.path);
+    setDiff((open) => {
+      if (open?.kind !== "working") return open;
+      const now = status?.files.find((f) => f.path === open.file.path);
       if (!now) return null;
-      return now.code === open.code && now.orig_path === open.orig_path ? open : now;
+      return now.code === open.file.code && now.orig_path === open.file.orig_path
+        ? open
+        : { kind: "working", file: now };
     });
   }, [status]);
 
@@ -391,7 +401,7 @@ export function WorkspaceView({
     try {
       const f = await api.workspaces.readFile(area.id, path);
       cursorRef.current = null;
-      setDiffFile(null);
+      setDiff(null);
       setActivePath(path);
       onPathChange(path);
       setContent(f.content);
@@ -577,8 +587,33 @@ export function WorkspaceView({
     }
   }
 
+  // The tree's path for a repository path; null outside the subdir.
+  function browsePathOf(repo: string): string | null {
+    if (!subdir) return repo;
+    return repo.startsWith(`${subdir}/`) ? repo.slice(subdir.length + 1) : null;
+  }
+
+  // "Open file" from a diff, when the file is in the tree now.
+  function diffOpenTarget(target: DiffTarget): (() => void) | undefined {
+    const repo = target.file.path;
+    const browse =
+      target.kind === "working" ? (target.file.browse_path ?? null) : browsePathOf(repo);
+    if (!browse || !files.some((f) => f.path === browse && f.type !== "dir")) return undefined;
+    return () => openFromChanges(browse);
+  }
+
+  function showFileHistory(): void {
+    if (!repoPath) return;
+    setHistoryPath(repoPath);
+    setLeftTab("history");
+    if (narrow) {
+      setDiff(null);
+      setActivePath(null);
+    }
+  }
+
   function openFromChanges(browsePath: string): void {
-    if (browsePath === activePath) setDiffFile(null);
+    if (browsePath === activePath) setDiff(null);
     else void openFile(browsePath);
   }
 
@@ -601,7 +636,7 @@ export function WorkspaceView({
             setLeftTab("changes");
             // On a phone the list is its own screen.
             if (narrow) {
-              setDiffFile(null);
+              setDiff(null);
               setActivePath(null);
             }
           }}
@@ -648,13 +683,15 @@ export function WorkspaceView({
       )}
 
       <div className="flex-1 min-h-0 flex">
-        {showFiles && (
+        {/* Hidden rather than unmounted on a phone while a file or diff is
+            open, so the commit message, the expanded commit and the scroll
+            position are still there on the way back. */}
         <aside
           className={`relative border-r border-border flex flex-col min-h-0 ${
             // Beside the assistant's 2.25rem rail, so it fills what's left
             // rather than claiming a full viewport width the row can't afford.
             narrow ? "flex-1 min-w-0 border-r-0" : "shrink-0"
-          }`}
+          } ${showFiles ? "" : "hidden"}`}
           style={narrow ? undefined : { width: filesWidth }}
         >
           {!narrow && <ResizeHandle onMouseDown={onFilesResize} side="right" />}
@@ -671,6 +708,16 @@ export function WorkspaceView({
                       {status?.files.length}
                     </span>
                   )}
+                </PaneTab>
+                <PaneTab
+                  active={leftTab === "history"}
+                  onSelect={() => {
+                    // The tab itself shows the whole branch; File history narrows it.
+                    if (leftTab !== "history") setHistoryPath(null);
+                    setLeftTab("history");
+                  }}
+                >
+                  History
                 </PaneTab>
               </div>
             ) : (
@@ -699,13 +746,25 @@ export function WorkspaceView({
             </div>
             )}
           </div>
-          {leftTab === "changes" ? (
+          {leftTab === "history" ? (
+            <div className="flex-1 min-h-0">
+              <HistoryPanel
+                key={`${area.id}:${historyPath ?? ""}`}
+                workspaceId={area.id}
+                head={status?.head ?? null}
+                path={historyPath}
+                onClearPath={() => setHistoryPath(null)}
+                activeKey={diff?.kind === "commit" ? `${diff.commit.sha}:${diff.file.path}` : null}
+                onOpenDiff={(commit, file) => setDiff({ kind: "commit", commit, file })}
+              />
+            </div>
+          ) : leftTab === "changes" ? (
             <div className="flex-1 min-h-0">
               <ChangesPanel
                 files={status?.files ?? []}
-                activeDiff={diffFile?.path ?? null}
+                activeDiff={diff?.kind === "working" ? diff.file.path : null}
                 canPush={!status?.detached}
-                onOpenDiff={setDiffFile}
+                onOpenDiff={(file) => setDiff({ kind: "working", file })}
                 onOpenFile={openFromChanges}
                 onDiscard={discardFile}
                 onCommit={(message, paths) => commitFiles(message, paths, false)}
@@ -729,25 +788,20 @@ export function WorkspaceView({
           </div>
           )}
         </aside>
-        )}
 
         {showEditor && (
         <section className="flex-1 min-w-0 flex flex-col">
-          {diffFile && (
+          {diff && (
             <GitDiffPane
               workspaceId={area.id}
-              file={diffFile}
+              target={diff}
               narrow={narrow}
               version={status}
-              onOpenFile={
-                diffFile.browse_path != null && !diffFile.code.includes("D")
-                  ? () => openFromChanges(diffFile.browse_path as string)
-                  : undefined
-              }
-              onClose={() => setDiffFile(null)}
+              onOpenFile={diffOpenTarget(diff)}
+              onClose={() => setDiff(null)}
             />
           )}
-          <div className={diffFile ? "hidden" : "flex min-h-0 flex-1 flex-col"}>
+          <div className={diff ? "hidden" : "flex min-h-0 flex-1 flex-col"}>
           {activePath ? (
             <>
               {/* Wraps on phones: fixed-height nowrap would clip the
@@ -816,6 +870,16 @@ export function WorkspaceView({
                   )}
                   Save
                 </button>
+                {isGit && (
+                  <button
+                    className="p-1 rounded text-muted hover:text-text hover:bg-surface"
+                    aria-label="File history"
+                    data-tooltip="File history: the commits that changed this file"
+                    onClick={showFileHistory}
+                  >
+                    <History size={15} />
+                  </button>
+                )}
                 <button
                   className={`p-1 rounded hover:bg-surface ${
                     copiedPath ? "text-green-500" : "text-muted hover:text-text"
@@ -927,7 +991,9 @@ export function WorkspaceView({
             </>
           ) : (
             <div className="h-full flex items-center justify-center text-muted text-sm">
-              {leftTab === "changes"
+              {leftTab === "history"
+                ? "Select a commit to see what it changed."
+                : leftTab === "changes"
                 ? "Select a changed file to see what changed."
                 : "Select a file to view or edit."}
             </div>

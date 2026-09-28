@@ -24,7 +24,15 @@ import re
 import shutil
 from pathlib import Path, PurePosixPath
 
-from precursor.backend.schemas.workspace import FileVersions, GitFileStatus, GitStatus
+from precursor.backend.schemas.workspace import (
+    FileVersions,
+    GitCommit,
+    GitCommitDetail,
+    GitCommitFile,
+    GitFileStatus,
+    GitLog,
+    GitStatus,
+)
 from precursor.backend.services import workspace_fs as fs
 
 logger = logging.getLogger(__name__)
@@ -44,6 +52,10 @@ class GitError(RuntimeError):
 
 class GitInputError(GitError):
     """A path, branch name or revision from a request that git must not see."""
+
+
+class GitNotFound(GitError):
+    """A well-formed revision this repository doesn't have."""
 
 
 def git_available() -> bool:
@@ -376,21 +388,22 @@ async def file_versions(
     rel: str,
     *,
     original_rel: str | None = None,
-    base: str = "HEAD",
+    base: str | None = "HEAD",
     head: str | None = None,
 ) -> FileVersions:
     """Both sides of one file's diff, for a side-by-side view.
 
     The original is ``rel`` (or its pre-rename ``original_rel``) at ``base``;
     the modified side is the working copy, or ``rel`` at ``head``. A side the
-    file doesn't exist on is null.
+    file doesn't exist on is null; so is the original when ``base`` is None
+    (a root commit has nothing before it).
     """
     rel = check_path(rel)
     original_rel = check_path(original_rel) if original_rel else rel
-    base = check_rev(base)
+    base = check_rev(base) if base else None
     head = check_rev(head) if head else None
     try:
-        before = await _blob(path, base, original_rel)
+        before = await _blob(path, base, original_rel) if base else None
         after = await _blob(path, head, rel) if head else _working_file(path, rel)
     except _TooLarge:
         return FileVersions(path=rel, too_large=True)
@@ -398,6 +411,81 @@ async def file_versions(
         return FileVersions(path=rel, original=_text(before), modified=_text(after))
     except UnicodeDecodeError:
         return FileVersions(path=rel, binary=True)
+
+
+# --- History ------------------------------------------------------------------------
+
+MAX_LOG_PAGE = 100
+# Fields of one commit, split on the unit separator (never in names/subjects).
+_LOG_FORMAT = "%H%x1f%h%x1f%an%x1f%aI%x1f%P%x1f%s"
+
+
+def _commit(fields: list[str]) -> GitCommit:
+    sha, short, author, date, parents, subject = fields[:6]
+    return GitCommit(
+        sha=sha,
+        short_sha=short,
+        author=author,
+        date=date,
+        subject=subject,
+        parents=parents.split(),
+    )
+
+
+async def log(path: Path, *, limit: int = 50, skip: int = 0, rel: str | None = None) -> GitLog:
+    """A page of the checked-out branch's history, newest first.
+
+    With ``rel``, only the commits that touched that file, following it across
+    renames.
+    """
+    limit = max(1, min(limit, MAX_LOG_PAGE))
+    skip = max(0, skip)
+    args = ["log", f"--format={_LOG_FORMAT}", "-z", f"--max-count={limit + 1}", f"--skip={skip}"]
+    if rel:
+        args += ["--follow", "--", check_path(rel)]
+    code, out, err = await _run_git(args, cwd=path)
+    if code != 0:
+        if "does not have any commits" in err:
+            return GitLog()
+        raise GitError(f"git log failed: {err.strip()}", stderr=err)
+    commits = [_commit(entry.split("\x1f")) for entry in out.split("\0") if entry.strip()]
+    return GitLog(commits=commits[:limit], has_more=len(commits) > limit)
+
+
+async def commit_detail(path: Path, rev: str) -> GitCommitDetail:
+    """One commit: its message and the files it changed against its first parent."""
+    rev = check_rev(rev)
+    code, sha, _err = await _run_git(
+        ["rev-parse", "--verify", "--quiet", f"{rev}^{{commit}}"], cwd=path
+    )
+    if code != 0 or not sha.strip():
+        raise GitNotFound(f"No commit {rev!r} in this repository")
+    sha = sha.strip()
+    out = await _git(
+        ["show", "-s", "-z", f"--format={_LOG_FORMAT}%x1f%b", sha],
+        cwd=path,
+        what="git show failed",
+    )
+    fields = out.rstrip("\0").split("\x1f")
+    commit = _commit(fields)
+    body = fields[6].strip() if len(fields) > 6 else ""
+    parent = commit.parents[0] if commit.parents else None
+    # A merge is compared with its first parent, like `git show --first-parent`;
+    # a root commit with nothing (every file added).
+    args = ["diff-tree", "-r", "-z", "-M", "--name-status", "--no-commit-id"]
+    args += [parent, sha] if parent else ["--root", sha]
+    raw = (await _git(args, cwd=path, what="git diff-tree failed")).split("\0")
+    files: list[GitCommitFile] = []
+    i = 0
+    while i < len(raw) and raw[i]:
+        status = raw[i]
+        if status[0] in "RC":
+            files.append(GitCommitFile(status=status[0], orig_path=raw[i + 1], path=raw[i + 2]))
+            i += 3
+        else:
+            files.append(GitCommitFile(status=status[0], path=raw[i + 1]))
+            i += 2
+    return GitCommitDetail(**commit.model_dump(), body=body, parent=parent, files=files)
 
 
 def push_rejected(detail: str) -> bool:
@@ -469,6 +557,7 @@ async def status(path: Path, subdir: str | None = None) -> GitStatus:
     )
     prefix = f"{subdir.strip('/')}/" if subdir and subdir.strip("/") else ""
     head = "HEAD"
+    oid: str | None = None
     upstream: str | None = None
     ahead: int | None = None
     behind: int | None = None
@@ -483,7 +572,9 @@ async def status(path: Path, subdir: str | None = None) -> GitStatus:
             continue
         if entry.startswith("# "):
             key, _, value = entry[2:].partition(" ")
-            if key == "branch.head":
+            if key == "branch.oid":
+                oid = None if value == "(initial)" else value
+            elif key == "branch.head":
                 head = value
             elif key == "branch.upstream":
                 upstream = value
@@ -530,6 +621,7 @@ async def status(path: Path, subdir: str | None = None) -> GitStatus:
     merging_code, _o, _e = await _run_git(["rev-parse", "-q", "--verify", "MERGE_HEAD"], cwd=path)
     return GitStatus(
         branch="HEAD" if detached else head,
+        head=oid,
         detached=detached,
         upstream=upstream,
         ahead=ahead,

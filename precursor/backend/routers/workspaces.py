@@ -32,6 +32,8 @@ from precursor.backend.schemas import (
     FileWrite,
     FolderCreate,
     GitActionResult,
+    GitCommitDetail,
+    GitLog,
     GitStatus,
     LocalPath,
     WorkspaceCreate,
@@ -579,20 +581,55 @@ async def git_file_versions(
     workspace_id: int,
     path: str = Query(...),
     original_path: str | None = Query(None),
-    base: str = Query("HEAD"),
+    base: str | None = Query(None),
     head: str | None = Query(None),
     session: AsyncSession = Depends(get_session),
 ) -> FileVersions:
     """One file at ``base`` and in the working copy (or at ``head``), for the diff editor.
 
     Paths are relative to the repository root; ``original_path`` is a rename's
-    old name. Over 2 MB, or binary, only the flag comes back.
+    old name. ``base`` defaults to HEAD for the working copy; with ``head`` and
+    no ``base`` (a root commit) the original side is empty. Over 2 MB, or
+    binary, only the flag comes back. Revisions are commit ids (or HEAD): a
+    commit's parent comes from ``/git/commits/{sha}``.
     """
     ws = await _get_git_workspace(workspace_id, session)
     root = workspace_root(ws)
+    if base is None and head is None:
+        base = "HEAD"
     try:
         return await git.file_versions(root, path, original_rel=original_path, base=base, head=head)
     except (git.GitError, fs.UnsafePathError) as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+
+
+@router.get("/{workspace_id}/git/log", response_model=GitLog)
+async def git_log(
+    workspace_id: int,
+    limit: int = Query(50, ge=1, le=git.MAX_LOG_PAGE),
+    skip: int = Query(0, ge=0),
+    path: str | None = Query(None),
+    session: AsyncSession = Depends(get_session),
+) -> GitLog:
+    """A page of the checked-out branch's history; with ``path``, that file's."""
+    ws = await _get_git_workspace(workspace_id, session)
+    try:
+        return await git.log(workspace_root(ws), limit=limit, skip=skip, rel=path)
+    except git.GitError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+
+
+@router.get("/{workspace_id}/git/commits/{sha}", response_model=GitCommitDetail)
+async def git_commit_detail(
+    workspace_id: int, sha: str, session: AsyncSession = Depends(get_session)
+) -> GitCommitDetail:
+    """One commit: message, first parent (null for a root commit) and changed files."""
+    ws = await _get_git_workspace(workspace_id, session)
+    try:
+        return await git.commit_detail(workspace_root(ws), sha)
+    except git.GitNotFound as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except git.GitError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
 
 

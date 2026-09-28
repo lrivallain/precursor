@@ -15,6 +15,20 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Changed
 
+- **Git workspaces have a History tab.**
+  - **Browsing:** the branch's commits, newest first, with **Load more**. A
+    commit opens to its message and changed files, and each file's diff
+    against the commit before it.
+  - **Merges and the first commit:** a merge is compared with its first parent
+    and says so. The first commit shows its files as added.
+  - **One file's history:** **File history** beside an open file's name lists
+    the commits that changed it, across renames, and opens that file's diff
+    directly.
+  - **Phones:** the commit message and opened commits now survive a look at a
+    file or diff.
+  - **API:** new `GET /api/workspaces/{id}/git/log` and
+    `/git/commits/{sha}`. The status gains `head`, and `file-versions`
+    compares against an empty original when given `head` without `base`.
 - **Git workspaces review changes in a Changes tab, with a real diff.** The
   Files section's left pane gains a **Changes** tab beside **Files**, replacing
   the Review & Push dialog.

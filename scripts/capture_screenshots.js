@@ -310,6 +310,26 @@ const scenes = {
     },
   },
 
+  // The History tab: a commit opened to its files, one of them compared with
+  // the commit's parent.
+  "workspaces-history": {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await page.addInitScript(() =>
+        localStorage.setItem("precursor:workspace:leftTab", "history"),
+      );
+      await page.goto(`${BASE}/ws/handbook`, { waitUntil: "networkidle" });
+      await page.getByRole("button", { name: "Hide assistant" }).click();
+      const history = page.getByLabel("History", { exact: true });
+      await history.getByRole("button", { name: /Page owners sooner/ }).click();
+      await history.getByRole("button", { name: /^on-call\.md,/ }).click();
+      await page.locator(".monaco-diff-editor .view-line", { hasText: "15 minutes" }).first().waitFor();
+      await page.mouse.move(1200, 900);
+      await sleep(600);
+      return undefined;
+    },
+  },
+
   "agents-setup": {
     viewport: { width: 1200, height: 800 },
     async go(page) {

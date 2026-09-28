@@ -123,6 +123,8 @@ class GitFileStatus(BaseModel):
 class GitStatus(BaseModel):
     # The checked-out branch; "HEAD" when detached.
     branch: str
+    # The commit checked out; None before the first commit.
+    head: str | None = None
     detached: bool = False
     # The branch it tracks on origin, e.g. "origin/main"; None while it isn't
     # published (tracking a local branch doesn't count).
@@ -135,6 +137,39 @@ class GitStatus(BaseModel):
     # A merge is in progress (stopped on conflicts).
     merging: bool = False
     files: list[GitFileStatus] = Field(default_factory=list)
+
+
+class GitCommit(BaseModel):
+    sha: str
+    short_sha: str
+    author: str
+    # Author date, ISO 8601 with the author's offset.
+    date: str
+    subject: str
+    # More than one: a merge.
+    parents: list[str] = Field(default_factory=list)
+
+
+class GitLog(BaseModel):
+    commits: list[GitCommit] = Field(default_factory=list)
+    # Another page follows (ask with ``skip`` = commits seen so far).
+    has_more: bool = False
+
+
+class GitCommitFile(BaseModel):
+    # A (added), M, D, R (renamed), C (copied), T (type changed).
+    status: str
+    path: str
+    orig_path: str | None = None
+
+
+class GitCommitDetail(GitCommit):
+    # The message after its subject line.
+    body: str = ""
+    # What ``files`` are compared with: the first parent (for a merge too);
+    # null for a root commit, whose files are all added.
+    parent: str | None = None
+    files: list[GitCommitFile] = Field(default_factory=list)
 
 
 class GitActionResult(BaseModel):

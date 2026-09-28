@@ -2045,6 +2045,8 @@ export interface GitFileStatus {
 export interface GitStatus {
   /** The checked-out branch; "HEAD" when detached. */
   branch: string;
+  /** The commit checked out; null before the first commit. */
+  head?: string | null;
   detached?: boolean;
   /** e.g. "origin/main"; null while the branch isn't published. */
   upstream?: string | null;
@@ -2068,6 +2070,37 @@ export interface FileDiff {
   path: string;
   diff: string;
   binary: boolean;
+}
+
+export interface GitCommit {
+  sha: string;
+  short_sha: string;
+  author: string;
+  /** Author date, ISO 8601. */
+  date: string;
+  subject: string;
+  /** More than one: a merge. */
+  parents: string[];
+}
+
+export interface GitLog {
+  commits: GitCommit[];
+  has_more: boolean;
+}
+
+export interface GitCommitFile {
+  /** A, M, D, R (renamed), C (copied), T (type changed). */
+  status: string;
+  path: string;
+  orig_path: string | null;
+}
+
+export interface GitCommitDetail extends GitCommit {
+  /** The message after its subject line. */
+  body: string;
+  /** What `files` are compared with: the first parent; null for a root commit. */
+  parent: string | null;
+  files: GitCommitFile[];
 }
 
 /** Both sides of one file's diff; null where the file doesn't exist. */

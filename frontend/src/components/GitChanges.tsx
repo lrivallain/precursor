@@ -15,7 +15,13 @@ import {
   ChevronLeft,
 } from "lucide-react";
 import { api } from "../lib/api";
-import type { FileVersions, GitActionResult, GitFileStatus } from "../lib/types";
+import type {
+  FileVersions,
+  GitActionResult,
+  GitCommitDetail,
+  GitCommitFile,
+  GitFileStatus,
+} from "../lib/types";
 import type { ConfirmOptions } from "./ConfirmDialog";
 
 // Monaco's diff editor, in the same lazy chunk family as the file editor.
@@ -32,6 +38,31 @@ const DiffEditor = lazy(() =>
 /** A file HEAD doesn't have: discarding it deletes it. */
 export function isNewFile(file: GitFileStatus): boolean {
   return file.code === "??" || file.code[0] === "A";
+}
+
+/** What the diff pane shows: a change in the working copy, or a file in a commit. */
+export type DiffTarget =
+  | { kind: "working"; file: GitFileStatus }
+  | { kind: "commit"; commit: GitCommitDetail; file: GitCommitFile };
+
+/** A file's change in a commit, marked like the Changes list marks them. */
+export function commitFileMark(file: GitCommitFile): {
+  letter: string;
+  className: string;
+  tip: string;
+} {
+  switch (file.status) {
+    case "A":
+      return { letter: "A", className: "text-emerald-500", tip: "Added" };
+    case "D":
+      return { letter: "D", className: "text-red-500", tip: "Deleted" };
+    case "R":
+      return { letter: "R", className: "text-blue-500", tip: `Renamed from ${file.orig_path ?? "?"}` };
+    case "C":
+      return { letter: "C", className: "text-blue-500", tip: `Copied from ${file.orig_path ?? "?"}` };
+    default:
+      return { letter: file.status || "M", className: "text-amber-500", tip: "Modified" };
+  }
 }
 
 function status(file: GitFileStatus): { letter: string; className: string; tip: string } {
@@ -273,14 +304,14 @@ const INLINE_KEY = "precursor:workspace:diffInline";
 
 export function GitDiffPane({
   workspaceId,
-  file,
+  target,
   narrow,
   version,
   onOpenFile,
   onClose,
 }: {
   workspaceId: number;
-  file: GitFileStatus;
+  target: DiffTarget;
   narrow: boolean;
   /** Bumps when the working copy may have changed (save, pull, discard). */
   version: unknown;
@@ -293,11 +324,20 @@ export function GitDiffPane({
   // A phone has no room for two columns.
   const inline = narrow || inlinePref;
 
+  const file = target.file;
+  const commit = target.kind === "commit" ? target.commit : null;
+  // A commit is compared with the parent the server resolved (none for a
+  // root commit, whose files are all added).
+  const base = commit ? commit.parent : undefined;
+  const head = commit?.sha;
+  const key = `${commit?.sha ?? "working"}:${file.path}`;
+
   useEffect(() => {
     let cancelled = false;
     setError(null);
+    setVersions(null);
     api.workspaces
-      .gitFileVersions(workspaceId, file.path, { originalPath: file.orig_path })
+      .gitFileVersions(workspaceId, file.path, { originalPath: file.orig_path, base, head })
       .then((v) => {
         if (!cancelled) setVersions(v);
       })
@@ -307,14 +347,16 @@ export function GitDiffPane({
     return () => {
       cancelled = true;
     };
-  }, [workspaceId, file.path, file.orig_path, version]);
+    // A commit's files never change; the working copy's follow `version`.
+  }, [workspaceId, key, file.orig_path, base, head, commit ? null : version]);
 
   function setInline(value: boolean): void {
     setInlinePref(value);
     localStorage.setItem(INLINE_KEY, value ? "1" : "0");
   }
 
-  const mark = status(file);
+  const mark =
+    target.kind === "working" ? status(target.file) : commitFileMark(target.file);
   const loaded = versions?.path === file.path ? versions : null;
 
   return (
@@ -324,7 +366,7 @@ export function GitDiffPane({
           <button
             type="button"
             className="-ml-2 shrink-0 rounded p-1 text-muted hover:bg-surface hover:text-text"
-            aria-label="Back to changes"
+            aria-label={commit ? "Back to history" : "Back to changes"}
             onClick={onClose}
           >
             <ChevronLeft size={16} />
@@ -336,7 +378,16 @@ export function GitDiffPane({
         <span className="min-w-0 flex-1 truncate text-sm">
           {file.orig_path && <span className="text-muted">{file.orig_path} → </span>}
           {file.path}
-          <span className="text-muted"> · since the last commit</span>
+          {commit ? (
+            <span className="text-muted" data-tooltip={commit.subject}>
+              {" · in "}
+              <span className="font-mono">{commit.short_sha}</span>
+              {commit.parents.length > 1 && " · compared with its first parent"}
+              {commit.parent === null && " · the first commit"}
+            </span>
+          ) : (
+            <span className="text-muted"> · since the last commit</span>
+          )}
         </span>
         {!narrow && (
           <div className="flex shrink-0 overflow-hidden rounded border border-border text-xs">

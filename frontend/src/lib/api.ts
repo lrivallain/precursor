@@ -51,7 +51,9 @@ import type {
   FileDiff,
   FileVersions,
   GitActionResult,
+  GitCommitDetail,
   GitHubIssue,
+  GitLog,
   GitStatus,
   IssueComment,
   IssueLabel,
@@ -1482,10 +1484,11 @@ export const api = {
       ),
     // A file at `base` (HEAD) and in the working copy — or at `head` — for the
     // diff editor. `originalPath` is a rename's old name.
+    // With `head` and no `base` (a root commit), the original side is empty.
     gitFileVersions: (
       workspaceId: number,
       path: string,
-      opts: { originalPath?: string | null; base?: string; head?: string } = {},
+      opts: { originalPath?: string | null; base?: string | null; head?: string } = {},
     ) => {
       const q = new URLSearchParams({ path });
       if (opts.originalPath) q.set("original_path", opts.originalPath);
@@ -1493,6 +1496,18 @@ export const api = {
       if (opts.head) q.set("head", opts.head);
       return request<FileVersions>(`/api/workspaces/${workspaceId}/git/file-versions?${q}`);
     },
+    // A page of history, newest first; `path` limits it to one file (by its
+    // repository path), following renames.
+    gitLog: (workspaceId: number, opts: { limit?: number; skip?: number; path?: string | null } = {}) => {
+      const q = new URLSearchParams();
+      if (opts.limit) q.set("limit", String(opts.limit));
+      if (opts.skip) q.set("skip", String(opts.skip));
+      if (opts.path) q.set("path", opts.path);
+      return request<GitLog>(`/api/workspaces/${workspaceId}/git/log?${q}`);
+    },
+    // One commit: message, first parent and changed files.
+    gitCommitDetail: (workspaceId: number, sha: string) =>
+      request<GitCommitDetail>(`/api/workspaces/${workspaceId}/git/commits/${sha}`),
     gitDiff: (workspaceId: number, path: string) =>
       request<FileDiff>(
         `/api/workspaces/${workspaceId}/git/diff?path=${encodeURIComponent(path)}`,

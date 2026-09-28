@@ -410,6 +410,108 @@ async def test_file_versions_check_their_inputs(remote: str, tmp_path: Path) -> 
         await git.file_versions(repo, ".git/config")
 
 
+# --- History ---------------------------------------------------------------------
+
+
+async def _history(repo: Path) -> dict[str, str]:
+    """Four more commits on the clone: an edit, a rename, a merge. Returns their ids."""
+    ids: dict[str, str] = {}
+    (repo / "README.md").write_text("# Notes\n\nsecond line\n", encoding="utf-8")
+    run(repo, "commit", "-am", "Edit the notes", "-m", "Why: clearer.")
+    ids["edit"] = run(repo, "rev-parse", "HEAD").strip()
+    run(repo, "mv", "README.md", "NOTES.md")
+    run(repo, "commit", "-m", "Rename the notes")
+    ids["rename"] = run(repo, "rev-parse", "HEAD").strip()
+    run(repo, "switch", "-c", "side")
+    (repo / "side.md").write_text("side\n", encoding="utf-8")
+    run(repo, "add", "side.md")
+    run(repo, "commit", "-m", "Side work")
+    run(repo, "switch", "main")
+    (repo / "main.md").write_text("main\n", encoding="utf-8")
+    run(repo, "add", "main.md")
+    run(repo, "commit", "-m", "Main work")
+    run(repo, "merge", "--no-ff", "--no-edit", "side")
+    ids["merge"] = run(repo, "rev-parse", "HEAD").strip()
+    ids["root"] = run(repo, "rev-list", "--max-parents=0", "HEAD").strip()
+    return ids
+
+
+async def test_log_pages_newest_first(remote: str, tmp_path: Path) -> None:
+    repo = await _clone(remote, tmp_path / "ws")
+    ids = await _history(repo)
+    first = await git.log(repo, limit=2)
+    assert first.commits[0].sha == ids["merge"] and first.has_more
+    assert len(first.commits[0].parents) == 2  # a merge
+    rest = await git.log(repo, limit=100, skip=2)
+    assert not rest.has_more and rest.commits[-1].sha == ids["root"]
+    assert rest.commits[-1].parents == []
+    assert len(first.commits) + len(rest.commits) == 6
+
+
+async def test_log_of_a_file_follows_its_renames(remote: str, tmp_path: Path) -> None:
+    repo = await _clone(remote, tmp_path / "ws")
+    ids = await _history(repo)
+    history = await git.log(repo, rel="NOTES.md")
+    assert [c.sha for c in history.commits] == [ids["rename"], ids["edit"], ids["root"]]
+    with pytest.raises(git.GitInputError):
+        await git.log(repo, rel="../x")
+
+
+async def test_log_of_an_empty_repository(tmp_path: Path) -> None:
+    run(tmp_path, "init", "--initial-branch=main", "empty")
+    assert await git.log(tmp_path / "empty") == git.GitLog()
+
+
+async def test_commit_detail_of_an_edit_a_rename_a_merge_and_the_root(
+    remote: str, tmp_path: Path
+) -> None:
+    repo = await _clone(remote, tmp_path / "ws")
+    ids = await _history(repo)
+
+    edit = await git.commit_detail(repo, ids["edit"][:8])
+    assert edit.sha == ids["edit"] and edit.subject == "Edit the notes"
+    assert edit.body == "Why: clearer."
+    assert edit.parent == ids["root"]
+    assert [(f.status, f.path) for f in edit.files] == [("M", "README.md")]
+
+    rename = await git.commit_detail(repo, ids["rename"])
+    [moved] = rename.files
+    assert (moved.status, moved.orig_path, moved.path) == ("R", "README.md", "NOTES.md")
+
+    merge = await git.commit_detail(repo, ids["merge"])
+    assert merge.parent == merge.parents[0]
+    # Against its first parent: only what the merged branch brought in.
+    assert [(f.status, f.path) for f in merge.files] == [("A", "side.md")]
+
+    root = await git.commit_detail(repo, ids["root"])
+    assert root.parent is None and root.parents == []
+    assert [(f.status, f.path) for f in root.files] == [("A", "README.md")]
+
+
+async def test_commit_detail_checks_its_input(remote: str, tmp_path: Path) -> None:
+    repo = await _clone(remote, tmp_path / "ws")
+    for bad in ("HEAD^", "main", "--all"):
+        with pytest.raises(git.GitInputError):
+            await git.commit_detail(repo, bad)
+    with pytest.raises(git.GitNotFound):
+        await git.commit_detail(repo, "deadbeef")
+
+
+async def test_file_versions_of_a_commit_use_the_resolved_parent(
+    remote: str, tmp_path: Path
+) -> None:
+    repo = await _clone(remote, tmp_path / "ws")
+    ids = await _history(repo)
+    edit = await git.commit_detail(repo, ids["edit"])
+    versions = await git.file_versions(repo, "README.md", base=edit.parent, head=edit.sha)
+    assert (versions.original, versions.modified) == (
+        "# Notes\n\nfirst line\n",
+        "# Notes\n\nsecond line\n",
+    )
+    root = await git.file_versions(repo, "README.md", base=None, head=ids["root"])
+    assert (root.original, root.modified) == (None, "# Notes\n\nfirst line\n")
+
+
 # --- API ---------------------------------------------------------------------------
 
 
@@ -471,6 +573,17 @@ def test_api_rejects_unsafe_paths(client: TestClient, remote: str) -> None:
             assert resp.status_code == 400
         ok = client.get(f"{base}/git/file-versions", params={"path": "README.md"}).json()
         assert ok["original"] == ok["modified"] == "# Notes\n\nfirst line\n"
+        for params in ({"limit": 0}, {"limit": 101}, {"skip": -1}, {"path": "../x"}):
+            assert client.get(f"{base}/git/log", params=params).status_code in (400, 422)
+        assert client.get(f"{base}/git/commits/HEAD~1").status_code == 400
+        assert client.get(f"{base}/git/commits/deadbeef").status_code == 404
+        [root] = client.get(f"{base}/git/log").json()["commits"]
+        detail = client.get(f"{base}/git/commits/{root['sha']}").json()
+        assert detail["parent"] is None and detail["files"][0]["status"] == "A"
+        added = client.get(
+            f"{base}/git/file-versions", params={"path": "README.md", "head": root["sha"]}
+        ).json()
+        assert added["original"] is None and added["modified"] == "# Notes\n\nfirst line\n"
     finally:
         client.delete(base)
 

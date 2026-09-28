@@ -49,9 +49,15 @@ prompt. The token is added to each command and never written to the clone.
 
 ## Reviewing and committing
 
-In a git workspace the left pane has two tabs: **Files**, the tree, and
-**Changes**, every file that differs from the last commit. **Review & commit**
-in the bar opens Changes, and the pane you last used is remembered.
+In a git workspace the left pane has three tabs:
+
+- **Files:** the tree.
+- **Changes:** every file that differs from the last commit.
+- **History:** the commits on the branch (see [History](#history)).
+
+**Review & commit** in the bar opens Changes, and the pane you last used is
+remembered. On a phone, what you had typed or opened in the pane is still
+there when you come back from a file or a diff.
 
 <Screenshot src="/screenshots/workspaces-changes.png" alt="The Changes tab listing three changed files with checkboxes and a commit message, and a side-by-side diff of one of them" caption="Reviewing a change before committing it." />
 
@@ -73,6 +79,24 @@ While you edit a file in a git workspace, bars in the editor's margin mark the
 lines changed since the last commit: green for added, blue for modified, and a
 red wedge where lines were removed. They refresh when you open or save the
 file.
+
+## History
+
+**History** lists the commits on the checked-out branch, newest first, with
+**Load more** for older ones.
+
+- **Opening a commit:** a commit opens to its message and the files it
+  changed. Click a file to see its diff against the commit before it.
+- **Merges:** a merge is marked with an icon, and its files are **compared with
+  its first parent**, the branch that was merged into.
+- **The first commit:** it has nothing before it, so its files show as added.
+- **One file's history:** **File history** (the clock beside an open file's
+  name) narrows the list to the commits that changed that file, following it
+  across renames. Opening one of those commits shows that file's change
+  straight away. The cross beside "History of …" goes back to the whole
+  branch.
+
+<Screenshot src="/screenshots/workspaces-history.png" alt="The History tab with a commit opened to the file it changed, and that file's diff against the previous commit" caption="What a past commit changed." />
 
 ## The Agents & workflows workspace
 
