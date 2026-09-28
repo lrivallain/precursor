@@ -766,6 +766,47 @@ async def test_a_conflict_is_resolved_then_completed(remote: str, tmp_path: Path
     assert len(run(repo, "rev-list", "--parents", "-n", "1", "HEAD").split()) == 3
 
 
+@pytest.mark.parametrize(
+    ("text", "markers"),
+    [
+        # A Markdown heading underlined with exactly seven "=": not a marker.
+        ("Title\n=======\n\nBody\n", []),
+        # An unresolved block: all three.
+        ("a\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> origin/main\nb\n", [2, 4, 6]),
+        # Leftovers of a block edited by hand still count.
+        ("a\n>>>>>>> origin/main\n", [2]),
+        ("<<<<<<< HEAD\nours\n", [1]),
+        # Two blocks, and a heading between them.
+        (
+            "<<<<<<< HEAD\n1\n=======\n2\n>>>>>>> x\nTitle\n=======\n"
+            "<<<<<<< HEAD\n3\n=======\n4\n>>>>>>> x\n",
+            [1, 3, 5, 8, 10, 12],
+        ),
+        ("no conflict\r\n=======\r\n", []),
+    ],
+)
+def test_conflict_markers_are_read_as_blocks(text: str, markers: list[int]) -> None:
+    assert git.conflict_marker_lines(text) == markers
+
+
+async def test_a_resolved_markdown_heading_does_not_block_resolve(
+    remote: str, tmp_path: Path
+) -> None:
+    repo = await _clone(remote, tmp_path / "ws")
+    _diverge(
+        remote,
+        tmp_path,
+        repo,
+        ours={"README.md": "# Notes\n\nours\n"},
+        theirs={"README.md": "# Notes\n\ntheirs\n"},
+    )
+    await git.merge(repo, "main", None)
+    (repo / "README.md").write_text("Notes\n=======\n\nours and theirs\n", encoding="utf-8")
+    await git.resolve(repo, "README.md")
+    await git.complete_merge(repo)
+    assert not (await git.status(repo)).merging
+
+
 async def test_abort_puts_everything_back(remote: str, tmp_path: Path) -> None:
     repo = await _clone(remote, tmp_path / "ws")
     _diverge(

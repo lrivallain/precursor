@@ -93,8 +93,9 @@ incoming one:
   conflict tinted, yours in green and theirs in blue. Above each one, choose
   **Accept current** (yours), **Accept incoming** (theirs) or **Accept both**,
   or edit the text yourself. Each choice can be undone. Save, then **Mark
-  resolved**. That is refused while any conflict marker (`<<<<<<<`, `=======`,
-  `>>>>>>>` at the start of a line) is left in the saved file.
+  resolved**. That is refused while a conflict is left in the saved file: a
+  `<<<<<<<` or `>>>>>>>` line, or a `=======` line between them. A Markdown
+  heading underlined with `=======` is fine.
 - **Binary files, and files one side deleted:** these can't be merged line by
   line. Choose **Keep yours** or **Keep theirs**. Keeping the side that deleted
   the file deletes it. You're asked first, because the other side's changes to

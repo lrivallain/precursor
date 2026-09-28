@@ -698,8 +698,10 @@ _MERGE_CONFIG = [
     "rerere.enabled=false",
 ]
 
-# A line git writes around a conflict (``merge.conflictStyle=merge``).
-_MARKER = re.compile(r"^(<{7}|={7}|>{7})(\s|$)", re.MULTILINE)
+# Lines git writes around a conflict (``merge.conflictStyle=merge``).
+_OPEN = re.compile(r"<{7}(\s|$)")
+_SEPARATOR = re.compile(r"={7}\s*$")
+_CLOSE = re.compile(r">{7}(\s|$)")
 
 _CONFLICT_KINDS = {
     "UU": "both_modified",
@@ -794,8 +796,24 @@ async def conflict(path: Path, rel: str) -> GitConflict:
 
 
 def conflict_marker_lines(text: str) -> list[int]:
-    """1-based lines that are conflict markers."""
-    return [text.count("\n", 0, m.start()) + 1 for m in _MARKER.finditer(text)]
+    """1-based lines that are conflict markers, the way the editor reads blocks.
+
+    ``<<<<<<<`` and ``>>>>>>>`` always count (a stray one is a leftover); a
+    ``=======`` line only inside an open block, so a Markdown heading underlined
+    with seven ``=`` isn't mistaken for one.
+    """
+    found: list[int] = []
+    open_block = False
+    for number, line in enumerate(text.splitlines(), start=1):
+        if _OPEN.match(line):
+            found.append(number)
+            open_block = True
+        elif _CLOSE.match(line):
+            found.append(number)
+            open_block = False
+        elif open_block and _SEPARATOR.match(line):
+            found.append(number)
+    return found
 
 
 async def resolve(path: Path, rel: str, side: str | None = None) -> None:
