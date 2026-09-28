@@ -24,10 +24,14 @@ def run(cwd: Path, *args: str, check: bool = True) -> str:
     ).stdout
 
 
+def write_text(path: Path, text: str) -> None:
+    path.write_text(text, encoding="utf-8", newline="\n")
+
+
 @pytest.fixture(autouse=True)
 def _isolated_git(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     config = tmp_path / "gitconfig"
-    config.write_text("", encoding="utf-8")
+    config.write_text("", encoding="utf-8", newline="\n")
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(config))
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
     for who in ("AUTHOR", "COMMITTER"):
@@ -42,7 +46,7 @@ def remote(tmp_path: Path) -> str:
     run(tmp_path, "init", "--bare", "--initial-branch=main", str(bare))
     seed = tmp_path / "seed"
     run(tmp_path, "init", "--initial-branch=main", str(seed))
-    (seed / "README.md").write_text("# Notes\n\nfirst line\n", encoding="utf-8")
+    write_text(seed / "README.md", "# Notes\n\nfirst line\n")
     run(seed, "add", "-A")
     run(seed, "commit", "-m", "Initial")
     run(seed, "remote", "add", "origin", bare.as_uri())
@@ -62,7 +66,7 @@ def _other_clone(remote: str, tmp_path: Path, name: str = "other") -> Path:
 
 
 def _commit_and_push(repo: Path, rel: str, text: str, message: str) -> None:
-    (repo / rel).write_text(text, encoding="utf-8")
+    write_text(repo / rel, text)
     run(repo, "add", "-A")
     run(repo, "commit", "-m", message)
     run(repo, "push", "origin", "HEAD")
@@ -137,11 +141,11 @@ async def test_status_parses_edits_untracked_unicode_spaces_and_renames(
     remote: str, tmp_path: Path
 ) -> None:
     repo = await _clone(remote, tmp_path / "ws")
-    (repo / "README.md").write_text("# Notes\n\nedited\n", encoding="utf-8")
+    write_text(repo / "README.md", "# Notes\n\nedited\n")
     (repo / "docs").mkdir()
-    (repo / "docs" / "a b.md").write_text("spaces\n", encoding="utf-8")
-    (repo / "ünï.md").write_text("unicode\n", encoding="utf-8")
-    (repo / "old.md").write_text("to rename\n", encoding="utf-8")
+    write_text(repo / "docs" / "a b.md", "spaces\n")
+    write_text(repo / "ünï.md", "unicode\n")
+    write_text(repo / "old.md", "to rename\n")
     run(repo, "add", "old.md")
     run(repo, "commit", "-m", "Add old")
     run(repo, "mv", "old.md", "new name.md")
@@ -163,8 +167,8 @@ async def test_status_parses_edits_untracked_unicode_spaces_and_renames(
 async def test_status_browse_paths_follow_the_subdir(remote: str, tmp_path: Path) -> None:
     repo = await _clone(remote, tmp_path / "ws")
     (repo / "docs").mkdir()
-    (repo / "docs" / "guide.md").write_text("x\n", encoding="utf-8")
-    (repo / "README.md").write_text("changed\n", encoding="utf-8")
+    write_text(repo / "docs" / "guide.md", "x\n")
+    write_text(repo / "README.md", "changed\n")
     st = await git.status(repo, "docs/")
     by_path = {f.path: f.browse_path for f in st.files}
     assert by_path == {"docs/guide.md": "guide.md", "README.md": None}
@@ -174,7 +178,7 @@ async def test_status_reports_a_conflicted_merge(remote: str, tmp_path: Path) ->
     repo = await _clone(remote, tmp_path / "ws")
     other = _other_clone(remote, tmp_path)
     _commit_and_push(other, "README.md", "# Notes\n\ntheirs\n", "Theirs")
-    (repo / "README.md").write_text("# Notes\n\nours\n", encoding="utf-8")
+    write_text(repo / "README.md", "# Notes\n\nours\n")
     run(repo, "commit", "-am", "Ours")
     assert (await git.fetch(repo, "main", None))[0]
     subprocess.run(["git", "merge", "origin/main"], cwd=repo, capture_output=True)
@@ -234,8 +238,8 @@ async def test_fetch_of_a_branch_the_remote_lacks_fails_softly(remote: str, tmp_
 
 async def test_commit_then_push(remote: str, tmp_path: Path) -> None:
     repo = await _clone(remote, tmp_path / "ws")
-    (repo / "a.md").write_text("a\n", encoding="utf-8")
-    (repo / "keep.md").write_text("not yet\n", encoding="utf-8")
+    write_text(repo / "a.md", "a\n")
+    write_text(repo / "keep.md", "not yet\n")
     committed, _ = await git.commit_paths(repo, "Add a", ["a.md"])
     assert committed
     st = await git.status(repo)
@@ -265,7 +269,7 @@ async def test_nothing_to_commit(remote: str, tmp_path: Path) -> None:
 async def test_push_publishes_a_new_branch(remote: str, tmp_path: Path) -> None:
     repo = await _clone(remote, tmp_path / "ws")
     run(repo, "switch", "-c", "draft")
-    (repo / "d.md").write_text("d\n", encoding="utf-8")
+    write_text(repo / "d.md", "d\n")
     await git.commit_all(repo, "Draft")
     st = await git.status(repo)
     assert (st.branch, st.upstream, st.ahead) == ("draft", None, None)
@@ -289,7 +293,7 @@ async def test_a_branch_tracking_a_local_one_is_not_published(remote: str, tmp_p
 async def test_a_push_behind_the_remote_is_rejected(remote: str, tmp_path: Path) -> None:
     repo = await _clone(remote, tmp_path / "ws")
     _commit_and_push(_other_clone(remote, tmp_path), "b.md", "b\n", "Theirs")
-    (repo / "a.md").write_text("a\n", encoding="utf-8")
+    write_text(repo / "a.md", "a\n")
     await git.commit_all(repo, "Ours")
     ok, detail = await git.push(repo, "main", None)
     assert not ok and git.push_rejected(detail)
@@ -305,7 +309,7 @@ async def test_pull_fast_forwards(remote: str, tmp_path: Path) -> None:
 async def test_a_diverged_pull_stops(remote: str, tmp_path: Path) -> None:
     repo = await _clone(remote, tmp_path / "ws")
     _commit_and_push(_other_clone(remote, tmp_path), "b.md", "b\n", "Theirs")
-    (repo / "a.md").write_text("a\n", encoding="utf-8")
+    write_text(repo / "a.md", "a\n")
     await git.commit_all(repo, "Ours")
     ok, detail = await git.pull(repo, "main", None)
     assert not ok and detail
@@ -317,9 +321,9 @@ async def test_a_diverged_pull_stops(remote: str, tmp_path: Path) -> None:
 
 async def test_discard_restores_tracked_and_removes_new_files(remote: str, tmp_path: Path) -> None:
     repo = await _clone(remote, tmp_path / "ws")
-    (repo / "README.md").write_text("edited\n", encoding="utf-8")
+    write_text(repo / "README.md", "edited\n")
     run(repo, "add", "README.md")  # staged edits are discarded too
-    (repo / "new.md").write_text("new\n", encoding="utf-8")
+    write_text(repo / "new.md", "new\n")
     await git.discard(repo, "README.md")
     await git.discard(repo, "new.md")
     assert (repo / "README.md").read_text(encoding="utf-8") == "# Notes\n\nfirst line\n"
@@ -338,7 +342,7 @@ async def test_discarding_a_rename_restores_the_old_name(remote: str, tmp_path: 
 async def test_pathspec_magic_is_literal(remote: str, tmp_path: Path) -> None:
     """``:/`` or ``*`` would mean "everything" to git; here each is just a name."""
     repo = await _clone(remote, tmp_path / "ws")
-    (repo / "README.md").write_text("keep me\n", encoding="utf-8")
+    write_text(repo / "README.md", "keep me\n")
     for magic in (":/", ":(top)README.md", "*", "*.md"):
         await git.discard(repo, magic)
         assert await git.commit_paths(repo, "m", [magic]) == (False, "Nothing to commit.")
@@ -357,8 +361,8 @@ async def test_file_versions_of_an_edit_a_new_file_and_a_deletion(
     remote: str, tmp_path: Path
 ) -> None:
     repo = await _clone(remote, tmp_path / "ws")
-    (repo / "README.md").write_text("# Notes\n\nedited\n", encoding="utf-8")
-    (repo / "new.md").write_text("new\n", encoding="utf-8")
+    write_text(repo / "README.md", "# Notes\n\nedited\n")
+    write_text(repo / "new.md", "new\n")
     edited = await git.file_versions(repo, "README.md")
     assert (edited.original, edited.modified) == ("# Notes\n\nfirst line\n", "# Notes\n\nedited\n")
     added = await git.file_versions(repo, "new.md")
@@ -380,10 +384,10 @@ async def test_file_versions_of_a_rename_compare_with_the_old_name(
 async def test_file_versions_between_two_commits(remote: str, tmp_path: Path) -> None:
     repo = await _clone(remote, tmp_path / "ws")
     first = run(repo, "rev-parse", "HEAD").strip()
-    (repo / "README.md").write_text("second\n", encoding="utf-8")
+    write_text(repo / "README.md", "second\n")
     run(repo, "commit", "-am", "Second")
     second = run(repo, "rev-parse", "HEAD").strip()
-    (repo / "README.md").write_text("uncommitted\n", encoding="utf-8")
+    write_text(repo / "README.md", "uncommitted\n")
     versions = await git.file_versions(repo, "README.md", base=first[:7], head=second)
     assert (versions.original, versions.modified) == ("# Notes\n\nfirst line\n", "second\n")
 
@@ -396,7 +400,7 @@ async def test_file_versions_flag_binary_and_large_files(
     binary = await git.file_versions(repo, "logo.png")
     assert binary.binary and binary.modified is None
     monkeypatch.setattr(git, "MAX_DIFF_BYTES", 10)
-    (repo / "README.md").write_text("x" * 11, encoding="utf-8")
+    write_text(repo / "README.md", "x" * 11)
     large = await git.file_versions(repo, "README.md")
     assert large.too_large and large.original is None and large.modified is None
 
@@ -416,18 +420,18 @@ async def test_file_versions_check_their_inputs(remote: str, tmp_path: Path) -> 
 async def _history(repo: Path) -> dict[str, str]:
     """Four more commits on the clone: an edit, a rename, a merge. Returns their ids."""
     ids: dict[str, str] = {}
-    (repo / "README.md").write_text("# Notes\n\nsecond line\n", encoding="utf-8")
+    write_text(repo / "README.md", "# Notes\n\nsecond line\n")
     run(repo, "commit", "-am", "Edit the notes", "-m", "Why: clearer.")
     ids["edit"] = run(repo, "rev-parse", "HEAD").strip()
     run(repo, "mv", "README.md", "NOTES.md")
     run(repo, "commit", "-m", "Rename the notes")
     ids["rename"] = run(repo, "rev-parse", "HEAD").strip()
     run(repo, "switch", "-c", "side")
-    (repo / "side.md").write_text("side\n", encoding="utf-8")
+    write_text(repo / "side.md", "side\n")
     run(repo, "add", "side.md")
     run(repo, "commit", "-m", "Side work")
     run(repo, "switch", "main")
-    (repo / "main.md").write_text("main\n", encoding="utf-8")
+    write_text(repo / "main.md", "main\n")
     run(repo, "add", "main.md")
     run(repo, "commit", "-m", "Main work")
     run(repo, "merge", "--no-ff", "--no-edit", "side")
@@ -533,11 +537,11 @@ async def test_branches_lists_local_and_remote(remote: str, tmp_path: Path) -> N
 
 async def test_unusable_remote_branch_names_are_not_listed(remote: str, tmp_path: Path) -> None:
     repo = await _clone(remote, tmp_path / "ws")
-    bare = Path(remote.removeprefix("file://"))
+    bare = tmp_path / "remote.git"
     sha = run(tmp_path, f"--git-dir={bare}", "rev-parse", "main").strip()
     # A name git itself accepts but no one should pass to git on a command line.
     run(tmp_path, f"--git-dir={bare}", "update-ref", "refs/heads/--upload-pack=pwned", sha)
-    (bare / "refs" / "heads" / "a..b").write_text(sha + "\n", encoding="utf-8")
+    write_text(bare / "refs" / "heads" / "a..b", sha + "\n")
     assert await git.remote_branches(repo, None) == ["main"]
     with pytest.raises(git.GitInputError):
         await git.switch(repo, "--upload-pack=pwned", None)
@@ -558,7 +562,7 @@ async def test_switching_to_a_branch_only_the_remote_has(remote: str, tmp_path: 
 async def test_switching_is_refused_with_uncommitted_changes(remote: str, tmp_path: Path) -> None:
     repo = await _clone(remote, tmp_path / "ws")
     run(repo, "branch", "other")
-    (repo / "README.md").write_text("edited\n", encoding="utf-8")
+    write_text(repo / "README.md", "edited\n")
     with pytest.raises(git.GitRefused, match=r"README\.md"):
         await git.switch(repo, "other", None)
     run(repo, "add", "README.md")  # staged counts too
@@ -573,8 +577,8 @@ async def test_untracked_files_block_only_when_they_would_be_overwritten(
 ) -> None:
     repo = await _clone(remote, tmp_path / "ws")
     _remote_branch(remote, tmp_path, "feature", "f.md")
-    (repo / "notes.txt").write_text("mine\n", encoding="utf-8")  # the branch lacks it
-    (repo / "f.md").write_text("my own f\n", encoding="utf-8")  # the branch has one
+    write_text(repo / "notes.txt", "mine\n")  # the branch lacks it
+    write_text(repo / "f.md", "my own f\n")  # the branch has one
     with pytest.raises(git.GitRefused, match=r"f\.md"):
         await git.switch(repo, "feature", None)
     assert (repo / "f.md").read_text(encoding="utf-8") == "my own f\n"
@@ -591,7 +595,7 @@ async def test_switching_is_refused_while_merging_or_detached(remote: str, tmp_p
         await git.switch(repo, "other", None)
     run(repo, "switch", "main")
     _commit_and_push(_other_clone(remote, tmp_path), "README.md", "# Notes\n\ntheirs\n", "Theirs")
-    (repo / "README.md").write_text("# Notes\n\nours\n", encoding="utf-8")
+    write_text(repo / "README.md", "# Notes\n\nours\n")
     run(repo, "commit", "-am", "Ours")
     await git.fetch(repo, "main", None)
     subprocess.run(["git", "merge", "origin/main"], cwd=repo, capture_output=True)
@@ -604,7 +608,7 @@ async def test_switching_is_refused_while_merging_or_detached(remote: str, tmp_p
 async def test_create_then_publish_even_with_autosetupmerge(remote: str, tmp_path: Path) -> None:
     repo = await _clone(remote, tmp_path / "ws")
     run(repo, "config", "branch.autoSetupMerge", "always")
-    (repo / "wip.md").write_text("wip\n", encoding="utf-8")  # comes along
+    write_text(repo / "wip.md", "wip\n")  # comes along
     await git.create_branch(repo, "draft/one", None)
     st = await git.status(repo)
     assert (st.branch, st.upstream) == ("draft/one", None)
@@ -758,7 +762,7 @@ async def test_a_conflict_is_resolved_then_completed(remote: str, tmp_path: Path
     with pytest.raises(git.GitRefused, match="Resolve every conflict"):
         await git.complete_merge(repo)
 
-    (repo / "README.md").write_text("# Notes\n\nours and theirs\n", encoding="utf-8")
+    write_text(repo / "README.md", "# Notes\n\nours and theirs\n")
     await git.resolve(repo, "README.md")
     await git.complete_merge(repo)
     st = await git.status(repo)
@@ -801,7 +805,7 @@ async def test_a_resolved_markdown_heading_does_not_block_resolve(
         theirs={"README.md": "# Notes\n\ntheirs\n"},
     )
     await git.merge(repo, "main", None)
-    (repo / "README.md").write_text("Notes\n=======\n\nours and theirs\n", encoding="utf-8")
+    write_text(repo / "README.md", "Notes\n=======\n\nours and theirs\n")
     await git.resolve(repo, "README.md")
     await git.complete_merge(repo)
     assert not (await git.status(repo)).merging
@@ -838,7 +842,7 @@ async def test_merge_is_refused_dirty_detached_or_already_merging(
         ours={"README.md": "# Notes\n\nours\n"},
         theirs={"README.md": "# Notes\n\ntheirs\n"},
     )
-    (repo / "README.md").write_text("uncommitted\n", encoding="utf-8")
+    write_text(repo / "README.md", "uncommitted\n")
     with pytest.raises(git.GitRefused, match=r"README\.md"):
         await git.merge(repo, "main", None)
     run(repo, "checkout", "--", "README.md")
@@ -1041,7 +1045,7 @@ def test_api_switch_and_create_branches(
         listed = client.get(f"{base}/git/branches").json()
         assert listed["current"] == "main" and "feature" in listed["remote"]
 
-        (repo / "README.md").write_text("dirty\n", encoding="utf-8")
+        write_text(repo / "README.md", "dirty\n")
         resp = client.post(f"{base}/git/switch", json={"name": "feature"})
         assert resp.status_code == 409 and "README.md" in resp.json()["detail"]
         assert refreshed == []
