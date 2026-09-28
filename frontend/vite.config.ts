@@ -81,6 +81,23 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [react(), tailwindcss(), pluginRuntime()],
+    resolve: {
+      alias: [
+        // monaco-yaml's worker (through monaco-worker-manager) imports Monaco's
+        // editor worker by its pre-0.57 path, which 0.57's `exports` map maps
+        // to a file that doesn't exist.
+        {
+          find: /^monaco-editor\/esm\/vs\/editor\/editor\.worker(\.js)?$/,
+          replacement: "monaco-editor/editor/editor.worker.js",
+        },
+      ],
+    },
+    // Monaco's workers are ES modules with shared chunks, which IIFE can't express.
+    worker: { format: "es" },
+    // Only reached from a worker, which the dev server's dependency scan
+    // doesn't follow: without this, the first edit in dev re-optimises and
+    // reloads the page.
+    optimizeDeps: { include: ["monaco-yaml/yaml.worker.js"] },
     server: {
       port: 5173,
       proxy,

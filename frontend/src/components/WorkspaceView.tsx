@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
 import {
   ClipboardCheck,
   ClipboardCopy,
@@ -34,6 +34,7 @@ import { FileTree } from "./FileTree";
 import { ChangesModal } from "./GitDiffViewer";
 import { DrawioEditor } from "./DrawioEditor";
 import { DefinitionFileIssues } from "./DefinitionFileIssues";
+import { PlainTextEditor } from "./PlainTextEditor";
 import type {
   GitActionResult,
   GitStatus,
@@ -82,24 +83,44 @@ function isDrawio(name: string): boolean {
   return lower.endsWith(".drawio") || lower.endsWith(".drawio.xml");
 }
 
+function hasPreview(name: string): boolean {
+  return isMarkdown(name) || isHtml(name) || isDrawio(name);
+}
+
+// Monaco is its own chunk, fetched the first time a file is edited.
+const CodeEditor = lazy(() =>
+  import("./CodeEditor")
+    .then((m) => ({ default: m.CodeEditor }))
+    .catch(() => ({ default: PlainTextEditor })),
+);
+
 const VSCODE_HINT =
   "\nOpens the server's copy, so VS Code must run on the same computer.";
 
 function OpenInVSCode({
-  href,
+  path,
   label,
   size,
+  position,
 }: {
-  href: string;
+  /** Absolute path on the server. */
+  path: string;
   label: string;
   size: number;
+  /** Where the cursor is, read at click time so the link lands on that line. */
+  position?: () => { line: number; column: number } | null;
 }) {
   return (
     <a
       className="p-1 rounded text-muted hover:text-text hover:bg-surface"
-      href={href}
+      href={vscodeUrl(path)}
       aria-label={label}
       data-tooltip={label + VSCODE_HINT}
+      onClick={(e) => {
+        // The link follows its href after this handler, so it lands on the line.
+        const at = position?.();
+        e.currentTarget.href = vscodeUrl(path, at?.line, at?.column);
+      }}
     >
       <SquareCode size={size} />
     </a>
@@ -139,6 +160,11 @@ export function WorkspaceView({
   const [copiedPath, setCopiedPath] = useState(false);
   // The working copy's absolute path on the server, for "Open in VS Code".
   const [rootPath, setRootPath] = useState<string | null>(null);
+  // Monaco's cursor, for opening VS Code on the same line.
+  const cursorRef = useRef<{ line: number; column: number } | null>(null);
+  // The file whose editor has been shown: it then stays mounted (hidden) under
+  // a preview, keeping its undo history, scroll and cursor.
+  const [editorFor, setEditorFor] = useState<string | null>(null);
   // Inline create-in-tree state (VS Code style): an input row appears at the
   // target parent ("" = root) until the user confirms or cancels. No modal.
   const [pendingCreate, setPendingCreate] = useState<{
@@ -148,6 +174,13 @@ export function WorkspaceView({
 
   const dirty = content !== savedContent;
   const isGit = area.kind !== "local";
+  const showPreview = activePath !== null && mode === "preview" && hasPreview(activePath);
+  const editorVisible =
+    activePath !== null && !loadingFile && isEditable(activePath) && !showPreview;
+
+  useEffect(() => {
+    if (editorVisible) setEditorFor(activePath);
+  }, [editorVisible, activePath]);
 
   // Resizable Files panel (left). Width persists per browser.
   const { width: filesWidth, onMouseDown: onFilesResize } = useResizableWidth({
@@ -226,13 +259,12 @@ export function WorkspaceView({
     setError(null);
     try {
       const f = await api.workspaces.readFile(area.id, path);
+      cursorRef.current = null;
       setActivePath(path);
       onPathChange(path);
       setContent(f.content);
       setSavedContent(f.content);
-      setMode(
-        isMarkdown(path) || isHtml(path) || isDrawio(path) ? "preview" : "edit",
-      );
+      setMode(hasPreview(path) ? "preview" : "edit");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -240,13 +272,16 @@ export function WorkspaceView({
     }
   }
 
-  async function save(): Promise<void> {
-    if (!activePath) return;
+  // `text` is the editor's buffer on Cmd/Ctrl+S, which may be a keystroke
+  // ahead of `content`.
+  async function save(text: string = content): Promise<void> {
+    if (!activePath || saving || text === savedContent) return;
     setSaving(true);
     setError(null);
     try {
-      await api.workspaces.writeFile(area.id, activePath, content);
-      setSavedContent(content);
+      await api.workspaces.writeFile(area.id, activePath, text);
+      setContent(text);
+      setSavedContent(text);
       setSavedVersion((v) => v + 1);
       await refreshStatus();
     } catch (e) {
@@ -472,9 +507,7 @@ export function WorkspaceView({
                   {activePath}
                   {dirty && <span className="text-accent"> •</span>}
                 </span>
-                {(isMarkdown(activePath) ||
-                  isHtml(activePath) ||
-                  isDrawio(activePath)) && (
+                {hasPreview(activePath) && (
                   <div className="flex shrink-0 rounded border border-border overflow-hidden text-xs">
                     <button
                       className={`px-2 py-1 inline-flex items-center gap-1 ${
@@ -513,7 +546,7 @@ export function WorkspaceView({
                 <button
                   className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-accent text-white text-xs disabled:opacity-50"
                   disabled={!dirty || saving}
-                  onClick={save}
+                  onClick={() => void save()}
                 >
                   {saving ? (
                     <Loader2 size={13} className="animate-spin" />
@@ -538,11 +571,10 @@ export function WorkspaceView({
                 </button>
                 {rootPath && (
                   <OpenInVSCode
-                    href={vscodeUrl(
-                      workspaceAbsolutePath(rootPath, area.subdir, activePath),
-                    )}
+                    path={workspaceAbsolutePath(rootPath, area.subdir, activePath)}
                     label="Open in VS Code"
                     size={15}
+                    position={() => (editorVisible ? cursorRef.current : null)}
                   />
                 )}
                 <a
@@ -573,30 +605,51 @@ export function WorkspaceView({
                   <div className="p-6 text-muted text-sm">
                     This file type isn't editable here. Use the git CLI to manage it.
                   </div>
-                ) : mode === "preview" && isMarkdown(activePath) ? (
-                  <Markdown className="text-sm leading-relaxed p-6 max-w-3xl">
-                    {content || "\u200B"}
-                  </Markdown>
-                ) : mode === "preview" && isDrawio(activePath) ? (
-                  <DrawioEditor
-                    path={activePath}
-                    xml={content}
-                    onChange={setContent}
-                  />
-                ) : mode === "preview" && isHtml(activePath) ? (
-                  <iframe
-                    title={activePath}
-                    src={workspaceRawUrl(area.slug, activePath)}
-                    sandbox="allow-scripts allow-same-origin"
-                    className="w-full h-full border-0 bg-white"
-                  />
                 ) : (
-                  <textarea
-                    className="w-full h-full resize-none bg-bg text-text font-mono text-sm p-4 outline-none"
-                    value={content}
-                    spellCheck={false}
-                    onChange={(e) => setContent(e.target.value)}
-                  />
+                  <>
+                    {showPreview && isMarkdown(activePath) ? (
+                      <Markdown className="text-sm leading-relaxed p-6 max-w-3xl">
+                        {content || "\u200B"}
+                      </Markdown>
+                    ) : showPreview && isDrawio(activePath) ? (
+                      <DrawioEditor
+                        path={activePath}
+                        xml={content}
+                        onChange={setContent}
+                      />
+                    ) : showPreview && isHtml(activePath) ? (
+                      <iframe
+                        title={activePath}
+                        src={workspaceRawUrl(area.slug, activePath)}
+                        sandbox="allow-scripts allow-same-origin"
+                        className="w-full h-full border-0 bg-white"
+                      />
+                    ) : null}
+                    {(editorVisible || editorFor === activePath) && (
+                      <div className={editorVisible ? "h-full" : "hidden"}>
+                        <Suspense
+                          fallback={
+                            <div className="h-full flex items-center justify-center text-muted">
+                              <Loader2 className="animate-spin" size={18} />
+                            </div>
+                          }
+                        >
+                          <CodeEditor
+                            key={`${area.slug}/${activePath}`}
+                            modelKey={`${area.slug}/${activePath}`}
+                            path={activePath}
+                            value={content}
+                            onChange={setContent}
+                            onSave={(text) => void save(text)}
+                            onCursorChange={(line, column) => {
+                              cursorRef.current = { line, column };
+                            }}
+                            compact={narrow}
+                          />
+                        </Suspense>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
               <DefinitionFileIssues
@@ -706,7 +759,7 @@ function LocalWorkspaceBar({
       </button>
       {rootPath && (
         <OpenInVSCode
-          href={vscodeUrl(rootPath)}
+          path={rootPath}
           label="Open folder in VS Code"
           size={13}
         />
@@ -875,7 +928,7 @@ function GitBar({
         </button>
         {rootPath && (
           <OpenInVSCode
-            href={vscodeUrl(rootPath)}
+            path={rootPath}
             label="Open folder in VS Code"
             size={13}
           />

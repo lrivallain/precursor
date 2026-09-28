@@ -52,6 +52,26 @@ workspace root.
 Markdown files get a rendered **Preview**, HTML files render in a sandboxed
 frame, and `.drawio` files open in a full diagram editor (below).
 
+## The editor
+
+Files open in **Monaco**, the editor core of VS Code:
+
+- **Highlighting and editing:** syntax highlighting, find and replace
+  (<kbd>Cmd/Ctrl</kbd>+<kbd>F</kbd>), multiple cursors, folding, and the command
+  palette (<kbd>F1</kbd>).
+- **Saving:** <kbd>Cmd/Ctrl</kbd>+<kbd>S</kbd> saves.
+- **YAML and JSON:** these files are checked as you type, and a syntax error is
+  underlined where it is.
+- **Previews:** switching a Markdown, HTML or diagram file to **Preview** and
+  back keeps your undo history, cursor and scroll position.
+
+The editor follows the app's light or dark theme, and works on phones too.
+
+<Screenshot src="/screenshots/workspaces-editor.png" alt="A Markdown file open in the Monaco editor, with line numbers and syntax highlighting" caption="Editing a file in Monaco." />
+
+Monaco only downloads the first time you edit a file, so opening Precursor
+stays as fast as before.
+
 ## Opening in VS Code
 
 When a change is easier to make in a full editor, **Open in VS Code** hands it

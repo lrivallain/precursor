@@ -294,7 +294,8 @@ Vite + React 19 + Tailwind, built to `frontend/dist` and bundled inside the whee
 All HTTP goes through `src/lib/api.ts`; streaming chat uses a manual SSE reader
 (`src/lib/sse.ts`) since it POSTs a JSON body; cross-window sync uses the
 `/api/events` SSE stream. Theming is via CSS variables (`light` / `dark` /
-`system`).
+`system`). The Files editor (Monaco) is a lazily loaded chunk: `lib/monaco.ts`
+wires its workers and derives the editor theme from those variables.
 
 ## Security & deployment model
 

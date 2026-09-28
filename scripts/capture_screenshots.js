@@ -256,6 +256,19 @@ const scenes = {
     },
   },
 
+  // The same file in Monaco. Left unfocused so no blinking cursor differs
+  // between the light and dark shots.
+  "workspaces-editor": {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await page.goto(`${BASE}/ws/design-notes/README.md`, { waitUntil: "networkidle" });
+      await page.getByRole("button", { name: "Edit", exact: true }).click();
+      await page.locator(".monaco-editor .view-line", { hasText: "Release checklist" }).waitFor();
+      await sleep(500);
+      return undefined;
+    },
+  },
+
   "agents-setup": {
     viewport: { width: 1200, height: 800 },
     async go(page) {

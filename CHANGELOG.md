@@ -15,6 +15,16 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Changed
 
+- **The Files section edits with Monaco, the VS Code editor core.** It replaces
+  the plain text box:
+  - syntax highlighting, find and replace, multiple cursors and folding;
+  - <kbd>Cmd/Ctrl</kbd>+<kbd>S</kbd> saves;
+  - YAML and JSON are checked as you type;
+  - switching to a preview and back keeps undo history.
+
+  The editor follows the app's theme and works on phones. It downloads the first
+  time a file is edited, so the rest of the app is unchanged in size. New
+  frontend dependencies: `monaco-editor` and `monaco-yaml`.
 - **An agent's page now separates its result from its activity.** Refining a
   deliverable over several follow-ups used to stack every draft at the foot of
   the page, oldest last, so the current one was the hardest to find. The body
