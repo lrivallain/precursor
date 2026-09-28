@@ -43,7 +43,7 @@ steps:
 ```
 
 Steps have **keys**, so references (`on_fail`, context sources,
-`{{step.triage.output}}`) survive a reorder. Files are checked strictly —
+<code v-pre>{{step.triage.output}}</code>) survive a reorder. Files are checked strictly —
 unknown keys, duplicate keys and contradictions are errors — and JSON Schemas
 give editors completion.
 
