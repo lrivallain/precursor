@@ -53,6 +53,7 @@ import type {
   GitActionResult,
   GitBranches,
   GitCommitDetail,
+  GitConflict,
   GitHubIssue,
   GitLog,
   GitStatus,
@@ -1521,6 +1522,29 @@ export const api = {
       request<GitActionResult>(`/api/workspaces/${workspaceId}/git/branches`, {
         method: "POST",
         body: JSON.stringify({ name }),
+      }),
+    // Merge the remote's branch; `ok: false` with `status.merging` means it
+    // stopped on conflicts.
+    gitMerge: (workspaceId: number) =>
+      request<GitActionResult>(`/api/workspaces/${workspaceId}/git/merge`, { method: "POST" }),
+    gitConflict: (workspaceId: number, path: string) =>
+      request<GitConflict>(
+        `/api/workspaces/${workspaceId}/git/conflict?path=${encodeURIComponent(path)}`,
+      ),
+    // Mark a conflict resolved: as edited (refused while markers remain), or
+    // by keeping one side.
+    gitResolve: (workspaceId: number, path: string, side?: "ours" | "theirs") =>
+      request<GitStatus>(`/api/workspaces/${workspaceId}/git/resolve`, {
+        method: "POST",
+        body: JSON.stringify(side ? { path, side } : { path }),
+      }),
+    gitMergeComplete: (workspaceId: number) =>
+      request<GitActionResult>(`/api/workspaces/${workspaceId}/git/merge/complete`, {
+        method: "POST",
+      }),
+    gitMergeAbort: (workspaceId: number) =>
+      request<GitActionResult>(`/api/workspaces/${workspaceId}/git/merge/abort`, {
+        method: "POST",
       }),
     // One commit: message, first parent and changed files.
     gitCommitDetail: (workspaceId: number, sha: string) =>

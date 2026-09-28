@@ -43,7 +43,8 @@ export function isNewFile(file: GitFileStatus): boolean {
 /** What the diff pane shows: a change in the working copy, or a file in a commit. */
 export type DiffTarget =
   | { kind: "working"; file: GitFileStatus }
-  | { kind: "commit"; commit: GitCommitDetail; file: GitCommitFile };
+  | { kind: "commit"; commit: GitCommitDetail; file: GitCommitFile }
+  | { kind: "conflict"; file: GitFileStatus };
 
 /** A file's change in a commit, marked like the Changes list marks them. */
 export function commitFileMark(file: GitCommitFile): {
@@ -113,6 +114,8 @@ export function ChangesPanel({
   files,
   activeDiff,
   canPush,
+  merging = false,
+  onOpenConflict,
   onOpenDiff,
   onOpenFile,
   onDiscard,
@@ -124,6 +127,9 @@ export function ChangesPanel({
   activeDiff: string | null;
   /** False on a detached HEAD: there is no branch to push. */
   canPush: boolean;
+  /** A merge is in progress: conflicts first, and no partial commit. */
+  merging?: boolean;
+  onOpenConflict?: (file: GitFileStatus) => void;
   onOpenDiff: (file: GitFileStatus) => void;
   /** Tree path to open in the editor. */
   onOpenFile: (browsePath: string) => void;
@@ -166,6 +172,60 @@ export function ChangesPanel({
       e.preventDefault();
       void commit(false);
     }
+  }
+
+  if (merging) {
+    const conflicts = files.filter((f) => f.conflicted);
+    const merged = files.filter((f) => !f.conflicted);
+    const item = (file: GitFileStatus, conflict: boolean) => {
+      const { name, dir } = splitPath(file.path);
+      const mark = conflict
+        ? { letter: "!", className: "text-red-500", tip: "Conflict" }
+        : status(file);
+      return (
+        <li key={file.path}>
+          <button
+            className={`flex w-full items-center gap-1.5 px-3 py-1 text-left text-sm ${
+              activeDiff === file.path ? "bg-surface" : "hover:bg-surface/60"
+            }`}
+            aria-label={`${file.path}, ${conflict ? "conflict" : mark.tip.toLowerCase()}`}
+            onClick={() => (conflict ? onOpenConflict?.(file) : onOpenDiff(file))}
+          >
+            <span className={`w-3 shrink-0 text-center font-mono text-[11px] ${mark.className}`}>
+              {mark.letter}
+            </span>
+            <span className="truncate">{name}</span>
+            {dir && <span className="truncate text-xs text-muted">{dir}</span>}
+          </button>
+        </li>
+      );
+    };
+    return (
+      <div className="flex h-full min-h-0 flex-col" aria-label="Changes">
+        <p className="border-b border-border px-3 py-2 text-xs text-muted">
+          A merge is in progress. Resolve each conflict, then <b>Complete merge</b> above.
+          Committing single files is off until then.
+        </p>
+        <div className="min-h-0 flex-1 overflow-auto py-1">
+          <p className="px-3 pb-0.5 pt-1 text-[11px] font-medium uppercase tracking-wide text-muted">
+            Conflicts ({conflicts.length})
+          </p>
+          {conflicts.length === 0 ? (
+            <p className="px-3 py-1 text-xs text-muted">None left — ready to complete.</p>
+          ) : (
+            <ul>{conflicts.map((f) => item(f, true))}</ul>
+          )}
+          {merged.length > 0 && (
+            <>
+              <p className="px-3 pb-0.5 pt-2 text-[11px] font-medium uppercase tracking-wide text-muted">
+                Merged ({merged.length})
+              </p>
+              <ul>{merged.map((f) => item(f, false))}</ul>
+            </>
+          )}
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -311,7 +371,7 @@ export function GitDiffPane({
   onClose,
 }: {
   workspaceId: number;
-  target: DiffTarget;
+  target: Exclude<DiffTarget, { kind: "conflict" }>;
   narrow: boolean;
   /** Bumps when the working copy may have changed (save, pull, discard). */
   version: unknown;

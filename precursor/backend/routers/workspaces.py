@@ -35,9 +35,11 @@ from precursor.backend.schemas import (
     GitActionResult,
     GitBranches,
     GitCommitDetail,
+    GitConflict,
     GitLog,
     GitStatus,
     LocalPath,
+    ResolveRequest,
     WorkspaceCreate,
     WorkspaceRead,
     WorkspaceUpdate,
@@ -678,6 +680,97 @@ async def git_create_branch(
     except git.GitError as exc:
         raise _branch_error(exc) from exc
     return GitActionResult(ok=True, detail=f"Created {st.branch}.", local_path=str(root), status=st)
+
+
+@router.post("/{workspace_id}/git/merge", response_model=GitActionResult)
+async def git_merge(
+    workspace_id: int, session: AsyncSession = Depends(get_session)
+) -> GitActionResult:
+    """Merge the remote's branch into the checked-out one (a merge commit).
+
+    ``ok=false`` with ``status.merging`` means it stopped on conflicts, to be
+    resolved (``/git/conflict``, ``/git/resolve``) then completed or aborted.
+    409 on uncommitted changes, a detached HEAD or a merge already running.
+    """
+    ws = await _get_git_workspace(workspace_id, session)
+    root = workspace_root(ws)
+    token = await resolve_github_token(session)
+    try:
+        branch = await _checked_out_branch(ws, root, session)
+        clean, detail = await git.merge(root, branch, token)
+        st = await git.status(root, ws.subdir)
+    except git.GitError as exc:
+        raise _branch_error(exc) from exc
+    await _after_tree_change(root, session)
+    return GitActionResult(ok=clean, detail=detail, local_path=str(root), status=st)
+
+
+@router.get("/{workspace_id}/git/conflict", response_model=GitConflict)
+async def git_conflict(
+    workspace_id: int,
+    path: str = Query(...),
+    session: AsyncSession = Depends(get_session),
+) -> GitConflict:
+    """A conflicted file's base / ours / theirs (index stages 1, 2, 3)."""
+    ws = await _get_git_workspace(workspace_id, session)
+    try:
+        return await git.conflict(workspace_root(ws), path)
+    except git.GitError as exc:
+        raise _branch_error(exc) from exc
+
+
+@router.post("/{workspace_id}/git/resolve", response_model=GitStatus)
+async def git_resolve(
+    workspace_id: int,
+    payload: ResolveRequest,
+    session: AsyncSession = Depends(get_session),
+) -> GitStatus:
+    """Mark one conflict resolved: as edited (refused while markers remain) or
+    by keeping one side's version (or deletion)."""
+    ws = await _get_git_workspace(workspace_id, session)
+    root = workspace_root(ws)
+    try:
+        await git.resolve(root, payload.path, payload.side)
+        st = await git.status(root, ws.subdir)
+    except fs.UnsafePathError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    except git.GitError as exc:
+        raise _branch_error(exc) from exc
+    if payload.side is not None:
+        await _after_tree_change(root, session)
+    return st
+
+
+@router.post("/{workspace_id}/git/merge/complete", response_model=GitActionResult)
+async def git_merge_complete(
+    workspace_id: int, session: AsyncSession = Depends(get_session)
+) -> GitActionResult:
+    """Commit the merge; 409 while any file is still conflicted."""
+    ws = await _get_git_workspace(workspace_id, session)
+    root = workspace_root(ws)
+    try:
+        detail = await git.complete_merge(root)
+        st = await git.status(root, ws.subdir)
+    except git.GitError as exc:
+        raise _branch_error(exc) from exc
+    await _after_tree_change(root, session)
+    return GitActionResult(ok=True, detail=detail, local_path=str(root), status=st)
+
+
+@router.post("/{workspace_id}/git/merge/abort", response_model=GitActionResult)
+async def git_merge_abort(
+    workspace_id: int, session: AsyncSession = Depends(get_session)
+) -> GitActionResult:
+    """Undo the merge: branch and files as they were before it."""
+    ws = await _get_git_workspace(workspace_id, session)
+    root = workspace_root(ws)
+    try:
+        await git.abort_merge(root)
+        st = await git.status(root, ws.subdir)
+    except git.GitError as exc:
+        raise _branch_error(exc) from exc
+    await _after_tree_change(root, session)
+    return GitActionResult(ok=True, detail="Merge aborted.", local_path=str(root), status=st)
 
 
 @router.get("/{workspace_id}/git/log", response_model=GitLog)

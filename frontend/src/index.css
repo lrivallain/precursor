@@ -685,3 +685,15 @@ body {
   border: 4px solid transparent;
   border-left-color: #f85149;
 }
+
+/* Merge conflict blocks in the editor (CodeEditor's conflicts): yours in
+   green, theirs in blue, the marker lines greyed. */
+.monaco-editor .precursor-conflict-ours {
+  background: rgba(46, 160, 67, 0.16);
+}
+.monaco-editor .precursor-conflict-theirs {
+  background: rgba(59, 130, 246, 0.16);
+}
+.monaco-editor .precursor-conflict-marker {
+  background: rgba(127, 127, 127, 0.18);
+}

@@ -15,6 +15,27 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Changed
 
+- **Git workspaces merge, and conflicts are resolved in the editor.**
+  - **Starting a merge:** when Pull (or Push) finds that the branch and the
+    remote have both moved on, the bar offers **Merge remote changes**. It
+    records a merge commit and is refused while anything is uncommitted.
+  - **Conflicts:** a **Merge in progress** bar stays up, and the Changes tab
+    lists the conflicted files first.
+    - A text conflict opens in the editor, tinted, with **Accept current /
+      incoming / both** above each block. Save, then **Mark resolved**, which is
+      refused while a conflict marker remains.
+    - A binary conflict, or one side deleting the file, offers **Keep yours** or
+      **Keep theirs**, after a confirmation.
+  - **Finishing:** **Complete merge** once none are left, or **Abort merge**
+    after a confirmation.
+  - **Consistent behaviour:** the merge always runs as `git merge` and ignores
+    the user's git settings (rebasing pulls, `merge.ff`, conflict style,
+    editor).
+  - **API:** new `POST /api/workspaces/{id}/git/merge`, `GET /git/conflict`,
+    `POST /git/resolve`, `/git/merge/complete` and `/git/merge/abort`.
+  - **Stricter names:** branch names and paths with surrounding whitespace or
+    control characters are refused instead of trimmed. A new branch can't be
+    named like another kind of ref (`refs/…`, `origin/…`, `HEAD`…).
 - **Git workspaces switch and create branches.** The branch name in the git bar
   opens a picker.
   - **What it lists:** local branches (unpublished ones marked) and the

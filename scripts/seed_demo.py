@@ -240,6 +240,76 @@ def seed_handbook_repo(data_dir: Path) -> str:
     return url
 
 
+_ESCALATION = (
+    "# Escalation\n\n"
+    "1. Page the on-call engineer.\n"
+    "2. After 15 minutes, page the service owner.\n"
+    "3. After an hour, page the engineering manager.\n"
+)
+
+
+def seed_runbooks_repo(data_dir: Path) -> str:
+    """A clone that diverged from its remote on the same line: Pull, then Merge,
+    stops on a conflict (the conflict screenshot)."""
+    remotes = data_dir / "git-remotes"
+    bare = remotes / "runbooks.git"
+    seed = remotes / "runbooks-seed"
+    _git(remotes, "init", "--bare", "--initial-branch=main", str(bare))
+    _git(remotes, "init", "--initial-branch=main", str(seed))
+
+    def commit(where: Path, who: str, email: str, date: str, message: str, text: str) -> None:
+        (where / "escalation.md").write_text(text, encoding="utf-8")
+        env = {
+            "GIT_AUTHOR_NAME": who,
+            "GIT_AUTHOR_EMAIL": email,
+            "GIT_COMMITTER_NAME": who,
+            "GIT_COMMITTER_EMAIL": email,
+            "GIT_AUTHOR_DATE": date,
+            "GIT_COMMITTER_DATE": date,
+        }
+        _git(where, "add", "-A", env=env)
+        _git(where, "commit", "-m", message, env=env)
+
+    commit(
+        seed,
+        "Alex Chen",
+        "alex@example.com",
+        "2026-09-15T10:00:00+02:00",
+        "Write the escalation runbook",
+        _ESCALATION,
+    )
+    _git(seed, "push", str(bare), "main")
+    url = bare.resolve().as_uri()
+    clone = data_dir / "workspaces" / "runbooks"
+    shutil.rmtree(clone, ignore_errors=True)
+    _git(data_dir, "clone", "--branch", "main", "--single-branch", url, str(clone))
+    commit(
+        seed,
+        "Sam Rivera",
+        "sam@example.com",
+        "2026-09-26T09:10:00+02:00",
+        "Page owners after 10 minutes",
+        _ESCALATION.replace(
+            "2. After 15 minutes, page the service owner.",
+            "2. After 10 minutes, page the service owner and post in #incidents.",
+        ),
+    )
+    _git(seed, "push", str(bare), "main")
+    shutil.rmtree(seed)
+    commit(
+        clone,
+        "Alex Chen",
+        "alex@example.com",
+        "2026-09-25T16:45:00+02:00",
+        "Loop in the team lead",
+        _ESCALATION.replace(
+            "2. After 15 minutes, page the service owner.",
+            "2. After 15 minutes, page the service owner and the team lead.",
+        ),
+    )
+    return url
+
+
 def write_skill_files(skills_dir: Path) -> None:
     for name, (description, instructions) in DEMO_SKILLS.items():
         folder = skills_dir / name
@@ -1275,6 +1345,18 @@ async def seed() -> None:
         s.add(Workspace(name="Agents & workflows", slug="definitions", kind="local"))
 
         handbook_url = seed_handbook_repo(Path(os.environ["PRECURSOR_DATA_DIR"]))
+        runbooks_url = seed_runbooks_repo(Path(os.environ["PRECURSOR_DATA_DIR"]))
+        s.add(
+            Workspace(
+                name="Runbooks",
+                slug="runbooks",
+                kind="git",
+                repo_url=runbooks_url,
+                branch="main",
+                cloned_at=ago(days=13),
+                last_synced_at=ago(days=3),
+            )
+        )
         s.add(
             Workspace(
                 name="Team handbook",

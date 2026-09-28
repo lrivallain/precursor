@@ -636,6 +636,249 @@ async def test_switching_to_an_unknown_branch(remote: str, tmp_path: Path) -> No
         await git.switch(repo, "nowhere", None)
 
 
+# --- Input checks: nothing stripped, nothing ambiguous ------------------------------
+
+
+@pytest.mark.parametrize("bad", ["ok\n", " ok", "ok ", "a\tb", "a\x7fb", "\x1b[31m"])
+def test_names_are_refused_not_stripped(bad: str) -> None:
+    with pytest.raises(git.GitInputError):
+        git.check_branch(bad)
+    with pytest.raises(git.GitInputError):
+        git.check_path(bad)
+
+
+def test_revisions_are_not_stripped() -> None:
+    with pytest.raises(git.GitInputError):
+        git.check_rev(" HEAD")
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "refs/heads/x",
+        "heads/x",
+        "remotes/origin/x",
+        "tags/v1",
+        "origin/main",
+        "upstream/x",
+        "HEAD",
+        "ORIG_HEAD",
+        "FETCH_HEAD",
+        "MERGE_HEAD",
+    ],
+)
+async def test_create_refuses_names_read_as_other_refs(
+    remote: str, tmp_path: Path, name: str
+) -> None:
+    repo = await _clone(remote, tmp_path / "ws")
+    run(repo, "remote", "add", "upstream", remote)
+    with pytest.raises(git.GitInputError):
+        await git.create_branch(repo, name, None)
+    assert await git.current_branch(repo) == "main"
+
+
+# --- Merging ------------------------------------------------------------------------
+
+
+def _hostile_config(repo: Path) -> None:
+    """Settings that would change a merge if the app relied on the user's config."""
+    for key, value in (
+        ("branch.autoSetupRebase", "always"),
+        ("branch.main.rebase", "true"),
+        ("pull.rebase", "true"),
+        ("merge.ff", "only"),
+        ("merge.conflictStyle", "diff3"),
+        ("core.editor", "false"),  # an editor that fails
+    ):
+        run(repo, "config", key, value)
+
+
+def _diverge(
+    remote: str,
+    tmp_path: Path,
+    repo: Path,
+    *,
+    ours: dict[str, str | None],
+    theirs: dict[str, str | None],
+) -> None:
+    """Commit ``ours`` in the clone and push ``theirs`` from another one (None: delete)."""
+    other = _other_clone(remote, tmp_path, "theirs")
+    for where, changes, message in ((other, theirs, "Theirs"), (repo, ours, "Ours")):
+        for rel, text in changes.items():
+            if text is None:
+                (where / rel).unlink()
+            else:
+                (where / rel).write_bytes(text.encode("latin-1"))
+        run(where, "add", "-A")
+        run(where, "commit", "-m", message)
+    run(other, "push", "origin", "main")
+
+
+async def test_a_clean_merge_ignores_the_users_config(remote: str, tmp_path: Path) -> None:
+    repo = await _clone(remote, tmp_path / "ws")
+    _hostile_config(repo)
+    _diverge(remote, tmp_path, repo, ours={"a.md": "a\n"}, theirs={"b.md": "b\n"})
+    clean, _detail = await git.merge(repo, "main", None)
+    assert clean
+    parents = run(repo, "rev-list", "--parents", "-n", "1", "HEAD").split()
+    assert len(parents) == 3  # a merge commit, not a rebase or a fast-forward
+    st = await git.status(repo)
+    assert (st.ahead, st.behind, st.merging) == (2, 0, False)
+    assert (repo / "a.md").exists() and (repo / "b.md").exists()
+
+
+async def test_a_conflict_is_resolved_then_completed(remote: str, tmp_path: Path) -> None:
+    repo = await _clone(remote, tmp_path / "ws")
+    _hostile_config(repo)
+    _diverge(
+        remote,
+        tmp_path,
+        repo,
+        ours={"README.md": "# Notes\n\nours\n"},
+        theirs={"README.md": "# Notes\n\ntheirs\n"},
+    )
+    clean, detail = await git.merge(repo, "main", None)
+    assert not clean and "README.md" in detail
+    st = await git.status(repo)
+    [readme] = st.files
+    assert st.merging and readme.conflicted and readme.code == "UU"
+    text = (repo / "README.md").read_text(encoding="utf-8")
+    assert "|||||||" not in text  # our conflict style, not the user's diff3
+    assert git.conflict_marker_lines(text) == [3, 5, 7]
+
+    versions = await git.conflict(repo, "README.md")
+    assert versions.kind == "both_modified"
+    assert (versions.base, versions.ours, versions.theirs) == (
+        "# Notes\n\nfirst line\n",
+        "# Notes\n\nours\n",
+        "# Notes\n\ntheirs\n",
+    )
+    with pytest.raises(git.GitRefused, match="Conflict markers remain"):
+        await git.resolve(repo, "README.md")
+    with pytest.raises(git.GitRefused, match="Resolve every conflict"):
+        await git.complete_merge(repo)
+
+    (repo / "README.md").write_text("# Notes\n\nours and theirs\n", encoding="utf-8")
+    await git.resolve(repo, "README.md")
+    await git.complete_merge(repo)
+    st = await git.status(repo)
+    assert not st.merging and st.files == [] and st.ahead == 2
+    assert len(run(repo, "rev-list", "--parents", "-n", "1", "HEAD").split()) == 3
+
+
+async def test_abort_puts_everything_back(remote: str, tmp_path: Path) -> None:
+    repo = await _clone(remote, tmp_path / "ws")
+    _diverge(
+        remote,
+        tmp_path,
+        repo,
+        ours={"README.md": "# Notes\n\nours\n"},
+        theirs={"README.md": "# Notes\n\ntheirs\n"},
+    )
+    head = run(repo, "rev-parse", "HEAD").strip()
+    await git.merge(repo, "main", None)
+    await git.abort_merge(repo)
+    st = await git.status(repo)
+    assert not st.merging and st.files == []
+    assert run(repo, "rev-parse", "HEAD").strip() == head
+    assert (repo / "README.md").read_text(encoding="utf-8") == "# Notes\n\nours\n"
+    with pytest.raises(git.GitRefused):
+        await git.abort_merge(repo)
+
+
+async def test_merge_is_refused_dirty_detached_or_already_merging(
+    remote: str, tmp_path: Path
+) -> None:
+    repo = await _clone(remote, tmp_path / "ws")
+    _diverge(
+        remote,
+        tmp_path,
+        repo,
+        ours={"README.md": "# Notes\n\nours\n"},
+        theirs={"README.md": "# Notes\n\ntheirs\n"},
+    )
+    (repo / "README.md").write_text("uncommitted\n", encoding="utf-8")
+    with pytest.raises(git.GitRefused, match=r"README\.md"):
+        await git.merge(repo, "main", None)
+    run(repo, "checkout", "--", "README.md")
+    run(repo, "checkout", "--detach")
+    with pytest.raises(git.GitRefused, match="detached"):
+        await git.merge(repo, "main", None)
+    run(repo, "switch", "main")
+    await git.merge(repo, "main", None)
+    with pytest.raises(git.GitRefused, match="already in progress"):
+        await git.merge(repo, "main", None)
+
+
+async def test_add_add_conflict_has_no_base(remote: str, tmp_path: Path) -> None:
+    repo = await _clone(remote, tmp_path / "ws")
+    _diverge(remote, tmp_path, repo, ours={"new.md": "ours\n"}, theirs={"new.md": "theirs\n"})
+    await git.merge(repo, "main", None)
+    versions = await git.conflict(repo, "new.md")
+    assert versions.kind == "both_added"
+    assert (versions.has_base, versions.ours, versions.theirs) == (False, "ours\n", "theirs\n")
+
+
+async def test_delete_modify_conflict_keeps_either_side(remote: str, tmp_path: Path) -> None:
+    repo = await _clone(remote, tmp_path / "ws")
+    _diverge(
+        remote,
+        tmp_path,
+        repo,
+        ours={"README.md": None},
+        theirs={"README.md": "# Notes\n\ntheirs\n"},
+    )
+    await git.merge(repo, "main", None)
+    versions = await git.conflict(repo, "README.md")
+    assert versions.kind == "deleted_by_us"
+    assert (versions.has_ours, versions.theirs) == (False, "# Notes\n\ntheirs\n")
+    await git.resolve(repo, "README.md", "theirs")
+    assert (repo / "README.md").read_text(encoding="utf-8") == "# Notes\n\ntheirs\n"
+    assert [f.conflicted for f in (await git.status(repo)).files] == [False]
+
+    await git.abort_merge(repo)
+    await git.merge(repo, "main", None)
+    await git.resolve(repo, "README.md", "ours")  # ours deleted it
+    assert not (repo / "README.md").exists()
+    await git.complete_merge(repo)
+    assert "README.md" not in run(repo, "ls-tree", "--name-only", "HEAD")
+
+
+async def test_binary_conflict_is_flagged_and_kept_by_side(remote: str, tmp_path: Path) -> None:
+    repo = await _clone(remote, tmp_path / "ws")
+    other = _other_clone(remote, tmp_path, "seed-bin")
+    (other / "logo.bin").write_bytes(b"\x00base\x01")
+    run(other, "add", "-A")
+    run(other, "commit", "-m", "Add a binary")
+    run(other, "push", "origin", "main")
+    await git.pull(repo, "main", None)
+    _diverge(
+        remote,
+        tmp_path,
+        repo,
+        ours={"logo.bin": "\x00ours\x01"},
+        theirs={"logo.bin": "\x00theirs\x01"},
+    )
+    await git.merge(repo, "main", None)
+    versions = await git.conflict(repo, "logo.bin")
+    assert versions.binary and versions.ours is None and versions.has_ours and versions.has_theirs
+    await git.resolve(repo, "logo.bin", "theirs")
+    assert (repo / "logo.bin").read_bytes() == b"\x00theirs\x01"
+    await git.complete_merge(repo)
+
+
+async def test_conflict_inputs_are_checked(remote: str, tmp_path: Path) -> None:
+    repo = await _clone(remote, tmp_path / "ws")
+    with pytest.raises(git.GitInputError):
+        await git.conflict(repo, "../x")
+    with pytest.raises(git.GitNotFound):
+        await git.conflict(repo, "README.md")  # not conflicted
+    with pytest.raises(git.GitRefused):
+        await git.resolve(repo, "README.md")
+    with pytest.raises(git.GitInputError):
+        await git.resolve(repo, "README.md", "mine")
+
+
 # --- API ---------------------------------------------------------------------------
 
 
@@ -776,6 +1019,65 @@ def test_api_switch_and_create_branches(
         assert client.post(f"{base}/git/branches", json={"name": "main"}).status_code == 409
         resp = client.post(f"{base}/git/push")
         assert resp.json()["ok"] and resp.json()["status"]["upstream"] == "origin/draft"
+    finally:
+        client.delete(base)
+
+
+def test_api_merge_resolve_complete_and_abort(
+    client: TestClient, remote: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from precursor.backend.config import get_settings
+    from precursor.backend.routers import workspaces as router
+
+    refreshed: list[bool] = []
+
+    async def record(_session: Any) -> None:
+        refreshed.append(True)
+
+    monkeypatch.setattr(router, "_holds_definitions", lambda _root: True)
+    monkeypatch.setattr(router.definition_anchors, "refresh", record)
+    ws = _workspace(client, remote, "Git merge")
+    base = f"/api/workspaces/{ws['id']}"
+    repo = Path(get_settings().workspaces_dir) / ws["slug"]
+    try:
+        _diverge(
+            remote,
+            tmp_path,
+            repo,
+            ours={"README.md": "# Notes\n\nours\n"},
+            theirs={"README.md": "# Notes\n\ntheirs\n"},
+        )
+        resp = client.post(f"{base}/git/pull").json()
+        assert not resp["ok"] and resp["needs_manual_merge"]
+
+        resp = client.post(f"{base}/git/merge").json()
+        assert not resp["ok"] and resp["status"]["merging"]
+        assert refreshed == [True]  # the merge wrote files
+        versions = client.get(f"{base}/git/conflict", params={"path": "README.md"}).json()
+        assert versions["theirs"] == "# Notes\n\ntheirs\n"
+        assert client.get(f"{base}/git/conflict", params={"path": "../x"}).status_code == 400
+
+        resp = client.post(f"{base}/git/resolve", json={"path": "README.md"})
+        assert resp.status_code == 409 and "markers remain" in resp.json()["detail"]
+        assert client.post(f"{base}/git/merge/complete").status_code == 409
+
+        client.put(f"{base}/file", params={"path": "README.md"}, json={"content": "merged\n"})
+        assert client.post(f"{base}/git/resolve", json={"path": "README.md"}).status_code == 200
+        resp = client.post(f"{base}/git/merge/complete").json()
+        assert resp["ok"] and not resp["status"]["merging"] and len(refreshed) == 2
+        assert client.post(f"{base}/git/merge/abort").status_code == 409
+
+        # Abort, on a second divergence.
+        other = tmp_path / "theirs"
+        run(other, "pull", "--no-rebase", "--no-edit", "origin", "main")
+        _commit_and_push(other, "README.md", "theirs again\n", "Again")
+        client.put(f"{base}/file", params={"path": "README.md"}, json={"content": "ours again\n"})
+        client.post(f"{base}/git/commit", json={"message": "Ours again"})
+        assert not client.post(f"{base}/git/merge").json()["ok"]
+        resp = client.post(f"{base}/git/merge/abort").json()
+        assert resp["ok"] and not resp["status"]["merging"]
+        assert (repo / "README.md").read_text(encoding="utf-8") == "ours again\n"
+        assert len(refreshed) == 4
     finally:
         client.delete(base)
 

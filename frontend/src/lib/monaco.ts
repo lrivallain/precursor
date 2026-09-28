@@ -20,6 +20,8 @@ import "monaco-editor/languages/definitions/yaml/register";
 // completion, formatting): the others would each bring a multi-megabyte worker.
 import "monaco-editor/languages/features/json/register";
 import { configureMonacoYaml } from "monaco-yaml";
+import { findConflicts, resolution } from "./conflicts";
+import type { ConflictChoice } from "./conflicts";
 import EditorWorker from "monaco-editor/editor/editor.worker.js?worker";
 import JsonWorker from "monaco-editor/languages/features/json/json.worker.js?worker";
 import YamlWorker from "./yaml.worker?worker";
@@ -123,6 +125,109 @@ export function loadDefinitionSchemas(
       definitionSchemas = null;
     });
   return definitionSchemas;
+}
+
+// --- Merge conflicts ----------------------------------------------------------
+// A model marked as conflicted gets "Accept current | incoming | both" above
+// each conflict block (one CodeLens provider for every language) and tinted
+// block regions (decorations, applied by the editor component).
+
+const conflicted = new Set<string>();
+const lensesChanged = new monaco.Emitter<monaco.languages.CodeLensProvider>();
+const ACCEPT_COMMAND = "precursor.acceptConflict";
+const CHOICES: [ConflictChoice, string][] = [
+  ["current", "Accept current (yours)"],
+  ["incoming", "Accept incoming (theirs)"],
+  ["both", "Accept both"],
+];
+
+const conflictLenses: monaco.languages.CodeLensProvider = {
+  onDidChange: lensesChanged.event,
+  provideCodeLenses(model) {
+    if (!conflicted.has(model.uri.toString())) return { lenses: [], dispose() {} };
+    const lenses = findConflicts(model.getLinesContent()).flatMap((block, index) =>
+      CHOICES.map(([choice, title]) => ({
+        range: new monaco.Range(block.start, 1, block.start, 1),
+        command: { id: ACCEPT_COMMAND, title, arguments: [model.uri.toString(), index, choice] },
+      })),
+    );
+    return { lenses, dispose() {} };
+  },
+};
+monaco.languages.registerCodeLensProvider("*", conflictLenses);
+
+monaco.editor.registerCommand(
+  ACCEPT_COMMAND,
+  (_accessor: unknown, uri: string, index: number, choice: ConflictChoice) => {
+    const model = monaco.editor.getModel(monaco.Uri.parse(uri));
+    if (model) acceptConflict(model, index, choice);
+  },
+);
+
+/** Replace one conflict block, markers and all, with the chosen side(s); undoable. */
+export function acceptConflict(
+  model: monaco.editor.ITextModel,
+  index: number,
+  choice: ConflictChoice,
+): void {
+  const lines = model.getLinesContent();
+  const block = findConflicts(lines)[index];
+  if (!block) return;
+  const kept = resolution(lines, block, choice);
+  const eol = model.getEOL();
+  const last = model.getLineCount();
+  let range: monaco.Range;
+  let text: string;
+  if (block.end < last) {
+    // Whole lines, through the start of the line after the block.
+    range = new monaco.Range(block.start, 1, block.end + 1, 1);
+    text = kept.length ? kept.join(eol) + eol : "";
+  } else if (kept.length || block.start === 1) {
+    range = new monaco.Range(block.start, 1, block.end, model.getLineMaxColumn(block.end));
+    text = kept.join(eol);
+  } else {
+    // The block ends the file and nothing is kept: take the line break before it too.
+    range = new monaco.Range(
+      block.start - 1,
+      model.getLineMaxColumn(block.start - 1),
+      block.end,
+      model.getLineMaxColumn(block.end),
+    );
+    text = "";
+  }
+  model.pushStackElement();
+  model.pushEditOperations([], [{ range, text }], () => null);
+  model.pushStackElement();
+}
+
+/** Show (or stop showing) the conflict lenses on a model. */
+export function markConflicted(model: monaco.editor.ITextModel, on: boolean): void {
+  const key = model.uri.toString();
+  if (on) conflicted.add(key);
+  else conflicted.delete(key);
+  lensesChanged.fire(conflictLenses);
+}
+
+/** Tinted regions for each block: yours, theirs, and the marker lines. */
+export function conflictDecorations(
+  model: monaco.editor.ITextModel,
+): monaco.editor.IModelDeltaDecoration[] {
+  const whole = (from: number, to: number, className: string) =>
+    to < from
+      ? []
+      : [{ range: new monaco.Range(from, 1, to, 1), options: { isWholeLine: true, className } }];
+  return findConflicts(model.getLinesContent()).flatMap((b) => [
+    ...whole(b.start, b.start, "precursor-conflict-marker"),
+    ...whole(b.start + 1, b.middle - 1, "precursor-conflict-ours"),
+    ...whole(b.middle, b.middle, "precursor-conflict-marker"),
+    ...whole(b.middle + 1, b.end - 1, "precursor-conflict-theirs"),
+    ...whole(b.end, b.end, "precursor-conflict-marker"),
+  ]);
+}
+
+/** Refresh the lenses after an edit (the blocks may have moved or gone). */
+export function refreshConflictLenses(): void {
+  lensesChanged.fire(conflictLenses);
 }
 
 const LANGUAGES: [suffix: string, language: string][] = [

@@ -3,9 +3,12 @@ import type { Ref } from "react";
 import { api } from "../lib/api";
 import {
   EDITOR_FONT,
+  conflictDecorations,
   languageFor,
   loadDefinitionSchemas,
+  markConflicted,
   monaco,
+  refreshConflictLenses,
   wrapsLines,
 } from "../lib/monaco";
 import { isDefinitionFile } from "./DefinitionFileIssues";
@@ -52,6 +55,8 @@ export interface CodeEditorProps {
   markers?: EditorMarker[];
   /** Lines changed since the last commit, shown as gutter bars. */
   lineChanges?: LineChange[];
+  /** The file is conflicted in a merge: tint its blocks and offer Accept lenses. */
+  conflicts?: boolean;
   handle?: Ref<CodeEditorHandle | null>;
 }
 
@@ -69,6 +74,7 @@ export function CodeEditor({
   compact = false,
   markers,
   lineChanges,
+  conflicts = false,
   handle,
 }: CodeEditorProps) {
   const host = useRef<HTMLDivElement>(null);
@@ -208,6 +214,22 @@ export function CodeEditor({
     );
     return () => collection.clear();
   }, [editor, lineChanges]);
+
+  useEffect(() => {
+    const model = editor?.getModel();
+    if (!editor || !model || !conflicts) return;
+    markConflicted(model, true);
+    const collection = editor.createDecorationsCollection(conflictDecorations(model));
+    const changes = model.onDidChangeContent(() => {
+      collection.set(conflictDecorations(model));
+      refreshConflictLenses();
+    });
+    return () => {
+      changes.dispose();
+      collection.clear();
+      markConflicted(model, false);
+    };
+  }, [editor, conflicts]);
 
   useImperativeHandle(
     handle,

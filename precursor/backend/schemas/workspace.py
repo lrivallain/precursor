@@ -192,6 +192,30 @@ class BranchRequest(BaseModel):
     name: str = Field(min_length=1, max_length=255)
 
 
+class GitConflict(BaseModel):
+    """A conflicted file's three versions (null when that side has none)."""
+
+    path: str
+    # both_modified, both_added, deleted_by_us, deleted_by_them, added_by_us,
+    # added_by_them, both_deleted.
+    kind: str
+    base: str | None = None
+    ours: str | None = None
+    theirs: str | None = None
+    # Whether each side exists at all (the text is null when binary too).
+    has_base: bool = False
+    has_ours: bool = False
+    has_theirs: bool = False
+    binary: bool = False
+    too_large: bool = False
+
+
+class ResolveRequest(BaseModel):
+    path: str
+    # Keep one side's version (or its deletion); without it, the file as edited.
+    side: Literal["ours", "theirs"] | None = None
+
+
 class GitActionResult(BaseModel):
     ok: bool
     # Human-readable summary or the captured git stderr/stdout on failure.

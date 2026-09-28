@@ -2072,6 +2072,27 @@ export interface FileDiff {
   binary: boolean;
 }
 
+/** A conflicted file's three versions (null where that side has none). */
+export interface GitConflict {
+  path: string;
+  kind:
+    | "both_modified"
+    | "both_added"
+    | "deleted_by_us"
+    | "deleted_by_them"
+    | "added_by_us"
+    | "added_by_them"
+    | "both_deleted";
+  base: string | null;
+  ours: string | null;
+  theirs: string | null;
+  has_base: boolean;
+  has_ours: boolean;
+  has_theirs: boolean;
+  binary: boolean;
+  too_large: boolean;
+}
+
 export interface GitBranch {
   name: string;
   /** Its upstream on origin; null while unpublished. */

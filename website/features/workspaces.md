@@ -40,8 +40,8 @@ remote:
   With no branch checked out (a detached HEAD), both are off.
 
 Pull only fast-forwards. When your branch and the remote have both moved on,
-Precursor stops and shows where to resolve it (`git status` in the working
-copy, or **Open in VS Code**).
+Pull stops and offers to merge them (see
+[Merging and conflicts](#merging-and-conflicts)).
 
 Paths from the app are checked before git sees them. Git's pathspec magic, such
 as `:/`, is taken as a plain file name, and git never waits on a password
@@ -73,6 +73,43 @@ If the file open in the editor has unsaved edits, you're asked before
 switching. After the switch the file is reloaded from the new branch, or
 closed if that branch doesn't have it. If the remote can't be reached, the
 picker still lists your local branches.
+
+## Merging and conflicts
+
+When Pull (or Push) finds that the remote has commits yours doesn't, and yours
+has commits it doesn't, the bar offers **Merge remote changes**. It is
+refused, naming the files, while you have uncommitted changes: commit or
+discard them first.
+
+- **A clean merge** records a merge commit. **Push** sends it.
+- **A conflict**, where both sides changed the same lines, stops the merge. A
+  **Merge in progress** bar stays up until you finish, and the **Changes** tab
+  lists the conflicted files first. Committing single files is off meanwhile.
+
+Click a conflicted file to see what happened, and your version beside the
+incoming one:
+
+- **Text conflicts:** **Resolve in the editor** opens the file with each
+  conflict tinted, yours in green and theirs in blue. Above each one, choose
+  **Accept current** (yours), **Accept incoming** (theirs) or **Accept both**,
+  or edit the text yourself. Each choice can be undone. Save, then **Mark
+  resolved**. That is refused while any conflict marker (`<<<<<<<`, `=======`,
+  `>>>>>>>` at the start of a line) is left in the saved file.
+- **Binary files, and files one side deleted:** these can't be merged line by
+  line. Choose **Keep yours** or **Keep theirs**. Keeping the side that deleted
+  the file deletes it. You're asked first, because the other side's changes to
+  that file are dropped.
+
+<Screenshot src="/screenshots/workspaces-conflict.png" alt="A merge in progress: the banner with Abort and Complete merge, the conflicted file in the Changes tab, and the file in the editor with Accept current, Accept incoming and Accept both above the conflict" caption="Resolving a merge conflict in the editor." />
+
+- **Finishing:** once no conflict is left, **Complete merge** records the merge
+  commit.
+- **Backing out:** **Abort merge** (after a confirmation) puts your branch and
+  files back as they were before the merge.
+
+The merge always runs as `git merge`, never `git pull`. It doesn't depend on
+your git settings (a rebasing pull, `merge.ff`, the conflict style or your
+editor), so it behaves the same everywhere.
 
 ## Reviewing and committing
 

@@ -345,6 +345,33 @@ const scenes = {
     },
   },
 
+  // A merge stopped on a conflict: the banner, the Changes tab's conflict,
+  // and the file in the editor with Accept lenses above the block. The first
+  // (light) run does the Pull and the Merge; the dark one finds it in progress.
+  "workspaces-conflict": {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await page.addInitScript(() =>
+        localStorage.setItem("precursor:workspace:leftTab", "changes"),
+      );
+      await page.goto(`${BASE}/ws/runbooks`, { waitUntil: "networkidle" });
+      await page.getByRole("button", { name: "Hide assistant" }).click();
+      const banner = page.getByText("Merge in progress");
+      if (!(await banner.isVisible())) {
+        await page.getByRole("button", { name: "Pull" }).click();
+        await page.getByRole("button", { name: "Merge remote changes" }).click();
+        await banner.waitFor();
+      }
+      const changes = page.getByLabel("Changes", { exact: true });
+      await changes.getByRole("button", { name: /^escalation\.md, conflict/ }).click();
+      await page.getByRole("button", { name: "Resolve in the editor" }).click();
+      await page.locator(".monaco-editor .codelens-decoration", { hasText: "Accept current" }).first().waitFor();
+      await page.mouse.move(1200, 900);
+      await sleep(600);
+      return undefined;
+    },
+  },
+
   "agents-setup": {
     viewport: { width: 1200, height: 800 },
     async go(page) {

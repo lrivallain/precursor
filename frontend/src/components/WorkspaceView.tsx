@@ -2,6 +2,7 @@ import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } fro
 import type { ReactNode } from "react";
 import {
   ArrowUp,
+  Check,
   ClipboardCheck,
   ClipboardCopy,
   CloudOff,
@@ -16,6 +17,7 @@ import {
   FileCode2,
   FolderOpen,
   FolderPlus,
+  GitMerge,
   History,
   Loader2,
   Pencil,
@@ -39,6 +41,7 @@ import { ChangesPanel, GitDiffPane, discardPrompt } from "./GitChanges";
 import type { DiffTarget } from "./GitChanges";
 import { HistoryPanel } from "./GitHistory";
 import { BranchPicker } from "./BranchPicker";
+import { ConflictPane } from "./GitConflict";
 import { DrawioEditor } from "./DrawioEditor";
 import {
   DefinitionFileIssues,
@@ -51,6 +54,7 @@ import type { LineChange } from "../lib/diffGutter";
 import { PlainTextEditor } from "./PlainTextEditor";
 import type {
   GitActionResult,
+  GitConflict,
   GitFileStatus,
   GitStatus,
   Workspace,
@@ -241,6 +245,10 @@ export function WorkspaceView({
   // The open file as git names it (relative to the repository, not the subdir).
   const subdir = (area.subdir ?? "").replace(/^\/+|\/+$/g, "");
   const repoPath = isGit && activePath ? (subdir ? `${subdir}/${activePath}` : activePath) : null;
+  const merging = status?.merging ?? false;
+  const conflictCount = status?.files.filter((f) => f.conflicted).length ?? 0;
+  const activeConflicted =
+    repoPath !== null && !!status?.files.some((f) => f.path === repoPath && f.conflicted);
   const showPreview = activePath !== null && mode === "preview" && hasPreview(activePath);
   const editorVisible =
     activePath !== null && !loadingFile && isEditable(activePath) && !showPreview;
@@ -332,6 +340,10 @@ export function WorkspaceView({
   // changes left (committed, discarded).
   useEffect(() => {
     setDiff((open) => {
+      if (open?.kind === "conflict") {
+        const now = status?.files.find((f) => f.path === open.file.path);
+        return now?.conflicted ? open : null;
+      }
       if (open?.kind !== "working") return open;
       const now = status?.files.find((f) => f.path === open.file.path);
       if (!now) return null;
@@ -409,7 +421,10 @@ export function WorkspaceView({
       onPathChange(path);
       setContent(f.content);
       setSavedContent(f.content);
-      setMode(hasPreview(path) ? "preview" : "edit");
+      // A file with conflict markers opens where they can be resolved.
+      const inRepo = subdir ? `${subdir}/${path}` : path;
+      const conflictedFile = !!status?.files.some((f) => f.path === inRepo && f.conflicted);
+      setMode(hasPreview(path) && !conflictedFile ? "preview" : "edit");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -560,10 +575,19 @@ export function WorkspaceView({
   // Switch or create a branch. An unsaved buffer is given up first (with the
   // user's say-so), so nothing from one branch can be saved onto another.
   async function changeBranch(run: () => Promise<GitActionResult>): Promise<boolean> {
+    return rewriteTree(run, "Discard unsaved changes? Switching branches reloads the open file.");
+  }
+
+  // An operation that rewrites files (switch, merge, abort): the open file is
+  // reloaded afterwards, and the editor starts afresh.
+  async function rewriteTree(
+    run: () => Promise<GitActionResult>,
+    unsavedQuestion: string,
+  ): Promise<boolean> {
     if (
       dirty &&
       !(await confirmAction({
-        message: "Discard unsaved changes? Switching branches reloads the open file.",
+        message: unsavedQuestion,
         confirmLabel: "Discard changes",
         variant: "warning",
       }))
@@ -627,11 +651,88 @@ export function WorkspaceView({
     return repo.startsWith(`${subdir}/`) ? repo.slice(subdir.length + 1) : null;
   }
 
+  async function mergeRemote(): Promise<void> {
+    let stopped = false;
+    const done = await rewriteTree(async () => {
+      const res = await api.workspaces.gitMerge(area.id);
+      stopped = !res.ok;
+      return res;
+    }, "Discard unsaved changes? Merging may change the open file.");
+    // Stopped on conflicts: they are listed in the Changes tab.
+    if (done && stopped) setLeftTab("changes");
+  }
+
+  async function completeMerge(): Promise<void> {
+    setError(null);
+    try {
+      await api.workspaces.gitMergeComplete(area.id);
+      await afterGitChange();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function abortMerge(): Promise<void> {
+    if (
+      !(await confirmAction({
+        message:
+          "Abort the merge? Your branch and files go back to how they were before it, " +
+          "and the conflicts you resolved so far are lost.",
+        confirmLabel: "Abort merge",
+        variant: "danger",
+      }))
+    )
+      return;
+    await rewriteTree(
+      () => api.workspaces.gitMergeAbort(area.id),
+      "Discard unsaved changes? Aborting the merge reloads the open file.",
+    );
+  }
+
+  // Mark a conflict resolved as it is saved (the server refuses while markers remain).
+  async function markResolved(path: string): Promise<void> {
+    setError(null);
+    try {
+      setStatus(await api.workspaces.gitResolve(area.id, path));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function keepSide(
+    file: GitFileStatus,
+    side: "ours" | "theirs",
+    conflict: GitConflict,
+  ): Promise<void> {
+    const present = side === "ours" ? conflict.has_ours : conflict.has_theirs;
+    const mine = side === "ours";
+    const message = present
+      ? `Keep ${mine ? "your" : "the incoming"} version of "${file.path}"? ` +
+        `${mine ? "The incoming" : "Your"} changes to it are dropped.`
+      : `Delete "${file.path}", as ${mine ? "your" : "the incoming"} branch did? ` +
+        `${mine ? "The incoming" : "Your"} changes to it are dropped.`;
+    if (
+      !(await confirmAction({
+        message,
+        confirmLabel: present ? "Keep this version" : "Delete file",
+        variant: present ? "warning" : "danger",
+      }))
+    )
+      return;
+    setError(null);
+    try {
+      await api.workspaces.gitResolve(area.id, file.path, side);
+      await afterGitChange();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
   // "Open file" from a diff, when the file is in the tree now.
   function diffOpenTarget(target: DiffTarget): (() => void) | undefined {
     const repo = target.file.path;
     const browse =
-      target.kind === "working" ? (target.file.browse_path ?? null) : browsePathOf(repo);
+      target.kind === "commit" ? browsePathOf(repo) : (target.file.browse_path ?? null);
     if (!browse || !files.some((f) => f.path === browse && f.type !== "dir")) return undefined;
     return () => openFromChanges(browse);
   }
@@ -697,25 +798,71 @@ export function WorkspaceView({
         </div>
       )}
 
-      {conflict && (
-        <div className="px-4 py-3 text-sm bg-amber-500/10 border-b border-border space-y-1">
+      {conflict && !merging && (
+        <div className="px-4 py-3 text-sm bg-amber-500/10 border-b border-border space-y-1.5">
           <p className="font-medium text-amber-600 dark:text-amber-400">
-            Couldn&apos;t sync automatically — manual merge needed.
+            Your branch and the remote have both moved on.
           </p>
-          <p className="text-muted">{conflict.detail}</p>
-          {conflict.path && (
-            <p className="text-muted">
-              Resolve it from a terminal (or Open in VS Code), then click Pull again:
-              <code className="ml-1 px-1.5 py-0.5 rounded bg-surface font-mono text-xs">
-                git status
-              </code>
-            </p>
+          <p className="text-muted">
+            Merge the remote&apos;s commits into yours: if the same lines changed on both
+            sides, you&apos;ll resolve those conflicts here before the merge is committed.
+          </p>
+          <details className="text-xs text-muted">
+            <summary className="cursor-pointer">What git said</summary>
+            <pre className="mt-1 whitespace-pre-wrap font-mono">{conflict.detail}</pre>
+          </details>
+          <div className="flex items-center gap-3">
+            <button
+              className="inline-flex items-center gap-1.5 rounded bg-accent px-2.5 py-1 text-xs text-white"
+              onClick={() => void mergeRemote()}
+            >
+              <GitMerge size={13} /> Merge remote changes
+            </button>
+            <button
+              className="text-xs underline text-muted hover:text-text"
+              onClick={() => setConflict(null)}
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
+
+      {merging && (
+        <div
+          className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2 text-sm bg-amber-500/10 border-b border-border"
+          role="status"
+        >
+          <GitMerge size={15} className="shrink-0 text-amber-600 dark:text-amber-400" />
+          <span className="min-w-0 flex-1">
+            <span className="font-medium">Merge in progress</span>
+            <span className="text-muted">
+              {conflictCount > 0
+                ? ` — ${conflictCount} conflict${conflictCount === 1 ? "" : "s"} left to resolve.`
+                : " — every conflict is resolved."}
+            </span>
+          </span>
+          {conflictCount > 0 && leftTab !== "changes" && (
+            <button
+              className="text-xs underline text-muted hover:text-text"
+              onClick={() => setLeftTab("changes")}
+            >
+              Show conflicts
+            </button>
           )}
           <button
-            className="text-xs underline text-muted hover:text-text"
-            onClick={() => setConflict(null)}
+            className="rounded border border-border px-2.5 py-1 text-xs hover:bg-surface"
+            onClick={() => void abortMerge()}
           >
-            Dismiss
+            Abort merge
+          </button>
+          <button
+            className="rounded bg-accent px-2.5 py-1 text-xs text-white disabled:opacity-50"
+            disabled={conflictCount > 0}
+            data-tooltip={conflictCount > 0 ? "Resolve every conflict first" : "Commit the merge"}
+            onClick={() => void completeMerge()}
+          >
+            Complete merge
           </button>
         </div>
       )}
@@ -800,8 +947,10 @@ export function WorkspaceView({
             <div className="flex-1 min-h-0">
               <ChangesPanel
                 files={status?.files ?? []}
-                activeDiff={diff?.kind === "working" ? diff.file.path : null}
+                activeDiff={diff?.kind === "working" || diff?.kind === "conflict" ? diff.file.path : null}
                 canPush={!status?.detached}
+                merging={merging}
+                onOpenConflict={(file) => setDiff({ kind: "conflict", file })}
                 onOpenDiff={(file) => setDiff({ kind: "working", file })}
                 onOpenFile={openFromChanges}
                 onDiscard={discardFile}
@@ -829,7 +978,18 @@ export function WorkspaceView({
 
         {showEditor && (
         <section className="flex-1 min-w-0 flex flex-col">
-          {diff && (
+          {diff?.kind === "conflict" ? (
+            <ConflictPane
+              workspaceId={area.id}
+              file={diff.file}
+              narrow={narrow}
+              version={status}
+              onResolveInEditor={diffOpenTarget(diff)}
+              onMarkResolved={() => markResolved(diff.file.path)}
+              onKeep={(side, info) => keepSide(diff.file, side, info)}
+              onClose={() => setDiff(null)}
+            />
+          ) : diff ? (
             <GitDiffPane
               workspaceId={area.id}
               target={diff}
@@ -838,7 +998,7 @@ export function WorkspaceView({
               onOpenFile={diffOpenTarget(diff)}
               onClose={() => setDiff(null)}
             />
-          )}
+          ) : null}
           <div className={diff ? "hidden" : "flex min-h-0 flex-1 flex-col"}>
           {activePath ? (
             <>
@@ -908,6 +1068,20 @@ export function WorkspaceView({
                   )}
                   Save
                 </button>
+                {activeConflicted && repoPath && (
+                  <button
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded border border-border text-xs hover:bg-surface disabled:opacity-50"
+                    disabled={dirty}
+                    data-tooltip={
+                      dirty
+                        ? "Save first"
+                        : "Every conflict in this file is settled (no marker left)"
+                    }
+                    onClick={() => void markResolved(repoPath)}
+                  >
+                    <Check size={13} /> Mark resolved
+                  </button>
+                )}
                 {isGit && (
                   <button
                     className="p-1 rounded text-muted hover:text-text hover:bg-surface"
@@ -1010,6 +1184,7 @@ export function WorkspaceView({
                             compact={narrow}
                             markers={markers}
                             lineChanges={gutter}
+                            conflicts={activeConflicted}
                             handle={editorHandle}
                           />
                         </Suspense>
@@ -1203,6 +1378,7 @@ function GitBar({
   // Known once status has loaded; an older backend doesn't report it.
   const unpublished = status !== null && status.upstream === null && !detached;
   const ahead = status?.ahead ?? 0;
+  const merging = status?.merging ?? false;
 
   async function copyLocalPath(): Promise<void> {
     onError(null);
@@ -1348,7 +1524,7 @@ function GitBar({
 
         <button
           className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded border border-border hover:bg-surface text-xs disabled:opacity-50"
-          disabled={busy !== null || detached || unpublished}
+          disabled={busy !== null || detached || unpublished || merging}
           data-tooltip={
             unpublished ? "Nothing to pull: this branch isn't on the remote yet." : undefined
           }
@@ -1364,7 +1540,7 @@ function GitBar({
         {!detached && (unpublished || ahead > 0) && (
           <button
             className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded border border-border hover:bg-surface text-xs text-blue-600 dark:text-blue-400 disabled:opacity-50"
-            disabled={busy !== null}
+            disabled={busy !== null || merging}
             data-tooltip={
               unpublished
                 ? "Push this branch to the remote and track it from now on"

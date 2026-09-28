@@ -31,6 +31,7 @@ from precursor.backend.schemas.workspace import (
     GitCommit,
     GitCommitDetail,
     GitCommitFile,
+    GitConflict,
     GitFileStatus,
     GitLog,
     GitStatus,
@@ -71,14 +72,18 @@ def git_available() -> bool:
 # --- Input checks ---------------------------------------------------------------
 
 
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+
+
 def check_path(rel: str) -> str:
     """A working-tree path relative to the repository root, normalised.
 
     Checked on its text rather than resolved: git addresses the path itself (a
     symlink, a deleted file), and it refuses to follow a symlinked directory.
     """
-    text = (rel or "").strip()
-    if not text or "\0" in text or "\\" in text:
+    text = rel or ""
+    # Refused, not stripped: a name must reach git spelled as it was sent.
+    if not text or text != text.strip() or _CONTROL.search(text) or "\\" in text:
         raise GitInputError(f"Invalid path: {rel!r}")
     pure = PurePosixPath(text)
     if pure.is_absolute() or re.match(r"^[A-Za-z]:", text):
@@ -99,7 +104,8 @@ def check_branch(name: str) -> str:
 
     Also refuses a leading ``-`` (an option to git) and ``HEAD``.
     """
-    branch = (name or "").strip()
+    # Not stripped: whitespace and control characters are refused below.
+    branch = name or ""
     if (
         not branch
         or branch.startswith("-")
@@ -122,7 +128,7 @@ _SHA = re.compile(r"[0-9a-f]{4,64}")
 
 def check_rev(rev: str) -> str:
     """``HEAD`` or an abbreviated/full commit id; nothing git could read as more."""
-    value = (rev or "").strip()
+    value = rev or ""
     if value == "HEAD" or _SHA.fullmatch(value):
         return value
     raise GitInputError(f"Invalid revision: {rev!r}")
@@ -632,6 +638,25 @@ async def switch(path: Path, branch: str, token: str | None) -> None:
     await _run_switch(path, ["--no-guess", "--track", "-c", branch, f"origin/{branch}"])
 
 
+_HEAD_LIKE = re.compile(r"[A-Z_]*HEAD")
+
+
+async def _refuse_ambiguous(path: Path, branch: str) -> None:
+    """Names git accepts for a branch but reads as something else elsewhere.
+
+    ``refs/heads/x`` becomes ``refs/heads/refs/heads/x``; ``origin/main``
+    shadows the remote-tracking branch; ``ORIG_HEAD`` a pseudo-ref.
+    """
+    prefixes = ["refs/", "heads/", "remotes/", "tags/"]
+    code, out, _err = await _run_git(["remote"], cwd=path)
+    remotes = out.split() if code == 0 else []
+    prefixes += [f"{remote}/" for remote in {"origin", *remotes}]
+    if _HEAD_LIKE.fullmatch(branch) or branch.startswith(tuple(prefixes)):
+        raise GitInputError(
+            f"{branch!r} would be confused with another kind of ref — choose another name."
+        )
+
+
 async def create_branch(path: Path, branch: str, token: str | None) -> None:
     """Create ``branch`` from HEAD and check it out; it stays unpublished.
 
@@ -640,6 +665,7 @@ async def create_branch(path: Path, branch: str, token: str | None) -> None:
     (HEAD doesn't move, so nothing is overwritten); a merge in progress refuses.
     """
     branch = check_branch(branch)
+    await _refuse_ambiguous(path, branch)
     if (await status(path)).merging:
         raise GitRefused("A merge is in progress — finish or abort it first.")
     if await _local_exists(path, branch):
@@ -654,6 +680,183 @@ async def create_branch(path: Path, branch: str, token: str | None) -> None:
             f"The remote already has a branch named {branch!r} — switch to it instead."
         )
     await _run_switch(path, ["--no-track", "-c", branch])
+
+
+# --- Merging ---------------------------------------------------------------------------
+
+# The user's own settings must not change how a merge in the app behaves: no
+# editor may open, no fast-forward replaces the merge commit, and conflict
+# markers keep the two-sided style the editor understands.
+_MERGE_CONFIG = [
+    "-c",
+    "core.editor=true",
+    "-c",
+    "merge.ff=false",
+    "-c",
+    "merge.conflictStyle=merge",
+    "-c",
+    "rerere.enabled=false",
+]
+
+# A line git writes around a conflict (``merge.conflictStyle=merge``).
+_MARKER = re.compile(r"^(<{7}|={7}|>{7})(\s|$)", re.MULTILINE)
+
+_CONFLICT_KINDS = {
+    "UU": "both_modified",
+    "AA": "both_added",
+    "DU": "deleted_by_us",
+    "UD": "deleted_by_them",
+    "AU": "added_by_us",
+    "UA": "added_by_them",
+    "DD": "both_deleted",
+}
+
+
+async def merge(path: Path, branch: str, token: str | None) -> tuple[bool, str]:
+    """Merge ``origin/<branch>`` into the checked-out branch, with a merge commit.
+
+    Returns ``(clean, detail)``; ``clean=False`` leaves the merge in progress
+    with the conflicted files marked in ``status()``. Refused (``GitRefused``)
+    on a detached HEAD, during another merge, or with uncommitted changes to
+    tracked files. Always ``git merge`` itself, never ``pull``: a user's
+    ``branch.<b>.rebase`` or ``pull.rebase`` setting doesn't apply.
+    """
+    branch = check_branch(branch)
+    st = await status(path)
+    if st.merging:
+        raise GitRefused("A merge is already in progress — complete or abort it first.")
+    if st.detached:
+        raise GitRefused("The working copy is on a detached HEAD — check out a branch first.")
+    changed = [f.path for f in st.files if f.code != "??"]
+    if changed:
+        raise GitRefused(f"Commit or discard your changes before merging: {_names(changed)}.")
+    fetched, detail = await fetch(path, branch, token)
+    if not fetched:
+        raise GitError(f"Fetch failed: {detail}")
+    code, out, err = await _run_git(
+        [*_MERGE_CONFIG, "merge", "--no-ff", "--no-edit", "--no-autostash", f"origin/{branch}"],
+        cwd=path,
+    )
+    detail = (out + err).strip()
+    if code == 0:
+        return True, detail or f"Merged origin/{branch}."
+    if (await status(path)).merging:
+        conflicted = [f.path for f in (await status(path)).files if f.conflicted]
+        return False, f"{len(conflicted)} file(s) conflict: {_names(conflicted)}."
+    blocked = _overwritten(detail)
+    if blocked:
+        raise GitRefused(
+            "These new files would be overwritten by the merge — "
+            f"move or delete them first: {_names(blocked)}."
+        )
+    raise GitError(f"Merge failed: {detail}", stderr=err)
+
+
+async def _stage(path: Path, stage: int, rel: str) -> bytes | None:
+    spec = f":{stage}:{rel}"
+    code, out, _err = await _run_git(["cat-file", "-s", spec], cwd=path)
+    if code != 0:
+        return None
+    if int(out.strip() or 0) > MAX_DIFF_BYTES:
+        raise _TooLarge
+    code, data, err = await _run_git_bytes(["cat-file", "blob", spec], cwd=path)
+    if code != 0:
+        raise GitError(f"Could not read {spec}: {err.strip()}")
+    return data
+
+
+async def conflict(path: Path, rel: str) -> GitConflict:
+    """One conflicted file: its kind and the base / ours / theirs versions.
+
+    Each side may be absent: add/add has no base, delete/modify lacks one side.
+    Binary or over 2 MB: flagged, without contents.
+    """
+    rel = check_path(rel)
+    entry = next((f for f in (await status(path)).files if f.path == rel and f.conflicted), None)
+    if entry is None:
+        raise GitNotFound(f"{rel} has no conflict")
+    kind = _CONFLICT_KINDS.get(entry.code, "both_modified")
+    try:
+        base, ours, theirs = [await _stage(path, n, rel) for n in (1, 2, 3)]
+    except _TooLarge:
+        return GitConflict(path=rel, kind=kind, too_large=True)
+    present = {
+        "has_base": base is not None,
+        "has_ours": ours is not None,
+        "has_theirs": theirs is not None,
+    }
+    try:
+        return GitConflict(
+            path=rel, kind=kind, base=_text(base), ours=_text(ours), theirs=_text(theirs), **present
+        )
+    except UnicodeDecodeError:
+        return GitConflict(path=rel, kind=kind, binary=True, **present)
+
+
+def conflict_marker_lines(text: str) -> list[int]:
+    """1-based lines that are conflict markers."""
+    return [text.count("\n", 0, m.start()) + 1 for m in _MARKER.finditer(text)]
+
+
+async def resolve(path: Path, rel: str, side: str | None = None) -> None:
+    """Mark a conflicted file resolved.
+
+    Without ``side``: as it is in the working copy, which must hold no conflict
+    marker any more. With ``ours`` / ``theirs``: that side's version, or the
+    file's deletion when that side deleted it.
+    """
+    rel = check_path(rel)
+    if side not in (None, "ours", "theirs"):
+        raise GitInputError(f"Invalid side: {side!r}")
+    entry = next((f for f in (await status(path)).files if f.path == rel), None)
+    if entry is None or not entry.conflicted:
+        raise GitRefused(f"{rel} has no conflict to resolve.")
+    if side is None:
+        target = fs.safe_join(path, rel)
+        if target.is_file():
+            try:
+                lines = conflict_marker_lines(target.read_text(encoding="utf-8"))
+            except UnicodeDecodeError:
+                raise GitRefused(
+                    f"{rel} is binary: keep one side (ours or theirs) instead."
+                ) from None
+            if lines:
+                shown = ", ".join(str(n) for n in lines[:6])
+                raise GitRefused(
+                    f"Conflict markers remain in {rel} (line {shown}). "
+                    "Resolve them and save before marking it resolved."
+                )
+        await _git(["add", "-A", "--", rel], cwd=path, what=f"Could not resolve {rel}")
+        return
+    stage = 2 if side == "ours" else 3
+    code, _out, _err = await _run_git(["cat-file", "-e", f":{stage}:{rel}"], cwd=path)
+    if code == 0:
+        await _git(["checkout", f"--{side}", "--", rel], cwd=path, what=f"Could not keep {side}")
+        await _git(["add", "--", rel], cwd=path, what=f"Could not resolve {rel}")
+    else:
+        # That side deleted the file.
+        await _git(["rm", "--quiet", "--", rel], cwd=path, what=f"Could not resolve {rel}")
+
+
+async def complete_merge(path: Path) -> str:
+    """Commit the merge once no file is conflicted any more."""
+    st = await status(path)
+    if not st.merging:
+        raise GitRefused("No merge is in progress.")
+    left = [f.path for f in st.files if f.conflicted]
+    if left:
+        raise GitRefused(f"Resolve every conflict first: {_names(left)}.")
+    out = await _git(
+        [*_MERGE_CONFIG, "commit", "--no-edit"], cwd=path, what="Could not complete the merge"
+    )
+    return out.strip() or "Merge completed."
+
+
+async def abort_merge(path: Path) -> None:
+    """Put the branch and files back as they were before the merge."""
+    if not (await status(path)).merging:
+        raise GitRefused("No merge is in progress.")
+    await _git(["merge", "--abort"], cwd=path, what="Could not abort the merge")
 
 
 def push_rejected(detail: str) -> bool:
