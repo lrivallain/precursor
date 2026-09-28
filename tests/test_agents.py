@@ -6498,6 +6498,74 @@ async def test_only_a_transition_into_rest_advances_workflows() -> None:
         assert agent.status == "idle"
 
 
+async def test_sdk_events_are_handled_in_arrival_order() -> None:
+    """A burst of SDK events must be handled in the order the SDK emitted them.
+
+    Each event used to get its own task, which awaited a DB read *before* taking
+    the agent's lock, so whichever read finished first went first. A turn's
+    closing burst (final ``assistant.message``, ``turn_end``, ``session.idle``)
+    was then handled idle-first: the run rested on the previous, text-less
+    message and the workflow advanced with an empty step output. That is what
+    made the Morning AI briefing's email step see ``MISSING_PERSISTENCE``.
+    """
+    import asyncio
+    from typing import Any
+
+    from precursor.backend.services.agents.manager import AgentManager
+
+    mgr = AgentManager()
+    # Reads that finish in the *reverse* of the order they started: exactly
+    # the shuffle a burst of concurrent tasks produced.
+    delays = [0.03, 0.02, 0.01, 0.0]
+
+    class _Agent:
+        id = 7
+
+    async def load_run(run_id: int) -> tuple[Any, Any]:
+        await asyncio.sleep(delays.pop(0) if delays else 0)
+        return object(), _Agent()
+
+    handled: list[str] = []
+
+    async def handle_locked(run_id: int, event: Any) -> None:
+        if type(event).__name__ == "Broken":
+            raise RuntimeError("boom")
+        handled.append(type(event).__name__)
+
+    mgr._load_run = load_run  # type: ignore[method-assign]
+    mgr._handle_event_locked = handle_locked  # type: ignore[method-assign]
+
+    class AssistantMessageData:
+        pass
+
+    class Broken:
+        pass
+
+    class AssistantTurnEndData:
+        pass
+
+    class SessionIdleData:
+        pass
+
+    # The SDK calls the subscriber synchronously, back to back.
+    for event in (AssistantMessageData(), Broken(), AssistantTurnEndData(), SessionIdleData()):
+        mgr._dispatch_sdk_event(7, 42, event)
+    # One drainer for the whole burst, not one task per event.
+    assert mgr._event_drainers == {7}
+    await asyncio.gather(*list(mgr._tasks))
+
+    # A handler that raises doesn't hold up the events queued behind it.
+    assert handled == ["AssistantMessageData", "AssistantTurnEndData", "SessionIdleData"]
+    assert mgr._event_drainers == set()
+    assert mgr._event_queues == {}
+
+    # A later event, after the queue drained, still gets handled.
+    mgr._dispatch_sdk_event(7, 42, SessionIdleData())
+    await asyncio.gather(*list(mgr._tasks))
+    assert handled[-1] == "SessionIdleData"
+    assert len(handled) == 4
+
+
 async def test_a_status_change_made_mid_event_still_advances_workflows() -> None:
     """The transition has to be measured across the *whole* handler.
 
