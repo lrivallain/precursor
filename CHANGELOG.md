@@ -15,6 +15,22 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Changed
 
+- **Git workspaces review changes in a Changes tab, with a real diff.** The
+  Files section's left pane gains a **Changes** tab beside **Files**, replacing
+  the Review & Push dialog.
+  - **What it shows:** every changed file, ticked to be committed, with a
+    commit message box and **Commit** or **Commit & Push**. The pane you last
+    used is remembered.
+  - **The diff:** a file opens in Monaco's diff editor, comparing the last
+    commit with the working copy, side by side or inline (always inline on a
+    phone). Binary and very large files say so.
+  - **Change bars:** the editor's margin marks lines added, modified or removed
+    since the last commit, refreshed on open and on save.
+  - **Discard asks plainly:** a new file's confirmation says that discarding
+    deletes it, with a **Delete file** button. A rename's says it restores the
+    old name.
+  - **Phones:** the git bar wraps instead of pushing Pull and Push off-screen.
+  - **API:** new `GET /api/workspaces/{id}/git/file-versions`.
 - **Git workspaces know where they stand against the remote.**
   - **Refresh:** opening a git workspace, and Refresh, fetch from the remote,
     so "↓ N behind" is real (fetching changes no file). If the remote can't be

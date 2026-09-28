@@ -28,6 +28,7 @@ from precursor.backend.schemas import (
     FileDiff,
     FileNode,
     FileRename,
+    FileVersions,
     FileWrite,
     FolderCreate,
     GitActionResult,
@@ -571,6 +572,28 @@ async def git_diff(
     except git.GitError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     return FileDiff(path=path, diff=diff, binary=binary)
+
+
+@router.get("/{workspace_id}/git/file-versions", response_model=FileVersions)
+async def git_file_versions(
+    workspace_id: int,
+    path: str = Query(...),
+    original_path: str | None = Query(None),
+    base: str = Query("HEAD"),
+    head: str | None = Query(None),
+    session: AsyncSession = Depends(get_session),
+) -> FileVersions:
+    """One file at ``base`` and in the working copy (or at ``head``), for the diff editor.
+
+    Paths are relative to the repository root; ``original_path`` is a rename's
+    old name. Over 2 MB, or binary, only the flag comes back.
+    """
+    ws = await _get_git_workspace(workspace_id, session)
+    root = workspace_root(ws)
+    try:
+        return await git.file_versions(root, path, original_rel=original_path, base=base, head=head)
+    except (git.GitError, fs.UnsafePathError) as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
 
 
 # --------------------------------------------------------------------------

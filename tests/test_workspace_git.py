@@ -350,6 +350,66 @@ async def test_pathspec_magic_is_literal(remote: str, tmp_path: Path) -> None:
         await git.diff_file(repo, ".git/config")
 
 
+# --- File versions (the diff editor) -------------------------------------------------
+
+
+async def test_file_versions_of_an_edit_a_new_file_and_a_deletion(
+    remote: str, tmp_path: Path
+) -> None:
+    repo = await _clone(remote, tmp_path / "ws")
+    (repo / "README.md").write_text("# Notes\n\nedited\n", encoding="utf-8")
+    (repo / "new.md").write_text("new\n", encoding="utf-8")
+    edited = await git.file_versions(repo, "README.md")
+    assert (edited.original, edited.modified) == ("# Notes\n\nfirst line\n", "# Notes\n\nedited\n")
+    added = await git.file_versions(repo, "new.md")
+    assert (added.original, added.modified) == (None, "new\n")
+    (repo / "README.md").unlink()
+    deleted = await git.file_versions(repo, "README.md")
+    assert (deleted.original is not None, deleted.modified) == (True, None)
+
+
+async def test_file_versions_of_a_rename_compare_with_the_old_name(
+    remote: str, tmp_path: Path
+) -> None:
+    repo = await _clone(remote, tmp_path / "ws")
+    run(repo, "mv", "README.md", "INTRO.md")
+    versions = await git.file_versions(repo, "INTRO.md", original_rel="README.md")
+    assert versions.original == versions.modified == "# Notes\n\nfirst line\n"
+
+
+async def test_file_versions_between_two_commits(remote: str, tmp_path: Path) -> None:
+    repo = await _clone(remote, tmp_path / "ws")
+    first = run(repo, "rev-parse", "HEAD").strip()
+    (repo / "README.md").write_text("second\n", encoding="utf-8")
+    run(repo, "commit", "-am", "Second")
+    second = run(repo, "rev-parse", "HEAD").strip()
+    (repo / "README.md").write_text("uncommitted\n", encoding="utf-8")
+    versions = await git.file_versions(repo, "README.md", base=first[:7], head=second)
+    assert (versions.original, versions.modified) == ("# Notes\n\nfirst line\n", "second\n")
+
+
+async def test_file_versions_flag_binary_and_large_files(
+    remote: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = await _clone(remote, tmp_path / "ws")
+    (repo / "logo.png").write_bytes(b"\x89PNG\0\0\x01")
+    binary = await git.file_versions(repo, "logo.png")
+    assert binary.binary and binary.modified is None
+    monkeypatch.setattr(git, "MAX_DIFF_BYTES", 10)
+    (repo / "README.md").write_text("x" * 11, encoding="utf-8")
+    large = await git.file_versions(repo, "README.md")
+    assert large.too_large and large.original is None and large.modified is None
+
+
+async def test_file_versions_check_their_inputs(remote: str, tmp_path: Path) -> None:
+    repo = await _clone(remote, tmp_path / "ws")
+    for kwargs in ({"base": "HEAD~1"}, {"head": "--all"}, {"original_rel": "../x"}):
+        with pytest.raises(git.GitInputError):
+            await git.file_versions(repo, "README.md", **kwargs)  # type: ignore[arg-type]
+    with pytest.raises(git.GitInputError):
+        await git.file_versions(repo, ".git/config")
+
+
 # --- API ---------------------------------------------------------------------------
 
 
@@ -406,6 +466,11 @@ def test_api_rejects_unsafe_paths(client: TestClient, remote: str) -> None:
             assert client.post(f"{base}/git/discard", params={"path": path}).status_code == 400
         resp = client.post(f"{base}/git/commit", json={"message": "m", "paths": ["../x"]})
         assert resp.status_code == 400
+        for params in ({"path": "../x"}, {"path": "README.md", "base": "HEAD^"}):
+            resp = client.get(f"{base}/git/file-versions", params=params)
+            assert resp.status_code == 400
+        ok = client.get(f"{base}/git/file-versions", params={"path": "README.md"}).json()
+        assert ok["original"] == ok["modified"] == "# Notes\n\nfirst line\n"
     finally:
         client.delete(base)
 

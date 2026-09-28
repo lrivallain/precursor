@@ -30,17 +30,14 @@ remote:
   commits without changing any file. `↓ 2 behind` means **Pull** has something
   to bring in. A cloud icon with a slash means the remote couldn't be reached,
   so the count may be out of date. Hover the icon for git's message.
-- **Committing:** **Review & commit** lists your changes with their diffs.
-  **Commit** records the files you tick in this working copy only.
-  **Commit & Push** also sends them.
+- **Committing:** see [Reviewing and committing](#reviewing-and-committing)
+  below.
 - **Pushing:** commits that aren't on the remote yet show as **Push 2**.
 - **New branches:** a branch that isn't on the remote yet is marked **not
   published**, and **Publish** pushes it and tracks it from then on.
 - **Branch switches outside Precursor:** Pull and Push always use the branch
   that is checked out, even if you switched it in a terminal or VS Code. With no
   branch checked out (a detached HEAD), both are off.
-- **Discard** in the review puts a file back as the last commit has it. A file
-  the last commit doesn't have is deleted.
 
 Pull only fast-forwards. When your branch and the remote have both moved on,
 Precursor stops and shows where to resolve it (`git status` in the working
@@ -49,6 +46,33 @@ copy, or **Open in VS Code**).
 Paths from the app are checked before git sees them. Git's pathspec magic, such
 as `:/`, is taken as a plain file name, and git never waits on a password
 prompt. The token is added to each command and never written to the clone.
+
+## Reviewing and committing
+
+In a git workspace the left pane has two tabs: **Files**, the tree, and
+**Changes**, every file that differs from the last commit. **Review & commit**
+in the bar opens Changes, and the pane you last used is remembered.
+
+<Screenshot src="/screenshots/workspaces-changes.png" alt="The Changes tab listing three changed files with checkboxes and a commit message, and a side-by-side diff of one of them" caption="Reviewing a change before committing it." />
+
+- **See what changed:** click a file to compare the last commit with your
+  working copy in the editor's diff view, **side by side** or **inline**. On a
+  phone it is always inline. The diff is read-only; the file icon opens the
+  file for editing. Unchanged stretches of a long file are folded away.
+- **Choose what goes in:** untick the files to leave out of this commit. They
+  stay changed, for a later one.
+- **Commit** records the ticked files in this working copy only
+  (<kbd>Cmd/Ctrl</kbd>+<kbd>Enter</kbd> in the message box). **Commit & Push**
+  also sends them.
+- **Discard** (the arrow on a file) puts it back as the last commit has it, and
+  asks first. A **new** file doesn't exist in the last commit, so discarding it
+  **deletes** it. The confirmation says so and its button reads **Delete
+  file**. Discarding a rename restores the old name.
+
+While you edit a file in a git workspace, bars in the editor's margin mark the
+lines changed since the last commit: green for added, blue for modified, and a
+red wedge where lines were removed. They refresh when you open or save the
+file.
 
 ## The Agents & workflows workspace
 

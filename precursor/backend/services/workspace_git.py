@@ -24,7 +24,7 @@ import re
 import shutil
 from pathlib import Path, PurePosixPath
 
-from precursor.backend.schemas.workspace import GitFileStatus, GitStatus
+from precursor.backend.schemas.workspace import FileVersions, GitFileStatus, GitStatus
 from precursor.backend.services import workspace_fs as fs
 
 logger = logging.getLogger(__name__)
@@ -144,6 +144,17 @@ async def _run_git(
     cwd: Path | None = None,
     token: str | None = None,
 ) -> tuple[int, str, str]:
+    code, out, err = await _run_git_bytes(args, cwd=cwd, token=token)
+    return code, out.decode(errors="replace"), err
+
+
+async def _run_git_bytes(
+    args: list[str],
+    *,
+    cwd: Path | None = None,
+    token: str | None = None,
+) -> tuple[int, bytes, str]:
+    """``_run_git`` with stdout left as bytes (file contents)."""
     if not git_available():
         raise GitError("git is not installed or not on PATH")
     cmd = ["git", *_auth_args(token), *args]
@@ -164,11 +175,7 @@ async def _run_git(
     except TimeoutError as exc:
         proc.kill()
         raise GitError("git command timed out") from exc
-    return (
-        proc.returncode or 0,
-        stdout_b.decode(errors="replace"),
-        stderr_b.decode(errors="replace"),
-    )
+    return proc.returncode or 0, stdout_b, stderr_b.decode(errors="replace")
 
 
 async def _git(args: list[str], *, cwd: Path, what: str, token: str | None = None) -> str:
@@ -322,6 +329,75 @@ async def diff_file(path: Path, rel: str) -> tuple[str, bool]:
         return out, "Binary files" in out
     _code, out, _err = await _run_git(["diff", "HEAD", "--", rel], cwd=path)
     return out, "Binary files" in out
+
+
+# Past this, a diff isn't worth sending to the browser.
+MAX_DIFF_BYTES = 2_000_000
+
+
+class _TooLarge(Exception):
+    pass
+
+
+async def _blob(path: Path, rev: str, rel: str) -> bytes | None:
+    """``rel`` as commit ``rev`` has it; None when it doesn't have it."""
+    spec = f"{rev}:{rel}"
+    code, out, _err = await _run_git(["cat-file", "-s", spec], cwd=path)
+    if code != 0:
+        return None
+    if int(out.strip() or 0) > MAX_DIFF_BYTES:
+        raise _TooLarge
+    code, data, err = await _run_git_bytes(["cat-file", "blob", spec], cwd=path)
+    if code != 0:
+        raise GitError(f"Could not read {spec}: {err.strip()}")
+    return data
+
+
+def _working_file(path: Path, rel: str) -> bytes | None:
+    target = fs.safe_join(path, rel)
+    if not target.is_file():
+        return None
+    if target.stat().st_size > MAX_DIFF_BYTES:
+        raise _TooLarge
+    return target.read_bytes()
+
+
+def _text(data: bytes | None) -> str | None:
+    """Text for the diff editor; raises ``UnicodeDecodeError`` on binary data."""
+    if data is None:
+        return None
+    if b"\0" in data[:8000]:
+        raise UnicodeDecodeError("utf-8", data, 0, 1, "binary")
+    return data.decode("utf-8")
+
+
+async def file_versions(
+    path: Path,
+    rel: str,
+    *,
+    original_rel: str | None = None,
+    base: str = "HEAD",
+    head: str | None = None,
+) -> FileVersions:
+    """Both sides of one file's diff, for a side-by-side view.
+
+    The original is ``rel`` (or its pre-rename ``original_rel``) at ``base``;
+    the modified side is the working copy, or ``rel`` at ``head``. A side the
+    file doesn't exist on is null.
+    """
+    rel = check_path(rel)
+    original_rel = check_path(original_rel) if original_rel else rel
+    base = check_rev(base)
+    head = check_rev(head) if head else None
+    try:
+        before = await _blob(path, base, original_rel)
+        after = await _blob(path, head, rel) if head else _working_file(path, rel)
+    except _TooLarge:
+        return FileVersions(path=rel, too_large=True)
+    try:
+        return FileVersions(path=rel, original=_text(before), modified=_text(after))
+    except UnicodeDecodeError:
+        return FileVersions(path=rel, binary=True)
 
 
 def push_rejected(detail: str) -> bool:

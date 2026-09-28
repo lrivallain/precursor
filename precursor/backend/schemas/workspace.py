@@ -90,6 +90,17 @@ class FileDiff(BaseModel):
     binary: bool = False
 
 
+class FileVersions(BaseModel):
+    """Both sides of one file's diff (``null`` where the file doesn't exist)."""
+
+    path: str
+    original: str | None = None
+    modified: str | None = None
+    binary: bool = False
+    # Either side is over the size limit: no content is sent.
+    too_large: bool = False
+
+
 class LocalPath(BaseModel):
     # Absolute filesystem path of the workspace's working copy on the server.
     path: str

@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
+import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -111,6 +113,100 @@ DEMO_SKILLS = {
         "then name the area of the codebase most likely responsible.",
     ),
 }
+
+
+# The "Handbook" git workspace: a local bare repository stands in for the
+# remote, with a short history and a few uncommitted edits in the working copy.
+_HANDBOOK_HISTORY: list[tuple[str, str, str, dict[str, str]]] = [
+    (
+        "Alex Chen <alex@example.com>",
+        "2026-09-14T09:30:00+02:00",
+        "Start the team handbook",
+        {
+            "README.md": "# Team handbook\n\nHow the platform team works: on-call, releases and reviews.\n\n"
+            "- [On-call](on-call.md)\n- [Releases](releases.md)\n",
+            "on-call.md": "# On-call\n\nThe on-call engineer owns production alerts for one week,\n"
+            "Monday to Monday.\n\n## Handoff\n\n- Walk through open incidents with the next on-call.\n"
+            "- Hand over the pager in the team channel.\n\n## Escalation\n\n"
+            "Page the service owner after 30 minutes without progress.\n",
+        },
+    ),
+    (
+        "Sam Rivera <sam@example.com>",
+        "2026-09-17T14:05:00+02:00",
+        "Add the release checklist",
+        {
+            "releases.md": "# Releases\n\n1. Freeze the branch on Wednesday.\n"
+            "2. Run the load test against staging.\n3. Publish the engineering digest.\n",
+        },
+    ),
+    (
+        "Alex Chen <alex@example.com>",
+        "2026-09-22T11:40:00+02:00",
+        "Page owners sooner",
+        {
+            "on-call.md": "# On-call\n\nThe on-call engineer owns production alerts for one week,\n"
+            "Monday to Monday.\n\n## Handoff\n\n- Walk through open incidents with the next on-call.\n"
+            "- Hand over the pager in the team channel.\n\n## Escalation\n\n"
+            "Page the service owner after 15 minutes without progress.\n",
+        },
+    ),
+]
+
+_HANDBOOK_EDITS = {
+    "README.md": "# Team handbook\n\nHow the platform team works: on-call, releases and reviews.\n\n"
+    "- [On-call](on-call.md)\n- [Releases](releases.md)\n- [Incident reviews](incident-review.md)\n",
+    "on-call.md": "# On-call\n\nThe on-call engineer owns production alerts for one week,\n"
+    "Monday to Monday.\n\n## Handoff\n\n- Walk through open incidents with the next on-call.\n"
+    "- Review the error budget together.\n"
+    "- Hand over the pager and post the handoff note in #platform-oncall.\n\n## Escalation\n\n"
+    "Page the service owner after 15 minutes without progress.\n",
+    "incident-review.md": "# Incident reviews\n\nHold a blameless review within five working days\n"
+    "of any customer-facing incident.\n",
+}
+
+
+def _git(cwd: Path, *args: str, env: dict[str, str] | None = None) -> None:
+    # The developer's own git config (signing, hooks, aliases) stays out of it.
+    base = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+    subprocess.run(
+        ["git", *args], cwd=cwd, env={**base, **(env or {})}, check=True, capture_output=True
+    )
+
+
+def seed_handbook_repo(data_dir: Path) -> str:
+    """Create the bare remote and the working copy; return the remote's URL."""
+    remotes = data_dir / "git-remotes"
+    bare = remotes / "handbook.git"
+    seed = remotes / "seed"
+    shutil.rmtree(remotes, ignore_errors=True)
+    remotes.mkdir(parents=True)
+    _git(remotes, "init", "--bare", "--initial-branch=main", str(bare))
+    _git(remotes, "init", "--initial-branch=main", str(seed))
+    for author, date, message, files in _HANDBOOK_HISTORY:
+        for name, text in files.items():
+            (seed / name).write_text(text, encoding="utf-8")
+        who, email = author[: author.index(" <")], author[author.index("<") + 1 : -1]
+        env = {
+            "GIT_AUTHOR_NAME": who,
+            "GIT_AUTHOR_EMAIL": email,
+            "GIT_COMMITTER_NAME": who,
+            "GIT_COMMITTER_EMAIL": email,
+            "GIT_AUTHOR_DATE": date,
+            "GIT_COMMITTER_DATE": date,
+        }
+        _git(seed, "add", "-A", env=env)
+        _git(seed, "commit", "-m", message, env=env)
+    _git(seed, "push", str(bare), "main")
+    shutil.rmtree(seed)
+
+    url = bare.resolve().as_uri()
+    clone = data_dir / "workspaces" / "handbook"
+    shutil.rmtree(clone, ignore_errors=True)
+    _git(data_dir, "clone", "--branch", "main", "--single-branch", url, str(clone))
+    for name, text in _HANDBOOK_EDITS.items():
+        (clone / name).write_text(text, encoding="utf-8")
+    return url
 
 
 def write_skill_files(skills_dir: Path) -> None:
@@ -1146,6 +1242,19 @@ async def seed() -> None:
             encoding="utf-8",
         )
         s.add(Workspace(name="Agents & workflows", slug="definitions", kind="local"))
+
+        handbook_url = seed_handbook_repo(Path(os.environ["PRECURSOR_DATA_DIR"]))
+        s.add(
+            Workspace(
+                name="Team handbook",
+                slug="handbook",
+                kind="git",
+                repo_url=handbook_url,
+                branch="main",
+                cloned_at=ago(days=6),
+                last_synced_at=ago(hours=3),
+            )
+        )
 
         await s.commit()
 

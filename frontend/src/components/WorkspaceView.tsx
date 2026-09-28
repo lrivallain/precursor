@@ -1,4 +1,5 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import {
   ArrowUp,
   ClipboardCheck,
@@ -34,7 +35,7 @@ import { Markdown } from "./Markdown";
 import { ResizeHandle } from "./ResizeHandle";
 import { WorkspaceChat } from "./WorkspaceChat";
 import { FileTree } from "./FileTree";
-import { ChangesModal } from "./GitDiffViewer";
+import { ChangesPanel, GitDiffPane, discardPrompt } from "./GitChanges";
 import { DrawioEditor } from "./DrawioEditor";
 import {
   DefinitionFileIssues,
@@ -42,9 +43,12 @@ import {
   useDefinitionReport,
 } from "./DefinitionFileIssues";
 import type { CodeEditorHandle, EditorMarker } from "./CodeEditor";
+import { lineChanges } from "../lib/diffGutter";
+import type { LineChange } from "../lib/diffGutter";
 import { PlainTextEditor } from "./PlainTextEditor";
 import type {
   GitActionResult,
+  GitFileStatus,
   GitStatus,
   Workspace,
   WorkspaceFileNode,
@@ -101,6 +105,33 @@ const CodeEditor = lazy(() =>
     .then((m) => ({ default: m.CodeEditor }))
     .catch(() => ({ default: PlainTextEditor })),
 );
+
+function PaneTab({
+  active,
+  onSelect,
+  children,
+}: {
+  active: boolean;
+  onSelect: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      role="tab"
+      aria-selected={active}
+      className={`inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium uppercase tracking-wide ${
+        active ? "bg-surface text-text" : "text-muted hover:text-text"
+      }`}
+      onClick={onSelect}
+    >
+      {children}
+    </button>
+  );
+}
+
+// Which list the left pane shows in a git workspace (per browser).
+const LEFT_TAB_KEY = "precursor:workspace:leftTab";
+type LeftTab = "files" | "changes";
 
 const VSCODE_HINT =
   "\nOpens the server's copy, so VS Code must run on the same computer.";
@@ -174,6 +205,15 @@ export function WorkspaceView({
   // a preview, keeping its undo history, scroll and cursor.
   const [editorFor, setEditorFor] = useState<string | null>(null);
   const editorHandle = useRef<CodeEditorHandle | null>(null);
+  const [leftTabPref, setLeftTabPref] = useState<LeftTab>(() =>
+    localStorage.getItem(LEFT_TAB_KEY) === "changes" ? "changes" : "files",
+  );
+  // The changed file whose diff fills the main area (over the editor, which
+  // stays mounted underneath).
+  const [diffFile, setDiffFile] = useState<GitFileStatus | null>(null);
+  // A pull or push git couldn't do on its own.
+  const [conflict, setConflict] = useState<{ detail: string; path: string } | null>(null);
+  const [gutter, setGutter] = useState<LineChange[]>([]);
   // Inline create-in-tree state (VS Code style): an input row appears at the
   // target parent ("" = root) until the user confirms or cancels. No modal.
   const [pendingCreate, setPendingCreate] = useState<{
@@ -183,6 +223,14 @@ export function WorkspaceView({
 
   const dirty = content !== savedContent;
   const isGit = area.kind !== "local";
+  const leftTab: LeftTab = isGit ? leftTabPref : "files";
+  function setLeftTab(tab: LeftTab): void {
+    setLeftTabPref(tab);
+    localStorage.setItem(LEFT_TAB_KEY, tab);
+  }
+  // The open file as git names it (relative to the repository, not the subdir).
+  const subdir = (area.subdir ?? "").replace(/^\/+|\/+$/g, "");
+  const repoPath = isGit && activePath ? (subdir ? `${subdir}/${activePath}` : activePath) : null;
   const showPreview = activePath !== null && mode === "preview" && hasPreview(activePath);
   const editorVisible =
     activePath !== null && !loadingFile && isEditable(activePath) && !showPreview;
@@ -219,8 +267,9 @@ export function WorkspaceView({
   // list → detail flow: the tree owns the width until a file is opened, and
   // the editor's back button returns to it.
   const narrow = useIsNarrow();
-  const showFiles = !narrow || !activePath;
-  const showEditor = !narrow || activePath !== null;
+  const detailOpen = activePath !== null || diffFile !== null;
+  const showFiles = !narrow || !detailOpen;
+  const showEditor = !narrow || detailOpen;
 
   const refreshFiles = useCallback(async () => {
     setFiles(await api.workspaces.listFiles(area.id));
@@ -263,8 +312,42 @@ export function WorkspaceView({
 
   useEffect(() => {
     setFetchError(null);
+    setDiffFile(null);
+    setConflict(null);
     void fetchRemote();
   }, [fetchRemote]);
+
+  // The diff follows the file's status; it closes once the file has no
+  // changes left (committed, discarded).
+  useEffect(() => {
+    setDiffFile((open) => {
+      if (!open) return open;
+      const now = status?.files.find((f) => f.path === open.path);
+      if (!now) return null;
+      return now.code === open.code && now.orig_path === open.orig_path ? open : now;
+    });
+  }, [status]);
+
+  // Change bars in the editor's gutter, against HEAD: on open and whenever the
+  // status is refreshed (after a save, a pull, a commit…).
+  useEffect(() => {
+    if (!repoPath || !status?.files.some((f) => f.path === repoPath)) {
+      setGutter([]);
+      return;
+    }
+    let cancelled = false;
+    api.workspaces
+      .gitDiff(area.id, repoPath)
+      .then((d) => {
+        if (!cancelled) setGutter(d.binary ? [] : lineChanges(d.diff));
+      })
+      .catch(() => {
+        if (!cancelled) setGutter([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [area.id, repoPath, status]);
 
   useEffect(() => {
     let cancelled = false;
@@ -308,6 +391,7 @@ export function WorkspaceView({
     try {
       const f = await api.workspaces.readFile(area.id, path);
       cursorRef.current = null;
+      setDiffFile(null);
       setActivePath(path);
       onPathChange(path);
       setContent(f.content);
@@ -441,6 +525,63 @@ export function WorkspaceView({
     }
   }
 
+  // Files may have changed under git's hands: reload the tree, the status and
+  // the open file.
+  async function afterGitChange(): Promise<void> {
+    await refreshFiles();
+    await refreshStatus();
+    if (activePath) {
+      try {
+        const f = await api.workspaces.readFile(area.id, activePath);
+        setContent(f.content);
+        setSavedContent(f.content);
+      } catch {
+        setActivePath(null);
+        onPathChange(null);
+      }
+    }
+  }
+
+  async function commitFiles(
+    message: string,
+    paths: string[],
+    andPush: boolean,
+  ): Promise<GitActionResult> {
+    setError(null);
+    setConflict(null);
+    try {
+      const res = andPush
+        ? await api.workspaces.gitCommitPush(area.id, message, paths)
+        : await api.workspaces.gitCommit(area.id, message, paths);
+      if (!res.ok) {
+        if (res.needs_manual_merge) setConflict({ detail: res.detail, path: res.local_path ?? "" });
+        else setError(res.detail);
+      }
+      await afterGitChange();
+      return res;
+    } catch (e) {
+      const detail = e instanceof Error ? e.message : String(e);
+      setError(detail);
+      return { ok: false, detail, needs_manual_merge: false, local_path: null, status: null };
+    }
+  }
+
+  async function discardFile(file: GitFileStatus): Promise<void> {
+    if (!(await confirmAction(discardPrompt(file)))) return;
+    setError(null);
+    try {
+      await api.workspaces.gitDiscard(area.id, file.path);
+      await afterGitChange();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  function openFromChanges(browsePath: string): void {
+    if (browsePath === activePath) setDiffFile(null);
+    else void openFile(browsePath);
+  }
+
   return (
     <div className="h-full flex flex-col">
       {isGit ? (
@@ -454,18 +595,14 @@ export function WorkspaceView({
             await fetchRemote();
             await refreshStatus();
           }}
-          onAfterSync={async () => {
-            await refreshFiles();
-            await refreshStatus();
-            // Reload the open file in case it changed during a pull.
-            if (activePath) {
-              try {
-                const f = await api.workspaces.readFile(area.id, activePath);
-                setContent(f.content);
-                setSavedContent(f.content);
-              } catch {
-                setActivePath(null);
-              }
+          onAfterSync={afterGitChange}
+          onConflict={setConflict}
+          onShowChanges={() => {
+            setLeftTab("changes");
+            // On a phone the list is its own screen.
+            if (narrow) {
+              setDiffFile(null);
+              setActivePath(null);
             }
           }}
           onDeleted={onDeleted}
@@ -487,6 +624,29 @@ export function WorkspaceView({
         </div>
       )}
 
+      {conflict && (
+        <div className="px-4 py-3 text-sm bg-amber-500/10 border-b border-border space-y-1">
+          <p className="font-medium text-amber-600 dark:text-amber-400">
+            Couldn&apos;t sync automatically — manual merge needed.
+          </p>
+          <p className="text-muted">{conflict.detail}</p>
+          {conflict.path && (
+            <p className="text-muted">
+              Resolve it from a terminal (or Open in VS Code), then click Pull again:
+              <code className="ml-1 px-1.5 py-0.5 rounded bg-surface font-mono text-xs">
+                git status
+              </code>
+            </p>
+          )}
+          <button
+            className="text-xs underline text-muted hover:text-text"
+            onClick={() => setConflict(null)}
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       <div className="flex-1 min-h-0 flex">
         {showFiles && (
         <aside
@@ -499,9 +659,26 @@ export function WorkspaceView({
         >
           {!narrow && <ResizeHandle onMouseDown={onFilesResize} side="right" />}
           <div className="flex items-center justify-between px-3 h-10 border-b border-border">
-            <span className="text-xs font-medium text-muted uppercase tracking-wide">
-              Files
-            </span>
+            {isGit ? (
+              <div role="tablist" aria-label="Workspace panes" className="-ml-1.5 flex items-center gap-0.5">
+                <PaneTab active={leftTab === "files"} onSelect={() => setLeftTab("files")}>
+                  Files
+                </PaneTab>
+                <PaneTab active={leftTab === "changes"} onSelect={() => setLeftTab("changes")}>
+                  Changes
+                  {(status?.files.length ?? 0) > 0 && (
+                    <span className="ml-1 rounded bg-accent/15 px-1 text-[10px] leading-4 text-accent">
+                      {status?.files.length}
+                    </span>
+                  )}
+                </PaneTab>
+              </div>
+            ) : (
+              <span className="text-xs font-medium text-muted uppercase tracking-wide">
+                Files
+              </span>
+            )}
+            {leftTab === "files" && (
             <div className="flex items-center gap-0.5">
               <button
                 className="p-1 rounded hover:bg-surface text-muted hover:text-text"
@@ -520,7 +697,22 @@ export function WorkspaceView({
                 <FilePlus2 size={15} />
               </button>
             </div>
+            )}
           </div>
+          {leftTab === "changes" ? (
+            <div className="flex-1 min-h-0">
+              <ChangesPanel
+                files={status?.files ?? []}
+                activeDiff={diffFile?.path ?? null}
+                canPush={!status?.detached}
+                onOpenDiff={setDiffFile}
+                onOpenFile={openFromChanges}
+                onDiscard={discardFile}
+                onCommit={(message, paths) => commitFiles(message, paths, false)}
+                onCommitPush={(message, paths) => commitFiles(message, paths, true)}
+              />
+            </div>
+          ) : (
           <div className="flex-1 overflow-auto py-1">
             <FileTree
               files={files}
@@ -535,11 +727,27 @@ export function WorkspaceView({
               onMove={handleMove}
             />
           </div>
+          )}
         </aside>
         )}
 
         {showEditor && (
         <section className="flex-1 min-w-0 flex flex-col">
+          {diffFile && (
+            <GitDiffPane
+              workspaceId={area.id}
+              file={diffFile}
+              narrow={narrow}
+              version={status}
+              onOpenFile={
+                diffFile.browse_path != null && !diffFile.code.includes("D")
+                  ? () => openFromChanges(diffFile.browse_path as string)
+                  : undefined
+              }
+              onClose={() => setDiffFile(null)}
+            />
+          )}
+          <div className={diffFile ? "hidden" : "flex min-h-0 flex-1 flex-col"}>
           {activePath ? (
             <>
               {/* Wraps on phones: fixed-height nowrap would clip the
@@ -699,6 +907,7 @@ export function WorkspaceView({
                             }}
                             compact={narrow}
                             markers={markers}
+                            lineChanges={gutter}
                             handle={editorHandle}
                           />
                         </Suspense>
@@ -718,9 +927,12 @@ export function WorkspaceView({
             </>
           ) : (
             <div className="h-full flex items-center justify-center text-muted text-sm">
-              Select a file to view or edit.
+              {leftTab === "changes"
+                ? "Select a changed file to see what changed."
+                : "Select a file to view or edit."}
             </div>
           )}
+          </div>
         </section>
         )}
 
@@ -854,6 +1066,8 @@ function GitBar({
   fetchError,
   onRefresh,
   onAfterSync,
+  onConflict,
+  onShowChanges,
   onDeleted,
   onError,
   rootPath,
@@ -865,16 +1079,15 @@ function GitBar({
   fetchError: string | null;
   onRefresh: () => Promise<void>;
   onAfterSync: () => Promise<void>;
+  onConflict: (conflict: { detail: string; path: string } | null) => void;
+  /** Show the Changes list (the review and commit). */
+  onShowChanges: () => void;
   onDeleted: () => void;
   onError: (msg: string | null) => void;
   rootPath: string | null;
 }) {
   const confirmAction = useConfirm();
   const [busy, setBusy] = useState<"pull" | "push" | null>(null);
-  const [conflict, setConflict] = useState<{ detail: string; path: string } | null>(
-    null,
-  );
-  const [reviewing, setReviewing] = useState(false);
   const [copied, setCopied] = useState(false);
 
   const changeCount = status?.files.length ?? 0;
@@ -898,11 +1111,11 @@ function GitBar({
   async function pull(): Promise<void> {
     setBusy("pull");
     onError(null);
-    setConflict(null);
+    onConflict(null);
     try {
       const res = await api.workspaces.gitPull(area.id);
       if (!res.ok && res.needs_manual_merge) {
-        setConflict({ detail: res.detail, path: res.local_path ?? "" });
+        onConflict({ detail: res.detail, path: res.local_path ?? "" });
       }
       await onAfterSync();
     } catch (e) {
@@ -915,12 +1128,12 @@ function GitBar({
   async function push(): Promise<void> {
     setBusy("push");
     onError(null);
-    setConflict(null);
+    onConflict(null);
     try {
       const res = await api.workspaces.gitPush(area.id);
       if (!res.ok) {
         if (res.needs_manual_merge) {
-          setConflict({ detail: res.detail, path: res.local_path ?? "" });
+          onConflict({ detail: res.detail, path: res.local_path ?? "" });
         } else {
           onError(res.detail);
         }
@@ -930,42 +1143,6 @@ function GitBar({
       onError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(null);
-    }
-  }
-
-  async function commitPaths(message: string, paths: string[]): Promise<GitActionResult> {
-    onError(null);
-    const res = await api.workspaces.gitCommit(area.id, message, paths);
-    if (!res.ok) onError(res.detail);
-    await onAfterSync();
-    return res;
-  }
-
-  async function commitPushPaths(
-    message: string,
-    paths: string[],
-  ): Promise<GitActionResult> {
-    onError(null);
-    setConflict(null);
-    const res = await api.workspaces.gitCommitPush(area.id, message, paths);
-    if (!res.ok) {
-      if (res.needs_manual_merge) {
-        setConflict({ detail: res.detail, path: res.local_path ?? "" });
-      } else {
-        onError(res.detail);
-      }
-    }
-    await onAfterSync();
-    return res;
-  }
-
-  async function discardPath(path: string): Promise<void> {
-    onError(null);
-    try {
-      await api.workspaces.gitDiscard(area.id, path);
-      await onAfterSync();
-    } catch (e) {
-      onError(e instanceof Error ? e.message : String(e));
     }
   }
 
@@ -989,7 +1166,9 @@ function GitBar({
 
   return (
     <>
-      <div className="flex items-center gap-3 px-4 h-10 border-b border-border bg-surface/40 text-sm">
+      {/* Wraps on phones, like the file header, rather than pushing Pull and
+          Push off-screen. */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-1.5 border-b border-border bg-surface/40 text-sm md:h-10 md:flex-nowrap md:py-0">
         <span className="inline-flex items-center gap-1.5 text-muted">
           <GitBranch size={14} />
           {detached ? (
@@ -1019,7 +1198,7 @@ function GitBar({
             ↓ {status.behind} behind
           </span>
         )}
-        <span className="text-muted">
+        <span className="whitespace-nowrap text-muted">
           {changeCount > 0
             ? `${changeCount} uncommitted change${changeCount === 1 ? "" : "s"}`
             : "clean"}
@@ -1103,8 +1282,9 @@ function GitBar({
         )}
         <button
           className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-accent text-white text-xs disabled:opacity-50"
-          disabled={busy !== null || (changeCount === 0 && !dirty)}
-          onClick={() => setReviewing(true)}
+          disabled={changeCount === 0 && !dirty}
+          data-tooltip="Review the changed files and commit them"
+          onClick={onShowChanges}
         >
           <Upload size={13} />
           Review &amp; commit
@@ -1126,40 +1306,6 @@ function GitBar({
         )}
       </div>
 
-      {conflict && (
-        <div className="px-4 py-3 text-sm bg-amber-500/10 border-b border-border space-y-1">
-          <p className="font-medium text-amber-600 dark:text-amber-400">
-            Couldn&apos;t sync automatically — manual merge needed.
-          </p>
-          <p className="text-muted">{conflict.detail}</p>
-          {conflict.path && (
-            <p className="text-muted">
-              Resolve it from a terminal, then click Pull again:
-              <code className="ml-1 px-1.5 py-0.5 rounded bg-surface font-mono text-xs">
-                cd {conflict.path} &amp;&amp; git status
-              </code>
-            </p>
-          )}
-          <button
-            className="text-xs underline text-muted hover:text-text"
-            onClick={() => setConflict(null)}
-          >
-            Dismiss
-          </button>
-        </div>
-      )}
-
-      {reviewing && (
-        <ChangesModal
-          area={area}
-          files={status?.files ?? []}
-          onClose={() => setReviewing(false)}
-          onCommit={commitPaths}
-          onCommitPush={commitPushPaths}
-          canPush={!detached}
-          onDiscard={discardPath}
-        />
-      )}
     </>
   );
 }

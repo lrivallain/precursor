@@ -9,6 +9,7 @@ import {
   wrapsLines,
 } from "../lib/monaco";
 import { isDefinitionFile } from "./DefinitionFileIssues";
+import type { LineChange } from "../lib/diffGutter";
 
 /** A finding to underline, e.g. from the definitions check. 1-based, end exclusive. */
 export interface EditorMarker {
@@ -24,6 +25,13 @@ export interface CodeEditorHandle {
   /** Move the cursor to a position and scroll it into view. */
   reveal: (line: number, column: number) => void;
 }
+
+// The overview ruler's marks for the gutter bars (styles in index.css).
+const GUTTER_COLORS = {
+  added: "#2ea04399",
+  modified: "#3b82f699",
+  deleted: "#f8514999",
+} as const;
 
 // Kept apart from monaco-yaml's own markers, which it replaces as you type.
 const MARKER_OWNER = "precursor-check";
@@ -42,6 +50,8 @@ export interface CodeEditorProps {
   compact?: boolean;
   /** Findings about the file as last saved; they move with later edits. */
   markers?: EditorMarker[];
+  /** Lines changed since the last commit, shown as gutter bars. */
+  lineChanges?: LineChange[];
   handle?: Ref<CodeEditorHandle | null>;
 }
 
@@ -58,6 +68,7 @@ export function CodeEditor({
   onCursorChange,
   compact = false,
   markers,
+  lineChanges,
   handle,
 }: CodeEditorProps) {
   const host = useRef<HTMLDivElement>(null);
@@ -179,6 +190,24 @@ export function CodeEditor({
       })),
     );
   }, [editor, markers]);
+
+  useEffect(() => {
+    if (!editor) return;
+    const collection = editor.createDecorationsCollection(
+      (lineChanges ?? []).map((change) => ({
+        range: new monaco.Range(change.start, 1, change.end, 1),
+        options: {
+          isWholeLine: true,
+          linesDecorationsClassName: `precursor-gutter-${change.kind}`,
+          overviewRuler: {
+            color: GUTTER_COLORS[change.kind],
+            position: monaco.editor.OverviewRulerLane.Left,
+          },
+        },
+      })),
+    );
+    return () => collection.clear();
+  }, [editor, lineChanges]);
 
   useImperativeHandle(
     handle,

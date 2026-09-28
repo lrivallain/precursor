@@ -288,6 +288,28 @@ const scenes = {
     },
   },
 
+  // The git workspace's Changes tab, with one file's diff against HEAD. The
+  // pane is chosen through the stored preference, as a returning user has it.
+  "workspaces-changes": {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await page.addInitScript(() =>
+        localStorage.setItem("precursor:workspace:leftTab", "changes"),
+      );
+      await page.goto(`${BASE}/ws/handbook`, { waitUntil: "networkidle" });
+      // The diff gets the assistant's width, to show side by side.
+      await page.getByRole("button", { name: "Hide assistant" }).click();
+      const changes = page.getByLabel("Changes", { exact: true });
+      await changes.getByRole("button", { name: /^on-call\.md,/ }).click();
+      await page.locator(".monaco-diff-editor .view-line", { hasText: "error budget" }).first().waitFor();
+      await page.getByText("3 of 3 to commit").waitFor();
+      await changes.getByLabel("Commit message").fill("Document handoffs and incident reviews");
+      await page.mouse.move(1200, 900);
+      await sleep(600);
+      return undefined;
+    },
+  },
+
   "agents-setup": {
     viewport: { width: 1200, height: 800 },
     async go(page) {

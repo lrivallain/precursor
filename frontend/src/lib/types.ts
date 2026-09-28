@@ -2070,6 +2070,16 @@ export interface FileDiff {
   binary: boolean;
 }
 
+/** Both sides of one file's diff; null where the file doesn't exist. */
+export interface FileVersions {
+  path: string;
+  original: string | null;
+  modified: string | null;
+  binary: boolean;
+  /** Over 2 MB: no content is sent. */
+  too_large: boolean;
+}
+
 export interface LocalPath {
   path: string;
 }

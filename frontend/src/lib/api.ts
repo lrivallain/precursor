@@ -49,6 +49,7 @@ import type {
   GhCreatePostResult,
   GhSyncResult,
   FileDiff,
+  FileVersions,
   GitActionResult,
   GitHubIssue,
   GitStatus,
@@ -1479,6 +1480,19 @@ export const api = {
         `/api/workspaces/${workspaceId}/git/discard?path=${encodeURIComponent(path)}`,
         { method: "POST" },
       ),
+    // A file at `base` (HEAD) and in the working copy — or at `head` — for the
+    // diff editor. `originalPath` is a rename's old name.
+    gitFileVersions: (
+      workspaceId: number,
+      path: string,
+      opts: { originalPath?: string | null; base?: string; head?: string } = {},
+    ) => {
+      const q = new URLSearchParams({ path });
+      if (opts.originalPath) q.set("original_path", opts.originalPath);
+      if (opts.base) q.set("base", opts.base);
+      if (opts.head) q.set("head", opts.head);
+      return request<FileVersions>(`/api/workspaces/${workspaceId}/git/file-versions?${q}`);
+    },
     gitDiff: (workspaceId: number, path: string) =>
       request<FileDiff>(
         `/api/workspaces/${workspaceId}/git/diff?path=${encodeURIComponent(path)}`,
