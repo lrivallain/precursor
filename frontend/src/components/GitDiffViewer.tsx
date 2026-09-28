@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { Loader2, RotateCcw, Square, SquareCheck, Upload, X } from "lucide-react";
+import {
+  GitCommitHorizontal,
+  Loader2,
+  RotateCcw,
+  Square,
+  SquareCheck,
+  Upload,
+  X,
+} from "lucide-react";
 import { api } from "../lib/api";
 import { useConfirm } from "./ConfirmDialog";
 import type {
@@ -18,14 +26,20 @@ export function ChangesModal({
   area,
   files,
   onClose,
+  onCommit,
   onCommitPush,
   onDiscard,
+  canPush = true,
 }: {
   area: Workspace;
   files: GitFileStatus[];
   onClose: () => void;
+  /** Commit locally only; Push (in the header) sends it later. */
+  onCommit: (message: string, paths: string[]) => Promise<GitActionResult>;
   onCommitPush: (message: string, paths: string[]) => Promise<GitActionResult>;
   onDiscard: (path: string) => Promise<void>;
+  /** False on a detached HEAD: there is no branch to push. */
+  canPush?: boolean;
 }) {
   const confirmAction = useConfirm();
   const [selected, setSelected] = useState<Set<string>>(
@@ -35,7 +49,7 @@ export function ChangesModal({
   const [diff, setDiff] = useState<FileDiff | null>(null);
   const [loadingDiff, setLoadingDiff] = useState(false);
   const [message, setMessage] = useState("Update workspace content");
-  const [pushing, setPushing] = useState(false);
+  const [pushing, setPushing] = useState<"commit" | "push" | null>(null);
 
   const loadDiff = useCallback(
     async (path: string): Promise<void> => {
@@ -71,14 +85,15 @@ export function ChangesModal({
     setSelected(allSelected ? new Set() : new Set(files.map((f) => f.path)));
   }
 
-  async function commit(): Promise<void> {
+  async function commit(andPush: boolean): Promise<void> {
     if (selected.size === 0 || !message.trim()) return;
-    setPushing(true);
+    setPushing(andPush ? "push" : "commit");
     try {
-      const res = await onCommitPush(message.trim(), [...selected]);
+      const run = andPush ? onCommitPush : onCommit;
+      const res = await run(message.trim(), [...selected]);
       if (res.ok) onClose();
     } finally {
-      setPushing(false);
+      setPushing(null);
     }
   }
 
@@ -216,17 +231,32 @@ export function ChangesModal({
             onChange={(e) => setMessage(e.target.value)}
           />
           <button
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-accent text-white text-sm disabled:opacity-50"
-            disabled={pushing || selected.size === 0 || !message.trim()}
-            onClick={commit}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-border text-sm hover:bg-surface disabled:opacity-50"
+            disabled={pushing !== null || selected.size === 0 || !message.trim()}
+            data-tooltip="Commit here only; Push sends it to the remote later"
+            onClick={() => void commit(false)}
           >
-            {pushing ? (
+            {pushing === "commit" ? (
               <Loader2 size={14} className="animate-spin" />
             ) : (
-              <Upload size={14} />
+              <GitCommitHorizontal size={14} />
             )}
-            Commit &amp; Push ({selected.size})
+            Commit ({selected.size})
           </button>
+          {canPush && (
+            <button
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-accent text-white text-sm disabled:opacity-50"
+              disabled={pushing !== null || selected.size === 0 || !message.trim()}
+              onClick={() => void commit(true)}
+            >
+              {pushing === "push" ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : (
+                <Upload size={14} />
+              )}
+              Commit &amp; Push ({selected.size})
+            </button>
+          )}
         </div>
       </div>
     </div>

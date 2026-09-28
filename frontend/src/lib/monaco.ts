@@ -67,6 +67,32 @@ export const monacoYaml = configureMonacoYaml(
 const DEFINITION_KINDS = ["agent", "workflow"] as const;
 let definitionSchemas: Promise<void> | null = null;
 
+// Keywords whose value is data, not a subschema: a "title" in there is a value.
+const DATA_KEYWORDS = new Set(["default", "examples", "const", "enum"]);
+const SCHEMA_MAPS = new Set(["properties", "$defs", "definitions", "patternProperties"]);
+
+/**
+ * A JSON Schema without its `title` keywords. yaml-language-server's hover
+ * prints the title of every schema matching a node, joined — "Precursor workflow
+ * definition || Precursor workflow definition" — so the hover keeps just the
+ * descriptions. A property *named* `title` is left alone.
+ */
+function withoutTitles(schema: unknown): unknown {
+  if (Array.isArray(schema)) return schema.map(withoutTitles);
+  if (!schema || typeof schema !== "object") return schema;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(schema)) {
+    if (key === "title" && typeof value === "string") continue;
+    if (DATA_KEYWORDS.has(key)) out[key] = value;
+    else if (SCHEMA_MAPS.has(key) && value && typeof value === "object")
+      out[key] = Object.fromEntries(
+        Object.entries(value).map(([name, sub]) => [name, withoutTitles(sub)]),
+      );
+    else out[key] = withoutTitles(value);
+  }
+  return out;
+}
+
 /**
  * Give `*.agent.yaml` / `*.workflow.yaml` their JSON Schema: completion,
  * hovers, and unknown keys flagged as you type. Fetched once, the first time
@@ -76,18 +102,19 @@ export function loadDefinitionSchemas(
   load: (kind: (typeof DEFINITION_KINDS)[number]) => Promise<Record<string, unknown>>,
 ): Promise<void> {
   definitionSchemas ??= Promise.all(DEFINITION_KINDS.map((kind) => load(kind)))
+    .then((loaded) => loaded.map((schema) => withoutTitles(schema) as object))
     .then((schemas) =>
       monacoYaml.update({
         schemas: DEFINITION_KINDS.flatMap((kind, i) => [
           {
             uri: new URL(`/api/definitions/schema/${kind}`, window.location.origin).href,
             fileMatch: [`**/*.${kind}.yaml`],
-            schema: schemas[i] as object,
+            schema: schemas[i],
           },
           // Where the documented modeline (`$schema=../../../schemas/…`)
           // resolves for a file in the definitions workspace: the schema is
           // known, not "unable to load".
-          { uri: `file:///schemas/${kind}.schema.json`, fileMatch: [], schema: schemas[i] as object },
+          { uri: `file:///schemas/${kind}.schema.json`, fileMatch: [], schema: schemas[i] },
         ]),
       }),
     )

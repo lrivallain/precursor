@@ -1445,8 +1445,24 @@ export const api = {
       }),
     gitStatus: (workspaceId: number) =>
       request<GitStatus>(`/api/workspaces/${workspaceId}/git/status`),
+    // Updates the remote-tracking branch (ahead/behind); changes no file.
+    gitFetch: (workspaceId: number) =>
+      request<GitActionResult>(`/api/workspaces/${workspaceId}/git/fetch`, {
+        method: "POST",
+      }),
     gitPull: (workspaceId: number) =>
       request<GitActionResult>(`/api/workspaces/${workspaceId}/git/pull`, {
+        method: "POST",
+      }),
+    // Commit locally; `paths` selects files, otherwise every change.
+    gitCommit: (workspaceId: number, message: string, paths?: string[]) =>
+      request<GitActionResult>(`/api/workspaces/${workspaceId}/git/commit`, {
+        method: "POST",
+        body: JSON.stringify(paths ? { message, paths } : { message }),
+      }),
+    // Push the checked-out branch, publishing it the first time.
+    gitPush: (workspaceId: number) =>
+      request<GitActionResult>(`/api/workspaces/${workspaceId}/git/push`, {
         method: "POST",
       }),
     gitCommitPush: (

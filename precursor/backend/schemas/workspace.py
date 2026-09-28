@@ -96,18 +96,33 @@ class LocalPath(BaseModel):
 
 
 class GitFileStatus(BaseModel):
+    # Relative to the repository root.
     path: str
-    # Two-letter porcelain code, e.g. " M", "??", "A ".
+    # Two-letter porcelain code, e.g. " M", "??", "A ", "UU".
     code: str
+    # A rename's previous path.
+    orig_path: str | None = None
+    # Unmerged: git stopped on a conflict in this file.
+    conflicted: bool = False
+    # Relative to the workspace's subdir, as the file browser lists it; null
+    # when the file is outside the subdir. Equal to ``path`` without a subdir.
+    browse_path: str | None = None
 
 
 class GitStatus(BaseModel):
+    # The checked-out branch; "HEAD" when detached.
     branch: str
+    detached: bool = False
+    # The branch it tracks on origin, e.g. "origin/main"; None while it isn't
+    # published (tracking a local branch doesn't count).
+    upstream: str | None = None
     # Commits ahead/behind the upstream branch (None when no upstream).
     ahead: int | None = None
     behind: int | None = None
     # True when there are uncommitted changes in the working tree.
     dirty: bool = False
+    # A merge is in progress (stopped on conflicts).
+    merging: bool = False
     files: list[GitFileStatus] = Field(default_factory=list)
 
 

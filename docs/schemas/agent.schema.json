@@ -7,7 +7,6 @@
         "enabled": {
           "default": false,
           "description": "Keep working toward the prompt on its own after each turn.",
-          "title": "Enabled",
           "type": "boolean"
         },
         "max_steps": {
@@ -15,7 +14,6 @@
           "description": "Autonomous steps before handing back.",
           "maximum": 100,
           "minimum": 1,
-          "title": "Max Steps",
           "type": "integer"
         }
       },
@@ -27,17 +25,14 @@
       "properties": {
         "mcp": {
           "default": true,
-          "title": "Mcp",
           "type": "boolean"
         },
         "skills": {
           "default": true,
-          "title": "Skills",
           "type": "boolean"
         },
         "memory": {
           "default": true,
-          "title": "Memory",
           "type": "boolean"
         },
         "mcp_servers": {
@@ -56,8 +51,7 @@
             }
           ],
           "default": null,
-          "description": "Only these MCP servers. Omit for every enabled server; [] for none.",
-          "title": "Mcp Servers"
+          "description": "Only these MCP servers. Omit for every enabled server; [] for none."
         }
       },
       "title": "AgentCapabilities",
@@ -77,15 +71,13 @@
             }
           ],
           "default": null,
-          "description": "Cumulative tokens before the agent is parked.",
-          "title": "Token Budget"
+          "description": "Cumulative tokens before the agent is parked."
         },
         "max_retries": {
           "default": 0,
           "description": "Automatic re-runs on failure.",
           "maximum": 10,
           "minimum": 0,
-          "title": "Max Retries",
           "type": "integer"
         }
       },
@@ -98,32 +90,27 @@
   "properties": {
     "kind": {
       "const": "agent",
-      "title": "Kind",
       "type": "string"
     },
     "format": {
       "default": 1,
       "maximum": 1,
       "minimum": 1,
-      "title": "Format",
       "type": "integer"
     },
     "id": {
       "description": "Stable identity linking this file to its run history. Never change it; renaming or moving the file keeps the history as long as the id stays.",
       "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
-      "title": "Id",
       "type": "string"
     },
     "title": {
       "maxLength": 200,
       "minLength": 1,
-      "title": "Title",
       "type": "string"
     },
     "prompt": {
       "default": "",
       "description": "The agent's objective.",
-      "title": "Prompt",
       "type": "string"
     },
     "model": {
@@ -136,8 +123,7 @@
           "type": "null"
         }
       ],
-      "default": null,
-      "title": "Model"
+      "default": null
     },
     "role": {
       "anyOf": [
@@ -151,8 +137,7 @@
         }
       ],
       "default": null,
-      "description": "Assistant Role, by name.",
-      "title": "Role"
+      "description": "Assistant Role, by name."
     },
     "approval_policy": {
       "anyOf": [
@@ -169,8 +154,7 @@
         }
       ],
       "default": null,
-      "description": "Tool-approval policy. Omit to inherit the global default.",
-      "title": "Approval Policy"
+      "description": "Tool-approval policy. Omit to inherit the global default."
     },
     "autonomy": {
       "$ref": "#/$defs/AgentAutonomy"

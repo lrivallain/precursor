@@ -1,7 +1,10 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  ArrowUp,
   ClipboardCheck,
   ClipboardCopy,
+  CloudOff,
+  CloudUpload,
   Code2,
   ChevronLeft,
   Download,
@@ -240,6 +243,29 @@ export function WorkspaceView({
     void refreshStatus();
   }, [refreshFiles, refreshStatus]);
 
+  // Ask the remote what it has, so ahead/behind are real: on open, and on
+  // Refresh. Changes no file.
+  const [fetching, setFetching] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+  const fetchRemote = useCallback(async () => {
+    if (area.kind === "local") return;
+    setFetching(true);
+    try {
+      const res = await api.workspaces.gitFetch(area.id);
+      if (res.status) setStatus(res.status);
+      setFetchError(res.ok ? null : res.detail);
+    } catch (e) {
+      setFetchError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setFetching(false);
+    }
+  }, [area.id, area.kind]);
+
+  useEffect(() => {
+    setFetchError(null);
+    void fetchRemote();
+  }, [fetchRemote]);
+
   useEffect(() => {
     let cancelled = false;
     setRootPath(null);
@@ -422,7 +448,12 @@ export function WorkspaceView({
           area={area}
           status={status}
           dirty={dirty}
-          onRefreshStatus={refreshStatus}
+          fetching={fetching}
+          fetchError={fetchError}
+          onRefresh={async () => {
+            await fetchRemote();
+            await refreshStatus();
+          }}
           onAfterSync={async () => {
             await refreshFiles();
             await refreshStatus();
@@ -699,9 +730,13 @@ export function WorkspaceView({
   );
 }
 
+// Keyed by the tree's paths, which are relative to the workspace's subdir.
 function statusMap(status: GitStatus | null): Map<string, string> {
   const m = new Map<string, string>();
-  for (const f of status?.files ?? []) m.set(f.path, f.code);
+  for (const f of status?.files ?? []) {
+    const path = f.browse_path === undefined ? f.path : f.browse_path;
+    if (path) m.set(path, f.code);
+  }
   return m;
 }
 
@@ -815,7 +850,9 @@ function GitBar({
   area,
   status,
   dirty,
-  onRefreshStatus,
+  fetching,
+  fetchError,
+  onRefresh,
   onAfterSync,
   onDeleted,
   onError,
@@ -824,7 +861,9 @@ function GitBar({
   area: Workspace;
   status: GitStatus | null;
   dirty: boolean;
-  onRefreshStatus: () => Promise<void>;
+  fetching: boolean;
+  fetchError: string | null;
+  onRefresh: () => Promise<void>;
   onAfterSync: () => Promise<void>;
   onDeleted: () => void;
   onError: (msg: string | null) => void;
@@ -839,6 +878,10 @@ function GitBar({
   const [copied, setCopied] = useState(false);
 
   const changeCount = status?.files.length ?? 0;
+  const detached = status?.detached ?? false;
+  // Known once status has loaded; an older backend doesn't report it.
+  const unpublished = status !== null && status.upstream === null && !detached;
+  const ahead = status?.ahead ?? 0;
 
   async function copyLocalPath(): Promise<void> {
     onError(null);
@@ -867,6 +910,35 @@ function GitBar({
     } finally {
       setBusy(null);
     }
+  }
+
+  async function push(): Promise<void> {
+    setBusy("push");
+    onError(null);
+    setConflict(null);
+    try {
+      const res = await api.workspaces.gitPush(area.id);
+      if (!res.ok) {
+        if (res.needs_manual_merge) {
+          setConflict({ detail: res.detail, path: res.local_path ?? "" });
+        } else {
+          onError(res.detail);
+        }
+      }
+      await onAfterSync();
+    } catch (e) {
+      onError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function commitPaths(message: string, paths: string[]): Promise<GitActionResult> {
+    onError(null);
+    const res = await api.workspaces.gitCommit(area.id, message, paths);
+    if (!res.ok) onError(res.detail);
+    await onAfterSync();
+    return res;
   }
 
   async function commitPushPaths(
@@ -920,13 +992,32 @@ function GitBar({
       <div className="flex items-center gap-3 px-4 h-10 border-b border-border bg-surface/40 text-sm">
         <span className="inline-flex items-center gap-1.5 text-muted">
           <GitBranch size={14} />
-          {status?.branch ?? area.branch}
+          {detached ? (
+            <span
+              className="text-amber-500"
+              data-tooltip="No branch is checked out, so Pull and Push are off. Check one out in a terminal or VS Code."
+            >
+              detached HEAD
+            </span>
+          ) : (
+            (status?.branch ?? area.branch)
+          )}
         </span>
-        {status && (status.behind ?? 0) > 0 && (
-          <span className="text-amber-500">↓ {status.behind} behind</span>
+        {unpublished && (
+          <span
+            className="rounded border border-border px-1.5 text-xs text-muted"
+            data-tooltip="This branch isn't on the remote yet. Publish pushes it there."
+          >
+            not published
+          </span>
         )}
-        {status && (status.ahead ?? 0) > 0 && (
-          <span className="text-blue-500">↑ {status.ahead} ahead</span>
+        {status && (status.behind ?? 0) > 0 && (
+          <span
+            className="text-amber-500"
+            data-tooltip="Commits on the remote you don't have yet. Pull brings them in."
+          >
+            ↓ {status.behind} behind
+          </span>
         )}
         <span className="text-muted">
           {changeCount > 0
@@ -934,13 +1025,24 @@ function GitBar({
             : "clean"}
         </span>
         <button
-          className="p-1 rounded hover:bg-surface text-muted hover:text-text"
-          aria-label="Refresh status"
-          data-tooltip="Refresh status"
-          onClick={() => void onRefreshStatus()}
+          className="p-1 rounded hover:bg-surface text-muted hover:text-text disabled:opacity-60"
+          aria-label="Refresh"
+          data-tooltip="Refresh (asks the remote for new commits)"
+          disabled={fetching}
+          onClick={() => void onRefresh()}
         >
-          <RefreshCw size={13} />
+          <RefreshCw size={13} className={fetching ? "animate-spin" : undefined} />
         </button>
+        {fetchError && (
+          <span
+            className="text-amber-500"
+            role="img"
+            aria-label="Couldn't reach the remote"
+            data-tooltip={`Couldn't reach the remote, so ahead/behind may be out of date:\n${fetchError}`}
+          >
+            <CloudOff size={13} />
+          </span>
+        )}
         <button
           className="p-1 rounded hover:bg-surface text-muted hover:text-text"
           aria-label="Copy local path"
@@ -965,7 +1067,10 @@ function GitBar({
 
         <button
           className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded border border-border hover:bg-surface text-xs disabled:opacity-50"
-          disabled={busy !== null}
+          disabled={busy !== null || detached || unpublished}
+          data-tooltip={
+            unpublished ? "Nothing to pull: this branch isn't on the remote yet." : undefined
+          }
           onClick={pull}
         >
           {busy === "pull" ? (
@@ -975,13 +1080,34 @@ function GitBar({
           )}
           Pull
         </button>
+        {!detached && (unpublished || ahead > 0) && (
+          <button
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded border border-border hover:bg-surface text-xs text-blue-600 dark:text-blue-400 disabled:opacity-50"
+            disabled={busy !== null}
+            data-tooltip={
+              unpublished
+                ? "Push this branch to the remote and track it from now on"
+                : `Push ${ahead} commit${ahead === 1 ? "" : "s"} to ${status?.upstream ?? "the remote"}`
+            }
+            onClick={push}
+          >
+            {busy === "push" ? (
+              <Loader2 size={13} className="animate-spin" />
+            ) : unpublished ? (
+              <CloudUpload size={13} />
+            ) : (
+              <ArrowUp size={13} />
+            )}
+            {unpublished ? "Publish" : `Push ${ahead}`}
+          </button>
+        )}
         <button
           className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-accent text-white text-xs disabled:opacity-50"
           disabled={busy !== null || (changeCount === 0 && !dirty)}
           onClick={() => setReviewing(true)}
         >
           <Upload size={13} />
-          Review &amp; Push
+          Review &amp; commit
           {changeCount > 0 && (
             <span className="ml-0.5 px-1 rounded bg-white/20 text-[10px] leading-4">
               {changeCount}
@@ -1028,7 +1154,9 @@ function GitBar({
           area={area}
           files={status?.files ?? []}
           onClose={() => setReviewing(false)}
+          onCommit={commitPaths}
           onCommitPush={commitPushPaths}
+          canPush={!detached}
           onDiscard={discardPath}
         />
       )}

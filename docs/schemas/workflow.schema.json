@@ -14,8 +14,7 @@
               "type": "null"
             }
           ],
-          "default": null,
-          "title": "Mcp"
+          "default": null
         },
         "skills": {
           "anyOf": [
@@ -26,8 +25,7 @@
               "type": "null"
             }
           ],
-          "default": null,
-          "title": "Skills"
+          "default": null
         },
         "memory": {
           "anyOf": [
@@ -38,8 +36,7 @@
               "type": "null"
             }
           ],
-          "default": null,
-          "title": "Memory"
+          "default": null
         },
         "mcp_servers": {
           "anyOf": [
@@ -57,8 +54,7 @@
             }
           ],
           "default": null,
-          "description": "Only these MCP servers. Omit for every enabled server; [] for none.",
-          "title": "Mcp Servers"
+          "description": "Only these MCP servers. Omit for every enabled server; [] for none."
         }
       },
       "title": "StepCapabilities",
@@ -75,7 +71,6 @@
             "selected",
             "none"
           ],
-          "title": "Mode",
           "type": "string"
         },
         "from": {
@@ -93,8 +88,7 @@
             }
           ],
           "default": null,
-          "description": "Earlier step keys to inherit from (mode: selected only).",
-          "title": "From"
+          "description": "Earlier step keys to inherit from (mode: selected only)."
         }
       },
       "title": "StepContext",
@@ -106,7 +100,6 @@
         "key": {
           "description": "Stable step identifier, unique within the workflow.",
           "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
-          "title": "Key",
           "type": "string"
         },
         "name": {
@@ -119,8 +112,7 @@
               "type": "null"
             }
           ],
-          "default": null,
-          "title": "Name"
+          "default": null
         },
         "kind": {
           "default": "task",
@@ -131,7 +123,6 @@
             "gate",
             "approval"
           ],
-          "title": "Kind",
           "type": "string"
         },
         "agent": {
@@ -144,8 +135,7 @@
             }
           ],
           "default": null,
-          "description": "Agent file, relative to the definitions folder.",
-          "title": "Agent"
+          "description": "Agent file, relative to the definitions folder."
         },
         "prompt": {
           "anyOf": [
@@ -157,8 +147,7 @@
             }
           ],
           "default": null,
-          "description": "A one-off objective owned by this step (no agent file).",
-          "title": "Prompt"
+          "description": "A one-off objective owned by this step (no agent file)."
         },
         "model": {
           "anyOf": [
@@ -171,8 +160,7 @@
             }
           ],
           "default": null,
-          "description": "Model for `prompt`.",
-          "title": "Model"
+          "description": "Model for `prompt`."
         },
         "instructions": {
           "anyOf": [
@@ -185,8 +173,7 @@
             }
           ],
           "default": null,
-          "description": "Extra mandate for this step only. Supports {{run.input}}, {{step.<key>.output}} (or {{step.N.output}}, N = 0-based position) and {{state.<key>}} placeholders.",
-          "title": "Instructions"
+          "description": "Extra mandate for this step only. Supports {{run.input}}, {{step.<key>.output}} (or {{step.N.output}}, N = 0-based position) and {{state.<key>}} placeholders."
         },
         "on_fail": {
           "anyOf": [
@@ -200,8 +187,7 @@
             }
           ],
           "default": null,
-          "description": "Gate/approval: the step to re-drive on FAIL or rework (default: the previous runnable step).",
-          "title": "On Fail"
+          "description": "Gate/approval: the step to re-drive on FAIL or rework (default: the previous runnable step)."
         },
         "on_error": {
           "default": "fail",
@@ -210,14 +196,12 @@
             "retry",
             "continue"
           ],
-          "title": "On Error",
           "type": "string"
         },
         "max_retries": {
           "default": 0,
           "maximum": 10,
           "minimum": 0,
-          "title": "Max Retries",
           "type": "integer"
         },
         "on_reject": {
@@ -228,7 +212,6 @@
             "stop",
             "skip"
           ],
-          "title": "On Reject",
           "type": "string"
         },
         "context": {
@@ -250,26 +233,22 @@
   "properties": {
     "kind": {
       "const": "workflow",
-      "title": "Kind",
       "type": "string"
     },
     "format": {
       "default": 1,
       "maximum": 1,
       "minimum": 1,
-      "title": "Format",
       "type": "integer"
     },
     "id": {
       "description": "Stable identity linking this file to its run history. Never change it; renaming or moving the file keeps the history as long as the id stays.",
       "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
-      "title": "Id",
       "type": "string"
     },
     "name": {
       "maxLength": 200,
       "minLength": 1,
-      "title": "Name",
       "type": "string"
     },
     "description": {
@@ -281,8 +260,7 @@
           "type": "null"
         }
       ],
-      "default": null,
-      "title": "Description"
+      "default": null
     },
     "icon": {
       "anyOf": [
@@ -295,8 +273,7 @@
         }
       ],
       "default": null,
-      "description": "A lucide icon name.",
-      "title": "Icon"
+      "description": "A lucide icon name."
     },
     "color": {
       "anyOf": [
@@ -308,8 +285,7 @@
           "type": "null"
         }
       ],
-      "default": null,
-      "title": "Color"
+      "default": null
     },
     "role": {
       "anyOf": [
@@ -323,8 +299,7 @@
         }
       ],
       "default": null,
-      "description": "Assistant Role applied to every step, by name.",
-      "title": "Role"
+      "description": "Assistant Role applied to every step, by name."
     },
     "approval_policy": {
       "anyOf": [
@@ -341,13 +316,11 @@
         }
       ],
       "default": null,
-      "description": "Tool-approval policy for every step. Omit to keep each agent's own.",
-      "title": "Approval Policy"
+      "description": "Tool-approval policy for every step. Omit to keep each agent's own."
     },
     "clear_artifacts": {
       "default": true,
       "description": "Wipe the agents' previous artifacts at the start of a run.",
-      "title": "Clear Artifacts",
       "type": "boolean"
     },
     "max_loops": {
@@ -355,7 +328,6 @@
       "description": "Cap on gate loop-backs per run.",
       "maximum": 25,
       "minimum": 1,
-      "title": "Max Loops",
       "type": "integer"
     },
     "step_timeout_seconds": {
@@ -370,14 +342,12 @@
         }
       ],
       "default": null,
-      "description": "Stall watchdog. Omit for none.",
-      "title": "Step Timeout Seconds"
+      "description": "Stall watchdog. Omit for none."
     },
     "steps": {
       "items": {
         "$ref": "#/$defs/WorkflowStepDefinition"
       },
-      "title": "Steps",
       "type": "array"
     }
   },

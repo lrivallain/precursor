@@ -2030,15 +2030,29 @@ export interface WorkspaceFileContent {
 }
 
 export interface GitFileStatus {
+  /** Relative to the repository root. */
   path: string;
+  /** Two-letter porcelain code, e.g. " M", "??", "A ", "UU". */
   code: string;
+  /** A rename's previous path. */
+  orig_path?: string | null;
+  /** Unmerged: git stopped on a conflict in this file. */
+  conflicted?: boolean;
+  /** Relative to the workspace's subdir, as the file tree lists it; null outside it. */
+  browse_path?: string | null;
 }
 
 export interface GitStatus {
+  /** The checked-out branch; "HEAD" when detached. */
   branch: string;
+  detached?: boolean;
+  /** e.g. "origin/main"; null while the branch isn't published. */
+  upstream?: string | null;
   ahead: number | null;
   behind: number | null;
   dirty: boolean;
+  /** A merge stopped on conflicts. */
+  merging?: boolean;
   files: GitFileStatus[];
 }
 

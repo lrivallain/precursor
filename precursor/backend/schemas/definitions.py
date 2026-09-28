@@ -19,6 +19,7 @@ from pathlib import PurePosixPath
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic.json_schema import GenerateJsonSchema
 
 from precursor.backend.schemas.agent import AgentApprovalPolicy
 from precursor.backend.schemas.workflow import (
@@ -339,9 +340,20 @@ DEFINITION_MODELS: dict[str, type[AgentDefinition] | type[WorkflowDefinition]] =
 }
 
 
+class _NoFieldTitles(GenerateJsonSchema):
+    """Leave out the titles Pydantic derives from field names.
+
+    ``agent`` → ``"title": "Agent"`` says nothing the key doesn't, and editors
+    show it in hovers — once per branch of an optional field's ``anyOf``.
+    """
+
+    def field_title_should_be_set(self, schema: Any) -> bool:
+        return False
+
+
 def definition_json_schema(kind: Literal["agent", "workflow"]) -> dict[str, Any]:
     """The published JSON Schema for one kind of definition file."""
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        **DEFINITION_MODELS[kind].model_json_schema(),
+        **DEFINITION_MODELS[kind].model_json_schema(schema_generator=_NoFieldTitles),
     }

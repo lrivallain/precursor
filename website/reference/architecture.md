@@ -283,8 +283,9 @@ concurrency governor. See the
 ## Workspaces
 
 A `Workspace` is a git clone or local directory the assistant can browse and edit.
-`services/workspace_git.py` clones/pulls/commits (token injected at op time, never
-stored); `services/workspace_fs.py` does sandboxed file ops — every path is routed
+`services/workspace_git.py` clones/fetches/pulls/commits/pushes (token injected at
+op time, never stored; paths, branch names and revisions checked before git sees
+them; literal pathspecs, no terminal prompts); `services/workspace_fs.py` does sandboxed file ops — every path is routed
 through `safe_join`, which rejects traversal outside the workspace root and blocks
 `.git`. The same sandbox backs the `workspace-fs` and `drawio` MCP servers.
 

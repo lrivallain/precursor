@@ -6,6 +6,12 @@ same posture used elsewhere for the ``gh`` CLI. ``git`` must be on PATH.
 Authentication: a GitHub token (when available) is injected per-invocation
 through an ``http.extraheader`` config flag so it is never written to disk in
 ``.git/config``. The remote URL stored on disk stays token-free.
+
+Every path, branch name and revision that comes from a request is checked here
+before it reaches git (``check_path``, ``check_branch``, ``check_rev``), and git
+runs with literal pathspecs, so ``:/`` or ``*`` can't widen what an operation
+touches, and with terminal prompts off, so a missing credential fails instead
+of hanging the request.
 """
 
 from __future__ import annotations
@@ -13,14 +19,21 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+import os
+import re
 import shutil
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from precursor.backend.schemas.workspace import GitFileStatus, GitStatus
+from precursor.backend.services import workspace_fs as fs
 
 logger = logging.getLogger(__name__)
 
 _TIMEOUT = 120.0
+
+# Pushes git refuses because the remote moved on: a pull (and maybe a merge)
+# is needed first, unlike an auth or network failure.
+_PUSH_REJECTED = ("[rejected]", "non-fast-forward", "fetch first")
 
 
 class GitError(RuntimeError):
@@ -29,8 +42,75 @@ class GitError(RuntimeError):
         self.stderr = stderr
 
 
+class GitInputError(GitError):
+    """A path, branch name or revision from a request that git must not see."""
+
+
 def git_available() -> bool:
     return shutil.which("git") is not None
+
+
+# --- Input checks ---------------------------------------------------------------
+
+
+def check_path(rel: str) -> str:
+    """A working-tree path relative to the repository root, normalised.
+
+    Checked on its text rather than resolved: git addresses the path itself (a
+    symlink, a deleted file), and it refuses to follow a symlinked directory.
+    """
+    text = (rel or "").strip()
+    if not text or "\0" in text or "\\" in text:
+        raise GitInputError(f"Invalid path: {rel!r}")
+    pure = PurePosixPath(text)
+    if pure.is_absolute() or re.match(r"^[A-Za-z]:", text):
+        raise GitInputError(f"Path '{rel}' must be relative to the repository")
+    parts = [p for p in pure.parts if p != "."]
+    if not parts or ".." in parts:
+        raise GitInputError(f"Path '{rel}' escapes the repository")
+    if any(p.lower() == ".git" for p in parts):
+        raise GitInputError(f"Path '{rel}' is not accessible")
+    return "/".join(parts)
+
+
+_REF_FORBIDDEN = re.compile(r"[\x00-\x20\x7f~^:?*\[\\]")
+
+
+def check_branch(name: str) -> str:
+    """A branch name git would accept (``git check-ref-format --branch``).
+
+    Also refuses a leading ``-`` (an option to git) and ``HEAD``.
+    """
+    branch = (name or "").strip()
+    if (
+        not branch
+        or branch.startswith("-")
+        or branch == "HEAD"
+        or branch == "@"
+        or _REF_FORBIDDEN.search(branch)
+        or ".." in branch
+        or "@{" in branch
+        or "//" in branch
+        or branch.startswith("/")
+        or branch.endswith(("/", "."))
+        or any(part.startswith(".") or part.endswith(".lock") for part in branch.split("/"))
+    ):
+        raise GitInputError(f"Invalid branch name: {name!r}")
+    return branch
+
+
+_SHA = re.compile(r"[0-9a-f]{4,64}")
+
+
+def check_rev(rev: str) -> str:
+    """``HEAD`` or an abbreviated/full commit id; nothing git could read as more."""
+    value = (rev or "").strip()
+    if value == "HEAD" or _SHA.fullmatch(value):
+        return value
+    raise GitInputError(f"Invalid revision: {rev!r}")
+
+
+# --- Running git ----------------------------------------------------------------
 
 
 def _auth_args(token: str | None) -> list[str]:
@@ -39,6 +119,23 @@ def _auth_args(token: str | None) -> list[str]:
         return []
     basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
     return ["-c", f"http.extraheader=AUTHORIZATION: basic {basic}"]
+
+
+def git_env() -> dict[str, str]:
+    env = dict(os.environ)
+    env.update(
+        # Fail rather than wait on a prompt no one will see.
+        GIT_TERMINAL_PROMPT="0",
+        GCM_INTERACTIVE="never",
+        # A pathspec is a path: no `:/`, globs or other magic.
+        GIT_LITERAL_PATHSPECS="1",
+        # Don't take the index lock just to refresh it (status runs often, and
+        # the user may be running git in the same folder).
+        GIT_OPTIONAL_LOCKS="0",
+        # Messages are matched below ("nothing to commit"); paths are bytes.
+        LC_ALL="C",
+    )
+    return env
 
 
 async def _run_git(
@@ -50,12 +147,18 @@ async def _run_git(
     if not git_available():
         raise GitError("git is not installed or not on PATH")
     cmd = ["git", *_auth_args(token), *args]
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        cwd=str(cwd) if cwd else None,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            cwd=str(cwd) if cwd else None,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=git_env(),
+        )
+    except OSError as exc:
+        # Typically the working copy is gone (cwd missing).
+        raise GitError(f"Cannot run git here: {exc}") from exc
     try:
         stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=_TIMEOUT)
     except TimeoutError as exc:
@@ -68,12 +171,25 @@ async def _run_git(
     )
 
 
+async def _git(args: list[str], *, cwd: Path, what: str, token: str | None = None) -> str:
+    """Run git and raise ``GitError`` (with ``what`` as context) when it fails."""
+    code, out, err = await _run_git(args, cwd=cwd, token=token)
+    if code != 0:
+        raise GitError(f"{what}: {(err or out).strip()}", stderr=err)
+    return out
+
+
+# --- Operations -----------------------------------------------------------------
+
+
 async def clone(repo_url: str, dest: Path, branch: str, token: str | None) -> None:
+    branch = check_branch(branch)
     dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.exists():
         raise GitError(f"Destination already exists: {dest}")
     code, _out, err = await _run_git(
-        ["clone", "--branch", branch, "--single-branch", repo_url, str(dest)],
+        # `--` so a URL can't be read as an option (`--upload-pack=…`).
+        ["clone", "--branch", branch, "--single-branch", "--", repo_url, str(dest)],
         token=token,
     )
     if code != 0:
@@ -83,16 +199,65 @@ async def clone(repo_url: str, dest: Path, branch: str, token: str | None) -> No
         raise GitError(f"Clone failed: {err.strip()}", stderr=err)
 
 
+async def current_branch(path: Path) -> str | None:
+    """The checked-out branch; None on a detached HEAD."""
+    code, out, _err = await _run_git(["symbolic-ref", "--quiet", "--short", "HEAD"], cwd=path)
+    return (out.strip() or None) if code == 0 else None
+
+
+def _tracking_ref(branch: str) -> str:
+    return f"refs/remotes/origin/{branch}"
+
+
+async def _track(path: Path, branch: str) -> None:
+    """Make ``origin/<branch>`` a remote-tracking branch of this clone.
+
+    A single-branch clone only maps the branch it was cloned with. For any
+    other, git would neither keep ``origin/<branch>`` up to date nor accept it
+    as an upstream, so ahead/behind and "publish" would silently not work.
+    """
+    _code, out, _err = await _run_git(["config", "--get-all", "remote.origin.fetch"], cwd=path)
+    specs = set(out.split())
+    if f"+refs/heads/*:{_tracking_ref('*')}" in specs:
+        return
+    if f"+refs/heads/{branch}:{_tracking_ref(branch)}" not in specs:
+        await _git(
+            ["remote", "set-branches", "--add", "origin", branch],
+            cwd=path,
+            what="Could not track the branch",
+        )
+
+
+async def fetch(path: Path, branch: str, token: str | None) -> tuple[bool, str]:
+    """Update ``origin/<branch>`` from the remote.
+
+    The refspec is explicit because a single-branch clone only maps the branch
+    it was cloned with: fetching any other one would leave its remote-tracking
+    ref stale, and ahead/behind with it.
+    """
+    branch = check_branch(branch)
+    await _track(path, branch)
+    code, out, err = await _run_git(
+        ["fetch", "origin", f"+refs/heads/{branch}:{_tracking_ref(branch)}"],
+        cwd=path,
+        token=token,
+    )
+    if code == 0:
+        return True, (err or out).strip() or "Up to date."
+    return False, (err or out).strip()
+
+
 async def pull(path: Path, branch: str, token: str | None) -> tuple[bool, str]:
-    """Fast-forward-only pull.
+    """Fetch, then fast-forward only.
 
     Returns ``(ok, detail)``. ``ok=False`` means the branch has diverged or a
-    conflict exists and the user must resolve it with the git CLI.
+    conflict exists and the user must resolve it with the git CLI. A failed
+    fetch raises ``GitError``: that is a network or auth problem, not a merge.
     """
-    await _run_git(["fetch", "origin", branch], cwd=path, token=token)
-    code, out, err = await _run_git(
-        ["merge", "--ff-only", f"origin/{branch}"], cwd=path, token=token
-    )
+    fetched, detail = await fetch(path, branch, token)
+    if not fetched:
+        raise GitError(f"Fetch failed: {detail}")
+    code, out, err = await _run_git(["merge", "--ff-only", _tracking_ref(branch)], cwd=path)
     if code == 0:
         return True, (out or err).strip() or "Up to date."
     return False, (err or out).strip()
@@ -100,7 +265,7 @@ async def pull(path: Path, branch: str, token: str | None) -> tuple[bool, str]:
 
 async def commit_all(path: Path, message: str) -> tuple[bool, str]:
     """Stage every change and commit. Returns ``(committed, detail)``."""
-    await _run_git(["add", "-A"], cwd=path)
+    await _git(["add", "-A"], cwd=path, what="Staging failed")
     code, out, err = await _run_git(["commit", "-m", message], cwd=path)
     if code == 0:
         return True, out.strip()
@@ -118,9 +283,20 @@ async def commit_paths(path: Path, message: str, paths: list[str]) -> tuple[bool
     """
     if not paths:
         return False, "No files selected."
-    # ``add -A -- <paths>`` stages additions, modifications and deletions for
-    # exactly those pathspecs; ``commit -- <paths>`` records only them.
-    await _run_git(["add", "-A", "--", *paths], cwd=path)
+    requested = list(dict.fromkeys(check_path(p) for p in paths))
+    changed = {f.path: f for f in (await status(path)).files}
+    # A path with nothing to commit (a stale selection) is left out.
+    selected = [p for p in requested if p in changed]
+    if not selected:
+        return False, "Nothing to commit."
+    # Only what has unstaged changes needs `add` (which fails on a path that is
+    # neither in the index nor on disk, e.g. an already staged deletion).
+    unstaged = [p for p in selected if changed[p].code[1] != " "]
+    # A staged rename commits whole: its old path goes along.
+    renamed = [o for p in selected if (o := changed[p].orig_path)]
+    paths = list(dict.fromkeys([*selected, *renamed]))
+    if unstaged:
+        await _git(["add", "-A", "--", *unstaged], cwd=path, what="Staging failed")
     code, out, err = await _run_git(["commit", "-m", message, "--", *paths], cwd=path)
     if code == 0:
         return True, out.strip()
@@ -136,6 +312,7 @@ async def diff_file(path: Path, rel: str) -> tuple[str, bool]:
     Covers staged + unstaged edits and deletions against HEAD. Untracked
     files are rendered as an all-added diff so they preview consistently.
     """
+    rel = check_path(rel)
     _c, st_out, _e = await _run_git(["status", "--porcelain", "--", rel], cwd=path)
     code_part = st_out[:2] if st_out else ""
     if code_part.strip() == "??":
@@ -147,46 +324,141 @@ async def diff_file(path: Path, rel: str) -> tuple[str, bool]:
     return out, "Binary files" in out
 
 
+def push_rejected(detail: str) -> bool:
+    """Whether a failed push needs the remote's commits first (vs. auth/network)."""
+    return any(marker in detail for marker in _PUSH_REJECTED)
+
+
 async def push(path: Path, branch: str, token: str | None) -> tuple[bool, str]:
-    code, out, err = await _run_git(["push", "origin", branch], cwd=path, token=token)
+    """Push ``branch`` to ``origin``; publish it (``-u``) when it has no upstream."""
+    branch = check_branch(branch)
+    published = (await status(path)).upstream is not None
+    await _track(path, branch)
+    args = ["push", "origin", f"refs/heads/{branch}:refs/heads/{branch}"]
+    if not published:
+        args.insert(1, "--set-upstream")
+    code, out, err = await _run_git(args, cwd=path, token=token)
     if code == 0:
+        if not published:
+            return True, f"Published {branch} to origin."
         return True, (out or err).strip() or "Pushed."
     return False, (err or out).strip()
 
 
+async def _in_head(path: Path, rel: str) -> bool:
+    code, _out, _err = await _run_git(["cat-file", "-e", f"HEAD:{rel}"], cwd=path)
+    return code == 0
+
+
 async def discard(path: Path, rel: str) -> None:
-    await _run_git(["checkout", "--", rel], cwd=path)
+    """Bring ``rel`` back to its HEAD state, staged changes included.
+
+    A file HEAD doesn't have (untracked, or added) is deleted; a rename also
+    restores its old name.
+    """
+    rel = check_path(rel)
+    entry = next((f for f in (await status(path)).files if f.path == rel), None)
+    targets = [rel] + ([entry.orig_path] if entry is not None and entry.orig_path else [])
+    for target in targets:
+        if await _in_head(path, target):
+            await _git(
+                ["restore", "--source=HEAD", "--staged", "--worktree", "--", target],
+                cwd=path,
+                what=f"Could not discard {target}",
+            )
+            continue
+        await _git(
+            ["rm", "--cached", "--quiet", "--ignore-unmatch", "--", target],
+            cwd=path,
+            what=f"Could not discard {target}",
+        )
+        # Resolve the folder, not the file: the entry itself may be a symlink.
+        parent = PurePosixPath(target).parent.as_posix()
+        folder = fs.safe_join(path, "" if parent == "." else parent)
+        file = folder / PurePosixPath(target).name
+        if file.is_symlink() or file.is_file():
+            file.unlink()
 
 
-async def status(path: Path) -> GitStatus:
-    # Current branch name.
-    _c, branch_out, _e = await _run_git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=path)
-    branch = branch_out.strip() or "HEAD"
+async def status(path: Path, subdir: str | None = None) -> GitStatus:
+    """The working copy's branch, upstream, ahead/behind and changed files.
 
+    ``subdir`` is the part of the repository the file browser shows; each
+    file's ``browse_path`` is relative to it (null when outside it).
+    """
+    out = await _git(
+        ["status", "--porcelain=v2", "--branch", "-z", "--untracked-files=all"],
+        cwd=path,
+        what="git status failed",
+    )
+    prefix = f"{subdir.strip('/')}/" if subdir and subdir.strip("/") else ""
+    head = "HEAD"
+    upstream: str | None = None
     ahead: int | None = None
     behind: int | None = None
-    code, counts, _e2 = await _run_git(
-        ["rev-list", "--left-right", "--count", f"origin/{branch}...HEAD"],
-        cwd=path,
-    )
-    if code == 0 and counts.strip():
-        parts = counts.split()
-        if len(parts) == 2:
-            behind, ahead = int(parts[0]), int(parts[1])
-
-    _c3, porcelain, _e3 = await _run_git(["status", "--porcelain"], cwd=path)
     files: list[GitFileStatus] = []
-    for line in porcelain.splitlines():
-        if not line.strip():
-            continue
-        code_part = line[:2]
-        name = line[3:]
-        files.append(GitFileStatus(path=name, code=code_part))
 
+    fields = out.split("\0")
+    i = 0
+    while i < len(fields):
+        entry = fields[i]
+        i += 1
+        if not entry:
+            continue
+        if entry.startswith("# "):
+            key, _, value = entry[2:].partition(" ")
+            if key == "branch.head":
+                head = value
+            elif key == "branch.upstream":
+                upstream = value
+            elif key == "branch.ab":
+                plus, minus = value.split()
+                ahead, behind = int(plus.lstrip("+")), int(minus.lstrip("-"))
+            continue
+        kind = entry[0]
+        orig: str | None = None
+        if kind == "1":
+            parts = entry.split(" ", 8)
+            xy, name = parts[1], parts[8]
+        elif kind == "2":
+            parts = entry.split(" ", 9)
+            xy, name = parts[1], parts[9]
+            # A rename's old path is the next NUL-separated field.
+            orig = fields[i] if i < len(fields) else None
+            i += 1
+        elif kind == "u":
+            parts = entry.split(" ", 10)
+            xy, name = parts[1], parts[10]
+        elif kind == "?":
+            xy, name = "??", entry[2:]
+        else:
+            continue
+        # With no subdir the prefix is "", which every path starts with.
+        browse = name.removeprefix(prefix) if name.startswith(prefix) else None
+        files.append(
+            GitFileStatus(
+                path=name,
+                code=xy.replace(".", " "),
+                orig_path=orig,
+                conflicted=kind == "u",
+                browse_path=browse,
+            )
+        )
+
+    if upstream is not None and not upstream.startswith("origin/"):
+        # Tracking a local branch (`branch.autoSetupMerge=always` does that for
+        # every new branch): not published, and ahead/behind would compare
+        # with the wrong thing.
+        upstream = ahead = behind = None
+    detached = head == "(detached)"
+    merging_code, _o, _e = await _run_git(["rev-parse", "-q", "--verify", "MERGE_HEAD"], cwd=path)
     return GitStatus(
-        branch=branch,
+        branch="HEAD" if detached else head,
+        detached=detached,
+        upstream=upstream,
         ahead=ahead,
         behind=behind,
         dirty=bool(files),
+        merging=merging_code == 0,
         files=files,
     )

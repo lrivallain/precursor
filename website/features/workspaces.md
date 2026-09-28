@@ -21,6 +21,35 @@ sessions, and the assistant operates on them through a **sandboxed** file layer.
 - **Local folder** — creates an empty folder for authoring files, with no git
   behind it. The same file tools apply.
 
+## Syncing with git
+
+The bar above a git workspace shows its branch and where it stands against the
+remote:
+
+- **Behind:** opening the workspace, and **Refresh**, ask the remote for new
+  commits without changing any file. `↓ 2 behind` means **Pull** has something
+  to bring in. A cloud icon with a slash means the remote couldn't be reached,
+  so the count may be out of date. Hover the icon for git's message.
+- **Committing:** **Review & commit** lists your changes with their diffs.
+  **Commit** records the files you tick in this working copy only.
+  **Commit & Push** also sends them.
+- **Pushing:** commits that aren't on the remote yet show as **Push 2**.
+- **New branches:** a branch that isn't on the remote yet is marked **not
+  published**, and **Publish** pushes it and tracks it from then on.
+- **Branch switches outside Precursor:** Pull and Push always use the branch
+  that is checked out, even if you switched it in a terminal or VS Code. With no
+  branch checked out (a detached HEAD), both are off.
+- **Discard** in the review puts a file back as the last commit has it. A file
+  the last commit doesn't have is deleted.
+
+Pull only fast-forwards. When your branch and the remote have both moved on,
+Precursor stops and shows where to resolve it (`git status` in the working
+copy, or **Open in VS Code**).
+
+Paths from the app are checked before git sees them. Git's pathspec magic, such
+as `:/`, is taken as a plain file name, and git never waits on a password
+prompt. The token is added to each command and never written to the clone.
+
 ## The Agents & workflows workspace
 
 Once Agents mode is on, the list starts with a built-in **Agents & workflows**

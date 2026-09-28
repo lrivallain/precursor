@@ -365,13 +365,67 @@ async def rename_endpoint(
 # --------------------------------------------------------------------------
 
 
+async def _checked_out_branch(ws: Workspace, root: Path, session: AsyncSession) -> str:
+    """The branch to fetch/pull/push: the one checked out, whoever switched to it.
+
+    ``Workspace.branch`` follows it, so a switch made in VS Code or a terminal
+    doesn't leave Precursor pulling one branch into another.
+    """
+    branch = await git.current_branch(root)
+    if branch is None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "The working copy is on a detached HEAD — check out a branch first.",
+        )
+    try:
+        git.check_branch(branch)
+    except git.GitInputError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    if ws.branch != branch:
+        ws.branch = branch
+        await session.commit()
+    return branch
+
+
+async def _after_tree_change(root: Path, session: AsyncSession) -> None:
+    """Files changed on disk under git's hands: re-read definitions they hold."""
+    if _holds_definitions(root):
+        await definition_anchors.refresh(session)
+
+
 @router.get("/{workspace_id}/git/status", response_model=GitStatus)
 async def git_status(workspace_id: int, session: AsyncSession = Depends(get_session)) -> GitStatus:
     ws = await _get_git_workspace(workspace_id, session)
     try:
-        return await git.status(workspace_root(ws))
+        return await git.status(workspace_root(ws), ws.subdir)
     except git.GitError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+
+
+@router.post("/{workspace_id}/git/fetch", response_model=GitActionResult)
+async def git_fetch(
+    workspace_id: int, session: AsyncSession = Depends(get_session)
+) -> GitActionResult:
+    """Update the remote-tracking branch, so ahead/behind are current. Changes no file."""
+    ws = await _get_git_workspace(workspace_id, session)
+    root = workspace_root(ws)
+    try:
+        before = await git.status(root, ws.subdir)
+        if before.detached or before.upstream is None:
+            # Nothing on the remote to compare with (yet): not a failure.
+            return GitActionResult(
+                ok=True,
+                detail="Nothing to fetch for this branch.",
+                local_path=str(root),
+                status=before,
+            )
+        branch = await _checked_out_branch(ws, root, session)
+        token = await resolve_github_token(session)
+        ok, detail = await git.fetch(root, branch, token)
+        st = await git.status(root, ws.subdir)
+    except git.GitError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    return GitActionResult(ok=ok, detail=detail, local_path=str(root), status=st)
 
 
 @router.post("/{workspace_id}/git/pull", response_model=GitActionResult)
@@ -379,11 +433,19 @@ async def git_pull(
     workspace_id: int, session: AsyncSession = Depends(get_session)
 ) -> GitActionResult:
     ws = await _get_git_workspace(workspace_id, session)
-    token = await resolve_github_token(session)
     root = workspace_root(ws)
     try:
-        ok, detail = await git.pull(root, ws.branch, token)
-        st = await git.status(root)
+        branch = await _checked_out_branch(ws, root, session)
+        if (await git.status(root, ws.subdir)).upstream is None:
+            return GitActionResult(
+                ok=False,
+                detail="Nothing to pull: this branch isn't on the remote yet. Push publishes it.",
+                local_path=str(root),
+                status=await git.status(root, ws.subdir),
+            )
+        token = await resolve_github_token(session)
+        ok, detail = await git.pull(root, branch, token)
+        st = await git.status(root, ws.subdir)
     except git.GitError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     if ok:
@@ -392,8 +454,7 @@ async def git_pull(
         # Files mode: a pull into the definitions folder applies at once (new
         # files, changed steps); anything that widens permissions waits for
         # review as usual.
-        if _holds_definitions(root):
-            await definition_anchors.refresh(session)
+        await _after_tree_change(root, session)
     return GitActionResult(
         ok=ok,
         detail=detail,
@@ -403,6 +464,60 @@ async def git_pull(
     )
 
 
+async def _commit(root: Path, payload: CommitRequest) -> tuple[bool, str]:
+    if payload.paths is not None:
+        return await git.commit_paths(root, payload.message, payload.paths)
+    return await git.commit_all(root, payload.message)
+
+
+async def _push(ws: Workspace, root: Path, branch: str, session: AsyncSession) -> GitActionResult:
+    token = await resolve_github_token(session)
+    pushed, detail = await git.push(root, branch, token)
+    st = await git.status(root, ws.subdir)
+    if pushed:
+        ws.last_synced_at = datetime.now(UTC)
+        await session.commit()
+    return GitActionResult(
+        ok=pushed,
+        detail=detail,
+        # Only a push the remote refused for being behind needs a pull/merge.
+        needs_manual_merge=not pushed and git.push_rejected(detail),
+        local_path=str(root),
+        status=st,
+    )
+
+
+@router.post("/{workspace_id}/git/commit", response_model=GitActionResult)
+async def git_commit(
+    workspace_id: int,
+    payload: CommitRequest,
+    session: AsyncSession = Depends(get_session),
+) -> GitActionResult:
+    """Commit locally (the selected ``paths``, or everything); nothing is pushed."""
+    ws = await _get_git_workspace(workspace_id, session)
+    root = workspace_root(ws)
+    try:
+        committed, detail = await _commit(root, payload)
+        st = await git.status(root, ws.subdir)
+    except git.GitError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    return GitActionResult(ok=committed, detail=detail, local_path=str(root), status=st)
+
+
+@router.post("/{workspace_id}/git/push", response_model=GitActionResult)
+async def git_push(
+    workspace_id: int, session: AsyncSession = Depends(get_session)
+) -> GitActionResult:
+    """Push the checked-out branch; publish it (set its upstream) the first time."""
+    ws = await _get_git_workspace(workspace_id, session)
+    root = workspace_root(ws)
+    try:
+        branch = await _checked_out_branch(ws, root, session)
+        return await _push(ws, root, branch, session)
+    except git.GitError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+
+
 @router.post("/{workspace_id}/git/commit-push", response_model=GitActionResult)
 async def git_commit_push(
     workspace_id: int,
@@ -410,30 +525,19 @@ async def git_commit_push(
     session: AsyncSession = Depends(get_session),
 ) -> GitActionResult:
     ws = await _get_git_workspace(workspace_id, session)
-    token = await resolve_github_token(session)
     root = workspace_root(ws)
     try:
-        if payload.paths is not None:
-            committed, commit_detail = await git.commit_paths(root, payload.message, payload.paths)
-        else:
-            committed, commit_detail = await git.commit_all(root, payload.message)
+        branch = await _checked_out_branch(ws, root, session)
+        committed, commit_detail = await _commit(root, payload)
         if not committed:
-            st = await git.status(root)
+            st = await git.status(root, ws.subdir)
             return GitActionResult(ok=False, detail=commit_detail, local_path=str(root), status=st)
-        pushed, push_detail = await git.push(root, ws.branch, token)
-        st = await git.status(root)
+        result = await _push(ws, root, branch, session)
     except git.GitError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
-    if pushed:
-        ws.last_synced_at = datetime.now(UTC)
-        await session.commit()
-    return GitActionResult(
-        ok=pushed,
-        detail=push_detail if pushed else f"Committed locally but push failed: {push_detail}",
-        needs_manual_merge=not pushed,
-        local_path=str(root),
-        status=st,
-    )
+    if not result.ok:
+        result.detail = f"Committed locally but push failed: {result.detail}"
+    return result
 
 
 @router.post("/{workspace_id}/git/discard", response_model=GitStatus)
@@ -442,13 +546,16 @@ async def git_discard(
     path: str = Query(...),
     session: AsyncSession = Depends(get_session),
 ) -> GitStatus:
+    """Put a file back as HEAD has it; a file HEAD doesn't have is deleted."""
     ws = await _get_git_workspace(workspace_id, session)
     root = workspace_root(ws)
     try:
         await git.discard(root, path)
-        return await git.status(root)
-    except git.GitError as exc:
+        st = await git.status(root, ws.subdir)
+    except (git.GitError, fs.UnsafePathError) as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    await _after_tree_change(root, session)
+    return st
 
 
 @router.get("/{workspace_id}/git/diff", response_model=FileDiff)

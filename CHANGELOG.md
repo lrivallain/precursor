@@ -15,6 +15,33 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Changed
 
+- **Git workspaces know where they stand against the remote.**
+  - **Refresh:** opening a git workspace, and Refresh, fetch from the remote,
+    so "↓ N behind" is real (fetching changes no file). If the remote can't be
+    reached, an icon says so.
+  - **Commit and Push are separate:** the review can commit locally, and
+    **Push N** sends commits later.
+  - **New branches:** a branch that isn't on the remote shows **not published**,
+    and **Publish** pushes it and sets its upstream. A branch that only tracks a
+    local one counts as unpublished too.
+  - **Branch switches outside Precursor:** Pull and Push follow the checked-out
+    branch, even when it was switched in a terminal or VS Code, and the
+    workspace remembers it.
+  - **Fixes:**
+    - A pushed branch other than the cloned one stays tracked.
+    - File names with spaces, non-ASCII characters and renames are reported
+      correctly.
+    - Change badges show in a workspace limited to a subfolder.
+    - Discard now also resets staged changes, and removes a file the last commit
+      doesn't have. It used to do nothing to such a file.
+  - **Hardening:** request paths are checked before git sees them. Pathspec
+    magic such as `:/` is literal, git never waits on a prompt, and a clone URL
+    can't pass options to git.
+  - **API:** new `POST /api/workspaces/{id}/git/fetch`, `/git/commit` and
+    `/git/push`. The status gains `upstream`, `detached`, `merging`, and per-file
+    `orig_path`, `conflicted` and `browse_path`.
+  - **Definition schemas:** `docs/schemas/` drops the titles Pydantic generated
+    from field names. The Files editor's hovers show only descriptions.
 - **The Files section edits with Monaco, the VS Code editor core.** It replaces
   the plain text box:
   - syntax highlighting, find and replace, multiple cursors and folding;
