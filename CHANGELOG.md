@@ -536,6 +536,15 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Fixed
 
+- **Workflow steps no longer lose their final answer.** Precursor handled each
+  Copilot SDK event in its own task, and a burst of events could be processed
+  out of order. At the end of a turn, *idle* was sometimes handled before the
+  final message. The step was then recorded with an empty or stale output, and
+  its `ARTIFACT` blocks were dropped. The next step saw its input as missing:
+  the Morning AI briefing's email step reported `MISSING_PERSISTENCE` and sent
+  nothing, and a meeting-triage *Collect* step handed on no invitations. SDK
+  events are now handled one at a time per agent, in the order the SDK emits
+  them.
 - **Agents recover when the Copilot CLI crashes.** All agents share a single
   Copilot CLI process. When it died (seen as a V8 "JavaScript heap out of
   memory" after about 35 hours), Precursor didn't notice. Every later agent run

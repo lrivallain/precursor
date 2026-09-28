@@ -51,6 +51,7 @@ import json
 import logging
 import os
 import time
+from collections import deque
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any, ClassVar
@@ -253,6 +254,13 @@ class AgentManager:
         # Per *agent* rather than per run on purpose: ``_notify_back`` posts into
         # the agent's shared topic/chat, so concurrent runs must still take turns.
         self._event_locks: dict[int, asyncio.Lock] = {}
+        # The lock alone can't keep that order: a handler awaits a DB read before
+        # it knows which lock to take, so events racing in a burst reach the lock
+        # shuffled. SDK events are therefore queued per agent, in the order the
+        # SDK delivers them, and a single drainer task per agent works through
+        # each queue. See ``_dispatch_sdk_event``.
+        self._event_queues: dict[int, deque[tuple[int, Any]]] = {}
+        self._event_drainers: set[int] = set()
         # Per-run locks serialising session build/resume. ``_ensure_live`` does a
         # check-then-create (read ``_live``, ``create_session``, write ``_live``);
         # without this lock two concurrent callers — e.g. ``start_task`` racing the
@@ -846,9 +854,10 @@ class AgentManager:
         # the run driving an agent without a DB round-trip.
         self._agent_runs[agent.id] = run.id
 
-        # Wire the event stream. The SDK invokes this synchronously; defer the
-        # async work (DB + bus) onto the loop.
-        sdk_session.on(lambda event: self._spawn(self._handle_event(run.id, event)))
+        # Wire the event stream. The SDK invokes this synchronously, in emission
+        # order; the async work (DB + bus) is queued to run in that same order.
+        agent_id, run_id = agent.id, run.id
+        sdk_session.on(lambda event: self._dispatch_sdk_event(agent_id, run_id, event))
 
         # The resume handle is *not* readable off ``CopilotSession`` — it exposes
         # no ``id``/``session_id`` attribute — so it is captured from the
@@ -1447,6 +1456,42 @@ class AgentManager:
     _decision = staticmethod(permissions.decision)
 
     # ------------------------------------------------------------------ events
+
+    def _dispatch_sdk_event(self, agent_id: int, run_id: int, event: Any) -> None:
+        """Queue one SDK event for handling strictly in arrival order.
+
+        This used to spawn one task per event. Each task awaited ``_load_run``
+        before taking the agent's event lock, so a burst of events reached the
+        lock in whatever order those reads finished. At the end of a turn that
+        meant ``session.idle`` could be handled before ``turn_end`` and the final
+        ``assistant.message``. The run then rested on the *previous* message
+        (often a tool-call-only one with no text), and a workflow advanced
+        with an empty or stale step output while the real answer arrived a
+        moment later.
+        """
+        queue = self._event_queues.setdefault(agent_id, deque())
+        queue.append((run_id, event))
+        if agent_id not in self._event_drainers:
+            self._event_drainers.add(agent_id)
+            self._spawn(self._drain_events(agent_id))
+
+    async def _drain_events(self, agent_id: int) -> None:
+        """Handle an agent's queued SDK events one at a time, oldest first."""
+        queue = self._event_queues.get(agent_id)
+        try:
+            while queue:
+                run_id, event = queue.popleft()
+                try:
+                    await self._handle_event(run_id, event)
+                except Exception:
+                    # One bad event must not stall every event queued behind it.
+                    logger.exception("failed to handle %s for run %s", type(event).__name__, run_id)
+        finally:
+            # No await separates the empty check above from here, so an event
+            # dispatched meanwhile can't be stranded without a drainer.
+            self._event_drainers.discard(agent_id)
+            if not queue:
+                self._event_queues.pop(agent_id, None)
 
     async def _handle_event(self, run_id: int, event: Any) -> None:
         # Events arrive keyed by the *run* that produced them, but are serialised
