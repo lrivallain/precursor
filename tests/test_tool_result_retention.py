@@ -4,8 +4,9 @@ The sweep replaces the ``content`` of aged TOOL rows with a short placeholder
 *in place* — keeping the row and its ``tool_calls`` metadata so
 ``_hydrate_history`` still pairs each assistant tool-call turn with its TOOL
 rows. Covers: disabled (0) is a no-op; old large TOOL rows get the placeholder
-while recent/non-TOOL rows are untouched; idempotency; and that a pruned row
-still hydrates without dropping its assistant turn.
+while recent/non-TOOL rows are untouched; idempotency; that a pruned row
+still hydrates without dropping its assistant turn; and that the same window
+clears the model's thinking on older turns.
 """
 
 from __future__ import annotations
@@ -179,3 +180,59 @@ def test_pruned_row_still_hydrates_pairing() -> None:
     assert roles.count("tool") == 2
     tool_contents = [m.content for m in hydrated if m.role == "tool"]  # type: ignore[attr-defined]
     assert PRUNED_PLACEHOLDER in tool_contents
+
+
+def test_clears_expired_thinking_only() -> None:
+    _init_db()
+
+    async def _run() -> None:
+        from sqlalchemy import delete, select
+
+        old = datetime.now(UTC) - timedelta(days=40)
+        recent = datetime.now(UTC) - timedelta(days=1)
+        async with SessionLocal() as session:
+            await session.execute(delete(Message))
+            await session.execute(delete(Topic))
+            topic = Topic(title="thinking", slug="thinking")
+            session.add(topic)
+            await session.flush()
+            session.add_all(
+                [
+                    Message(
+                        topic_id=topic.id,
+                        role=MessageRole.ASSISTANT,
+                        content="old answer",
+                        reasoning="T" * 500,
+                        created_at=old,
+                    ),
+                    Message(
+                        topic_id=topic.id,
+                        role=MessageRole.ASSISTANT,
+                        content="new answer",
+                        reasoning="fresh",
+                        created_at=recent,
+                    ),
+                ]
+            )
+            await session.commit()
+
+        async def _rows() -> list[tuple[str, str | None]]:
+            async with SessionLocal() as session:
+                found = await session.execute(select(Message).order_by(Message.id))
+                return [(m.content, m.reasoning) for m in found.scalars()]
+
+        await _set_retention(0)
+        assert (await prune_expired_tool_results()).rows == 0
+
+        await _set_retention(30)
+        preview = await prune_expired_tool_results(dry_run=True)
+        # Thinking is dropped outright, so all of it counts as reclaimed.
+        assert (preview.rows, preview.bytes) == (1, 500)
+        assert await _rows() == [("old answer", "T" * 500), ("new answer", "fresh")]
+
+        assert (await prune_expired_tool_results()).rows == 1
+        # Only the thinking goes: the answer itself is never touched.
+        assert await _rows() == [("old answer", None), ("new answer", "fresh")]
+        assert (await prune_expired_tool_results()).rows == 0
+
+    asyncio.run(_run())

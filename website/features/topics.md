@@ -124,7 +124,10 @@ What appears depends on the model:
   Thinking area at all.
 
 The effort picker under the composer sets how hard the model thinks. The thinking
-is for you only: it is never sent back to the model on later turns.
+is for you only: it is never sent back to the model on later turns. It follows
+the tool-result retention window (**Settings → System → Storage / retention**):
+past it, a reply keeps its answer but loses its Thinking area — see
+[Storage & retention](/features/storage).
 
 ## Deleting, clearing and stopping
 

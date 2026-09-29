@@ -467,7 +467,8 @@ DEFAULT_LLM_MAX_TOOL_RESULT_TOKENS = 20_000
 # Wall-clock ceiling for one scheduled/automated run.
 DEFAULT_SCHEDULED_RUN_TIMEOUT_SECONDS = 600
 
-# Retention window (in days) for full TOOL-result content. 0 disables pruning.
+# Retention window (in days) for full TOOL-result content and model thinking
+# (``messages.reasoning``). 0 disables pruning.
 DEFAULT_TOOL_RESULT_RETENTION_DAYS = 0
 
 # Retention window (in days) for Live meeting transcript segments, measured from

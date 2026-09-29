@@ -22,7 +22,9 @@ are the per-version history; releasing does not rewrite this file.
   answer (and with each tool round) after a reload, and a stopped turn keeps
   what was received. Gemini streams its thoughts, GPT-5.5 and later stream a
   reasoning summary — Precursor now requests one on the Responses API — and
-  Claude sends a summary with the answer. Thinking is never replayed to the model.
+  Claude sends a summary with the answer. Thinking is never replayed to the model,
+  and the tool-result retention window (renamed *Tool result & thinking
+  retention*) clears it from older replies.
   Messages gain a `reasoning` field, the chat stream a `reasoning` event, and
   `POST …/messages/stopped` an optional `reasoning`.
 

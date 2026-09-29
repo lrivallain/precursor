@@ -1750,10 +1750,10 @@ function SystemTab({
 
       <section className="space-y-3">
         <h3 className="text-sm font-medium">Storage / retention</h3>
-        {numField("Tool result retention (days)", "tool_result_retention_days", {
+        {numField("Tool result & thinking retention (days)", "tool_result_retention_days", {
           min: 0,
           max: 3650,
-          help: "How long full tool outputs are kept before their content is replaced with a short placeholder to save space. 0 = keep forever.",
+          help: "How long full tool outputs and the model's thinking are kept. After that, tool outputs are replaced with a short placeholder and the thinking is removed, to save space. 0 = keep forever.",
         })}
         <p className="text-[11px] text-muted">
           Feature-specific retention lives with its feature: agent timelines
