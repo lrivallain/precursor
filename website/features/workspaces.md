@@ -163,20 +163,23 @@ file.
 
 <Screenshot src="/screenshots/workspaces-history.png" alt="The History tab with a commit opened to the file it changed, and that file's diff against the previous commit" caption="What a past commit changed." />
 
-## The Agents & workflows workspace
+## The Definitions workspace
 
-Once Agents mode is on, the list starts with a built-in **Agents & workflows**
-workspace: the folder that holds your agent and workflow
-[definition files](/features/definitions) (work in progress). It can't be
-removed while it holds definition files, and the assistant's file tools can
-only read it.
+Once Agents mode is on — or as soon as you edit a
+[summary template](/features/live-sessions#your-own-templates) —
+the list starts with a built-in **Definitions** workspace: the folder that holds
+your [definition files](/features/definitions) — agents and workflows (work in
+progress) and live summary templates. It can't be removed while it holds
+definition files, and the assistant's file tools can only read it. (It was
+called *Agents & workflows* before it held summary templates; it's renamed in
+place.)
 
 Definition files get help while you edit them:
 
 - **As you type:** the editor knows the file format, so it suggests keys
   (<kbd>Ctrl</kbd>+<kbd>Space</kbd>) and underlines unknown keys and wrong
-  types. This works for any `*.agent.yaml` or `*.workflow.yaml` file, in any
-  workspace.
+  types. This works for any `*.agent.yaml`, `*.workflow.yaml` or
+  `*.summary.yaml` file, in any workspace.
 - **On save:** in the definitions folder, the full check runs, including
   cross-file checks such as an agent path that points nowhere or a role this
   instance doesn't have. Its errors and warnings are listed under the editor

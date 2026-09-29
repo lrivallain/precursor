@@ -66,7 +66,7 @@ export const monacoYaml = configureMonacoYaml(
   { enableSchemaRequest: false, format: { enable: true } },
 );
 
-const DEFINITION_KINDS = ["agent", "workflow"] as const;
+const DEFINITION_KINDS = ["agent", "workflow", "summary"] as const;
 let definitionSchemas: Promise<void> | null = null;
 
 // Keywords whose value is data, not a subschema: a "title" in there is a value.
@@ -96,7 +96,7 @@ function withoutTitles(schema: unknown): unknown {
 }
 
 /**
- * Give `*.agent.yaml` / `*.workflow.yaml` their JSON Schema: completion,
+ * Give `*.agent.yaml` / `*.workflow.yaml` / `*.summary.yaml` their JSON Schema: completion,
  * hovers, and unknown keys flagged as you type. Fetched once, the first time
  * such a file is opened; the backend serves the same schema as `docs/schemas/`.
  */

@@ -8,6 +8,8 @@ direct Q&A endpoint. Summary-to-topic lands in the next phase.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 import logging
 import re
@@ -31,7 +33,9 @@ from precursor.backend.models import (
     Message,
     MessageRole,
     Topic,
+    Workspace,
 )
+from precursor.backend.routers.workspaces import browse_root
 from precursor.backend.schemas import (
     AgendaEvent,
     AgendaResponse,
@@ -53,23 +57,39 @@ from precursor.backend.schemas import (
     MeetingSessionUpdate,
     MeetingSummaryPost,
     MeetingSummaryPostResult,
+    MeetingSummaryRequest,
     MeetingSummaryResult,
     MeetingTranscriptListResult,
     MeetingTranscriptPart,
     MeetingTranscriptSummaryRequest,
     MeetingTranscriptSummaryResult,
     SpeakerRenameRequest,
+    SummaryLanguage,
+    SummaryTemplateCatalog,
+    SummaryTemplateFileRequest,
+    SummaryTemplateFileResult,
+    SummaryTemplateRead,
+    SummaryTemplateSelection,
     TopicSummaryResult,
     TranslateRequest,
     TranslateResult,
 )
+from precursor.backend.schemas.definitions_api import DefinitionsWorkspaceRef
+from precursor.backend.services import summary_templates
 from precursor.backend.services.app_settings import (
     resolve_issue_associations_enabled,
     resolve_live_fast_model,
     resolve_live_reasoning_effort,
+    resolve_live_summary_language,
+    resolve_live_summary_template,
 )
 from precursor.backend.services.blob_store import blob_path, write_blob
 from precursor.backend.services.collections import resolve_topic_github_repo
+from precursor.backend.services.definitions.home import (
+    definitions_workspace,
+    ensure_definitions_workspace,
+)
+from precursor.backend.services.definitions.overlay import definitions_root
 from precursor.backend.services.events import publish_meeting_changed, publish_message_changed
 from precursor.backend.services.github_auth import resolve_github_token
 from precursor.backend.services.github_client import GitHubClient
@@ -81,6 +101,8 @@ from precursor.backend.services.meeting_analysis import (
     analyze_session,
     context_notes_text,
     display_label,
+    is_known_language,
+    known_languages,
     language_name,
     meeting_context_text,
     meeting_details_markdown,
@@ -160,6 +182,98 @@ async def list_archived_sessions(
         .order_by(MeetingSession.archived_at.desc())
     )
     return list(result.scalars().all())
+
+
+# --------------------------------------------------------------------------
+# Summary templates (declared before ``/{session_id}``, which would match them)
+# --------------------------------------------------------------------------
+
+
+def _workspace_ref(ws: Workspace | None) -> DefinitionsWorkspaceRef | None:
+    return DefinitionsWorkspaceRef(id=ws.id, slug=ws.slug, name=ws.name) if ws else None
+
+
+@router.get("/summary-templates", response_model=SummaryTemplateCatalog)
+async def list_summary_templates(
+    session: AsyncSession = Depends(get_session),
+) -> SummaryTemplateCatalog:
+    """The templates a recap can be written from, the languages, and the last used."""
+    catalog = await summary_templates.load_catalog()
+    last = await resolve_live_summary_template(session)
+    if catalog.find(last) is None:
+        last = catalog.default().id
+    language = await resolve_live_summary_language(session)
+    return SummaryTemplateCatalog(
+        templates=[
+            SummaryTemplateRead(
+                id=t.id,
+                name=t.name,
+                description=t.description,
+                source="builtin" if t.path is None else "file",
+                path=t.path,
+                overrides_builtin=t.path is not None and t.builtin,
+            )
+            for t in catalog.templates
+        ],
+        problems=catalog.problems,
+        languages=[SummaryLanguage(code=code, name=name) for code, name in known_languages()],
+        last_template=last,
+        last_language=language if is_known_language(language) else "",
+        folder=str(definitions_root()),
+        workspace=_workspace_ref(await definitions_workspace(session)),
+    )
+
+
+@router.put("/summary-templates/selection", status_code=status.HTTP_204_NO_CONTENT)
+async def select_summary_template(
+    payload: SummaryTemplateSelection, session: AsyncSession = Depends(get_session)
+) -> None:
+    """Remember the picker's choice, so the next recap (and session) starts there."""
+    catalog = await summary_templates.load_catalog()
+    if catalog.find(payload.template) is None:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, f"No summary template '{payload.template}'"
+        )
+    await summary_templates.remember(session, payload.template, payload.language)
+    await session.commit()
+
+
+@router.post("/summary-templates/files", response_model=SummaryTemplateFileResult)
+async def summary_template_file(
+    payload: SummaryTemplateFileRequest, session: AsyncSession = Depends(get_session)
+) -> SummaryTemplateFileResult:
+    """The definition file to edit a template in, written first when needed.
+
+    A built-in is saved to the definitions folder under its own id (the copy
+    replaces it); ``duplicate`` saves any template as a new one to adapt.
+    """
+    await ensure_definitions_workspace(session)
+    try:
+        ident, rel, created = await asyncio.to_thread(
+            summary_templates.template_file, payload.template, duplicate=payload.duplicate
+        )
+    except LookupError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except (summary_templates.TemplateFileError, OSError) as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, f"Couldn't write the template file: {exc}"
+        ) from exc
+    root = definitions_root()
+    ws = await definitions_workspace(session)
+    workspace_path: str | None = None
+    if ws is not None:
+        with contextlib.suppress(ValueError):
+            workspace_path = (
+                (root / rel).resolve().relative_to(browse_root(ws).resolve()).as_posix()
+            )
+    return SummaryTemplateFileResult(
+        id=ident,
+        path=rel,
+        created=created,
+        folder=str(root),
+        workspace=_workspace_ref(ws),
+        workspace_path=workspace_path,
+    )
 
 
 @router.post("", response_model=MeetingSessionRead, status_code=status.HTTP_201_CREATED)
@@ -711,18 +825,52 @@ async def translate(
 # --------------------------------------------------------------------------
 
 
+async def _summary_options(
+    session: AsyncSession, payload: MeetingSummaryRequest | None
+) -> tuple[summary_templates.SummaryTemplate, str]:
+    """The template and language a recap is written with.
+
+    What the request names, else what was last used — falling back to the
+    default template when that one is gone, and to the session's language.
+    """
+    catalog = await summary_templates.load_catalog()
+    requested = payload.template if payload else None
+    if requested is not None:
+        template = catalog.find(requested)
+        if template is None:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"No summary template '{requested}': it was removed, or its file has errors.",
+            )
+    else:
+        template = catalog.find(await resolve_live_summary_template(session)) or catalog.default()
+    if payload is not None and payload.language is not None:
+        language = payload.language
+    else:
+        language = await resolve_live_summary_language(session)
+        if not is_known_language(language):
+            language = ""
+    return template, language
+
+
 @router.post("/{session_id}/summary", response_model=MeetingSummaryResult)
 async def summarize(
-    session_id: int, session: AsyncSession = Depends(get_session)
+    session_id: int,
+    payload: MeetingSummaryRequest | None = None,
+    session: AsyncSession = Depends(get_session),
 ) -> MeetingSummaryResult:
     """Generate a markdown recap of the session and persist it on the session.
 
     Stored so a reopened session shows the recap without regenerating; a new
-    generation only happens on the user's explicit request.
+    generation only happens on the user's explicit request. The template and
+    language used are remembered for the next recap.
     """
     ms = await _get_session_or_404(session_id, session)
+    template, language = await _summary_options(session, payload)
     try:
-        text, model = await generate_summary(session, session_id)
+        text, model = await generate_summary(
+            session, session_id, instructions=template.prompt, language=language
+        )
     except Exception as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Summary failed: {exc}") from exc
     if not text:
@@ -731,9 +879,10 @@ async def summarize(
             "Nothing to summarise yet — record some of the meeting first.",
         )
     ms.summary = text
+    await summary_templates.remember(session, template.id, language)
     await session.commit()
     await publish_meeting_changed(ms.id)
-    return MeetingSummaryResult(summary=text, model=model)
+    return MeetingSummaryResult(summary=text, model=model, template=template.id, language=language)
 
 
 @router.get("/{session_id}/transcripts", response_model=MeetingTranscriptListResult)
@@ -788,6 +937,7 @@ async def summarize_from_transcript(
             "Link a Teams meeting to this session first.",
         )
 
+    template, language = await _summary_options(session, payload)
     transcript_ids = list(payload.transcript_ids) if payload else []
     available, transcript, detail = await fetch_meeting_transcript(
         ms.external_meeting, transcript_ids or None
@@ -799,7 +949,9 @@ async def summarize_from_transcript(
         )
 
     try:
-        text, model = await generate_summary_from_transcript(session, session_id, transcript)
+        text, model = await generate_summary_from_transcript(
+            session, session_id, transcript, instructions=template.prompt, language=language
+        )
     except Exception as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Summary failed: {exc}") from exc
     if not text:
@@ -808,9 +960,16 @@ async def summarize_from_transcript(
             "The transcript couldn't be summarised.",
         )
     ms.summary = text
+    await summary_templates.remember(session, template.id, language)
     await session.commit()
     await publish_meeting_changed(ms.id)
-    return MeetingTranscriptSummaryResult(summary=text, model=model, transcript_ids=transcript_ids)
+    return MeetingTranscriptSummaryResult(
+        summary=text,
+        model=model,
+        template=template.id,
+        language=language,
+        transcript_ids=transcript_ids,
+    )
 
 
 @router.post(

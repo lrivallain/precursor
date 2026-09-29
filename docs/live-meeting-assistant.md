@@ -75,7 +75,11 @@ applies to every past and future phrase from that voice.
 
 The **Summary** tab generates an editable markdown recap — including an
 **Attendees** list (seeded from renamed speakers and any linked meeting's
-invitees) — which you can **post into the linked topic** as a message.
+invitees) — which you can **post into the linked topic** as a message. The
+recap is written from a **summary template** (meeting recap, executive brief,
+action items, detailed minutes, follow-up email, or your own
+`*.summary.yaml` [definition files](definitions.md#summary-template-files--summaryyaml))
+in the **language** you pick; both are remembered for the next recap.
 
 The **Context** tab shows an AI summary of the attached topic's conversation and,
 via the **WorkIQ MCP** (Microsoft 365), lets you **link a meeting from your

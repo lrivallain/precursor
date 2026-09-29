@@ -302,7 +302,7 @@ def record(row: AgentSession | Workflow, defn: AgentDefinition | WorkflowDefinit
 def accept_current(row: AgentSession | Workflow) -> bool:
     """Accept what the row's file grants now; ``False`` if it has no usable file."""
     linked = overlay.linked_file(row)
-    if linked is None or linked.definition is None:
+    if linked is None or not isinstance(linked.definition, AgentDefinition | WorkflowDefinition):
         return False
     record(row, linked.definition)
     return True

@@ -1270,7 +1270,16 @@ async def seed() -> None:
             started_at=ago(hours=2),
             ended_at=ago(hours=1),
             speaker_names_json='{"Guest-1":"Alex","Guest-2":"Sam"}',
-            summary="Add bounded retries and publish the release checklist.",
+            summary=(
+                "## Summary\n"
+                "The team reviewed the latency regression: retries amplify load when the "
+                "gateway is slow. They agreed to bound retries and add jitter.\n\n"
+                "## Attendees\n- Alex\n- Sam\n\n"
+                "## Decisions\n- Cap the retries and add jitter to the backoff.\n\n"
+                "## Action items\n"
+                "- **Sam** — add a bounded-retry regression test.\n"
+                "- **Sam** — update the release checklist."
+            ),
         )
         s.add(meeting)
         await s.flush()
@@ -1305,12 +1314,25 @@ async def seed() -> None:
         )
         s.add(Workspace(name="Design notes", slug="design-notes", kind="local"))
 
-        # The built-in "Agents & workflows" workspace (created at startup once
+        # The built-in "Definitions" workspace (created at startup once
         # Agents mode is on), with a workflow whose first step names an agent
-        # file that doesn't exist: the Files editor marks it.
+        # file that doesn't exist: the Files editor marks it. And a summary
+        # template of our own, next to the built-in ones in the Live picker.
         definitions_dir = Path(os.environ["PRECURSOR_DATA_DIR"]) / "workspaces" / "definitions"
         (definitions_dir / "agents").mkdir(parents=True, exist_ok=True)
         (definitions_dir / "workflows").mkdir(parents=True, exist_ok=True)
+        (definitions_dir / "summaries").mkdir(parents=True, exist_ok=True)
+        (definitions_dir / "summaries" / "customer-call.summary.yaml").write_text(
+            "kind: summary\n"
+            "id: customer-call\n"
+            "name: Customer call notes\n"
+            "description: What the customer needs, what each side committed to, and what's next.\n"
+            "prompt: |\n"
+            "  You are an account manager writing up a call with a customer. Write\n"
+            "  markdown notes: context, needs & pain points, commitments (us / the\n"
+            "  customer) and next steps. Never invent figures, dates or commitments.\n",
+            encoding="utf-8",
+        )
         (definitions_dir / "agents" / "digest-writer.agent.yaml").write_text(
             "kind: agent\n"
             "id: digest-writer\n"
@@ -1342,7 +1364,7 @@ async def seed() -> None:
             "    on_fail: write\n",
             encoding="utf-8",
         )
-        s.add(Workspace(name="Agents & workflows", slug="definitions", kind="local"))
+        s.add(Workspace(name="Definitions", slug="definitions", kind="local"))
 
         handbook_url = seed_handbook_repo(Path(os.environ["PRECURSOR_DATA_DIR"]))
         runbooks_url = seed_runbooks_repo(Path(os.environ["PRECURSOR_DATA_DIR"]))

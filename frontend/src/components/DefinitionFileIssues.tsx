@@ -3,14 +3,16 @@ import { CircleCheck, CircleAlert, TriangleAlert } from "lucide-react";
 import { api } from "../lib/api";
 import type { DefinitionFileReport, DefinitionIssue } from "../lib/types";
 
+const DEFINITION_SUFFIXES = [".agent.yaml", ".workflow.yaml", ".summary.yaml"];
+
 export function isDefinitionFile(path: string): boolean {
   const name = path.split("/").pop() ?? "";
-  return !name.startsWith(".") && (name.endsWith(".agent.yaml") || name.endsWith(".workflow.yaml"));
+  return !name.startsWith(".") && DEFINITION_SUFFIXES.some((suffix) => name.endsWith(suffix));
 }
 
 /**
- * The definitions check's report on the open file, when it is an agent or
- * workflow definition. `version` bumps after each save so the report follows
+ * The definitions check's report on the open file, when it is an agent,
+ * workflow or summary template definition. `version` bumps after each save so the report follows
  * the file on disk.
  */
 export function useDefinitionReport(
@@ -55,7 +57,7 @@ export function isPlaced(issue: DefinitionIssue): issue is DefinitionIssue & {
 
 /**
  * Under the Files editor: the definitions check's findings for the open file,
- * when it is an agent or workflow definition inside the definitions folder.
+ * when it is a definition file inside the definitions folder.
  * A finding placed in the text moves the editor to it on click.
  */
 export function DefinitionFileIssues({
@@ -70,7 +72,9 @@ export function DefinitionFileIssues({
   const warnings = report.issues.filter((i) => i.severity === "warning");
   const summary =
     report.issues.length === 0
-      ? `Valid ${report.kind} definition`
+      ? report.kind === "summary"
+        ? "Valid summary template"
+        : `Valid ${report.kind} definition`
       : [
           errors.length ? `${errors.length} error${errors.length > 1 ? "s" : ""}` : null,
           warnings.length ? `${warnings.length} warning${warnings.length > 1 ? "s" : ""}` : null,

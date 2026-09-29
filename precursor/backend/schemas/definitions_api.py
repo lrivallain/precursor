@@ -11,7 +11,10 @@ from typing import Literal
 
 from pydantic import BaseModel
 
+# What a database row can be declared by.
 DefinitionKind = Literal["agent", "workflow"]
+# What a file in the folder can declare: summary templates have no row.
+DefinitionFileKind = Literal["agent", "workflow", "summary"]
 
 
 class DefinitionSource(BaseModel):
@@ -65,16 +68,18 @@ class DefinitionIssue(BaseModel):
 
 class DefinitionFileSummary(BaseModel):
     path: str
-    kind: DefinitionKind
+    kind: DefinitionFileKind
     # Taken from the file even when it fails validation, as long as it parses.
     id: str | None = None
-    # The agent's ``title`` or the workflow's ``name``, when the file is valid.
+    # The agent's ``title``, or the workflow's or template's ``name``, when the
+    # file is valid.
     name: str | None = None
     valid: bool
     # SHA-256 of the file's bytes: what a run will record as "the version used".
     content_hash: str
     # Whether an agent or workflow in the database carries this id. Null when
-    # the check ran without a database (the ``precursor validate`` CLI).
+    # the check ran without a database (the ``precursor validate`` CLI), and for
+    # a summary template, which has no row.
     linked: bool | None = None
 
 
@@ -141,7 +146,7 @@ class DefinitionFileReport(BaseModel):
     in_definitions: bool
     # Relative to the definitions folder, as the check reports it.
     path: str | None = None
-    kind: DefinitionKind | None = None
+    kind: DefinitionFileKind | None = None
     valid: bool | None = None
     issues: list[DefinitionIssue] = []
 

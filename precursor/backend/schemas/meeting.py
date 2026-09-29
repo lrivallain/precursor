@@ -9,7 +9,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from precursor.backend.schemas.definitions_api import DefinitionIssue, DefinitionsWorkspaceRef
 
 InsightKind = Literal["action_item", "decision", "question", "suggestion", "risk", "note"]
 MeetingStatus = Literal["active", "ended"]
@@ -162,9 +164,93 @@ class MeetingAskRequest(BaseModel):
     question: str = Field(min_length=1, max_length=2000)
 
 
+class MeetingSummaryRequest(BaseModel):
+    """How to write a recap. Omitted, each falls back to the one last used."""
+
+    # A summary template's id (``GET /api/live/summary-templates``).
+    template: str | None = Field(default=None, min_length=1, max_length=64)
+    # A BCP-47 tag (``fr`` or ``fr-FR``); ``""`` writes in the session's language.
+    language: str | None = Field(default=None, max_length=35)
+
+    @field_validator("language")
+    @classmethod
+    def _language(cls, value: str | None) -> str | None:
+        from precursor.backend.services.meeting_analysis import is_known_language
+
+        if value and not is_known_language(value):
+            raise ValueError(f"unsupported summary language '{value}'")
+        return value
+
+
 class MeetingSummaryResult(BaseModel):
     summary: str
     model: str
+    # The template and language it was written with ("" = the session's).
+    template: str = ""
+    language: str = ""
+
+
+class SummaryTemplateRead(BaseModel):
+    id: str
+    name: str
+    description: str | None = None
+    source: Literal["builtin", "file"]
+    # Relative to the definitions folder, for a template read from a file.
+    path: str | None = None
+    # A file that replaces the built-in template of the same id.
+    overrides_builtin: bool = False
+
+
+class SummaryLanguage(BaseModel):
+    code: str
+    name: str
+
+
+class SummaryTemplateCatalog(BaseModel):
+    templates: list[SummaryTemplateRead]
+    # Template files left out because of errors (or ids used twice).
+    problems: list[DefinitionIssue] = Field(default_factory=list)
+    languages: list[SummaryLanguage] = Field(default_factory=list)
+    # What the last recap was written with: the picker starts there.
+    last_template: str
+    last_language: str = ""
+    # The definitions folder, and the workspace showing it in Files (if any).
+    folder: str
+    workspace: DefinitionsWorkspaceRef | None = None
+
+
+class SummaryTemplateSelection(BaseModel):
+    template: str = Field(min_length=1, max_length=64)
+    # ``""`` writes in the session's language.
+    language: str = Field(default="", max_length=35)
+
+    @field_validator("language")
+    @classmethod
+    def _language(cls, value: str) -> str:
+        from precursor.backend.services.meeting_analysis import is_known_language
+
+        if value and not is_known_language(value):
+            raise ValueError(f"unsupported summary language '{value}'")
+        return value
+
+
+class SummaryTemplateFileRequest(BaseModel):
+    template: str = Field(min_length=1, max_length=64)
+    # Save it as a new template (new id) instead of opening/customizing it.
+    duplicate: bool = False
+
+
+class SummaryTemplateFileResult(BaseModel):
+    # The template the file declares: a new id for a duplicate.
+    id: str
+    # Relative to the definitions folder.
+    path: str
+    # False when the template already had its file.
+    created: bool
+    folder: str
+    workspace: DefinitionsWorkspaceRef | None = None
+    # The same file, relative to the workspace's Files root, to open it there.
+    workspace_path: str | None = None
 
 
 class MeetingSummaryPost(BaseModel):
@@ -244,7 +330,7 @@ class MeetingTranscriptListResult(BaseModel):
     detail: str | None = None
 
 
-class MeetingTranscriptSummaryRequest(BaseModel):
+class MeetingTranscriptSummaryRequest(MeetingSummaryRequest):
     # Which transcription session(s) to summarise. Empty means "the most recent
     # one" — the UI only sends ids once the user has picked from several.
     transcript_ids: list[str] = Field(default_factory=list)

@@ -141,12 +141,31 @@ async def test_the_builtin_workspace_hosts_the_definitions(env: Path) -> None:
     first = listed[0]
     assert (first["slug"], first["name"], first["kind"]) == (
         "definitions",
-        "Agents & workflows",
+        "Definitions",
         "local",
     )
     assert first["hosts_definitions"] is True
     assert all(not w["hosts_definitions"] for w in listed[1:])
     assert env.is_dir()
+
+
+async def test_the_builtin_workspace_takes_its_new_name(env: Path) -> None:
+    from sqlalchemy import update
+
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import Workspace
+    from precursor.backend.services.definitions.home import ensure_definitions_workspace
+
+    async with SessionLocal() as session:
+        await ensure_definitions_workspace(session)
+        await session.execute(
+            update(Workspace)
+            .where(Workspace.slug == "definitions")
+            .values(name="Agents & workflows")
+        )
+        await session.commit()
+        ws = await ensure_definitions_workspace(session)
+        assert ws is not None and ws.name == "Definitions"
 
 
 async def test_a_user_workspace_cannot_take_the_reserved_slug(env: Path) -> None:
@@ -236,6 +255,22 @@ async def test_the_preview_lists_blockers(env: Path) -> None:
     joined = " ".join(preview["blockers"])
     assert "mid-run" in joined and "used by several files" in joined
     assert refused.status_code == 409
+
+
+async def test_summary_templates_are_left_out_of_the_migration(env: Path) -> None:
+    await _seed()
+    _write(env, "summaries/ok.summary.yaml", "kind: summary\nid: ok\nname: Ok\nprompt: Ok.\n")
+    _write(env, "summaries/broken.summary.yaml", "kind: summary\nid: broken\nname: Broken\n")
+    _write(env, "summaries/a.summary.yaml", "kind: summary\nid: twin\nname: A\nprompt: a\n")
+    _write(env, "summaries/b.summary.yaml", "kind: summary\nid: twin\nname: B\nprompt: b\n")
+    with TestClient(create_app()) as client:
+        client.post("/api/definitions/export")
+        preview = client.get("/api/definitions/migration").json()
+        assert preview["ready"] is True, preview["blockers"]
+        assert not [i for i in preview["items"] if (i["path"] or "").startswith("summaries/")]
+        assert client.post("/api/definitions/migrate", json={"acknowledge": True}).json()["ok"]
+        cleanup = client.get("/api/definitions/migration").json()["cleanup"]
+    assert not [b for b in cleanup["blockers"] if "summaries/" in b]
 
 
 # --- Migrate ----------------------------------------------------------------

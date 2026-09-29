@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "``summaries/<slug>.summary.yaml``: how a live session's recap is written.",
+  "properties": {
+    "kind": {
+      "const": "summary",
+      "type": "string"
+    },
+    "format": {
+      "default": 1,
+      "maximum": 1,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "id": {
+      "description": "Stable identity, remembered as the last template used. The id of a built-in template replaces that template.",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+      "type": "string"
+    },
+    "name": {
+      "description": "Shown in the template picker.",
+      "maxLength": 80,
+      "minLength": 1,
+      "type": "string"
+    },
+    "description": {
+      "anyOf": [
+        {
+          "maxLength": 300,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "One line on what the recap looks like."
+    },
+    "prompt": {
+      "description": "Instructions for the model: the sections, tone and length of the recap. It receives the transcript, notes, insights and linked context; the language is added for you.",
+      "maxLength": 16000,
+      "minLength": 1,
+      "type": "string"
+    }
+  },
+  "required": [
+    "kind",
+    "id",
+    "name",
+    "prompt"
+  ],
+  "title": "Precursor summary template",
+  "type": "object"
+}

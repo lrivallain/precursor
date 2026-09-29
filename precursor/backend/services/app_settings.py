@@ -297,6 +297,27 @@ async def resolve_live_reasoning_effort(session: AsyncSession) -> str:
     )
 
 
+# The summary template and output language last used for a live recap, so the
+# next one (including the draft written when a session ends) starts from them.
+LIVE_SUMMARY_TEMPLATE_KEY = "live_summary_template"
+LIVE_SUMMARY_LANGUAGE_KEY = "live_summary_language"
+DEFAULT_LIVE_SUMMARY_TEMPLATE = "standard"
+
+
+async def resolve_live_summary_template(session: AsyncSession) -> str:
+    return await resolve(
+        session,
+        SettingSpec(
+            LIVE_SUMMARY_TEMPLATE_KEY, _nonempty_str(), default=DEFAULT_LIVE_SUMMARY_TEMPLATE
+        ),
+    )
+
+
+async def resolve_live_summary_language(session: AsyncSession) -> str:
+    """``""`` means the session's own language."""
+    return await resolve(session, SettingSpec(LIVE_SUMMARY_LANGUAGE_KEY, _any_str, default=""))
+
+
 async def resolve_llm_provider(session: AsyncSession) -> str:
     """Return the active LLM provider id, or the factory default."""
     from precursor.backend.services.llm.registry import DEFAULT_PROVIDER, PROVIDERS

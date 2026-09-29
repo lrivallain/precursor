@@ -518,6 +518,30 @@ async def test_export_keeps_an_existing_portable_id(api_root: Path) -> None:
     assert _written(result, "agent", ids["adhoc"])["id"] == portable
 
 
+async def test_export_never_reuses_a_summary_templates_id(api_root: Path) -> None:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentSession
+
+    await _setup()
+    ids, _ = await _seed()
+    taken = _uid()
+    _write(
+        api_root, "summaries/t.summary.yaml", f"kind: summary\nid: {taken}\nname: T\nprompt: t\n"
+    )
+    async with SessionLocal() as session:
+        agent = await session.get(AgentSession, ids["adhoc"])
+        assert agent is not None
+        agent.export_id = taken
+        await session.commit()
+
+    with TestClient(create_app()) as client:
+        result = client.post("/api/definitions/export").json()
+        report = client.get("/api/definitions/check").json()
+    assert _written(result, "agent", ids["adhoc"])["id"] != taken
+    assert any("used by a summary template" in i["message"] for i in result["issues"])
+    assert not [i for i in report["issues"] if "is also used by" in i["message"]]
+
+
 async def test_a_step_with_a_deleted_agent_is_written_and_flagged(api_root: Path) -> None:
     from precursor.backend.db import SessionLocal
     from precursor.backend.models import Workflow, WorkflowStep

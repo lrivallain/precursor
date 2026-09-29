@@ -247,6 +247,25 @@ const scenes = {
     },
   },
 
+  // The Summary tab's Generate panel: the source, the templates (built-ins
+  // plus one of our own, a `*.summary.yaml` definition file) and the language.
+  "live-summary-templates": {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await page.goto(`${BASE}/live/weekly-platform-sync`, { waitUntil: "networkidle" });
+      await page.getByRole("button", { name: /^Summary/ }).first().click();
+      await page.getByRole("button", { name: /Regenerate|Generate/ }).first().click();
+      await page.getByRole("radio", { name: /Customer call notes/ }).waitFor();
+      await page.mouse.move(0, 0);
+      await sleep(400);
+      // The section (not the sidebar's persona footer), cut below the panel.
+      const clip = await clipOf(page, "[data-live-summary]");
+      const panel = await page.getByRole("dialog", { name: "Generate summary" }).boundingBox();
+      const bottom = panel ? Math.ceil(panel.y + panel.height + 16) : clip.y + 560;
+      return clip && { ...clip, height: Math.min(clip.height, bottom - clip.y) };
+    },
+  },
+
   workspaces: {
     viewport: { width: 1440, height: 1000 },
     async go(page) {

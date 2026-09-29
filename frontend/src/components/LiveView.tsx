@@ -24,6 +24,7 @@ import type {
 } from "../lib/types";
 import { api } from "../lib/api";
 import { useSettings } from "../lib/settingsStore";
+import { useSummaryTemplates } from "../lib/useSummaryTemplates";
 import {
   listAudioInputDevices,
   useConversationTranscriber,
@@ -209,6 +210,8 @@ export function LiveView({
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const [summarySaving, setSummarySaving] = useState(false);
   const [summarySaved, setSummarySaved] = useState(false);
+  // The summary template + output language (last used, remembered server-side).
+  const summaryTemplates = useSummaryTemplates();
   // Last text known to be persisted server-side. Generation and posting also
   // write the recap, so we re-seed this from the session (below) to keep those
   // paths from tripping a redundant autosave.
@@ -638,7 +641,7 @@ export function LiveView({
     setSummaryGenerating(true);
     setSummaryError(null);
     try {
-      const res = await api.meetings.summarize(session.id);
+      const res = await api.meetings.summarize(session.id, summaryTemplates.options);
       setSummaryText(res.summary);
       // The backend persisted the recap; mirror it onto the session so a later
       // open (or the "Summary ●" dot) stays in sync without regenerating. Merge
@@ -660,7 +663,11 @@ export function LiveView({
     setTranscriptScraping(true);
     setSummaryError(null);
     try {
-      const res = await api.meetings.summarizeFromTranscript(session.id, transcriptIds);
+      const res = await api.meetings.summarizeFromTranscript(
+        session.id,
+        transcriptIds,
+        summaryTemplates.options,
+      );
       setSummaryText(res.summary);
       onUpdated({ ...session, summary: res.summary || null });
     } catch (e) {
@@ -1312,8 +1319,11 @@ export function LiveView({
 
   // A linked Teams meeting + WorkIQ lets the user build the recap from the
   // meeting's own transcript — no local recording needed.
-  const canSummarizeFromTranscript =
-    (settings?.mcp_enabled?.workiq ?? false) && session.external_meeting != null;
+  const transcriptUnavailable = !(settings?.mcp_enabled?.workiq ?? false)
+    ? "Needs the WorkIQ MCP server (Microsoft 365), enabled in Settings → MCP servers"
+    : session.external_meeting == null
+      ? "Link the Teams meeting in the Context tab first"
+      : null;
 
   const summaryNode = (
     <SummarySection
@@ -1323,16 +1333,18 @@ export function LiveView({
       setText={setSummaryText}
       generating={summaryGenerating}
       error={summaryError}
-      onGenerate={() => void generateSummary()}
+      onGenerate={(source) =>
+        void (source === "transcript" ? generateFromTranscript() : generateSummary())
+      }
       suggestedAttendees={suggestedAttendees}
       topicTitle={topicTitle}
       topicIssueNumber={topicIssueNumber}
       canGenerate={segments.length > 0}
-      canSummarizeFromTranscript={canSummarizeFromTranscript}
-      onSummarizeFromTranscript={() => void generateFromTranscript()}
+      transcriptUnavailable={transcriptUnavailable}
       transcriptScraping={transcriptScraping}
       saving={summarySaving}
       saved={summarySaved}
+      templates={summaryTemplates}
     />
   );
 

@@ -1,4 +1,4 @@
-# Agent & workflow definition files
+# Definition files
 
 > **Work in progress.** This page describes the file format for declaring
 > agents and workflows, the folder check, the one-shot export of today's agents
@@ -21,6 +21,11 @@ Files can then live in a git repository: history, diffs and review come for
 free, the same definitions can be used on several machines, and any editor
 (or the assistant itself) can write them.
 
+The folder is the home of every definition, not just agents and workflows: it
+also holds the **summary templates** live sessions write their recaps from
+([below](#summary-template-files--summaryyaml)). Those have no database side
+and are read from the folder whatever the mode.
+
 ## Decisions (step 0)
 
 | Question | Decision |
@@ -42,6 +47,8 @@ the database; skills are already files.
 ├── agents/
 │   ├── inbox-triager.agent.yaml
 │   └── adhoc/            # agents spawned from a topic or chat
+├── summaries/            # live summary templates
+│   └── customer-call.summary.yaml
 └── workflows/
     └── morning-briefing.workflow.yaml
 ```
@@ -137,6 +144,43 @@ never re-points a reference.
 | `context` | `mode: auto` (previous output + artifacts, default), `selected` (only the steps listed in `from`), or `none`. |
 | `capabilities` | Per-step `mcp` / `skills` / `memory` / `mcp_servers`; an omitted toggle inherits the agent. |
 
+## Summary template files — `*.summary.yaml`
+
+A template a [live session](../website/features/live-sessions.md)'s recap is
+written from, picked in the Summary tab's **Generate** form together with the
+source and the output language.
+
+```yaml
+kind: summary
+id: customer-call            # remembered as the last template used
+name: Customer call notes    # shown in the picker (80 characters max)
+description: What the customer needs, what each side committed to, and what's next.
+prompt: |
+  You are an account manager writing up a call with a customer…
+```
+
+| Field | Meaning |
+| --- | --- |
+| `id` | Stable identity: the picker remembers the last template used by it. The id of a **built-in** template (`standard`, `executive-brief`, `action-items`, `detailed-minutes`, `follow-up-email`) replaces that template while the file exists. |
+| `name` / `description` | What the picker shows. |
+| `prompt` | The instructions: sections, tone, length. The transcript (or the Teams transcript), notes, insights, attendees and linked context are passed as the message; "write in &lt;language&gt;" is appended for you. |
+
+- **No database side.** Templates aren't migrated, exported or linked to a
+  row, and they're read in database mode too. The check still validates them
+  (`linked` is null in its report), and their errors never block the
+  migration or the cleanup.
+- **A file with errors is skipped**, with the reason listed in the Generate
+  form; a built-in of the same id stays available, so a typo never stops a
+  recap.
+- **From the app:** *Edit* in the Generate form saves a built-in to
+  `summaries/<id>.summary.yaml` (same id, so it replaces it) and opens it in
+  Files; a template that has a file opens as it is. *New from this one* saves
+  a copy under a new id. `POST /api/live/summary-templates/files`
+  does both; it never overwrites a file.
+
+A complete example is
+[`docs/examples/definitions/summaries/customer-call.summary.yaml`](examples/definitions/summaries/customer-call.summary.yaml).
+
 ## Validation
 
 Files are checked strictly, because they are written by hand:
@@ -162,7 +206,7 @@ Checks that need the whole folder or the instance are described under
 
 ### Editor support
 
-JSON Schemas for both kinds are committed under
+JSON Schemas for every kind (`agent`, `workflow`, `summary`) are committed under
 [`docs/schemas/`](schemas/). Point the VS Code YAML extension (or any
 `yaml-language-server` client) at them with a modeline to get completion and
 inline errors. The path is relative to the file, as in the examples:
@@ -176,8 +220,8 @@ rules above (for example "an approval step has no agent") are enforced by
 Precursor itself.
 
 Precursor's own Files editor needs no modeline: it applies the same schemas,
-served by `GET /api/definitions/schema/{kind}`, to every `*.agent.yaml` and
-`*.workflow.yaml`. It also shows the check's findings on the lines they
+served by `GET /api/definitions/schema/{kind}`, to every `*.agent.yaml`,
+`*.workflow.yaml` and `*.summary.yaml`. It also shows the check's findings on the lines they
 concern: `GET /api/definitions/file-issues` gives each one a
 `line`/`column` range. A file that still carries the modeline above gets the
 same schema; the modeline is only for other editors.
@@ -193,14 +237,16 @@ uv run --frozen python scripts/gen_definition_schemas.py
 
 ## The definitions folder
 
-By default the definitions live in a built-in workspace, **Agents &
-workflows** (slug `definitions`, a local folder at
+By default the definitions live in a built-in workspace, **Definitions**
+(slug `definitions`, a local folder at
 `<data dir>/workspaces/definitions`), so they can be browsed, edited and checked
 in the **Files** section like any other workspace:
 
 - It's created when Agents mode is on (or files mode is forced), and whenever
-  the export or the migration is about to write there. It always leads the
-  workspace list, marked with its own icon.
+  the export, the migration or a summary template is about to write there. It
+  always leads the workspace list, marked with its own icon. (It was called
+  *Agents & workflows* before it held summary templates, and is renamed in
+  place.)
 - It can't be removed while it holds definition files — its folder would go
   with it. The `definitions` slug is reserved: a workspace you create never
   gets it.
@@ -210,8 +256,8 @@ in the **Files** section like any other workspace:
 `PRECURSOR_DEFINITIONS_WORKSPACE` points at one of your own workspaces instead
 (see [keeping definitions in git](#keeping-definitions-in-git)), and
 `PRECURSOR_DEFINITIONS_DIR` at any folder (no workspace then); either replaces
-the built-in one. Every `*.agent.yaml` and
-`*.workflow.yaml` below it is read, in any sub-folder; hidden folders (such as
+the built-in one. Every `*.agent.yaml`, `*.workflow.yaml` and
+`*.summary.yaml` below it is read, in any sub-folder; hidden folders (such as
 `.git`) and hidden files are skipped. A symlink is followed only if it stays
 inside the folder.
 
@@ -554,7 +600,7 @@ workspace, point Precursor at it, and:
 
 The assistant's file tools still can't write there, even though it's a
 workspace. `PRECURSOR_DEFINITIONS_DIR`, when set, takes precedence. Without
-either setting, the built-in **Agents & workflows** workspace holds the files —
+either setting, the built-in **Definitions** workspace holds the files —
 a plain local folder, no git.
 
 ## Roadmap
@@ -577,7 +623,7 @@ Each step ships on its own and is validated before the next starts.
    autonomy, tools, budget, new steps) are held until a human accepts them; the
    assistant's file tools cannot write the definitions folder.
 8. ✅ The definitions folder can be a git workspace: pull, check, accept, push.
-   By default it's the built-in **Agents & workflows** workspace.
+   By default it's the built-in **Definitions** workspace.
    ✅ **Migration wizard** in Settings → Definition files — previewed with
    each file's content, verified, reversible — ending, on request, with the
    **database cleanup** (irreversible).

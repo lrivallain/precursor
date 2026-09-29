@@ -38,7 +38,7 @@ async def database_links(
 ) -> tuple[dict[str, frozenset[str]], DefinitionsDatabaseLinks]:
     file_ids: dict[str, set[str]] = {"agent": set(), "workflow": set()}
     for f in dset.files:
-        if f.raw_id:
+        if f.raw_id and f.kind in file_ids:
             file_ids[f.kind].add(f.raw_id)
 
     links = DefinitionsDatabaseLinks()
