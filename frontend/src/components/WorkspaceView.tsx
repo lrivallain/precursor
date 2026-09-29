@@ -1331,13 +1331,14 @@ function LocalWorkspaceBar({
         <span
           className="inline-flex items-center gap-1.5 text-muted"
           data-tooltip={
-            "Agent and workflow definition files (*.agent.yaml, *.workflow.yaml).\n" +
+            "Definition files: agents, workflows and live summary templates\n" +
+            "(*.agent.yaml, *.workflow.yaml, *.summary.yaml).\n" +
             "Opening one shows its check under the editor. The assistant's file tools can only read here.\n" +
             "Settings → Workflows migrates your agents and workflows into files."
           }
         >
           <FileCode2 size={14} />
-          Agent &amp; workflow definitions
+          Definition files
         </span>
       ) : (
         <span className="inline-flex items-center gap-1.5 text-muted">

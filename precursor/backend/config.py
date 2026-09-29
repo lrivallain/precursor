@@ -140,10 +140,9 @@ class Settings(BaseSettings):
             base = Path(xdg) / "copilot" if xdg else Path.home() / ".copilot"
         return str((base / "skills").expanduser())
 
-    # Agent and workflow definition files (``*.agent.yaml`` /
-    # ``*.workflow.yaml``). Work in progress: read by the integrity check and
-    # written by the one-shot export, not yet by the runtime. See
-    # docs/definitions.md.
+    # Definition files: agents and workflows (``*.agent.yaml`` /
+    # ``*.workflow.yaml``, read at runtime in files mode) and live summary
+    # templates (``*.summary.yaml``, always read). See docs/definitions.md.
     definitions_dir_override: str = Field(default="", validation_alias="PRECURSOR_DEFINITIONS_DIR")
     # Keep the definitions in a Precursor workspace (e.g. a git clone), named by
     # its slug, optionally followed by a folder inside it: ``team-defs`` or
@@ -157,8 +156,8 @@ class Settings(BaseSettings):
         inside = Path(self.definitions_workspace.strip().strip("/"))
         if inside.parts and ".." not in inside.parts and not inside.is_absolute():
             return str(Path(self.workspaces_dir) / inside)
-        # The built-in "Agents & workflows" workspace, so the files can be
-        # browsed and edited in the Files section.
+        # The built-in "Definitions" workspace, so the files can be browsed
+        # and edited in the Files section.
         return str(Path(self.workspaces_dir) / DEFINITIONS_WORKSPACE_SLUG)
 
     @property

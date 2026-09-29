@@ -1,10 +1,12 @@
 import { useState } from "react";
-import { Check, Eye, Loader2, Pencil, Plus, RefreshCw, ScrollText, Send, X } from "lucide-react";
+import { Check, Eye, Loader2, Pencil, Plus, Send, X } from "lucide-react";
 import type { MeetingSession } from "../lib/types";
 import { api } from "../lib/api";
+import type { SummaryTemplatesState } from "../lib/useSummaryTemplates";
 import { GithubIcon as Github } from "./icons/GithubIcon";
 import { CopyableMarkdown } from "./CopyableMarkdown";
 import { RefineTextarea } from "./RefineTextarea";
+import { SummaryGeneratePanel, type SummarySource } from "./SummaryGeneratePanel";
 
 interface Props {
   session: MeetingSession;
@@ -13,30 +15,34 @@ interface Props {
   setText: (text: string) => void;
   generating: boolean;
   error: string | null;
-  onGenerate: () => void;
+  /** Generate the recap from the local recording or the Teams transcript. */
+  onGenerate: (source: SummarySource) => void;
   /** Speaker-derived names not yet in the attendee list. */
   suggestedAttendees: string[];
   topicTitle: string | null;
   /** Issue number linked to the attached topic; posting also comments there. */
   topicIssueNumber: number | null;
+  /** Something was recorded, so the recap can be generated from it. */
   canGenerate: boolean;
   /**
-   * Show the "From Teams transcript" action: true only when WorkIQ is enabled
-   * and a Teams meeting is linked to the session.
+   * Why the linked Teams meeting's transcript can't be summarised (WorkIQ off,
+   * no meeting linked), or null when it can.
    */
-  canSummarizeFromTranscript: boolean;
-  onSummarizeFromTranscript: () => void;
+  transcriptUnavailable: string | null;
   transcriptScraping: boolean;
   /** True while a debounced autosave of the recap is in flight. */
   saving: boolean;
   /** True once the latest recap edits have been persisted. */
   saved: boolean;
+  /** The template + output language pickers (see useSummaryTemplates). */
+  templates: SummaryTemplatesState;
 }
 
 /**
  * Summary tab: an editable attendee list plus the generated markdown recap,
  * with copy and post-to-topic actions. Attendees seed from the renamed speakers
- * (and, later, the linked M365 meeting) and are folded into the summary.
+ * (and, later, the linked M365 meeting) and are folded into the summary. The
+ * recap is written from the picked summary template, in the picked language.
  */
 export function SummarySection({
   session,
@@ -50,19 +56,25 @@ export function SummarySection({
   topicTitle,
   topicIssueNumber,
   canGenerate,
-  canSummarizeFromTranscript,
-  onSummarizeFromTranscript,
+  transcriptUnavailable,
   transcriptScraping,
   saving,
   saved,
+  templates,
 }: Props) {
   const [mode, setMode] = useState<"edit" | "preview">("preview");
+  const [notice, setNotice] = useState<{ message: string; tone: "info" | "error" } | null>(
+    null,
+  );
   const [newAttendee, setNewAttendee] = useState("");
   const [posting, setPosting] = useState(false);
   const [posted, setPosted] = useState(false);
   const [postError, setPostError] = useState<string | null>(null);
 
   const attendees = session.attendees ?? [];
+  const canSummarizeFromTranscript = transcriptUnavailable === null;
+  const currentTemplate =
+    templates.catalog?.templates.find((t) => t.id === templates.template) ?? null;
   const canPost = session.topic_id != null;
   // The attached topic carries a GitHub issue, so posting also mirrors the
   // recap there as a comment — surfaced with a GitHub glyph on the post button.
@@ -126,7 +138,7 @@ export function SummarySection({
   }
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full flex-col" data-live-summary>
       {/* Attendees */}
       <div className="border-b border-border px-3 py-2">
         <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted">
@@ -185,38 +197,16 @@ export function SummarySection({
 
       {/* Actions */}
       <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2">
-        {canGenerate && (
-          <button
-            type="button"
-            onClick={onGenerate}
-            disabled={generating}
-            data-tooltip="Generate the summary from the recorded transcript"
-            className="inline-flex items-center gap-1.5 rounded border border-border px-2 py-1 text-[12px] hover:bg-surface disabled:opacity-50"
-          >
-            {generating ? (
-              <Loader2 size={12} className="animate-spin" />
-            ) : (
-              <RefreshCw size={12} />
-            )}
-            {text ? "Refresh" : "Generate"}
-          </button>
-        )}
-        {canSummarizeFromTranscript && (
-          <button
-            type="button"
-            onClick={onSummarizeFromTranscript}
-            disabled={transcriptScraping || generating}
-            data-tooltip="Scrape the linked Teams meeting transcript and generate the summary from it"
-            className="inline-flex items-center gap-1.5 rounded border border-border px-2 py-1 text-[12px] hover:bg-surface disabled:opacity-50"
-          >
-            {transcriptScraping ? (
-              <Loader2 size={12} className="animate-spin" />
-            ) : (
-              <ScrollText size={12} />
-            )}
-            Generate from Teams transcript
-          </button>
-        )}
+        <SummaryGeneratePanel
+          templates={templates}
+          sessionLanguage={session.language}
+          hasSummary={text.trim().length > 0}
+          canUseRecording={canGenerate}
+          transcriptUnavailable={transcriptUnavailable}
+          busy={transcriptScraping ? "transcript" : generating ? "recording" : null}
+          onGenerate={onGenerate}
+          onNotice={(message, tone) => setNotice({ message, tone })}
+        />
         <div className="flex items-center gap-0.5 text-xs">
           <button
             type="button"
@@ -294,6 +284,23 @@ export function SummarySection({
           {postError ?? error}
         </div>
       )}
+      {notice && (
+        <div
+          className={`flex items-start gap-2 border-b border-border px-3 py-1.5 text-[12px] ${
+            notice.tone === "error" ? "bg-red-500/10 text-red-500" : "bg-sky-500/10 text-text"
+          }`}
+        >
+          <span className="min-w-0 flex-1 break-words">{notice.message}</span>
+          <button
+            type="button"
+            onClick={() => setNotice(null)}
+            aria-label="Dismiss"
+            className="shrink-0 text-muted hover:text-text"
+          >
+            <X size={12} />
+          </button>
+        </div>
+      )}
 
       {/* Body */}
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
@@ -319,15 +326,16 @@ export function SummarySection({
             <p className="mb-1 font-medium text-text">No summary yet</p>
             {canGenerate || canSummarizeFromTranscript ? (
               <p className="max-w-sm">
-                Generate a recap of the meeting — attendees, decisions, action
-                items, open questions and risks
+                Use <strong>Generate</strong> to write a recap of the meeting
                 {canSummarizeFromTranscript && !canGenerate ? (
                   <> from the linked Teams meeting&apos;s transcript</>
                 ) : null}
+                {" "}— pick the {canGenerate && canSummarizeFromTranscript ? "source, " : ""}
+                template (last used:{" "}
+                <strong>{currentTemplate?.name ?? "Meeting recap"}</strong>) and language
                 {canPost ? (
                   <>
-                    {" "}
-                    — then post it into <strong>{topicTitle ?? "the topic"}</strong>.
+                    , then post it into <strong>{topicTitle ?? "the topic"}</strong>.
                   </>
                 ) : (
                   "."

@@ -104,7 +104,11 @@ export function useWorkspacesController(
         const url = workspaceFileUrl(slug, path);
         if (url === null) return;
         const list = workspaces ?? (await loadWorkspaces());
-        const target = list.find((w) => w.slug === slug);
+        // A workspace made since the list was loaded (e.g. the built-in
+        // Definitions one, created when a first summary template is saved).
+        const target =
+          list.find((w) => w.slug === slug) ??
+          (workspaces ? (await loadWorkspaces()).find((w) => w.slug === slug) : undefined);
         if (!target) return;
         setActiveWorkspaceId(target.id);
         navigate(url);

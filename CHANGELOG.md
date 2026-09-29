@@ -15,6 +15,25 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **Summary templates for live sessions.** The Summary tab's single
+  **Generate** button opens a small form: the **source** (the recording, or the
+  linked Teams meeting's transcript — replacing the separate "Generate from
+  Teams transcript" button), the **template** — Meeting recap, Executive brief,
+  Action items, Detailed minutes or Follow-up email — and the **language** (the
+  meeting's own by default). Template and language are remembered, so the next
+  recap and the draft written when a session ends start from them. Templates
+  are `*.summary.yaml`
+  [definition files](website/features/definitions.md#summary-templates): from
+  the form, **Edit** saves a built-in to the definitions folder (the copy
+  replaces it) and opens it in Files, and **New from this one** starts your
+  own. A file with errors is skipped and listed, never
+  breaking a recap. The definitions folder now holds every kind of definition,
+  so its built-in workspace is renamed **Definitions** (from *Agents &
+  workflows*). New endpoints: `GET /api/live/summary-templates`,
+  `PUT /api/live/summary-templates/selection` and
+  `POST /api/live/summary-templates/files`; `POST /api/live/{id}/summary` and
+  `/summary/from-transcript` accept `template` and `language`.
+
 - **Windows gets the same one-command install.** `scripts/install.ps1` is the
   PowerShell twin of `install.sh`: `irm …/install.ps1 | iex` installs the nightly
   build with the Kanban and tray extras, registers the login items and starts

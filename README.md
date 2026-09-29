@@ -186,7 +186,7 @@ In-repo references:
 
 - [Architecture](docs/architecture.md)
 - [Plugin system](docs/plugins.md)
-- [Agent & workflow definition files](docs/definitions.md) (work in progress)
+- [Definition files](docs/definitions.md) — agents & workflows (work in progress) and live summary templates
 - [Contributing](CONTRIBUTING.md)
 - [Releasing](RELEASING.md)
 - [Changelog](CHANGELOG.md)

@@ -1,10 +1,11 @@
-"""The built-in "Agents & workflows" workspace that holds definition files.
+"""The built-in "Definitions" workspace that holds definition files.
 
 By default the definitions folder *is* a workspace — local, slug
-``definitions`` — so agent and workflow files can be browsed, edited and
-checked in the Files section like any other. It is created on demand: at
-startup when Agents mode is on (or files mode is forced), and whenever the
-export or the migration is about to write there.
+``definitions`` — so agent, workflow and summary template files can be
+browsed, edited and checked in the Files section like any other. It is created
+on demand: at startup when Agents mode is on (or files mode is forced), and
+whenever the export, the migration or a new summary template is about to write
+there.
 
 When ``PRECURSOR_DEFINITIONS_DIR`` or ``PRECURSOR_DEFINITIONS_WORKSPACE`` puts
 the definitions somewhere else, there is no built-in workspace: the folder
@@ -26,7 +27,9 @@ from precursor.backend.services.definitions.loader import kind_for
 
 logger = logging.getLogger(__name__)
 
-WORKSPACE_NAME = "Agents & workflows"
+WORKSPACE_NAME = "Definitions"
+# What it was called while it only held agents and workflows: renamed in place.
+_LEGACY_WORKSPACE_NAME = "Agents & workflows"
 
 
 async def ensure_definitions_workspace(session: AsyncSession) -> Workspace | None:
@@ -55,11 +58,14 @@ async def ensure_definitions_workspace(session: AsyncSession) -> Workspace | Non
         session.add(ws)
         await session.commit()
         logger.info("Created the %r workspace for definition files at %s", WORKSPACE_NAME, root)
+    elif ws.kind == "local" and ws.name == _LEGACY_WORKSPACE_NAME:
+        ws.name = WORKSPACE_NAME
+        await session.commit()
     elif ws.kind != "local" or ws.name != WORKSPACE_NAME:
         # A workspace that already had the slug before it was reserved: it is
         # adopted as the home of the definitions, files and all.
         logger.warning(
-            "Workspace %r (slug %r) now also holds the agent and workflow definition files",
+            "Workspace %r (slug %r) now also holds the definition files",
             ws.name,
             DEFINITIONS_WORKSPACE_SLUG,
         )

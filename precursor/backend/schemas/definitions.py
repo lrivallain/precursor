@@ -1,10 +1,14 @@
-"""Declarative agent and workflow definitions — the on-disk file format.
+"""Declarative definitions — the on-disk file format.
 
 A definition file declares what an agent or a workflow *is* (prompt, model,
 role, capabilities, policies, steps). Everything that evolves while it runs —
 status, progress, runs, token spend, scheduling, triggers, webhook tokens —
 stays in the database, keyed to the file by its stable ``id``. See
 ``docs/definitions.md``.
+
+The same folder also holds **summary templates** (``*.summary.yaml``): the
+instructions a live session's recap is written from. They have no database
+side at all.
 
 The models are strict (unknown keys are rejected) because these files are
 written by hand: a typo such as ``instuctions:`` must fail loudly rather than
@@ -22,6 +26,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from pydantic.json_schema import GenerateJsonSchema
 
 from precursor.backend.schemas.agent import AgentApprovalPolicy
+from precursor.backend.schemas.definitions_api import DefinitionFileKind
 from precursor.backend.schemas.workflow import (
     WorkflowStepContextMode,
     WorkflowStepErrorPolicy,
@@ -33,6 +38,14 @@ DEFINITION_FORMAT_VERSION = 1
 
 AGENT_FILE_SUFFIX = ".agent.yaml"
 WORKFLOW_FILE_SUFFIX = ".workflow.yaml"
+SUMMARY_FILE_SUFFIX = ".summary.yaml"
+SUMMARY_NAME_MAX = 80
+
+FILE_SUFFIXES: dict[DefinitionFileKind, str] = {
+    "agent": AGENT_FILE_SUFFIX,
+    "workflow": WORKFLOW_FILE_SUFFIX,
+    "summary": SUMMARY_FILE_SUFFIX,
+}
 
 DefinitionId = Annotated[
     str,
@@ -334,9 +347,64 @@ class WorkflowDefinition(_Strict):
         return self
 
 
-DEFINITION_MODELS: dict[str, type[AgentDefinition] | type[WorkflowDefinition]] = {
+# --- Summary template -------------------------------------------------------
+
+
+class SummaryDefinition(_Strict):
+    """``summaries/<slug>.summary.yaml``: how a live session's recap is written."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={"title": "Precursor summary template"},
+    )
+
+    kind: Literal["summary"]
+    format: int = Field(default=DEFINITION_FORMAT_VERSION, ge=1, le=DEFINITION_FORMAT_VERSION)
+    id: Annotated[
+        str,
+        Field(
+            pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+            description=(
+                "Stable identity, remembered as the last template used. The id of a "
+                "built-in template replaces that template."
+            ),
+        ),
+    ]
+    name: str = Field(
+        min_length=1, max_length=SUMMARY_NAME_MAX, description="Shown in the template picker."
+    )
+    description: str | None = Field(
+        default=None, max_length=300, description="One line on what the recap looks like."
+    )
+    prompt: str = Field(
+        min_length=1,
+        max_length=16000,
+        description=(
+            "Instructions for the model: the sections, tone and length of the recap. "
+            "It receives the transcript, notes, insights and linked context; the "
+            "language is added for you."
+        ),
+    )
+
+    @field_validator("format", mode="before")
+    @classmethod
+    def _format(cls, value: Any) -> Any:
+        return _check_format(value)
+
+    @field_validator("prompt")
+    @classmethod
+    def _prompt(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("prompt is empty")
+        return value
+
+
+DEFINITION_MODELS: dict[
+    str, type[AgentDefinition] | type[WorkflowDefinition] | type[SummaryDefinition]
+] = {
     "agent": AgentDefinition,
     "workflow": WorkflowDefinition,
+    "summary": SummaryDefinition,
 }
 
 
@@ -351,7 +419,7 @@ class _NoFieldTitles(GenerateJsonSchema):
         return False
 
 
-def definition_json_schema(kind: Literal["agent", "workflow"]) -> dict[str, Any]:
+def definition_json_schema(kind: DefinitionFileKind) -> dict[str, Any]:
     """The published JSON Schema for one kind of definition file."""
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",

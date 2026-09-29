@@ -145,7 +145,7 @@ def _compare(
     issues: list[DefinitionIssue],
 ) -> _Planned:
     generated = _validated(kind, doc, linked.path, issues)
-    if linked.definition is None:
+    if not isinstance(linked.definition, AgentDefinition | WorkflowDefinition):
         action, reason = "regenerate", "its file has errors"
     elif generated is None:
         action, reason = "regenerate", "the database's version doesn't validate"
@@ -169,7 +169,7 @@ async def _plan(session: AsyncSession) -> _Plan:
     plan = _Plan(root=root, dset=dset)
 
     for ident, files in sorted(dset.by_id.items()):
-        if len(files) > 1:
+        if len(files) > 1 and any(f.kind != "summary" for f in files):
             plan.blockers.append(
                 f"id '{ident}' is used by several files ({', '.join(f.path for f in files)}); "
                 "give each its own id"
@@ -269,6 +269,9 @@ async def _plan(session: AsyncSession) -> _Plan:
         )
 
     for f in dset.files:
+        if f.kind not in ("agent", "workflow"):
+            # Summary templates have no database side: nothing to migrate.
+            continue
         if f.raw_id is None:
             # Not even an id to read: nothing can tell which agent or workflow it
             # declares, so it's left as it is (and keeps showing in the check).
@@ -309,7 +312,10 @@ def _source() -> Literal["database", "files"]:
 
 def _sample_path(dset: DefinitionSet) -> str | None:
     """A file to open from the Settings panel: a workflow if there is one."""
-    ordered = sorted(dset.files, key=lambda f: (f.kind != "workflow", f.path))
+    ordered = sorted(
+        (f for f in dset.files if f.kind in ("agent", "workflow")),
+        key=lambda f: (f.kind != "workflow", f.path),
+    )
     return ordered[0].path if ordered else None
 
 
@@ -481,7 +487,9 @@ async def _accept_all(session: AsyncSession, dset: DefinitionSet, rows: Sequence
     for row in rows:
         kind: DefinitionKind = "workflow" if isinstance(row, Workflow) else "agent"
         linked = dset.find(kind, row.export_id)
-        if linked is None or linked.definition is None:
+        if linked is None or not isinstance(
+            linked.definition, AgentDefinition | WorkflowDefinition
+        ):
             continue
         snapshot = trust.permissions_of(linked.definition)
         model = type(row)
@@ -756,8 +764,12 @@ async def cleanup_preview(session: AsyncSession) -> CleanupPreview:
             f"{'is' if len(active) == 1 else 'are'} mid-run; let it finish or cancel it first"
         )
     # Once the database's copy is gone, the files are all there is: they must
-    # all be usable first.
+    # all be usable first. A summary template doesn't declare anything the
+    # database holds, so its errors don't stand in the way.
     for issue in check_definitions(dset):
+        owner = dset.by_path.get(issue.path or "")
+        if owner is not None and owner.kind == "summary":
+            continue
         if issue.severity == "error":
             where = ": ".join(p for p in (issue.path, issue.location) if p)
             preview.blockers.append(f"{where}: {issue.message}" if where else issue.message)

@@ -32,6 +32,7 @@ import type {
   ChatUpdate,
   CommentDraft,
   CommentPostResult,
+  DefinitionFileKind,
   DefinitionFileReport,
   DefinitionKind,
   DefinitionsCheckReport,
@@ -82,7 +83,10 @@ import type {
   MeetingSession,
   MeetingSessionCreate,
   MeetingSessionUpdate,
+  MeetingSummaryOptions,
+  MeetingSummaryResult,
   MeetingTranscriptListResult,
+  MeetingTranscriptSummaryResult,
   Message,
   StoppedTurn,
   NotesDraft,
@@ -117,6 +121,8 @@ import type {
   Skill,
   SkillCreate,
   SkillUpdate,
+  SummaryTemplateCatalog,
+  SummaryTemplateFileResult,
   SystemStats,
   CleanupPreview,
   CleanupRunResult,
@@ -820,7 +826,7 @@ export const api = {
         `/api/definitions/file-issues?workspace_id=${workspaceId}&path=${encodeURIComponent(path)}`,
       ),
     // The JSON Schema of a kind of definition file, for the Files editor.
-    schema: (kind: DefinitionKind) =>
+    schema: (kind: DefinitionFileKind) =>
       request<Record<string, unknown>>(`/api/definitions/schema/${kind}`),
     // Files mode: accept the permissions an agent's or workflow's file grants now.
     accept: (kind: DefinitionKind, id: number | string, contentHash?: string | null) =>
@@ -1332,21 +1338,40 @@ export const api = {
       request<{ insights: MeetingInsight[]; suggestion: string }>(`/api/live/${id}/analyze`, {
         method: "POST",
       }),
-    summarize: (id: number) =>
-      request<{ summary: string; model: string }>(`/api/live/${id}/summary`, {
+    summarize: (id: number, options: MeetingSummaryOptions = {}) =>
+      request<MeetingSummaryResult>(`/api/live/${id}/summary`, {
         method: "POST",
+        body: JSON.stringify(options),
+      }),
+    /** Summary templates (built in + definition files), languages, last used. */
+    summaryTemplates: () => request<SummaryTemplateCatalog>("/api/live/summary-templates"),
+    /**
+     * The definition file to edit a template in — a built-in is saved to the
+     * folder first; `duplicate` saves it as a new template instead.
+     */
+    /** Remember the picker's template + language for the next recap. */
+    selectSummaryTemplate: (template: string, language: string) =>
+      request<void>("/api/live/summary-templates/selection", {
+        method: "PUT",
+        body: JSON.stringify({ template, language }),
+      }),
+    summaryTemplateFile: (template: string, duplicate = false) =>
+      request<SummaryTemplateFileResult>("/api/live/summary-templates/files", {
+        method: "POST",
+        body: JSON.stringify({ template, duplicate }),
       }),
     /** The linked Teams meeting's transcription sessions (fail-closed). */
     listTranscripts: (id: number) =>
       request<MeetingTranscriptListResult>(`/api/live/${id}/transcripts`),
-    summarizeFromTranscript: (id: number, transcriptIds?: string[]) =>
-      request<{ summary: string; model: string; transcript_ids: string[] }>(
-        `/api/live/${id}/summary/from-transcript`,
-        {
-          method: "POST",
-          body: JSON.stringify({ transcript_ids: transcriptIds ?? [] }),
-        },
-      ),
+    summarizeFromTranscript: (
+      id: number,
+      transcriptIds?: string[],
+      options: MeetingSummaryOptions = {},
+    ) =>
+      request<MeetingTranscriptSummaryResult>(`/api/live/${id}/summary/from-transcript`, {
+        method: "POST",
+        body: JSON.stringify({ transcript_ids: transcriptIds ?? [], ...options }),
+      }),
     postSummary: (id: number, summary: string) =>
       request<{
         topic_id: number;

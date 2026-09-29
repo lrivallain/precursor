@@ -71,6 +71,15 @@ _LANG_NAMES = {
 }
 
 
+def known_languages() -> list[tuple[str, str]]:
+    """``(code, name)`` for every language a prompt can name, by name."""
+    return sorted(_LANG_NAMES.items(), key=lambda item: item[1])
+
+
+def is_known_language(tag: str) -> bool:
+    return tag.split("-")[0].lower() in _LANG_NAMES
+
+
 def language_name(tag: str | None) -> str | None:
     """Map a BCP-47 tag (e.g. ``fr-FR``) to a language name, or None when unset."""
     if not tag:

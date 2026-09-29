@@ -1,4 +1,4 @@
-"""Read a definitions folder into validated agent and workflow definitions.
+"""Read a definitions folder into validated agent, workflow and summary definitions.
 
 Parsing is cached per file on its stat fingerprint, so re-checking a folder
 only re-reads the files that changed. Loading never raises for a bad file: every
@@ -19,22 +19,23 @@ import yaml
 from pydantic import ValidationError
 
 from precursor.backend.schemas.definitions import (
-    AGENT_FILE_SUFFIX,
-    WORKFLOW_FILE_SUFFIX,
+    DEFINITION_MODELS,
+    FILE_SUFFIXES,
     AgentDefinition,
+    SummaryDefinition,
     WorkflowDefinition,
 )
-from precursor.backend.schemas.definitions_api import DefinitionIssue, DefinitionKind
+from precursor.backend.schemas.definitions_api import DefinitionFileKind, DefinitionIssue
 
 MAX_DEFINITION_BYTES = 1_000_000
 
-Definition = AgentDefinition | WorkflowDefinition
+Definition = AgentDefinition | WorkflowDefinition | SummaryDefinition
 
 
 @dataclass(frozen=True)
 class LoadedFile:
     path: str
-    kind: DefinitionKind
+    kind: DefinitionFileKind
     content_hash: str
     # The ``id`` value when the YAML parses to a mapping carrying a string id,
     # even if the rest fails validation — so a broken file still links to its row
@@ -47,7 +48,7 @@ class LoadedFile:
     def name(self) -> str | None:
         if isinstance(self.definition, AgentDefinition):
             return self.definition.title
-        if isinstance(self.definition, WorkflowDefinition):
+        if isinstance(self.definition, WorkflowDefinition | SummaryDefinition):
             return self.definition.name
         return None
 
@@ -60,7 +61,7 @@ class DefinitionSet:
     by_path: dict[str, LoadedFile] = field(default_factory=dict)
     by_id: dict[str, tuple[LoadedFile, ...]] = field(default_factory=dict)
 
-    def find(self, kind: DefinitionKind, ident: str | None) -> LoadedFile | None:
+    def find(self, kind: DefinitionFileKind, ident: str | None) -> LoadedFile | None:
         """The one file carrying ``ident``, if it is of ``kind``.
 
         An id used by two files is ambiguous (the check reports it), so it
@@ -81,14 +82,18 @@ class DefinitionSet:
             (f, f.definition) for f in self.files if isinstance(f.definition, WorkflowDefinition)
         ]
 
+    def summaries(self) -> list[tuple[LoadedFile, SummaryDefinition]]:
+        return [
+            (f, f.definition) for f in self.files if isinstance(f.definition, SummaryDefinition)
+        ]
 
-def kind_for(name: str) -> DefinitionKind | None:
+
+def kind_for(name: str) -> DefinitionFileKind | None:
     if name.startswith("."):
         return None
-    if name.endswith(AGENT_FILE_SUFFIX):
-        return "agent"
-    if name.endswith(WORKFLOW_FILE_SUFFIX):
-        return "workflow"
+    for kind, suffix in FILE_SUFFIXES.items():
+        if name.endswith(suffix):
+            return kind
     return None
 
 
@@ -196,7 +201,7 @@ def _validation_issues(
 # --- Parsing ----------------------------------------------------------------
 
 
-def parse_definition(path: str, kind: DefinitionKind, data: bytes) -> LoadedFile:
+def parse_definition(path: str, kind: DefinitionFileKind, data: bytes) -> LoadedFile:
     """Parse one file's bytes. ``path`` is only used to label issues."""
     digest = hashlib.sha256(data).hexdigest()
 
@@ -222,11 +227,10 @@ def parse_definition(path: str, kind: DefinitionKind, data: bytes) -> LoadedFile
     raw_id = raw.get("id") if isinstance(raw.get("id"), str) else None
     declared = raw.get("kind")
     if declared != kind:
-        suffix = AGENT_FILE_SUFFIX if kind == "agent" else WORKFLOW_FILE_SUFFIX
         found = "no `kind`" if declared is None else f"`kind: {declared}`"
-        return failed(f"a *{suffix} file needs `kind: {kind}`, found {found}", raw_id)
+        return failed(f"a *{FILE_SUFFIXES[kind]} file needs `kind: {kind}`, found {found}", raw_id)
 
-    model: type[Definition] = AgentDefinition if kind == "agent" else WorkflowDefinition
+    model = DEFINITION_MODELS[kind]
     try:
         definition = model.model_validate(raw)
     except ValidationError as exc:
@@ -297,7 +301,7 @@ def _load_file(root: Path, path: Path) -> LoadedFile:
 
 
 def load_definitions(root: Path) -> DefinitionSet:
-    """Load every ``*.agent.yaml`` / ``*.workflow.yaml`` under ``root``."""
+    """Load every ``*.agent.yaml`` / ``*.workflow.yaml`` / ``*.summary.yaml`` under ``root``."""
     if not root.is_dir():
         return DefinitionSet(root=root, exists=False)
     paths = _scan(root)

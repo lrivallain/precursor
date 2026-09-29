@@ -21,6 +21,7 @@ from precursor.backend.routers.workspaces import browse_root
 from precursor.backend.schemas.definitions import definition_json_schema
 from precursor.backend.schemas.definitions_api import (
     DefinitionAcceptRequest,
+    DefinitionFileKind,
     DefinitionFileReport,
     DefinitionKind,
     DefinitionsCheckReport,
@@ -169,7 +170,7 @@ async def definition_file_issues(
 
 
 @router.get("/schema/{kind}")
-async def definition_schema(kind: DefinitionKind) -> dict[str, Any]:
+async def definition_schema(kind: DefinitionFileKind) -> dict[str, Any]:
     """The JSON Schema of one kind of definition file (as in ``docs/schemas/``).
 
     The Files editor validates and completes definition files against it.

@@ -9,6 +9,10 @@ workflow — and let the database keep only what happens when they run: status,
 progress, run history, schedules, triggers. Files can live in git, be reviewed
 like code, and move between machines.
 
+The same folder holds the **summary templates** of
+[live sessions](/features/live-sessions#your-own-templates) — see
+[below](#summary-templates).
+
 ::: warning Work in progress
 Opt-in and still evolving. By default Precursor keeps running everything from
 the database, as it always has. The full design, file format and roadmap live
@@ -55,7 +59,7 @@ wizard; **Not now** hides it for a week. Or open **Settings → Definition
 files** directly. The wizard takes you through it:
 
 1. **Overview** — what's declared today, where the files will go (the
-   **Agents & workflows** workspace), what stays in the database, and anything
+   **Definitions** workspace), what stays in the database, and anything
    in the way (a workflow mid-run, two files with the same id).
 2. **Review** — every agent and workflow with what happens to its file: new,
    rewritten from the database (and why), or already up to date. Open a line to
@@ -74,6 +78,31 @@ files** directly. The wizard takes you through it:
 
 `precursor validate <folder>` checks a folder from a terminal or CI.
 
+## Summary templates
+
+A `*.summary.yaml` file is a template a live session's recap can be written
+from. Unlike agents and workflows, templates have no database side: they're
+always read from the folder, with or without the migration, and edits apply to
+the next recap.
+
+```yaml
+# summaries/customer-call.summary.yaml
+kind: summary
+id: customer-call            # remembered as the last template used
+name: Customer call notes    # shown in the picker
+description: Needs, commitments on each side, and next steps.
+prompt: |
+  You are an account manager writing up a call with a customer…
+```
+
+The `prompt` sets the recap's sections, tone and length; the transcript,
+notes, insights and linked context are passed for you, and so is the language.
+Precursor ships a few built-in templates; a file with the **id of a built-in**
+replaces it (delete the file to get it back). **Edit** in the Summary tab's
+**Generate** form writes that file for you and opens it. A template file with
+errors is skipped — the form lists why — and never stops a recap: the built-in
+of that id stays available.
+
 ## Working in files mode
 
 - **Edit either side.** Saving in the app writes the file; editing the file
@@ -89,7 +118,7 @@ files** directly. The wizard takes you through it:
   [workspace](/features/workspaces) becomes the definitions folder, so you pull,
   edit and push from the Files section. The editor completes and validates
   definition files as you type, and marks the check's findings in the file
-  (see [the Agents & workflows workspace](/features/workspaces#the-agents-workflows-workspace)).
+  (see [the Definitions workspace](/features/workspaces#the-definitions-workspace)).
 
 See also [Import & export](/features/transfer) for sharing a single agent or
 workflow as a file, and the [configuration reference](/reference/configuration).

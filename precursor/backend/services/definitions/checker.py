@@ -1,4 +1,4 @@
-"""Folder-wide integrity check for agent and workflow definition files.
+"""Folder-wide integrity check for definition files.
 
 Per-file problems come from the loader; this adds what only the whole folder
 (and, when available, this instance's database) can tell: duplicate ids, agent
@@ -190,9 +190,10 @@ def build_report(
             name=f.name,
             valid=f.definition is not None,
             content_hash=f.content_hash,
+            # A summary template has no database row to be linked to.
             linked=None
-            if linked_ids is None
-            else (f.raw_id is not None and f.raw_id in linked_ids.get(f.kind, frozenset())),
+            if linked_ids is None or f.kind not in linked_ids
+            else (f.raw_id is not None and f.raw_id in linked_ids[f.kind]),
         )
         for f in dset.files
     ]

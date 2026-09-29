@@ -75,7 +75,9 @@ Summary · Context. Use the **Split** toggle to view two sections side by side.
   handy for correcting a misheard word before it feeds the insights and summary.
 - **Summary** — an editable markdown recap, including an **Attendees** list
   (seeded from renamed speakers and any linked meeting's invitees), which you can
-  **post into the linked topic** as a message. Suggested attendees sit in a
+  **post into the linked topic** as a message. One **Generate** button opens a
+  small form to pick the [source, template and language](#generating-the-summary)
+  it's written from. Suggested attendees sit in a
   compact, scrollable strip, so a large invite list never crowds out the recap.
   Your edits **autosave** as you
   type (and when you end the session or leave it), so a hand-tuned recap survives
@@ -86,20 +88,78 @@ Summary · Context. Use the **Split** toggle to view two sections side by side.
   agenda spans the last few days through today, so you can attach — or record
   from — a meeting that already happened.
 
+### Generating the summary
+
+The Summary tab has a single **Generate** button (**Regenerate** once there's
+a recap). It opens a small form right under it:
+
+<Screenshot src="/screenshots/live-summary-templates.png" alt="The Generate panel under the Summary tab's button: a Recording / Teams transcript source choice, the list of summary templates including a custom one marked as a file, and the language picker" caption="One button: pick the source, the template — built in, or one of your own definition files — and the language." />
+
+- **Source** — the **Recording** (what Precursor transcribed) or the linked
+  meeting's **Teams transcript** (see [below](#summarize-from-the-teams-transcript-no-local-record)).
+  An option you can't use yet is greyed out, and hovering it says why. It
+  defaults to the recording when there is one.
+- **Template** — the shape of the recap. Precursor ships with:
+
+  | Template | What you get |
+  | --- | --- |
+  | **Meeting recap** (default) | Summary, attendees, decisions, action items, open questions and risks. |
+  | **Executive brief** | A short, outcome-first brief for someone who wasn't in the room. |
+  | **Action items** | Just the follow-ups — a table of tasks, owners and due dates. |
+  | **Detailed minutes** | Topic-by-topic minutes of the discussion, in the order it happened. |
+  | **Follow-up email** | A ready-to-send recap email for the attendees. |
+
+- **Language** — **Meeting language** (the session's own, the default) or any
+  other: record in French, send the recap in English.
+
+The template and language are **remembered**: the next recap — including the
+draft written when a session ends, and the next session — starts from what you
+picked last. Regenerating replaces the current recap (the form says so).
+
+#### Your own templates
+
+Templates are [definition files](/features/definitions#summary-templates):
+`*.summary.yaml` files in the **Definitions** workspace (under `summaries/`),
+next to agent and workflow files. Next to the template list in the form:
+
+- **Edit** opens the selected template's file in [Files](/features/workspaces).
+  For a built-in, it first saves a copy there under the same id — the copy
+  replaces the built-in until you delete it.
+- **New from this one** saves a copy under a new id, selects it and opens it:
+  rename it, rewrite its `prompt` (sections, tone, length), save. It's in the
+  list the next time you open the form.
+
+The editor completes and checks the file as you type. A template file with
+errors is left out of the list — the form says which file and why — and never
+breaks a recap: the built-in of that id stays available.
+
+```yaml
+# summaries/customer-call.summary.yaml
+kind: summary
+id: customer-call
+name: Customer call notes
+description: What the customer needs, what each side committed to, and what's next.
+prompt: |
+  You are an account manager writing up a call with a customer. …
+  ## Needs & pain points — bullet list, in the customer's own terms.
+  ## Commitments — two bullet lists, **Us** and **Customer**, with owners.
+  ## Next steps — bullet list.
+```
+
 ### Summarize from the Teams transcript (no local record)
 
 If you'd rather not capture audio locally, link the Teams meeting from your
-agenda in the **Context** tab, then open **Summary → Generate from Teams
-transcript**. Precursor reads the meeting's published transcript through WorkIQ
+agenda in the **Context** tab, then open **Summary → Generate** and pick the
+**Teams transcript** source. Precursor reads the meeting's published transcript through WorkIQ
 (Microsoft Graph) and summarizes it with **your** model — so you get Precursor's
 structured recap (decisions, action items, open questions, risks) instead of
 Teams' own summary.
 
-The button appears **only** when the WorkIQ MCP server is enabled **and** a Teams
-meeting is linked. It's best-effort and fail-closed: the transcript is only
-available to the meeting **organizer**, requires the delegated
+The source can be picked **only** when the WorkIQ MCP server is enabled **and**
+a Teams meeting is linked. It's best-effort and fail-closed: the transcript is
+only available to the meeting **organizer**, requires the delegated
 `OnlineMeetingTranscript.Read.All` permission, and is published by Teams a few
-minutes **after** the meeting ends. When any of those isn't met, the button
+minutes **after** the meeting ends. When any of those isn't met, generating
 reports why and leaves your summary untouched.
 
 #### When the meeting has several transcription sessions

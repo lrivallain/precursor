@@ -65,7 +65,7 @@ export function WorkspaceList({ workspaces, activeId, onSelect }: WorkspaceListP
                       className="flex-1 truncate"
                       data-tooltip={
                         w.hosts_definitions
-                          ? "Holds your agent and workflow definition files"
+                          ? "Holds your definition files: agents, workflows and summary templates"
                           : undefined
                       }
                     >

@@ -77,9 +77,9 @@ def _represent_str(dumper: yaml.SafeDumper, value: str) -> yaml.ScalarNode:
 _Dumper.add_representer(str, _represent_str)
 
 
-def render_document(doc: dict[str, Any]) -> str:
+def render_document(doc: dict[str, Any], header: str = _HEADER) -> str:
     body = yaml.dump(doc, Dumper=_Dumper, sort_keys=False, allow_unicode=True, width=100)
-    return _HEADER + body
+    return header + body
 
 
 def _write_atomic(target: Path, text: str) -> None:
@@ -483,7 +483,7 @@ def _accepted(defn: AgentDefinition | WorkflowDefinition | None) -> dict[str, st
 
 def _existing_ids(dset: DefinitionSet) -> dict[str, dict[str, str]]:
     """``{kind: {id: path}}`` for every file whose id could be read."""
-    out: dict[str, dict[str, str]] = {"agent": {}, "workflow": {}}
+    out: dict[str, dict[str, str]] = {"agent": {}, "workflow": {}, "summary": {}}
     for f in dset.files:
         if f.raw_id:
             out[f.kind].setdefault(f.raw_id, f.path)
@@ -506,6 +506,9 @@ def _resolve_identity(
         reason = f"its portable id '{ident}' isn't a valid file id"
     elif ident and (ident in existing[other] or ident in plan.ids_by_kind.get(other, set())):
         reason = f"its portable id '{ident}' is already used by a {other}"
+    elif ident and ident in existing["summary"]:
+        # Ids are unique across the whole folder, summary templates included.
+        reason = f"its portable id '{ident}' is already used by a summary template"
     if reason:
         ctx.warn(None, f"{label}: {reason}; a new one was minted")
         ident = None

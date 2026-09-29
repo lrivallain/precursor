@@ -1,4 +1,4 @@
-"""Tests for the agent/workflow definition file format (schemas/definitions.py).
+"""Tests for the definition file format (schemas/definitions.py).
 
 These files are hand-edited, so the rules worth pinning are the ones that turn
 a plausible-looking mistake into a loud error instead of a silently different
@@ -19,8 +19,11 @@ from pydantic import ValidationError
 
 from precursor.backend.schemas.definitions import (
     AGENT_FILE_SUFFIX,
+    FILE_SUFFIXES,
+    SUMMARY_FILE_SUFFIX,
     WORKFLOW_FILE_SUFFIX,
     AgentDefinition,
+    SummaryDefinition,
     WorkflowDefinition,
     definition_json_schema,
 )
@@ -43,6 +46,10 @@ def _example_files() -> list[Path]:
     return sorted(EXAMPLES.rglob("*.yaml"))
 
 
+def _kind_of(path: Path) -> str:
+    return next(kind for kind, suffix in FILE_SUFFIXES.items() if path.name.endswith(suffix))
+
+
 def _workflow(*steps: dict[str, Any], **extra: Any) -> dict[str, Any]:
     return {"kind": "workflow", "id": "wf", "name": "WF", "steps": list(steps), **extra}
 
@@ -56,10 +63,11 @@ def _error(model: type[AgentDefinition] | type[WorkflowDefinition], data: dict[s
 # --- Examples & published schemas -------------------------------------------
 
 
-def test_examples_exist_for_both_kinds() -> None:
+def test_examples_exist_for_every_kind() -> None:
     names = [p.name for p in _example_files()]
     assert any(n.endswith(AGENT_FILE_SUFFIX) for n in names)
     assert any(n.endswith(WORKFLOW_FILE_SUFFIX) for n in names)
+    assert any(n.endswith(SUMMARY_FILE_SUFFIX) for n in names)
 
 
 @pytest.mark.parametrize("path", _example_files(), ids=lambda p: p.name)
@@ -67,6 +75,8 @@ def test_example_files_validate(path: Path) -> None:
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
     if path.name.endswith(AGENT_FILE_SUFFIX):
         AgentDefinition.model_validate(data)
+    elif path.name.endswith(SUMMARY_FILE_SUFFIX):
+        SummaryDefinition.model_validate(data)
     else:
         workflow = WorkflowDefinition.model_validate(data)
         # The docs example must be self-consistent: every agent it names exists.
@@ -79,12 +89,12 @@ def test_example_files_validate(path: Path) -> None:
 def test_example_files_pass_the_published_json_schema(path: Path) -> None:
     # What an editor sees: the committed JSON Schema, not the Pydantic model.
     jsonschema = pytest.importorskip("jsonschema")
-    kind = "agent" if path.name.endswith(AGENT_FILE_SUFFIX) else "workflow"
+    kind = _kind_of(path)
     schema = json.loads((SCHEMAS / f"{kind}.schema.json").read_text(encoding="utf-8"))
     jsonschema.validate(yaml.safe_load(path.read_text(encoding="utf-8")), schema)
 
 
-@pytest.mark.parametrize("kind", ["agent", "workflow"])
+@pytest.mark.parametrize("kind", list(FILE_SUFFIXES))
 def test_committed_json_schemas_are_current(kind: str) -> None:
     committed = (SCHEMAS / f"{kind}.schema.json").read_text(encoding="utf-8")
     assert committed == _load_generator().render(kind), (
@@ -264,3 +274,36 @@ def test_a_gate_may_loop_back_to_an_approval_step() -> None:
 
 def test_empty_workflow_is_a_valid_draft() -> None:
     assert WorkflowDefinition.model_validate(_workflow()).steps == []
+
+
+# --- Summary templates --------------------------------------------------------
+
+
+def _summary(**extra: Any) -> dict[str, Any]:
+    return {"kind": "summary", "id": "brief", "name": "Brief", "prompt": "Be brief.", **extra}
+
+
+def test_minimal_summary_template() -> None:
+    template = SummaryDefinition.model_validate(_summary())
+    assert (template.id, template.name, template.description, template.format) == (
+        "brief",
+        "Brief",
+        None,
+        1,
+    )
+
+
+@pytest.mark.parametrize(
+    ("data", "message"),
+    [
+        (_summary(prompt="   "), "prompt is empty"),
+        (_summary(instructions="x"), "Extra inputs are not permitted"),
+        ({"kind": "summary", "id": "brief", "prompt": "x"}, "name"),
+        (_summary(id="../x"), "String should match pattern"),
+        (_summary(format=2), "written by a newer Precursor"),
+    ],
+)
+def test_summary_template_rejects(data: dict[str, Any], message: str) -> None:
+    with pytest.raises(ValidationError) as exc:
+        SummaryDefinition.model_validate(data)
+    assert message in str(exc.value)

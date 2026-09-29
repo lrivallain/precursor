@@ -996,6 +996,8 @@ export interface TransferImportResult {
 // see docs/definitions.md. They declare agents and workflows only in files mode.
 
 export type DefinitionKind = "agent" | "workflow";
+/** What a file in the definitions folder can declare: summary templates have no row. */
+export type DefinitionFileKind = DefinitionKind | "summary";
 
 /**
  * Where an agent's or workflow's declaration comes from, in files mode:
@@ -1031,7 +1033,7 @@ export interface DefinitionIssue {
 
 export interface DefinitionFileSummary {
   path: string;
-  kind: DefinitionKind;
+  kind: DefinitionFileKind;
   id: string | null;
   name: string | null;
   valid: boolean;
@@ -1071,7 +1073,7 @@ export interface DefinitionFileReport {
   /** False when the file isn't a definition file inside the definitions folder. */
   in_definitions: boolean;
   path: string | null;
-  kind: DefinitionKind | null;
+  kind: DefinitionFileKind | null;
   valid: boolean | null;
   issues: DefinitionIssue[];
 }
@@ -1999,7 +2001,7 @@ export interface Workspace {
   cloned_at: string | null;
   last_synced_at: string | null;
   role_id: number | null;
-  /** Holds the agent and workflow definition files (the built-in "Agents & workflows"). */
+  /** Holds the definition files (the built-in "Definitions" workspace). */
   hosts_definitions?: boolean;
   created_at: string;
   updated_at: string;
@@ -2298,6 +2300,68 @@ export interface MeetingTranscriptListResult {
   available: boolean;
   parts: MeetingTranscriptPart[];
   detail: string | null;
+}
+
+/** How to write a recap; an omitted field falls back to the one last used. */
+export interface MeetingSummaryOptions {
+  /** A summary template's id. */
+  template?: string;
+  /** A language tag (`fr`); `""` writes in the session's own language. */
+  language?: string;
+}
+
+export interface MeetingSummaryResult {
+  summary: string;
+  model: string;
+  /** The template and language it was written with (`""` = the session's). */
+  template: string;
+  language: string;
+}
+
+export interface MeetingTranscriptSummaryResult extends MeetingSummaryResult {
+  transcript_ids: string[];
+}
+
+export interface SummaryTemplate {
+  id: string;
+  name: string;
+  description: string | null;
+  source: "builtin" | "file";
+  /** Relative to the definitions folder, for a template read from a file. */
+  path: string | null;
+  /** A file that replaces the built-in template of the same id. */
+  overrides_builtin: boolean;
+}
+
+export interface SummaryLanguage {
+  code: string;
+  name: string;
+}
+
+export interface SummaryTemplateCatalog {
+  templates: SummaryTemplate[];
+  /** Template files left out because of errors (or ids used twice). */
+  problems: DefinitionIssue[];
+  languages: SummaryLanguage[];
+  /** What the last recap was written with: the picker starts there. */
+  last_template: string;
+  last_language: string;
+  /** The definitions folder, and the workspace showing it in Files (if any). */
+  folder: string;
+  workspace: DefinitionsWorkspaceRef | null;
+}
+
+export interface SummaryTemplateFileResult {
+  /** The template the file declares: a new id for a duplicate. */
+  id: string;
+  /** Relative to the definitions folder. */
+  path: string;
+  /** False when the template already had its file. */
+  created: boolean;
+  folder: string;
+  workspace: DefinitionsWorkspaceRef | null;
+  /** The same file, relative to the workspace's Files root. */
+  workspace_path: string | null;
 }
 
 export interface ExternalMeeting {

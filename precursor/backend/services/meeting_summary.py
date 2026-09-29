@@ -1,9 +1,10 @@
 """Live meeting summary — generate a markdown recap from the transcript.
 
 On demand (or as a draft when a session ends), summarise the full transcript
-plus the derived insights and any attached topic context into a concise markdown
-recap. Written in the session's language. The recap can then be appended as a
-message into the attached topic thread.
+plus the derived insights and any attached topic context into a markdown recap
+shaped by a summary template (see ``services.summary_templates``), in the
+language asked for — the session's own by default. The recap can then be
+appended as a message into the attached topic thread.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from precursor.backend.models import (
     MeetingSession,
     Topic,
 )
+from precursor.backend.services.app_settings import DEFAULT_LIVE_SUMMARY_TEMPLATE
 from precursor.backend.services.llm.one_shot import complete_once
 from precursor.backend.services.meeting_analysis import (
     context_notes_text,
@@ -27,6 +29,7 @@ from precursor.backend.services.meeting_analysis import (
     language_name,
     meeting_context_text,
 )
+from precursor.backend.services.summary_templates import builtin_templates
 
 logger = logging.getLogger(__name__)
 
@@ -42,20 +45,20 @@ _KIND_LABELS = {
     "note": "Note",
 }
 
-_SYSTEM_PROMPT = (
-    "You are a meeting assistant. Write a concise, well-structured markdown "
-    "summary of the meeting from the transcript, the derived insights, and any "
-    "attached topic context. Use these sections, omitting any that have no "
-    "content:\n"
-    "## Summary — 2-4 sentences of what the meeting was about and its outcome.\n"
-    "## Attendees — bullet list of who took part (only if attendees are given).\n"
-    "## Decisions — bullet list.\n"
-    "## Action items — bullet list, include an owner when one was named.\n"
-    "## Open questions — bullet list.\n"
-    "## Risks — bullet list.\n"
-    "Be faithful to what was said; do not invent owners or decisions. No "
-    "preamble, no closing remarks — just the markdown."
-)
+
+def _system_prompt(ms: MeetingSession, instructions: str | None, language: str | None) -> str:
+    """The template's instructions plus the language to write in.
+
+    ``instructions`` defaults to the standard recap; ``language`` (a BCP-47
+    tag) to the session's own language.
+    """
+    if instructions is None:
+        instructions = builtin_templates()[DEFAULT_LIVE_SUMMARY_TEMPLATE][0].prompt
+    system = instructions.strip()
+    lang = language_name(language or ms.language)
+    if lang:
+        system += f"\n\nWrite the entire summary in {lang}."
+    return system
 
 
 def _format_transcript(segments: list[MeetingSegment], names: dict[str, str]) -> str:
@@ -108,8 +111,18 @@ async def _attachments_markdown(session: AsyncSession, session_id: int, existing
     return "## Attachments\n" + "\n".join(lines)
 
 
-async def generate_summary(session: AsyncSession, session_id: int) -> tuple[str, str]:
-    """Generate a markdown summary for a session. Returns ``(text, model)``."""
+async def generate_summary(
+    session: AsyncSession,
+    session_id: int,
+    *,
+    instructions: str | None = None,
+    language: str | None = None,
+) -> tuple[str, str]:
+    """Generate a markdown summary for a session. Returns ``(text, model)``.
+
+    ``instructions`` is the summary template's prompt; ``language`` the tag of
+    the language to write in (see :func:`_system_prompt` for the defaults).
+    """
     ms = await session.get(MeetingSession, session_id)
     if ms is None:
         return "", ""
@@ -140,10 +153,7 @@ async def generate_summary(session: AsyncSession, session_id: int) -> tuple[str,
         .all()
     )
 
-    system = _SYSTEM_PROMPT
-    lang = language_name(ms.language)
-    if lang:
-        system += f"\n\nWrite the entire summary in {lang}."
+    system = _system_prompt(ms, instructions, language)
 
     user_parts = [
         f"Meeting title: {ms.title}",
@@ -183,7 +193,12 @@ async def generate_summary(session: AsyncSession, session_id: int) -> tuple[str,
 
 
 async def generate_summary_from_transcript(
-    session: AsyncSession, session_id: int, transcript: str
+    session: AsyncSession,
+    session_id: int,
+    transcript: str,
+    *,
+    instructions: str | None = None,
+    language: str | None = None,
 ) -> tuple[str, str]:
     """Generate a markdown recap from an *external* (Teams) transcript.
 
@@ -198,10 +213,7 @@ async def generate_summary_from_transcript(
     if ms is None or not transcript.strip():
         return "", ""
 
-    system = _SYSTEM_PROMPT
-    lang = language_name(ms.language)
-    if lang:
-        system += f"\n\nWrite the entire summary in {lang}."
+    system = _system_prompt(ms, instructions, language)
 
     user_parts = [f"Meeting title: {ms.title}"]
     if ms.attendees:
