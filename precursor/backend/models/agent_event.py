@@ -3,9 +3,10 @@
 The Copilot SDK's ``session.get_events`` is **per-connection**: a resumed session
 only replays ``SessionStartData``, not the full turn/tool/reasoning history. So
 the workflow timeline — which the manager otherwise keeps only in memory — would
-be empty after a process restart. We mirror every streamed, normalised event
-here so the timeline survives restarts (and live-session teardown, e.g. when a
-topic is linked). Append-only; rows are removed when the agent is deleted.
+be empty after a process restart. We mirror every normalised event that carries
+content here so the timeline survives restarts (and live-session teardown, e.g.
+when a topic is linked); streaming frames are live-only and never land here.
+Append-only; rows are removed when the agent is deleted.
 """
 
 from __future__ import annotations

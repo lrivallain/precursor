@@ -966,14 +966,6 @@ async def seed() -> None:
                 at=ago(days=1, minutes=2),
             ),
             AgentEvent(
-                kind="assistant_reasoning",
-                text=(
-                    "I will group the survey by user impact, distinguish shipped changes "
-                    "from investigations, and keep the digest short."
-                ),
-                at=ago(days=1, minutes=1),
-            ),
-            AgentEvent(
                 kind="assistant_message",
                 text=(
                     "## This week in the platform\n\n"
@@ -983,6 +975,20 @@ async def seed() -> None:
                     "in progress.\n\n"
                     "The draft is ready for review before publishing.\n\n"
                     "```suggest\nMake it shorter\nAdd a next-steps section\n```"
+                ),
+                at=ago(days=1),
+            ),
+            # The SDK sends a round's thinking right after its message; the
+            # timeline shows it collapsed on that message.
+            AgentEvent(
+                kind="reasoning",
+                text=(
+                    "**Grouping by user impact**\n\n"
+                    "The survey mixes shipped changes with open investigations. Readers "
+                    "care about what changed for them, so lead with shipped work and "
+                    "flag the search regression as still in progress.\n\n"
+                    "**Keeping it short**\n\n"
+                    "Three bullets cover it; anything longer belongs in the release notes."
                 ),
                 at=ago(days=1),
             ),

@@ -299,6 +299,7 @@ async def _read(session: AsyncSession, workflows: list[Workflow]) -> list[Workfl
                 continue
             live = activity.get(step.agent.id) or {}
             step.agent.active_narration = live.get("active_narration")
+            step.agent.active_thinking = live.get("active_thinking")
             pending = live.get("pending_permission")
             step.agent.pending_permission = (
                 AgentPendingPermission.model_validate(pending) if pending else None

@@ -24,6 +24,32 @@ the insights sidebar.
 
 <Screenshot src="/screenshots/agents-activity.png" alt="An agent's Activity tab: each follow-up prompt is followed by a folded Worked-for summary and the answer, which links to the result version it published" caption="Finished turns fold above their answers. Each answer links to the result version it published." />
 
+### Watching an agent think
+
+Agents show the model's thinking the way [chats and topics
+do](/features/topics#watching-the-model-think). While the model thinks, a
+pulsing **Thinking…** row at the end of the timeline previews the step it is on;
+click it to read the thinking in full as it streams. Once the round is done, its
+thinking stays with the message it led to, as a collapsed **Thinking** area at
+the top of that message. A round that went straight to a tool call keeps its
+own collapsed Thinking row just before the tool, so you can see *why* the agent
+reached for it. Stopping a turn keeps whatever thinking arrived before it.
+**Thinking** under **Show** in the insights sidebar hides all of it.
+
+<Screenshot src="/screenshots/agents-thinking.png" alt="An agent's answer with its Thinking area opened above it, showing two titled steps of the model's reasoning" caption="A round's thinking, opened on the answer it led to. Collapsed, the row shows only the latest step." />
+
+What appears depends on the model and on the reasoning effort picked under the
+composer or in **Settings → Agents**:
+
+- **Claude** thinks only with an effort picked, and streams its thinking live.
+- **Gemini** sends each round's thinking with its message, so it shows up once
+  the round is done rather than live.
+- **GPT** models keep their reasoning encrypted in the agents runtime, so they
+  show no Thinking area.
+
+A running agent's **dashboard card** and a workflow's **active step** show the
+same pulsing *Thinking…* line while the model thinks.
+
 An agent that publishes a result gets a **Result** tab next to this timeline,
 with each refinement kept as a version. See
 [Reading an agent's result](/features/agents-mode/artifacts-state#reading-an-agent-s-result).

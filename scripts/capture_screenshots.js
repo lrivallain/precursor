@@ -454,6 +454,40 @@ const scenes = {
     },
   },
 
+  // An agent's answer with the thinking that led to it, opened — just the
+  // exchange, so the sidebar and its persona footer stay out of the shot.
+  "agents-thinking": {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      const response = await page.request.get(`${BASE}/api/agents`);
+      const agents = await response.json();
+      const agent = agents.find((item) => item.title === "Digest writer");
+      if (!agent) throw new Error("Seed the demo Digest writer before capturing agents.");
+      await page.goto(`${BASE}/agents/${agent.public_id}`, { waitUntil: "networkidle" });
+      await page.getByText("The draft is ready for review before publishing.").waitFor();
+      await page.locator("button[aria-expanded]", { hasText: "Thinking" }).first().click();
+      await page.mouse.move(0, 0);
+      await sleep(400);
+      const node = (text) =>
+        page
+          .getByText(text)
+          .first()
+          .locator("xpath=ancestor::div[contains(@class, 'group/node')][1]")
+          .boundingBox();
+      const prompt = await node("Draft this week's engineering digest");
+      const answer = await node("The draft is ready for review before publishing.");
+      if (!prompt || !answer) throw new Error("Seed the demo Digest writer first.");
+      const x = Math.floor(Math.min(prompt.x, answer.x) - 24);
+      const y = Math.floor(prompt.y - 10);
+      return {
+        x,
+        y,
+        width: Math.ceil(Math.max(prompt.x + prompt.width, answer.x + answer.width) + 24 - x),
+        height: Math.ceil(answer.y + answer.height + 24 - y),
+      };
+    },
+  },
+
   // A deliverable refined over two follow-ups: the Result tab opens on v3,
   // with the earlier versions on the rail above it.
   "agents-results": {

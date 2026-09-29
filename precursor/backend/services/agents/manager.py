@@ -89,8 +89,9 @@ from precursor.backend.services.agents.directives import (
     parse_agent_directives,
     strip_control_directives,
 )
-from precursor.backend.services.agents.event_normalizer import normalize_event
+from precursor.backend.services.agents.event_normalizer import is_content_free, normalize_event
 from precursor.backend.services.agents.live_session import _Caps, _LiveSession
+from precursor.backend.services.agents.live_stream import StreamUpdate
 from precursor.backend.services.agents.mcp_config import (
     _OAUTH_FALLBACK_TTL,
     _OAUTH_REFRESH_MARGIN,
@@ -202,6 +203,16 @@ _WATCHDOG_INTERVAL_SECONDS = 60.0
 # the CLI exhausts its heap and dies. A released session resumes from its on-disk
 # state (``copilot_session_id``) on its next turn.
 _IDLE_SESSION_TTL_SECONDS = 15 * 60
+
+# Streaming frames aren't archived, but a long stretch of them is still the run
+# being alive: stamp its activity this often so the watchdog (whose timeout
+# floors at 30 s) never takes a model thinking at length for a stall.
+_STREAM_ACTIVITY_INTERVAL_SECONDS = 10.0
+
+# How often streamed thinking/answer text is announced to open views. The
+# frontend coalesces refreshes anyway; this keeps a fast stream from costing a
+# bus message per token.
+_STREAM_PUBLISH_INTERVAL_SECONDS = 0.25
 
 
 def _runtime_env() -> dict[str, str]:
@@ -1125,13 +1136,14 @@ class AgentManager:
     def live_activity(self, agent_ids: list[int]) -> dict[int, dict[str, Any]]:
         """Snapshot each agent's in-flight work for the dashboard cockpit.
 
-        Reads the in-memory event cache (no DB, no ``await``) to derive, per
-        agent: the currently running tool, how many tool calls are running in
-        parallel (the "sub-agent fan-out" cluster), a plain-language **narration**
-        line distilled from the agent's own commentary this turn, and the oldest
-        unresolved permission request. Everything resets at turn boundaries so a
-        dropped completion event can't leave a tool "running" across turns.
-        Agents not live in-process report an empty snapshot.
+        Reads the in-memory event cache and the live stream (no DB, no
+        ``await``) to derive, per agent: the currently running tool, how many
+        tool calls are running in parallel (the "sub-agent fan-out" cluster), a
+        plain-language **narration** line distilled from the agent's own
+        commentary this turn, the **thinking** it is streaming right now, and the
+        oldest unresolved permission request. Everything resets at turn
+        boundaries so a dropped completion event can't leave a tool "running"
+        across turns. Agents not live in-process report an empty snapshot.
         """
         out: dict[int, dict[str, Any]] = {}
         for aid in agent_ids:
@@ -1140,29 +1152,15 @@ class AgentManager:
             # Rolling live-narration state, reset at every turn boundary so a
             # resting agent shows nothing and each turn narrates itself.
             narration_msg: str | None = None  # last completed assistant message
-            delta_buf: list[str] = []  # deltas since that message (newer text)
-            delta_len = 0
             for ev in self._events.get(aid, ()):
                 if ev.kind in ("turn_start", "turn_end", "idle", "aborted"):
                     running.clear()
                     order.clear()
                     narration_msg = None
-                    delta_buf = []
-                    delta_len = 0
                     continue
                 if ev.kind == "assistant_message":
                     if ev.text:
                         narration_msg = ev.text
-                    delta_buf = []
-                    delta_len = 0
-                    continue
-                if ev.kind == "assistant_delta":
-                    # Accumulate just enough of the streaming message to recover
-                    # its first line; stop once we clearly have it so a long
-                    # answer can't make this scan quadratic across polls.
-                    if ev.text and delta_len < 400:
-                        delta_buf.append(ev.text)
-                        delta_len += len(ev.text)
                     continue
                 rid = ev.request_id
                 if not rid:
@@ -1175,12 +1173,13 @@ class AgentManager:
                     running.pop(rid, None)
                     if rid in order:
                         order.remove(rid)
-            # In-flight deltas are newer than the last completed message, so
-            # prefer them; fall back to the last full message otherwise.
-            raw_narration = "".join(delta_buf) if delta_buf else narration_msg
-            narration = _clean_narration(raw_narration) if raw_narration else None
             run_id = self._agent_runs.get(aid)
             live = self._live.get(run_id) if run_id is not None else None
+            stream = live.stream if live is not None else None
+            # The answer being streamed is newer than the last completed message,
+            # so prefer it; fall back to the last full message otherwise.
+            raw_narration = stream.message if stream and stream.message else narration_msg
+            narration = _clean_narration(raw_narration) if raw_narration else None
             pending: dict[str, Any] | None = None
             if live is not None and live.pending_info:
                 info = next(iter(live.pending_info.values()))
@@ -1195,6 +1194,7 @@ class AgentManager:
                 "active_tool": running.get(order[-1]) if order else None,
                 "active_tool_count": len(order),
                 "active_narration": narration,
+                "active_thinking": stream.thinking if stream is not None else None,
                 "pending_permission": pending,
             }
         return out
@@ -1527,9 +1527,10 @@ class AgentManager:
             return
         run, agent = loaded
         agent_id = agent.id
-        # Archive every event so the timeline persists across session teardown
-        # (e.g. on topic link) and process restart, where the SDK would otherwise
-        # drop it (``get_events`` only replays ``SessionStartData`` on resume).
+        # Archive every event with content so the timeline persists across
+        # session teardown (e.g. on topic link) and process restart, where the SDK
+        # would otherwise drop it (``get_events`` only replays ``SessionStartData``
+        # on resume). Streaming frames only feed the live stream.
         await self._transcript.ensure_loaded(agent_id)
         # The status *before* this event is handled, read up front rather than
         # around the final patch below: handlers reached from here (``_on_idle``,
@@ -1542,8 +1543,16 @@ class AgentManager:
         normalised.at = datetime.now(UTC)
         # Stamp the producing run so the timeline can be split per execution.
         normalised.agent_run_id = run_id
-        self._events.setdefault(agent_id, []).append(normalised)
-        await timeline.archive_event(agent_id, normalised, agent_run_id=run_id)
+        live = self._live.get(run_id)
+        update = live.stream.observe(normalised) if live is not None else None
+        if update is not None and update.flush is not None:
+            await self._record(agent_id, update.flush)
+        if is_content_free(normalised.kind, normalised.text):
+            # A streaming frame, or a message/reasoning with nothing in it. The
+            # live stream above has taken what it needs; the archive gets none.
+            await self._on_stream_frame(agent_id, run_id, live, update)
+            return
+        await self._record(agent_id, normalised)
 
         # A workiq tool that errors after the session was built with valid creds
         # usually means the OAuth token lapsed mid-turn. Surface the same sign-in
@@ -1639,6 +1648,36 @@ class AgentManager:
             and after.status in _RESTING_STATUSES
         ):
             self.enqueue(self._advance_workflows(run_id))
+
+    async def _record(self, agent_id: int, event: AgentEvent) -> None:
+        """Append an event to the agent's timeline, in memory and in the archive."""
+        self._events.setdefault(agent_id, []).append(event)
+        await timeline.archive_event(agent_id, event, agent_run_id=event.agent_run_id)
+
+    async def _on_stream_frame(
+        self,
+        agent_id: int,
+        run_id: int,
+        live: _LiveSession | None,
+        update: StreamUpdate | None,
+    ) -> None:
+        """Keep a run that is only streaming alive, and tell open views, cheaply."""
+        if live is None or update is None:
+            return
+        stream = live.stream
+        now = time.monotonic()
+        if now - stream.touched >= _STREAM_ACTIVITY_INTERVAL_SECONDS:
+            stream.touched = now
+            await self._patch_run(run_id, last_activity_at=datetime.now(UTC))
+        # A change held back by the throttle goes out with a later frame; byte
+        # counters interleave with every token, so it never waits for long.
+        stream.dirty = stream.dirty or update.changed
+        # Recovered thinking was just archived: the timeline has a new node.
+        due = now - stream.published >= _STREAM_PUBLISH_INTERVAL_SECONDS
+        if stream.dirty and (due or update.flush is not None):
+            stream.published = now
+            stream.dirty = False
+            await publish_agent_changed(agent_session_id=agent_id, agent_run_id=run_id)
 
     async def _record_usage(self, run_id: int, data: Any) -> None:
         await self._usage.record(run_id, data)

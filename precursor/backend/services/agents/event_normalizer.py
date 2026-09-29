@@ -54,6 +54,35 @@ _EVENT_KINDS: dict[str, str] = {
     "AbortData": "aborted",
 }
 
+# Streaming frames. They are published live (see ``LiveStream``) but never
+# archived: the complete message, reasoning and tool events that follow carry
+# the full content, and archiving every frame once filled ~89% of the table
+# with rows nothing renders.
+LIVE_ONLY_KINDS = frozenset(
+    {
+        "assistant_delta",
+        "reasoning_delta",
+        "AssistantStreamingDeltaData",
+        "AssistantToolCallDeltaData",
+        "AssistantMessageStartData",
+    }
+)
+
+# Kinds whose only content is their text. Without it they render nothing: a
+# tool-call-only round's message, or a model's encrypted (textless) reasoning.
+_TEXT_ONLY_KINDS = frozenset({"assistant_message", "reasoning"})
+
+
+def is_content_free(kind: Any, text: Any) -> bool:
+    """Whether an event with this ``kind`` and ``text`` has nothing to keep.
+
+    Takes the two fields rather than an event so it applies equally to a fresh
+    ``AgentEvent`` and to an archived payload decoded as a plain dict.
+    """
+    if kind in LIVE_ONLY_KINDS:
+        return True
+    return kind in _TEXT_ONLY_KINDS and not (isinstance(text, str) and text.strip())
+
 
 def unwrap_result(value: Any) -> Any:
     """Pull readable text out of SDK result wrappers.
@@ -83,11 +112,15 @@ def normalize_event(event: Any) -> AgentEvent:
     name = type(data).__name__
     # ``message`` covers error events (SessionErrorData/ErrorData) whose detail
     # lives there rather than in ``content``/``text`` — otherwise their
-    # timeline node renders blank.
+    # timeline node renders blank. Streaming frames carry theirs in
+    # ``delta_content`` (message and reasoning deltas) or ``input_delta``
+    # (partial tool arguments).
     text = (
         getattr(data, "content", None)
         or getattr(data, "text", None)
         or getattr(data, "message", None)
+        or getattr(data, "delta_content", None)
+        or getattr(data, "input_delta", None)
     )
     tool_name = getattr(data, "tool_name", None) or getattr(data, "name", None)
     kind = _EVENT_KINDS.get(name, name)

@@ -1627,6 +1627,7 @@ def _tool_event(
 def test_live_activity_snapshots_parallel_tools_and_resets_per_turn() -> None:
     """``live_activity`` derives the in-flight tool, parallel fan-out count, and
     resets running state at turn boundaries (a dropped completion can't leak)."""
+    from precursor.backend.services.agents.live_session import _LiveSession
     from precursor.backend.services.agents.manager import AgentManager
 
     mgr = AgentManager()
@@ -1643,15 +1644,31 @@ def test_live_activity_snapshots_parallel_tools_and_resets_per_turn() -> None:
         _tool_event("turn_end"),
     ]
     # Agent 4: streaming commentary (deltas) is distilled into live narration,
-    # preferred over the last completed message and stripped of directives.
+    # preferred over the last completed message and stripped of directives. The
+    # deltas are never archived: they reach it through the run's live stream.
     mgr._events[4] = [  # type: ignore[attr-defined]
         _tool_event("turn_start"),
         _tool_event("assistant_message", text="An earlier full message."),
+    ]
+    live4 = _LiveSession(sdk_session=object())
+    mgr._live[40] = live4  # type: ignore[attr-defined]
+    mgr._agent_runs[4] = 40  # type: ignore[attr-defined]
+    for ev in (
         _tool_event("assistant_delta", text="Reading the config "),
         _tool_event("assistant_delta", text="to find the setting.\nPROGRESS: 20 | scanning"),
-    ]
+    ):
+        live4.stream.observe(ev)
+    # Agent 5: thinking streams in, and is reported while the model is at it.
+    live5 = _LiveSession(sdk_session=object())
+    mgr._live[50] = live5  # type: ignore[attr-defined]
+    mgr._agent_runs[5] = 50  # type: ignore[attr-defined]
+    for ev in (
+        _tool_event("reasoning_delta", text="**Checking the config**\n"),
+        _tool_event("reasoning_delta", text="The key is under agents."),
+    ):
+        live5.stream.observe(ev)
 
-    snap = mgr.live_activity([1, 2, 3, 4])
+    snap = mgr.live_activity([1, 2, 3, 4, 5])
 
     assert snap[1]["active_tool"] == "view"
     assert snap[1]["active_tool_count"] == 1
@@ -1665,10 +1682,19 @@ def test_live_activity_snapshots_parallel_tools_and_resets_per_turn() -> None:
         "active_tool_count": 0,
         "pending_permission": None,
         "active_narration": None,
+        "active_thinking": None,
     }
     # In-flight deltas win over the older message; the PROGRESS directive line and
     # trailing prose are dropped, leaving the first meaningful sentence.
     assert snap[4]["active_narration"] == "Reading the config to find the setting."
+    # Answering, not thinking.
+    assert snap[4]["active_thinking"] is None
+    assert snap[5]["active_thinking"] == "**Checking the config**\nThe key is under agents."
+    # Once the answer starts streaming the model is no longer thinking.
+    live5.stream.observe(_tool_event("assistant_delta", text="Found it."))
+    after = mgr.live_activity([5])[5]
+    assert after["active_thinking"] is None
+    assert after["active_narration"] == "Found it."
 
 
 def test_sanitize_model_downgrades_stale_pin_but_respects_empty_catalog() -> None:
@@ -5473,10 +5499,19 @@ async def test_step_attempt_events_are_sliced_to_their_own_attempt() -> None:
             session.add(
                 AgentEventRecord(
                     agent_session_id=agent_id,
-                    payload=json.dumps({"kind": kind}),
+                    payload=json.dumps({"kind": kind, "text": f"{kind} text"}),
                     created_at=base + timedelta(seconds=offset),
                 )
             )
+        # A streaming frame archived before they stopped being kept renders
+        # nothing, so it isn't served.
+        session.add(
+            AgentEventRecord(
+                agent_session_id=agent_id,
+                payload=json.dumps({"kind": "assistant_delta", "text": None}),
+                created_at=base + timedelta(seconds=7),
+            )
+        )
         await session.commit()
         first_id, second_id = first.id, second.id
 

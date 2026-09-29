@@ -93,6 +93,19 @@ timeline node, tool name and status is preserved — only long captured blobs ar
 shortened, and each trimmed value is marked so it can't be mistaken for the
 original. It's idempotent, so running it twice is harmless.
 
+### Empty agent events
+
+Older versions archived every streaming fragment of an agent's reply and
+thinking as its own row, along with byte counters, message markers and empty
+messages. On a busy install that was nearly nine rows in ten, and they counted
+against `agent_event_max_per_session`, so the cap dropped real history to keep
+them. Agents now stream those fragments to the live view only, and archive just
+the complete message, thinking and tool events.
+
+**Empty agent events** deletes the leftover rows. Timelines never showed them,
+so no step is lost. Preview it, run it once, then **Compact**. It's idempotent,
+and a running agent is safe to clean.
+
 ## Backups are separate
 
 The [backup](/reference/configuration#backup) job copies the database and blobs
