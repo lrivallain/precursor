@@ -63,6 +63,8 @@ offline.
   offline development
 - **MCP both ways**: Precursor exposes its conversations as an MCP server *and*
   attaches external MCP tool servers per topic
+- **OpenAI-compatible endpoint** (opt-in): point VS Code or any OpenAI client at
+  Precursor to use the active provider's models, behind a generated API key
 - **Agents mode** (opt-in): hand long-running tasks to an autonomous Copilot
   SDK agent attached to a topic/chat, followed in a workflow-style tab. Nothing
   to install — the native runtime it drives is one click in **Settings → Agents**
@@ -158,7 +160,9 @@ Specific things to keep local:
 - The built-in **MCP-over-HTTP** transport is off by default and only binds to
   loopback — leave it that way unless you front it with auth.
 - Secrets (the GitHub token, LLM provider keys) live in the local DB (set via
-  Settings) and are never echoed by the API. Don't commit `.env`.
+  Settings) and are never echoed by the API. Don't commit `.env`. The one
+  exception is the opt-in OpenAI-compatible endpoint's own key, shown in
+  Settings so you can paste it into clients.
 
 See [SECURITY.md](SECURITY.md) for vulnerability reporting.
 

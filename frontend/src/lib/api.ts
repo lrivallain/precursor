@@ -912,6 +912,8 @@ export const api = {
       request<Settings>(`/api/settings`, { method: "PUT", body: JSON.stringify(data) }),
     runBackupNow: () =>
       request<BackupRunResult>(`/api/settings/backup/run`, { method: "POST" }),
+    regenerateOpenAIProxyKey: () =>
+      request<{ key: string }>(`/api/settings/openai-proxy/key`, { method: "POST" }),
   },
 
   stt: {

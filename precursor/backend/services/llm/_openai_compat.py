@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import re
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from typing import Any
 
 from openai import APIStatusError, AsyncOpenAI
@@ -187,6 +187,7 @@ async def stream_openai_tools(
     messages: Sequence[ChatMessage],
     tools: Sequence[ToolDef],
     reasoning_effort: str | None = None,
+    request_options: Mapping[str, Any] | None = None,
 ) -> AsyncIterator[ProviderEvent]:
     """Run a tool-aware streamed completion against an OpenAI-compatible API.
 
@@ -196,6 +197,9 @@ async def stream_openai_tools(
     turn completes.
     """
     kwargs: dict[str, Any] = {
+        # Already in this API's vocabulary; applied first so the fields this
+        # helper owns (model, messages, streaming) can't be overridden.
+        **(request_options or {}),
         "model": model,
         "messages": to_openai_messages(messages),
         "stream": True,

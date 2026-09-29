@@ -59,6 +59,8 @@ These work across the sections above:
   reminders.
 - [**MCP (both ways)**](/features/mcp) — Precursor is an MCP server *and* an MCP
   client, with built-in tool servers and support for your own.
+- [**OpenAI-compatible endpoint**](/features/openai-endpoint) — let VS Code or
+  any OpenAI client use the active provider's models through Precursor.
 - [**Command runner**](/features/command-runner) — execute bash / python / node
   inside a throwaway Docker jail or your local machine.
 - [**Attachments**](/features/attachments) — images as vision input; PDF / DOCX /

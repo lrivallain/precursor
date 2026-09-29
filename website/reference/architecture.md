@@ -252,6 +252,18 @@ reasoning *summary* is requested, so Precursor always asks for one. Both become
 of the round that produced them, for display only — they are never replayed to
 the model as history.
 
+**Serving the models outward.** The [OpenAI-compatible endpoint](/features/openai-endpoint)
+(`routers/openai_proxy.py`, `services/openai_proxy.py`) runs the same providers
+for outside clients. It translates an OpenAI chat-completions request into
+provider messages and tools, calls `stream_chat_with_tools` once — the client
+runs its own tool loop — and renders the provider events back as OpenAI chunks
+or a single completion. Its sampling options travel as `request_options`, which
+each provider passes on in its own API's vocabulary (the Responses helper
+respells them). It pulls the first event before answering, so a provider refusal
+becomes a real HTTP error rather than a half-sent stream. Only providers with
+`ProviderSpec.openai_proxy` set are relayed to; anything that would fall back to
+the mock is refused with a `503`.
+
 **Refusals that don't mean no.** Copilot serves a given model from only part of
 its fleet, so the same request alternates between `200` and
 `400 model_not_available_for_integrator` — a 4xx that says nothing durable about
@@ -327,7 +339,10 @@ Specifically:
 - The [MCP-over-HTTP](/features/mcp) transport is off by default and only binds to
   loopback.
 - Secrets (GitHub token, provider keys) live in the local DB and are **never
-  echoed** by the API — only `*_present` booleans are returned.
+  echoed** by the API — only `*_present` booleans are returned. The one exception
+  is the [OpenAI-compatible endpoint](/features/openai-endpoint)'s own API key,
+  which Settings shows in clear so it can be pasted into more clients; the
+  endpoint itself is off by default.
 
 See [SECURITY.md](https://github.com/lrivallain/precursor/blob/main/SECURITY.md)
 for vulnerability reporting.

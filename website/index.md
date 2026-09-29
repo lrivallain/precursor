@@ -106,6 +106,13 @@ features:
       or a deterministic mock provider for offline development.
     link: /guide/configuration
     linkText: Configure a provider
+  - icon: 🔁
+    title: An OpenAI endpoint for your models
+    details: >-
+      Point VS Code, Open WebUI or any OpenAI client at Precursor and use the
+      active provider's models — Copilot included — with a key you control.
+    link: /features/openai-endpoint
+    linkText: About the endpoint
   - icon: 📱
     title: Works on your phone
     details: >-

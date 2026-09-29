@@ -26,6 +26,7 @@ async def list_providers() -> list[ProviderRead]:
             label=spec.label,
             uses_github_token=spec.uses_github_token,
             discovers_models=spec.discovers_models,
+            openai_proxy=spec.openai_proxy,
             fields=[
                 ProviderFieldRead(
                     name=f.name,

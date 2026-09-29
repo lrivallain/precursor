@@ -211,6 +211,23 @@ async function gotoRefinedAgent(page) {
 // Scenes. `viewport` is per scene because these surfaces have very different
 // natural heights; the clip trims whatever is left over.
 // --------------------------------------------------------------------------
+// The OpenAI-compatible endpoint as a user sees it once switched on. The key is
+// an obvious placeholder: a screenshot must never carry a working credential.
+const OPENAI_ENDPOINT_SETTINGS = {
+  llm_provider: "github_copilot",
+  openai_proxy_enabled: true,
+  openai_proxy_url: "http://127.0.0.1:8000/api/openai/v1",
+  openai_proxy_key: "sk-precursor-demo-0000000000000000000000000000",
+  openai_proxy_available: true,
+  openai_proxy_unavailable_reason: null,
+};
+const OPENAI_ENDPOINT_MODELS = [
+  ["claude-sonnet-5", "Claude Sonnet 5", "Anthropic"],
+  ["gemini-3.6-flash", "Gemini 3.6 Flash", "Google"],
+  ["gpt-5-mini", "GPT-5 mini", "OpenAI"],
+  ["gpt-5.5", "GPT-5.5", "OpenAI"],
+].map(([id, name, publisher]) => ({ id, name, publisher, summary: "", tags: [] }));
+
 const scenes = {
   home: {
     viewport: { width: 1440, height: 1000 },
@@ -660,6 +677,41 @@ const scenes = {
         await sleep(600);
       }
       return clipOf(page, "div.fixed.inset-0 > div, [role=dialog]", 0);
+    },
+  },
+
+  // Settings → Model: the OpenAI-compatible endpoint, switched on. The Guest
+  // demo has no provider to relay to, so the switch, key and catalogue are
+  // fixtures — never a real key.
+  "openai-endpoint": {
+    // Tall enough for the whole Model tab, so the card isn't cut by the footer.
+    viewport: { width: 1440, height: 1800 },
+    async go(page) {
+      await page.route("**/api/settings", async (route) => {
+        if (route.request().method() !== "GET") return route.fallback();
+        const response = await route.fetch();
+        const settings = await response.json();
+        await route.fulfill({ response, json: { ...settings, ...OPENAI_ENDPOINT_SETTINGS } });
+      });
+      await page.route("**/api/llm/models*", (route) =>
+        route.fulfill({ json: OPENAI_ENDPOINT_MODELS }),
+      );
+      await page.goto(`${BASE}/`, { waitUntil: "networkidle" });
+      await openSettings(page, "Model");
+      const heading = page.getByRole("heading", { name: "OpenAI-compatible endpoint" });
+      // The innermost div holding the heading is the card itself.
+      const card = page.locator("div", { has: heading }).last();
+      await card.evaluate((el) => el.scrollIntoView({ block: "center" }));
+      await sleep(400);
+      const box = await card.boundingBox();
+      if (!box) return undefined;
+      const pad = 16;
+      return {
+        x: Math.max(0, Math.floor(box.x - pad)),
+        y: Math.max(0, Math.floor(box.y - pad)),
+        width: Math.ceil(box.width + pad * 2),
+        height: Math.ceil(box.height + pad * 2),
+      };
     },
   },
 

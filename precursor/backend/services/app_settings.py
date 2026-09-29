@@ -88,6 +88,10 @@ DEFAULT_MCP_HTTP_ENABLED = False
 # so the in-app installer is opt-in even on a loopback bind. Reading which
 # plugins exist is always allowed; only the mutating paths are gated.
 DEFAULT_PLUGIN_INSTALL_ENABLED = False
+# Whether the OpenAI-compatible endpoint (/api/openai/v1) answers. Off by
+# default: it spends the active provider's quota on behalf of whoever holds the
+# key, so the user turns it on deliberately.
+DEFAULT_OPENAI_PROXY_ENABLED = False
 
 # Browser channels the built-in ``playwright`` server can drive (``--browser``).
 # ``default`` is a deliberate sentinel: it omits ``--browser`` entirely so the
@@ -698,6 +702,19 @@ async def resolve_plugin_install_enabled(session: AsyncSession) -> bool:
         session,
         SettingSpec("plugin_install_enabled", _boolean, default=DEFAULT_PLUGIN_INSTALL_ENABLED),
     )
+
+
+async def resolve_openai_proxy_enabled(session: AsyncSession) -> bool:
+    """Whether the OpenAI-compatible endpoint answers requests."""
+    return await resolve(
+        session,
+        SettingSpec("openai_proxy_enabled", _boolean, default=DEFAULT_OPENAI_PROXY_ENABLED),
+    )
+
+
+async def resolve_openai_proxy_key(session: AsyncSession) -> str:
+    """The OpenAI-compatible endpoint's API key, or ``""`` before one is minted."""
+    return await resolve(session, SettingSpec("openai_proxy_key", _nonempty_str(), default=""))
 
 
 async def resolve_mcp_enabled(session: AsyncSession) -> dict[str, bool]:

@@ -1381,6 +1381,14 @@ export interface Settings {
   plugin_install_enabled: boolean;
   mcp_http_url: string | null;
   mcp_http_loopback_ok: boolean;
+  // OpenAI-compatible endpoint: the switch, the base URL clients are pointed
+  // at and its API key (returned in clear on purpose; "" until first enabled).
+  openai_proxy_enabled: boolean;
+  openai_proxy_url: string;
+  openai_proxy_key: string;
+  // Whether the active provider can back the endpoint, and why not.
+  openai_proxy_available: boolean;
+  openai_proxy_unavailable_reason: string | null;
   // Tenant GUID used by the Agent 365 servers (the workiq-* family).
   workiq_tenant_id: string;
   // True when the tenant above was read off a stored token rather than typed.
@@ -1463,6 +1471,7 @@ export interface SettingsUpdate {
   mcp_expose?: Record<string, boolean>;
   mcp_http_enabled?: boolean;
   plugin_install_enabled?: boolean;
+  openai_proxy_enabled?: boolean;
   workiq_tenant_id?: string;
   playwright_browser?: string;
   llm_max_input_tokens?: number;
@@ -1632,6 +1641,10 @@ export interface LLMModel {
   /** Reasoning-effort values this model accepts, ascending. Empty when the
    *  model isn't reasoning-capable (the composer hides the effort picker). */
   supported_reasoning_efforts?: string[];
+  /** Largest reply the model can produce; null when not advertised. */
+  max_output_tokens?: number | null;
+  /** Whether the model accepts image input. */
+  vision?: boolean;
 }
 
 export interface LLMProviderField {
@@ -1649,6 +1662,8 @@ export interface LLMProviderSpec {
   fields: LLMProviderField[];
   uses_github_token: boolean;
   discovers_models: boolean;
+  /** Whether the OpenAI-compatible endpoint can relay to this provider. */
+  openai_proxy: boolean;
   /** Non-empty => upstream is gone; the text explains what to use instead. */
 }
 
