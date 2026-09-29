@@ -56,10 +56,12 @@ class StoppedTurn(BaseModel):
 
     ``content`` is the partial reply received so far; ``tool_call_ids`` name the
     calls of the latest tool round that never returned, recorded as stopped.
+    ``reasoning`` is the model's thinking streamed for that reply, kept with it.
     """
 
     content: str = ""
     tool_call_ids: list[str] = Field(default_factory=list, max_length=64)
+    reasoning: str = ""
 
     @model_validator(mode="after")
     def _something_to_save(self) -> StoppedTurn:
@@ -76,6 +78,8 @@ class MessageRead(BaseModel):
     chat_id: int | None = None
     role: MessageRole
     content: str
+    # The model's thinking for this assistant round, shown collapsed.
+    reasoning: str | None = None
     tool_calls: str | None = None
     agent_session_id: int | None = None
     # The linked agent's public (UUID) id — used by the UI for deep links and

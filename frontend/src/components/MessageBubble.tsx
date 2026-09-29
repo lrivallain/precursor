@@ -22,10 +22,14 @@ import { errorNoticeBody, isErrorNotice } from "../lib/systemNotice";
 import type { Attachment, MessageRole, Skill } from "../lib/types";
 import { Markdown } from "./Markdown";
 import { MessageMeta } from "./MessageMeta";
+import { ReasoningDisclosure } from "./ReasoningDisclosure";
 
 interface Props {
   role: MessageRole;
   content: string;
+  // For assistant turns: the model's thinking, shown in a collapsed area above
+  // the reply (streaming in while the turn is pending).
+  reasoning?: string | null;
   pending?: boolean;
   attachments?: Attachment[];
   onDelete?: () => void;
@@ -74,7 +78,7 @@ function matchSkillInvocation(
   return { skill, argument: (m[2] ?? "").trim() };
 }
 
-export function MessageBubble({ role, content, pending, attachments, onDelete, onStop, collapsible, agentSessionId, createdAt, model, elapsedMs, isError, onRetry }: Props) {
+export function MessageBubble({ role, content, reasoning, pending, attachments, onDelete, onStop, collapsible, agentSessionId, createdAt, model, elapsedMs, isError, onRetry }: Props) {
   const isUser = role === "user";
   const skills = useSkills();
   const skillInvocation =
@@ -82,6 +86,7 @@ export function MessageBubble({ role, content, pending, attachments, onDelete, o
   const builtinCommand =
     isUser && !pending && !skillInvocation ? matchBuiltinCommand(content) : null;
   const showThinking = pending && !content;
+  const thinking = role === "assistant" ? reasoning?.trim() ?? "" : "";
   const imageAttachments = (attachments ?? []).filter((a) => a.mime.startsWith("image/"));
   const fileAttachments = (attachments ?? []).filter((a) => !a.mime.startsWith("image/"));
   const [hover, setHover] = useState(false);
@@ -282,10 +287,20 @@ export function MessageBubble({ role, content, pending, attachments, onDelete, o
             )}
           </div>
         )}
+        {thinking && (
+          // Rendered ahead of both branches below so it keeps its open state
+          // when the reply starts streaming in after the thinking.
+          <ReasoningDisclosure
+            reasoning={thinking}
+            live={showThinking}
+            className={showThinking ? "mb-1" : "mb-1.5"}
+          />
+        )}
         {showThinking ? (
           <div className="flex items-center gap-2 text-sm text-muted">
             <ThinkingDots />
-            <span className="italic">Thinking…</span>
+            {/* The disclosure above already says so once the model thinks aloud. */}
+            {!thinking && <span className="italic">Thinking…</span>}
             <Chronometer ms={liveElapsed} />
             {onStop && (
               <button

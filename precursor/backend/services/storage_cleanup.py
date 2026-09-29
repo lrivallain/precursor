@@ -70,10 +70,11 @@ TARGETS: tuple[CleanupTarget, ...] = (
     ),
     CleanupTarget(
         key="tool_results",
-        label="Tool results",
+        label="Tool results & thinking",
         description=(
-            "Replaces the body of old tool results with a short placeholder. "
-            "The conversation structure is preserved."
+            "Replaces the body of old tool results with a short placeholder and "
+            "drops the model's thinking on old replies. The conversation "
+            "structure is preserved."
         ),
         setting="tool_result_retention_days",
         table="messages",

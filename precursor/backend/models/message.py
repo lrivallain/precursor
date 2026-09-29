@@ -46,6 +46,11 @@ class Message(Base, TimestampMixin):
     )
     content: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
+    # For assistant turns: the model's thinking for this round, as the provider
+    # streamed it (usually a summary). Display-only — history sent back to the
+    # model never includes it. NULL when the model didn't surface any.
+    reasoning: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     # Set when this message was posted into the container by an Agents-mode
     # session (the prompt + answer of an agent exchange). Lets the UI render an
     # "agent exchange" badge with a deep link back to /agents/{id}. SET NULL on

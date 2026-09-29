@@ -37,6 +37,9 @@ interface Session {
   id: number;
   streaming: boolean;
   pendingContent: string;
+  // The model's thinking for the in-progress round, attached to the assistant
+  // message that round persists (`tool_calls` or `done`).
+  pendingReasoning: string;
   messages: Message[];
   abort: AbortController;
   // Usage reported for the in-progress round, applied to the next assistant
@@ -91,6 +94,10 @@ class StreamStore {
 
   pendingContent(key: string): string {
     return this.sessions.get(key)?.pendingContent ?? "";
+  }
+
+  pendingReasoning(key: string): string {
+    return this.sessions.get(key)?.pendingReasoning ?? "";
   }
 
   bufferedMessages(key: string): Message[] {
@@ -209,6 +216,7 @@ class StreamStore {
       id,
       streaming: true,
       pendingContent: "",
+      pendingReasoning: "",
       messages: [
         {
           id: optimisticId,
@@ -286,6 +294,8 @@ class StreamStore {
       }
     } else if (ev.event === "delta") {
       session.pendingContent += payload.content as string;
+    } else if (ev.event === "reasoning") {
+      session.pendingReasoning += payload.content as string;
     } else if (ev.event === "usage") {
       const usage: UsageReport = {
         prompt_tokens: (payload.prompt_tokens as number) ?? 0,
@@ -321,6 +331,7 @@ class StreamStore {
         ...fk,
         role: "assistant",
         content: session.pendingContent,
+        reasoning: session.pendingReasoning.trim() || null,
         tool_calls: JSON.stringify(
           calls.map((c) => ({
             id: c.id,
@@ -349,6 +360,7 @@ class StreamStore {
         });
       }
       session.pendingContent = "";
+      session.pendingReasoning = "";
     } else if (ev.event === "tool_result") {
       const tcId = payload.tool_call_id as string;
       const messageId = payload.message_id as number;
@@ -397,6 +409,7 @@ class StreamStore {
         ...fk,
         role: "assistant",
         content: payload.content as string,
+        reasoning: session.pendingReasoning.trim() || null,
         tool_calls: null,
         prompt_tokens: usage?.prompt_tokens ?? null,
         completion_tokens: usage?.completion_tokens ?? null,
@@ -405,6 +418,7 @@ class StreamStore {
         created_at: now,
       });
       session.pendingContent = "";
+      session.pendingReasoning = "";
     } else if (ev.event === "suggestions") {
       // Emitted right after `done`; patch the just-created assistant turn with
       // the follow-up chips (matched by the persisted message id).

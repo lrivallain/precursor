@@ -782,6 +782,20 @@ async def seed() -> None:
                         "Check `search/expand.py` first: if the expansion moved above the "
                         "cache check, moving it back below should recover most of it."
                     ),
+                    # The collapsed "Thinking" area in the docs screenshot.
+                    reasoning=(
+                        "**Reading the numbers**\n\n"
+                        "180ms to 410ms is about 2.3x, and the user says it is flat "
+                        "across query types. A worse plan would hurt some queries far "
+                        "more than others, so this reads like a cost every query pays.\n\n"
+                        "**Matching it to the change**\n\n"
+                        "The indexing change added a synonym-expansion pass. If it now "
+                        "runs before the cache lookup, even cache hits pay for it — "
+                        "that fits a uniform slowdown.\n\n"
+                        "**Choosing where to look first**\n\n"
+                        "Point at `search/expand.py` and the order of expansion versus "
+                        "the cache check before suggesting any profiling."
+                    ),
                     created_at=ago(days=1, hours=2),
                 ),
             ]

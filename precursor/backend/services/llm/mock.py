@@ -12,10 +12,17 @@ from precursor.backend.services.llm.base import (
     ChatMessage,
     LLMModel,
     ProviderEvent,
+    ReasoningDeltaEvent,
     TextDeltaEvent,
     ToolDef,
     TurnDoneEvent,
     UsageEvent,
+)
+
+_MOCK_REASONING = (
+    "**Reading the request**\n\n",
+    "No model provider is configured, ",
+    "so I'll echo the last user message back.",
 )
 
 
@@ -57,7 +64,12 @@ class MockProvider:
     ) -> AsyncIterator[ProviderEvent]:
         # Mock never issues tool calls; replay the plain text path.
         _ = tools
-        _ = reasoning_effort
+        if reasoning_effort:
+            # Think out loud like a reasoning model, so the thinking disclosure
+            # can be exercised without a real provider.
+            for part in _MOCK_REASONING:
+                yield ReasoningDeltaEvent(content=part)
+                await asyncio.sleep(0.05)
         chunks: list[str] = []
         async for chunk in self.stream_chat(model=model, messages=messages):
             chunks.append(chunk)

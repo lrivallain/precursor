@@ -21,7 +21,7 @@ The usual suspects, and what bounds each:
 | Feature | Table | Bounded by |
 | --- | --- | --- |
 | [Agents](/features/agents-mode) timelines | `agent_events` | `agent_event_retention_days` + `agent_event_max_per_session` |
-| Tool results in [chats](/features/chats) and [topics](/features/topics) | `messages` | `tool_result_retention_days` |
+| Tool results and model [thinking](/features/topics#watching-the-model-think) in [chats](/features/chats) and [topics](/features/topics) | `messages` | `tool_result_retention_days` |
 | [Live](/features/live-sessions) transcripts | `meeting_segments` | `live_transcript_retention_days` |
 | [Attachments](/features/attachments) | *(on disk, not in the DB)* | content-addressed blobs + orphan GC |
 
@@ -35,7 +35,9 @@ Each one is deliberately **conservative about meaning and aggressive about
 bytes**:
 
 - **Tool results** — the row and its `tool_call_id` metadata stay, only the body
-  is replaced with a short placeholder. The conversation never loses a turn.
+  is replaced with a short placeholder. The conversation never loses a turn. The
+  same window drops the model's thinking on older replies; the reply itself
+  stays, it just loses its collapsed **Thinking** area.
 - **Live transcripts** — only raw segments of *ended* sessions are deleted.
   Summary, insights and notes survive, so a cleaned session still shows its
   recap. An active recording is never touched.

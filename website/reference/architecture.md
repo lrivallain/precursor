@@ -107,7 +107,7 @@ instance comes up on doesn't depend on the caller's working directory.
    unattended runs skip the wait and return a tool error instead.
 4. Each round is trimmed to a token budget so a few large tool results can't
    overflow the context window.
-5. Text deltas and tool-call events stream to the browser over SSE.
+5. Thinking, text deltas and tool-call events stream to the browser over SSE.
 6. On stream end (or user "stop"), the assistant turn is persisted using a
    **fresh DB session** (the request-scoped one may be closed by the time the
    generator finishes), each metered round is written to the usage ledger, and
@@ -236,11 +236,20 @@ fallbacks stay with each feature.
 rejected by the other. `github_copilot.py` reads the `supported_endpoints` each
 model publishes, drops any model neither endpoint can serve, and routes the rest
 to the right surface; `_responses_compat.py` translates that surface back into
-the same four provider events (`text_delta`, `tool_calls`, `usage`,
-`turn_done`), so the turn engine never learns which API answered. A model we
+the same provider events (`text_delta`, `reasoning_delta`, `tool_calls`,
+`usage`, `turn_done`), so the turn engine never learns which API answered. A model we
 haven't catalogued yet is tried on `/chat/completions` first and transparently
 retried on Responses if it is refused, which keeps the hot path free of an
 extra round-trip and self-corrects for the rest of the process's life.
+
+**The model's thinking.** Reasoning models stream what they are thinking ahead
+of the answer, and each surface spells it differently: on `/chat/completions`
+Copilot sends `reasoning_text` deltas (DeepSeek-style servers `reasoning_content`,
+OpenRouter and Ollama `reasoning`); the Responses API streams nothing unless a
+reasoning *summary* is requested, so Precursor always asks for one. Both become
+`reasoning_delta` events. The turn engine stores them on the assistant message
+of the round that produced them, for display only — they are never replayed to
+the model as history.
 
 **Refusals that don't mean no.** Copilot serves a given model from only part of
 its fleet, so the same request alternates between `200` and

@@ -46,8 +46,10 @@ database over time. An optional **Settings → System → Storage / retention** 
 (`tool_result_retention_days`, default `0` = keep forever) bounds that growth:
 past the configured age, a tool message's content is replaced **in place** with a
 short placeholder, while the row and its `tool_calls` metadata are preserved so
-conversation history still pairs each tool-call turn with its results. The sweep
-is idempotent and runs best-effort on startup and periodically.
+conversation history still pairs each tool-call turn with its results. The same
+window removes the model's [thinking](/features/topics#watching-the-model-think)
+from older replies. The sweep is idempotent and runs best-effort on startup and
+periodically.
 
 This is one of several sweeps that bound database growth — see
 [Storage & retention](/features/storage) for the rest, and for the cockpit that

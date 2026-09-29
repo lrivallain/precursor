@@ -385,6 +385,7 @@ async def save_stopped_container_turn(
     container_id: int,
     content: str,
     tool_call_ids: list[str] | None = None,
+    reasoning: str = "",
 ) -> list[Message]:
     """Persist what the client kept when the user stopped a turn; return the rows.
 
@@ -399,6 +400,7 @@ async def save_stopped_container_turn(
             Message(
                 role=MessageRole.ASSISTANT,
                 content=content,
+                reasoning=reasoning.strip() or None,
                 **container_message_kwargs(kind, container_id),
             )
         )

@@ -64,6 +64,18 @@ class TextDeltaEvent:
 
 
 @dataclass(slots=True)
+class ReasoningDeltaEvent:
+    """A streamed chunk of the model's thinking, shown apart from the answer.
+
+    Usually a provider-written summary rather than the raw chain of thought, and
+    never fed back to the model on a later turn.
+    """
+
+    kind: Literal["reasoning"] = "reasoning"
+    content: str = ""
+
+
+@dataclass(slots=True)
 class ToolCallsEvent:
     """All tool calls accumulated for a single assistant turn."""
 
@@ -89,7 +101,7 @@ class UsageEvent:
     total_tokens: int = 0
 
 
-ProviderEvent = TextDeltaEvent | ToolCallsEvent | TurnDoneEvent | UsageEvent
+ProviderEvent = TextDeltaEvent | ReasoningDeltaEvent | ToolCallsEvent | TurnDoneEvent | UsageEvent
 
 
 class LLMError(Exception):

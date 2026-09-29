@@ -49,6 +49,7 @@ from precursor.backend.services.github_client import GitHubClient
 from precursor.backend.services.llm.base import (
     ChatMessage,
     LLMError,
+    ReasoningDeltaEvent,
     TextDeltaEvent,
     ToolCallsEvent,
     ToolDef,
@@ -427,11 +428,19 @@ class AssistantTextDelta:
 
 
 @dataclass(slots=True)
+class AssistantReasoningDelta:
+    """A streamed chunk of the model's thinking for the current round."""
+
+    content: str
+
+
+@dataclass(slots=True)
 class AssistantFinalTurn:
     """The model finished with a plain-text answer (no tool calls)."""
 
     text: str
     usage: UsageEvent | None
+    reasoning: str = ""
 
 
 @dataclass(slots=True)
@@ -442,6 +451,7 @@ class AssistantToolCallsTurn:
     tool_calls: list[Any]
     openai_tool_calls: list[dict[str, Any]]
     usage: UsageEvent | None
+    reasoning: str = ""
 
 
 @dataclass(slots=True)
@@ -579,6 +589,7 @@ class RoundCapReached:
 
 TurnEvent = (
     AssistantTextDelta
+    | AssistantReasoningDelta
     | AssistantFinalTurn
     | AssistantToolCallsTurn
     | ToolResultTurn
@@ -623,6 +634,7 @@ async def run_tool_loop(
 
     for _round in range(max_tool_rounds):
         text_chunks: list[str] = []
+        reasoning_chunks: list[str] = []
         tool_calls: list[Any] = []
         round_usage: UsageEvent | None = None
 
@@ -639,6 +651,9 @@ async def run_tool_loop(
             if isinstance(event, TextDeltaEvent):
                 text_chunks.append(event.content)
                 yield AssistantTextDelta(event.content)
+            elif isinstance(event, ReasoningDeltaEvent):
+                reasoning_chunks.append(event.content)
+                yield AssistantReasoningDelta(event.content)
             elif isinstance(event, ToolCallsEvent):
                 tool_calls = event.calls
             elif isinstance(event, UsageEvent):
@@ -647,9 +662,11 @@ async def run_tool_loop(
                 pass
 
         assistant_text = "".join(text_chunks)
+        # Kept for the transcript only: it never goes back into ``messages``.
+        reasoning = "".join(reasoning_chunks).strip()
 
         if not tool_calls:
-            yield AssistantFinalTurn(assistant_text, round_usage)
+            yield AssistantFinalTurn(assistant_text, round_usage, reasoning)
             return
 
         openai_tool_calls = [
@@ -660,7 +677,9 @@ async def run_tool_loop(
             }
             for c in tool_calls
         ]
-        yield AssistantToolCallsTurn(assistant_text, tool_calls, openai_tool_calls, round_usage)
+        yield AssistantToolCallsTurn(
+            assistant_text, tool_calls, openai_tool_calls, round_usage, reasoning
+        )
 
         messages.append(
             ChatMessage(
@@ -780,6 +799,7 @@ async def persist_final_turn(
         assistant = Message(
             role=MessageRole.ASSISTANT,
             content=text,
+            reasoning=ev.reasoning or None,
             suggestions=json.dumps(suggestions) if suggestions else None,
             prompt_tokens=usage.prompt_tokens if usage else None,
             completion_tokens=usage.completion_tokens if usage else None,
@@ -809,6 +829,7 @@ async def persist_tool_calls_turn(
         assistant = Message(
             role=MessageRole.ASSISTANT,
             content=ev.text,
+            reasoning=ev.reasoning or None,
             tool_calls=json.dumps(ev.openai_tool_calls),
             prompt_tokens=usage.prompt_tokens if usage else None,
             completion_tokens=usage.completion_tokens if usage else None,
@@ -945,6 +966,12 @@ async def run_message_stream(
                 if isinstance(ev, AssistantTextDelta):
                     yield {
                         "event": "delta",
+                        "data": json.dumps({"content": ev.content}),
+                    }
+
+                elif isinstance(ev, AssistantReasoningDelta):
+                    yield {
+                        "event": "reasoning",
                         "data": json.dumps({"content": ev.content}),
                     }
 

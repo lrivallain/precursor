@@ -1221,6 +1221,8 @@ export interface Message {
   chat_id?: number | null;
   role: MessageRole;
   content: string;
+  /** Assistant turns: the model's thinking for this round, shown collapsed. */
+  reasoning?: string | null;
   tool_calls: string | null;
   agent_session_id?: number | null;
   /** The linked agent's public (UUID) id — used for deep links / the /agent command. */
@@ -1247,11 +1249,13 @@ export interface Message {
  * What a user-stopped turn leaves behind (`POST …/messages/stopped`), mirroring
  * `schemas/message.py`: the reply text received so far, and the ids of the
  * latest tool round's calls that never returned (recorded as stopped). At least
- * one of the two must be present.
+ * one of the two must be present. `reasoning` is the thinking streamed for that
+ * reply, stored with it.
  */
 export interface StoppedTurn {
   content?: string;
   tool_call_ids?: string[];
+  reasoning?: string;
 }
 
 /**

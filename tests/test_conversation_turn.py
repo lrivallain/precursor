@@ -205,7 +205,11 @@ def test_transcript_endpoints_share_one_behaviour(container: str) -> None:
         assert saved["role"] == "assistant"
         assert saved["content"] == "partial reply"
         assert saved["attachments"] == []
-        [second] = client.post(f"{base}/stopped", json={"content": "another"}).json()
+        assert saved["reasoning"] is None
+        second_payload = {"content": "another", "reasoning": "Weighing the options"}
+        [second] = client.post(f"{base}/stopped", json=second_payload).json()
+        # The thinking streamed before the stop stays with the partial reply.
+        assert second["reasoning"] == "Weighing the options"
 
         # Nothing to save is a client bug; ids with no tool round save nothing.
         assert client.post(f"{base}/stopped", json={}).status_code == 422

@@ -139,7 +139,7 @@ env-level.
 
 | Setting | Default | Where | Description |
 | --- | --- | --- | --- |
-| `tool_result_retention_days` | `0` (keep forever) | Settings → System | Days before a large tool result's content is replaced in place with a short placeholder. |
+| `tool_result_retention_days` | `0` (keep forever) | Settings → System | Days before a large tool result's content is replaced in place with a short placeholder, and the model's thinking is removed from a reply. |
 | `live_transcript_retention_days` | `7` | Settings → Live | Days after a [Live session](/features/live-sessions#transcript-retention) ends before its transcript segments are deleted. `0` keeps them forever. Insights, notes and summary are preserved. |
 | `agent_event_retention_days` | `30` | Settings → Agents | Days before an agent's archived timeline events are deleted. `0` keeps them forever. A *running* agent is never pruned, and every agent keeps its result, artifacts and messages. |
 | `agent_event_max_per_session` | `2000` | Settings → Agents | Hard ceiling on archived events per agent — only the newest are kept. `0` is unlimited. |

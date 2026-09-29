@@ -13,6 +13,7 @@ from precursor.backend.services.llm.base import (
     ChatMessage,
     LLMError,
     ProviderEvent,
+    ReasoningDeltaEvent,
     TextDeltaEvent,
     ToolCallRequest,
     ToolCallsEvent,
@@ -20,6 +21,21 @@ from precursor.backend.services.llm.base import (
     TurnDoneEvent,
     UsageEvent,
 )
+
+# Chat-completions has no standard field for the model's thinking, so each
+# backend picks its own: Copilot streams ``reasoning_text``, DeepSeek-style
+# servers (Azure AI Foundry, vLLM) ``reasoning_content``, OpenRouter and Ollama
+# ``reasoning``. Only the first present one is read, in case a server mirrors it.
+REASONING_DELTA_FIELDS = ("reasoning_text", "reasoning_content", "reasoning")
+
+
+def reasoning_delta_text(delta: Any) -> str:
+    """The thinking text carried by one streamed chat-completions delta."""
+    for name in REASONING_DELTA_FIELDS:
+        value = getattr(delta, name, None)
+        if isinstance(value, str) and value:
+            return value
+    return ""
 
 
 class UnsupportedEndpointError(LLMError):
@@ -215,6 +231,10 @@ async def stream_openai_tools(
         delta = choice.delta
         if delta is None:
             continue
+
+        reasoning = reasoning_delta_text(delta)
+        if reasoning:
+            yield ReasoningDeltaEvent(content=reasoning)
 
         if delta.content:
             yield TextDeltaEvent(content=delta.content)

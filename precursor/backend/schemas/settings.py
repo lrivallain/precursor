@@ -75,7 +75,8 @@ class SettingsPayload(BaseModel):
     llm_max_tool_result_tokens: int | None = None
     # Scheduler (only the live-applicable timeout is editable).
     scheduled_run_timeout_seconds: int | None = None
-    # Tool-result retention window in days (0 = keep forever / disabled).
+    # Tool-result retention window in days (0 = keep forever / disabled). Also
+    # clears the model's thinking on older assistant turns.
     tool_result_retention_days: int | None = None
     # Live transcript retention window in days (0 = keep forever). Deletes only
     # transcript segments of ended sessions; insights/notes/summary are kept.

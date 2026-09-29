@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { MessageBubble } from "./MessageBubble";
+import { ReasoningDisclosure } from "./ReasoningDisclosure";
 import { SuggestedReplies } from "./SuggestedReplies";
 import { ToolCallBubble } from "./ToolCallBubble";
 import { stripSuggestionBlock } from "../lib/suggestions";
@@ -43,10 +44,12 @@ export function TranscriptMessage({
       />
     );
   }
-  // Hide assistant turns that only emitted tool calls (no text):
-  // the tool bubbles below carry the meaningful content.
+  // Hide assistant turns that only emitted tool calls (no text): the tool
+  // bubbles below carry the meaningful content. What the model thought before
+  // reaching for them still gets its collapsed row.
   if (m.role === "assistant" && !m.content.trim() && m.tool_calls) {
-    return null;
+    const thinking = m.reasoning?.trim();
+    return thinking ? <ReasoningDisclosure reasoning={thinking} className="px-3" /> : null;
   }
   const canDelete =
     !streaming && m.id > 0 && (m.role === "user" || m.role === "assistant");
@@ -54,6 +57,7 @@ export function TranscriptMessage({
     <MessageBubble
       role={m.role}
       content={m.content}
+      reasoning={m.reasoning}
       attachments={m.attachments}
       collapsible={collapsible}
       agentSessionId={hideAgentBadge ? undefined : m.agent_session_id}
@@ -71,6 +75,7 @@ interface TranscriptTailProps {
   visibleMessages: Message[];
   streaming: boolean;
   pendingContent: string;
+  pendingReasoning: string;
   onPickSuggestion: (text: string) => void;
   onStop: () => void;
 }
@@ -80,6 +85,7 @@ export function TranscriptTail({
   visibleMessages,
   streaming,
   pendingContent,
+  pendingReasoning,
   onPickSuggestion,
   onStop,
 }: TranscriptTailProps) {
@@ -88,6 +94,7 @@ export function TranscriptTail({
       <MessageBubble
         role="assistant"
         content={stripSuggestionBlock(pendingContent)}
+        reasoning={pendingReasoning}
         pending
         onStop={onStop}
       />
