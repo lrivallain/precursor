@@ -98,6 +98,34 @@ Any topic can carry a **schedule** so a prompt runs on a cadence, or a one-shot
 - **[Attachments](/features/attachments)** — images (vision) and documents.
 - **[MCP tools](/features/mcp)** — shown inline as they are called.
 
+## Watching the model think
+
+Reasoning models think before they answer, and Precursor shows it. While the
+model thinks, a pulsing **Thinking…** row sits where the reply will appear,
+previewing the step it is on — so a long pause reads as progress rather than a
+stall. Click it to read the thinking in full.
+
+<Screenshot src="/screenshots/thinking.png" alt="An assistant reply with its Thinking area expanded above the answer" caption="The model's thinking, opened above its answer. Collapsed, the row shows only the latest step." />
+
+Once the answer lands the area stays with it, collapsed, and survives a reload. A
+turn that [calls tools](/features/mcp) keeps the thinking of each round with that
+round, so you can see *why* the model reached for a tool. Stopping a turn keeps
+the thinking received so far with the partial reply.
+
+What appears depends on the model:
+
+- **Gemini, and GPT-5.5 and later**, stream a summary of their reasoning as they
+  go, one titled step at a time — the preview follows those titles. Older GPT
+  models answer on an API that doesn't expose their thinking, so they show none.
+- **Claude** thinks only when an effort is picked under the composer, and sends
+  a summary of its thinking just before the answer, so it shows up with the
+  reply rather than ahead of it.
+- A model that doesn't reason, or decides a question needs no thinking, shows no
+  Thinking area at all.
+
+The effort picker under the composer sets how hard the model thinks. The thinking
+is for you only: it is never sent back to the model on later turns.
+
 ## Deleting, clearing and stopping
 
 - **Delete** a message from its hover toolbar. It disappears at once, and an

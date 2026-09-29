@@ -625,6 +625,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
             visibleMessages={visibleMessages}
             streaming={streaming}
             pendingContent={conv.pendingContent}
+            pendingReasoning={conv.pendingReasoning}
             onPickSuggestion={conv.sendSuggestion}
             onStop={conv.stop}
           />

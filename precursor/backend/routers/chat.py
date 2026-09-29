@@ -79,7 +79,7 @@ async def save_stopped_turn(
     if await session.get(Topic, topic_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
     return await save_stopped_container_turn(
-        session, "topic", topic_id, payload.content, payload.tool_call_ids
+        session, "topic", topic_id, payload.content, payload.tool_call_ids, payload.reasoning
     )
 
 

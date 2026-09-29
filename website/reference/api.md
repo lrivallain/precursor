@@ -161,6 +161,12 @@ tool-call events for a single turn. A turn that dies (a provider rejection, the
 tool-round cap) emits an `error` event *and* persists an `Error: …` system
 message, so the failure is still there after a reload.
 
+A `reasoning` event (`{content}`) carries a chunk of the model's
+[thinking](/features/topics#watching-the-model-think); it arrives ahead of the
+`delta` events of the same round. The thinking of each round is stored on the
+assistant message it produced — the `tool_calls` round or the final answer — and
+returned as `reasoning` (`null` when the model surfaced none).
+
 A `tool_result` event carries the call id, name, arguments, result text and
 error flag — plus `link` (`{slug, path}`) when the tool read or wrote a
 [workspace](/features/workspaces) file, which the UI turns into an **Open** chip.
@@ -183,7 +189,8 @@ Stopping a turn disconnects the stream, so the backend never persists its final
 answer or the results of tools still running. The client records them with
 `POST .../messages/stopped`: `content` is the text received so far and
 `tool_call_ids` names the calls of the latest tool round that never returned —
-either may be omitted, not both (`422`). Each such call gets a tool row whose
+either may be omitted, not both (`422`). An optional `reasoning` is stored with
+`content` as that reply's thinking. Each such call gets a tool row whose
 metadata carries `"stopped": true`, skipping ids the round didn't issue or that
 already have a result, so the round still replays on the next turn. The response
 is the list of rows created, oldest first.

@@ -150,6 +150,7 @@ export function ChatSessionPanel({
               visibleMessages={visibleMessages}
               streaming={streaming}
               pendingContent={conv.pendingContent}
+              pendingReasoning={conv.pendingReasoning}
               onPickSuggestion={conv.sendSuggestion}
               onStop={conv.stop}
             />

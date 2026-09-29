@@ -85,6 +85,8 @@ export interface Conversation {
   visibleMessages: Message[];
   streaming: boolean;
   pendingContent: string;
+  /** The model's thinking for the in-flight round, streamed ahead of its reply. */
+  pendingReasoning: string;
   /** The prompt to offer a Retry on, when the transcript ends on an error. */
   retryableId: number | null;
   userHistory: string[];
@@ -157,6 +159,7 @@ export function useConversation({
   const streamKey = convKey(kind, id);
   const streaming = streamStore.isStreaming(streamKey);
   const pendingContent = streamStore.pendingContent(streamKey);
+  const pendingReasoning = streamStore.pendingReasoning(streamKey);
   const buffered = streamStore.bufferedMessages(streamKey);
   const hasSession = streamStore.hasSession(streamKey);
   const messages = useMemo<Message[]>(
@@ -177,7 +180,7 @@ export function useConversation({
   // Reverse-infinite-scroll wiring lives in useWindowedMessages; bind the scroll
   // helpers back into the hook once useChatScroll has produced them.
   const { scrollRef, onScroll, captureTopAnchor, pinToBottom } = useChatScroll(
-    [messages, pendingContent],
+    [messages, pendingContent, pendingReasoning],
     win.onReachTop,
   );
   const { bindScroll, reloadMessages } = win;
@@ -363,6 +366,7 @@ export function useConversation({
     // suppresses the streaming→done effect's reload so this handler owns the
     // post-persist refresh.
     const partial = streamStore.pendingContent(streamKey).trim();
+    const reasoning = streamStore.pendingReasoning(streamKey).trim();
     stoppingRef.current = true;
     const stoppedCalls = streamStore.stop(streamKey);
     void (async () => {
@@ -370,6 +374,7 @@ export function useConversation({
         if (partial || stoppedCalls.length > 0) {
           await containerApi.saveStopped({
             ...(partial ? { content: `${partial}\n\n_(stopped)_` } : {}),
+            ...(partial && reasoning ? { reasoning } : {}),
             ...(stoppedCalls.length > 0 ? { tool_call_ids: stoppedCalls } : {}),
           });
         }
@@ -497,6 +502,7 @@ export function useConversation({
     visibleMessages,
     streaming,
     pendingContent,
+    pendingReasoning,
     retryableId,
     userHistory,
     scrollRef,

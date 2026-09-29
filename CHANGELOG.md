@@ -15,6 +15,17 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **See the model think.** In topics and chats, a reasoning model's thinking
+  now streams into a collapsed **Thinking** area above its reply. While the
+  model works, the row pulses and previews the step it is on, so a long pause
+  reads as progress; click it to read the thinking in full. It stays with the
+  answer (and with each tool round) after a reload, and a stopped turn keeps
+  what was received. Gemini streams its thoughts, GPT-5.5 and later stream a
+  reasoning summary — Precursor now requests one on the Responses API — and
+  Claude sends a summary with the answer. Thinking is never replayed to the model.
+  Messages gain a `reasoning` field, the chat stream a `reasoning` event, and
+  `POST …/messages/stopped` an optional `reasoning`.
+
 - **Summary templates for live sessions.** The Summary tab's single
   **Generate** button opens a small form: the **source** (the recording, or the
   linked Teams meeting's transcript — replacing the separate "Generate from

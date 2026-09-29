@@ -28,6 +28,9 @@ for a **topic** when the conversation is part of ongoing work you'll return to.
 Chats share the same conversation experience as topics:
 
 - **Streaming** replies over Server-Sent Events with live markdown rendering.
+- **The model's thinking** in a collapsed area above its reply, previewing the
+  step it is on while it works — see
+  [watching the model think](/features/topics#watching-the-model-think).
 - **Mermaid diagrams**, fenced code blocks, and syntax highlighting.
 - **`/` slash commands**, including [skills](/features/skills-memory) and the
   memory commands (`/memory-store`, `/memory-list`, `/memory-update`).

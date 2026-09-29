@@ -238,6 +238,30 @@ const scenes = {
     },
   },
 
+  // A reply's collapsed "Thinking" area, opened — just the exchange, so the
+  // sidebar and its persona footer stay out of the shot.
+  thinking: {
+    viewport: { width: 1280, height: 900 },
+    async go(page) {
+      await page.goto(`${BASE}/topics/search-latency-regression`, { waitUntil: "networkidle" });
+      await page.locator("button[aria-expanded]", { hasText: "Thinking" }).first().click();
+      await page.mouse.move(0, 0);
+      await sleep(400);
+      const prompt = await page.getByText("p95 went from 180ms", { exact: false }).first().boundingBox();
+      const label = await page.getByText("Assistant", { exact: true }).first().boundingBox();
+      const answer = await page.getByText("recover most of it", { exact: false }).first().boundingBox();
+      if (!prompt || !label || !answer) throw new Error("Seed the search-latency topic first.");
+      const x = Math.floor(label.x - 24);
+      const y = Math.floor(prompt.y - 44);
+      return {
+        x,
+        y,
+        width: Math.ceil(prompt.x + prompt.width + 36 - x),
+        height: Math.ceil(answer.y + answer.height + 44 - y),
+      };
+    },
+  },
+
   live: {
     viewport: { width: 1440, height: 1000 },
     async go(page) {
