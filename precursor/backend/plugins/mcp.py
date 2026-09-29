@@ -16,12 +16,13 @@ from precursor.backend.services.mcp.client import get_mcp_client_manager
 logger = logging.getLogger(__name__)
 
 
-def hydrate_plugin_servers() -> None:
+def hydrate_plugin_servers() -> set[str]:
     """Sync the manager's plugin entries with what's currently enabled.
 
     Idempotent: registering the same server twice replaces it, and a server
     whose plugin has since been disabled (or failed) is removed, so this doubles
-    as the "apply a toggle" path.
+    as the "apply a toggle" path. Returns the names it removed, whose warm
+    workers the caller should retire.
     """
     manager = get_mcp_client_manager()
     registry = get_registry()
@@ -49,5 +50,7 @@ def hydrate_plugin_servers() -> None:
                 continue
             wanted.add(spec.name)
 
-    for name in manager.plugin_entry_names() - wanted:
+    removed = manager.plugin_entry_names() - wanted
+    for name in removed:
         manager.unregister_plugin_entry(name)
+    return removed

@@ -303,7 +303,11 @@ async def load_enabled_mcp_servers(session: AsyncSession) -> list[str]:
         return []
     if not isinstance(data, dict):
         return []
-    return [name for name, enabled in data.items() if enabled]
+    # A disabled or uninstalled plugin's server keeps its toggle, so it comes back
+    # as the user left it; until then it isn't registered, and asking for it would
+    # fail every turn with "Unknown MCP server".
+    manager = get_mcp_client_manager()
+    return [name for name, enabled in data.items() if enabled and manager.get(name) is not None]
 
 
 def mcp_tools_to_provider(tools: list[MCPToolDef]) -> list[ToolDef]:
