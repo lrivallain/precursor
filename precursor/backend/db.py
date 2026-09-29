@@ -66,10 +66,14 @@ async def init_db() -> None:
 
     * **Managed at a known revision** → ``upgrade head`` (a no-op when already at
       head; otherwise it applies the pending migrations). The production path.
-    * **Managed at an *unknown* revision** → the stored revision was squashed
-      away by a baseline reset. Managed databases were already at head, so the
-      live schema matches the new baseline — re-adopt it with ``stamp head`` (a
+    * **Managed at a squashed revision** → one of the pre-baseline revisions in
+      :data:`_SQUASHED_REVISIONS`. Managed databases were already at head, so the
+      live schema matches the baseline — re-adopt it with ``stamp head`` (a
       version-row write only; no schema or data change).
+    * **Managed at any other unknown revision** → a newer build migrated this
+      database. Refuse to start with :class:`DatabaseNewerThanAppError`, writing
+      nothing: stamping it back to this build's head would make the newer build
+      replay migrations that are already applied and crash on startup.
     * **Unmanaged** → a fresh database (``upgrade head`` builds it) or a legacy
       ``create_all`` one that has tables but no version row (``stamp head``
       adopts it). Told apart by whether any application table already exists.
@@ -80,22 +84,66 @@ async def init_db() -> None:
     async with engine.connect() as conn:
         has_version, has_tables, stored = await conn.run_sync(_inspect_alembic_state)
 
-    if not has_version:
-        # Fresh DB → build from migrations; legacy create_all DB → adopt it.
-        action, purge = ("stamp", False) if has_tables else ("upgrade", False)
-    elif stored in _known_revisions():
-        action, purge = ("upgrade", False)
-    else:
-        # Stored revision was squashed away by a baseline reset. The live schema
-        # already matches the baseline, so re-adopt it — purging the stale
-        # version row first, since stamp can't resolve the orphaned revision.
-        action, purge = ("stamp", True)
+    known = _known_revisions() if has_version else set()
+    action, purge = _plan_alembic(has_version, has_tables, stored, known)
     # env.py drives its own asyncio loop, so run Alembic off this one.
     await asyncio.to_thread(_run_alembic, action, "head", purge)
 
     async with engine.begin() as conn:
         await conn.run_sync(ensure_default_role)
         await conn.run_sync(ensure_default_collection)
+
+
+# The incremental revisions squashed into ``0001_baseline``. Only these may be
+# re-adopted: an unknown revision outside this set is not history this build
+# has forgotten but a migration it has never seen.
+_SQUASHED_REVISIONS = frozenset(
+    {
+        "0001_workspaces",
+        "0002_scheduled_topics",
+        "0003_schedule_days_of_week",
+        "0004_schedule_time_of_day",
+        "0005_local_workspaces",
+        "0006_schedule_clear_context",
+        "0007_chat_support",
+        "0008_chat_attachments",
+        "0009_reminders",
+        "0009_usage_records",
+        "0010_chat_description_as_system_prompt",
+        "0011_roles",
+    }
+)
+
+
+class DatabaseNewerThanAppError(RuntimeError):
+    """The database was migrated by a newer Precursor build than this one."""
+
+    def __init__(self, revision: str) -> None:
+        from precursor import __version__
+
+        self.revision = revision
+        super().__init__(
+            f"The database is at schema revision {revision!r}, which Precursor "
+            f"{__version__} does not know: a newer build has migrated it. Refusing "
+            "to start so the database is left untouched. Run a build at least as "
+            "new as the one that last used this database (e.g. `precursor service "
+            "update`), or point PRECURSOR_DATABASE_URL at another database."
+        )
+
+
+def _plan_alembic(
+    has_version: bool, has_tables: bool, stored: str | None, known: set[str]
+) -> tuple[str, bool]:
+    """Pick the ``(action, purge)`` that brings this database to head."""
+    if not has_version:
+        # Fresh DB → build from migrations; legacy create_all DB → adopt it.
+        return ("stamp", False) if has_tables else ("upgrade", False)
+    if stored in known:
+        return ("upgrade", False)
+    if stored in _SQUASHED_REVISIONS:
+        # Purge the stale version row first: stamp can't resolve the orphan.
+        return ("stamp", True)
+    raise DatabaseNewerThanAppError(str(stored))
 
 
 def _inspect_alembic_state(sync_conn: Connection) -> tuple[bool, bool, str | None]:
@@ -134,8 +182,8 @@ def _run_alembic(action: str, revision: str, purge: bool = False) -> None:
 
     Executed in a worker thread because Alembic's ``env.py`` calls
     ``asyncio.run``, which can't nest inside the app's running event loop.
-    ``purge`` (stamp only) clears the version table first, so a stale/orphaned
-    revision left by a baseline reset can be re-adopted.
+    ``purge`` (stamp only) clears the version table first, so a revision
+    squashed away by the baseline reset can be re-adopted.
     """
     from alembic import command
 

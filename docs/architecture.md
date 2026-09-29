@@ -188,8 +188,11 @@ remains separate.
   head` on startup, which both builds a fresh database from migrations and
   migrates an existing one (dev and prod alike — no `create_all`). Generate a
   migration from model changes with `make migration m="…"` (autogenerate). A
-  database stamped at a squashed-away revision is auto-adopted to the current
-  baseline on next startup (a version-row update only — no schema/data change).
+  database stamped at one of the revisions squashed into `0001_baseline` is
+  auto-adopted to the current baseline on next startup (a version-row update
+  only — no schema/data change). Any other unknown revision means a newer build
+  migrated the database, so startup fails with `DatabaseNewerThanAppError` and
+  writes nothing, rather than rewinding the version row.
 
 Runtime settings are owned by the database: `services/app_settings.py` resolves
 each one as "the `AppSetting` row if present and valid, clamped to a sane range,
