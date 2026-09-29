@@ -62,6 +62,7 @@ class WorkflowAgentSummary(BaseModel):
     progress_label: str | None = None
     result_summary: str | None = None
     active_narration: str | None = None
+    active_thinking: str | None = None
     # The question the agent raised when it parked itself (``status ==
     # "blocked"``). Carried so the board can show what it is stuck on and let the
     # operator answer it when resuming, instead of re-driving the step blind.

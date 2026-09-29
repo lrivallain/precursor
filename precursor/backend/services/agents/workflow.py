@@ -56,6 +56,7 @@ from precursor.backend.services.agents.directives import (
     RESULT_SUMMARY_CAP,
     strip_control_directives,
 )
+from precursor.backend.services.agents.event_normalizer import is_content_free
 from precursor.backend.services.agents.mcp_scope import parse_mcp_scope, scope_includes_precursor
 from precursor.backend.services.definitions import anchors as definition_anchors
 from precursor.backend.services.definitions import overlay as definition_overlay
@@ -2421,7 +2422,8 @@ async def step_attempt_events(
             data = json.loads(payload)
         except (ValueError, TypeError):
             continue
-        if not isinstance(data, dict):
+        # Streaming frames archived before they stopped being kept render nothing.
+        if not isinstance(data, dict) or is_content_free(data.get("kind"), data.get("text")):
             continue
         # Older rows predate the payload carrying its own timestamp; fall back to
         # the row's so the UI can always order and label them.

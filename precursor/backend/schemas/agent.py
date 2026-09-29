@@ -173,6 +173,9 @@ class AgentSessionRead(BaseModel):
     # A one-line, plain-language hint of what the agent is doing right now,
     # distilled from its own in-flight commentary (null when idle / not live).
     active_narration: str | None = None
+    # The tail of the thinking the model is streaming right now (null when it
+    # isn't thinking) — the card previews its latest step.
+    active_thinking: str | None = None
     pending_permission: AgentPendingPermission | None = None
     # --- Orchestration relations (eager-loaded by the router) ---
     # The execution currently driving this agent, if any. The execution columns
@@ -321,6 +324,18 @@ class AgentEvent(BaseModel):
     agent_run_id: int | None = None
 
 
+class AgentLiveThinking(BaseModel):
+    """The model's thinking for the round in flight, as it streams.
+
+    Streaming frames are never archived; once the round ends its complete
+    ``reasoning`` event lands in the timeline and this goes away.
+    """
+
+    text: str
+    # Still thinking: nothing of the answer or a tool call has streamed since.
+    active: bool = True
+
+
 class AgentEventPage(BaseModel):
     """One incremental read of an agent's transcript.
 
@@ -334,6 +349,9 @@ class AgentEventPage(BaseModel):
     never archived and vanish as approvals are answered, so they sit outside the
     cursor and are replaced wholesale on every read rather than appended.
 
+    ``thinking`` is the other volatile tail: the thinking the model is
+    streaming right now, replaced on every read like ``pending``.
+
     ``reset`` means the cursor no longer addresses this transcript — it was
     cleared, pruned by retention, or belongs to a different run — and ``events``
     is therefore a complete replacement rather than a delta.
@@ -341,6 +359,7 @@ class AgentEventPage(BaseModel):
 
     events: list[AgentEvent] = []
     pending: list[AgentEvent] = []
+    thinking: AgentLiveThinking | None = None
     cursor: int = 0
     reset: bool = False
 

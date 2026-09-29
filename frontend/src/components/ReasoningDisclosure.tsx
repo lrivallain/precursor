@@ -58,6 +58,21 @@ export function ReasoningDisclosure({ reasoning, live = false, className = "" }:
 }
 
 /**
+ * One pulsing line for a live card: the model is thinking, and the step it is
+ * on. The card has no room for the thinking itself; the agent's timeline does.
+ */
+export function ThinkingPreview({ reasoning, className = "" }: { reasoning: string; className?: string }) {
+  const step = latestThinkingStep(reasoning);
+  return (
+    <p className={`flex min-w-0 items-center gap-1.5 text-[11px] text-muted ${className}`}>
+      <Brain size={12} className="shrink-0 animate-pulse text-cyan-600 dark:text-cyan-300" />
+      <span className="shrink-0 font-medium">Thinking…</span>
+      {step && <span className="min-w-0 truncate italic">{step}</span>}
+    </p>
+  );
+}
+
+/**
  * The step the model is on: its latest summary heading (reasoning summaries open
  * each step with a bold or `#` title), else the last line of its thinking.
  */

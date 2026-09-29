@@ -28,6 +28,21 @@ are the per-version history; releasing does not rewrite this file.
   Messages gain a `reasoning` field, the chat stream a `reasoning` event, and
   `POST …/messages/stopped` an optional `reasoning`.
 
+- **Agents and workflows show the model think, too.** While an agent's model
+  thinks, its timeline ends in the same pulsing **Thinking…** row, and its
+  dashboard card and a workflow's active step show the step it is on. A finished
+  round's thinking sits collapsed on the message it led to — in the agent
+  timeline and in a workflow step's **Activity** — instead of a separate
+  "Thinking" box; a round that went straight to a tool call keeps its own row.
+  Claude streams its thinking live (with a reasoning effort picked), Gemini
+  sends it with each round, GPT keeps it encrypted. The events page gains a
+  `thinking` field, agents and workflow step agents an `active_thinking` field.
+
+- **Empty agent events cleanup.** A new target under **Settings → Usage stats →
+  Storage cleanup** deletes the streaming fragments and empty messages older
+  versions archived — nearly nine agent-event rows in ten on a busy install.
+  Preview it, run it, then Compact.
+
 - **Summary templates for live sessions.** The Summary tab's single
   **Generate** button opens a small form: the **source** (the recording, or the
   linked Teams meeting's transcript — replacing the separate "Generate from
@@ -110,6 +125,13 @@ are the per-version history; releasing does not rewrite this file.
   receipt is now the signal, on every platform.
 
 ### Changed
+
+- **Agents stop archiving streaming fragments.** Every token of an agent's reply
+  and thinking was written to `agent_events` as its own row and commit, with its
+  text dropped on the way. Those fragments now only feed the live view; the
+  archive keeps the complete messages, thinking and tool events. That frees
+  `agent_event_max_per_session` for real history, and the live narration on
+  agent cards reads the streamed text again.
 
 - **Git workspaces merge, and conflicts are resolved in the editor.**
   - **Starting a merge:** when Pull (or Push) finds that the branch and the

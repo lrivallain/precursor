@@ -312,6 +312,9 @@ export interface AgentSession {
   // One-line plain-language hint of what the agent is doing right now, distilled
   // from its own in-flight commentary (null when idle / not live in-process).
   active_narration: string | null;
+  // Tail of the thinking the model is streaming right now (null when it isn't
+  // thinking); cards preview its latest step.
+  active_thinking: string | null;
   // Oldest unresolved permission request blocking the agent (null when not
   // waiting). Deep-links the out-of-band "agent is waiting" signal.
   pending_permission: AgentPendingPermission | null;
@@ -470,12 +473,23 @@ export interface AgentEvent {
 // One incremental read of an agent's transcript (mirrors AgentEventPage).
 // The archived timeline is append-only, so a live view sends back the previous
 // `cursor` as `after` and receives only what it hasn't seen.
+// The model's thinking for the round in flight, streamed but not yet archived.
+// Mirrors backend AgentLiveThinking.
+export interface AgentLiveThinking {
+  text: string;
+  // Still thinking: nothing of the answer or a tool call has streamed since.
+  active: boolean;
+}
+
 export interface AgentEventPage {
   // The delta after the requested cursor — or the whole transcript when `reset`.
   events: AgentEvent[];
   // Unresolved approval cards. Never archived and they vanish once answered, so
   // they sit outside the cursor and replace the previous tail on every read.
   pending: AgentEvent[];
+  // The thinking being streamed right now. Volatile like `pending`: replaced on
+  // every read, and gone once the round's complete reasoning event lands.
+  thinking?: AgentLiveThinking | null;
   // Send this back as `after` on the next read.
   cursor: number;
   // The cursor no longer addresses this transcript (cleared, pruned, or taken
@@ -674,6 +688,8 @@ export interface WorkflowAgentSummary {
   progress_label: string | null;
   result_summary: string | null;
   active_narration: string | null;
+  /** Tail of the thinking the step's agent is streaming right now. */
+  active_thinking: string | null;
   /** What the agent asked when it parked itself (`status === "blocked"`). */
   blocked_question: string | null;
   /**

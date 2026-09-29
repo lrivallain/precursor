@@ -210,6 +210,7 @@ def _to_read(
         read.active_tool = activity.get("active_tool")
         read.active_tool_count = activity.get("active_tool_count", 0)
         read.active_narration = activity.get("active_narration")
+        read.active_thinking = activity.get("active_thinking")
         pending = activity.get("pending_permission")
         if pending:
             read.pending_permission = AgentPendingPermission.model_validate(pending)

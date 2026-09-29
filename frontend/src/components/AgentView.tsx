@@ -77,6 +77,7 @@ import { APPROVAL_POLICIES } from "./AgentsSettings";
 import { AgentsRuntimeCard } from "./AgentsRuntimeCard";
 import { AgentUsageSection } from "./AgentUsage";
 import { PermissionBody } from "./AgentPermissionBody";
+import { ReasoningDisclosure } from "./ReasoningDisclosure";
 import {
   AgentPaneTabs,
   AgentResultView,
@@ -98,6 +99,7 @@ import type {
   AgentApprovalPolicy,
   AgentArtifact,
   AgentEvent,
+  AgentLiveThinking,
   AgentPermissionDecisionValue,
   AgentRun,
   AgentSession,
@@ -891,6 +893,7 @@ function ArtifactViewer({
 function MessageNode({
   event,
   category,
+  reasoning,
   isLastAnswer,
   autonomy,
   user,
@@ -903,6 +906,8 @@ function MessageNode({
 }: {
   event: AgentEvent;
   category: "user" | "system" | "assistant" | "reasoning" | "error";
+  /** The round's thinking, shown collapsed above the message. */
+  reasoning?: string | null;
   isLastAnswer: boolean;
   // Whether the parent agent is autonomy-enabled — gates directive parsing so a
   // normal agent that happens to type "PROGRESS:" isn't rewritten.
@@ -975,7 +980,8 @@ function MessageNode({
     }
   };
   // A heartbeat-only message (`PROGRESS:` and nothing else) is drawn as its
-  // milestone on the spine; an empty bubble above it would only add noise.
+  // milestone on the spine; an empty bubble above it would only add noise. The
+  // thinking that led to it still has something to say.
   if (
     isAssistant &&
     autonomy &&
@@ -983,7 +989,7 @@ function MessageNode({
     !directives?.needInput &&
     (directives?.artifacts.length ?? 0) === 0
   ) {
-    return null;
+    return reasoning ? <ThinkingNode reasoning={reasoning} /> : null;
   }
   return (
     <div
@@ -1017,6 +1023,7 @@ function MessageNode({
           </span>
         ) : null}
       </div>
+      {reasoning && <ReasoningDisclosure reasoning={reasoning} className="mt-1.5" />}
       {event.text &&
         (isSystem ? (
           <div className="mt-1">
@@ -1111,6 +1118,16 @@ function MessageNode({
           hoverGroup="node"
         />
       </div>
+    </div>
+  );
+}
+
+// Thinking with no message of its own to sit on: a round that went straight to
+// a tool call, or the thinking the model is streaming right now.
+function ThinkingNode({ reasoning, live = false }: { reasoning: string; live?: boolean }) {
+  return (
+    <div className={`w-full max-w-xl rounded-lg border px-2.5 py-1.5 ${CATEGORY_STYLE.reasoning.box}`}>
+      <ReasoningDisclosure reasoning={reasoning} live={live} />
     </div>
   );
 }
@@ -1330,7 +1347,13 @@ function readShowPrefs(): ShowPrefs {
 // A row in the rendered workflow: a centered message node, a grouped tool box,
 // or a side hook bubble.
 type WorkflowRow =
-  | { type: "node"; ev: AgentEvent; cat: "user" | "system" | "assistant" | "reasoning" | "error" }
+  | {
+      type: "node";
+      ev: AgentEvent;
+      cat: "user" | "system" | "assistant" | "reasoning" | "error";
+      /** An assistant message's thinking, which the SDK sends right after it. */
+      reasoning?: string;
+    }
   | { type: "tool"; step: ToolStep }
   | { type: "hook"; ev: AgentEvent };
 
@@ -1352,6 +1375,9 @@ function buildRows(events: AgentEvent[]): WorkflowRow[] {
   // refers to. The archived `PermissionRequestedData` carries no request id, so
   // this positional link is the only way to know a call stopped at a gate.
   let openTool: ToolStep | null = null;
+  // The message a following reasoning event belongs to. The SDK sends a round's
+  // complete thinking right after that round's message, before its tool calls.
+  let thinkingAnchor: NodeRow | null = null;
 
   const pick = (data: Record<string, unknown> | null, ...keys: string[]): string | undefined => {
     if (!data) return undefined;
@@ -1366,6 +1392,8 @@ function buildRows(events: AgentEvent[]): WorkflowRow[] {
     const kind = ev.kind.toLowerCase();
     const cat = classify(ev);
     if (cat === "skip") continue;
+    // A new round's thinking never belongs to the previous round's message.
+    if (kind === "turn_start") thinkingAnchor = null;
     // Permission echoes carry no actionable content of their own, but a
     // *request* marks the call before it as gated — the difference between a
     // tool that ran and one that only ever asked.
@@ -1377,6 +1405,7 @@ function buildRows(events: AgentEvent[]): WorkflowRow[] {
 
     const isToolish = cat === "tool" || cat === "permission";
     if (isToolish) {
+      thinkingAnchor = null;
       const groupKey = ev.request_id ?? `tool-${rows.length}`;
       let step = ev.request_id ? toolIndex.get(groupKey) : undefined;
       // A tool is "done" when its completion event arrives — independent of
@@ -1419,28 +1448,26 @@ function buildRows(events: AgentEvent[]): WorkflowRow[] {
     if (cat === "hook") {
       rows.push({ type: "hook", ev });
     } else if (cat === "assistant" && (!ev.text || !ev.text.trim())) {
-      // Streaming emits an empty AssistantMessageStartData marker per message;
-      // drop the contentless frames so they don't render as blank "Assistant"
-      // steps. The real answer arrives as AssistantMessageData (with text).
+      // Archives from before streaming frames stopped being kept hold message
+      // markers and tool-call-only messages with no text: nothing to render.
+      // Its round's thinking has no message to sit on, so it stands alone.
+      thinkingAnchor = null;
       continue;
     } else if (cat === "reasoning") {
-      // Streamed reasoning deltas carry no standalone text (the SDK sends the
-      // full block separately as AssistantReasoningData); drop the empty ones so
-      // streaming mode doesn't fill the timeline with blank "thinking" steps.
+      // A model with encrypted reasoning reports it with no text at all.
       if (!ev.text || !ev.text.trim()) continue;
-      // The SDK emits reasoning right AFTER the assistant message of a turn;
-      // surface it just before so each turn reads think → speak and a trailing
-      // reasoning never dangles below the final answer.
-      let at = rows.length;
-      while (at > 0 && rows[at - 1].type === "hook") at--;
-      const anchor = at > 0 ? rows[at - 1] : undefined;
-      if (anchor && anchor.type === "node" && anchor.cat === "assistant") {
-        rows.splice(at - 1, 0, { type: "node", ev, cat });
+      // Shown on the message it belongs to, collapsed above it — think, then
+      // speak — like a chat reply's thinking.
+      if (thinkingAnchor && !thinkingAnchor.reasoning) {
+        thinkingAnchor.reasoning = ev.text;
       } else {
         rows.push({ type: "node", ev, cat });
       }
+      thinkingAnchor = null;
     } else {
-      rows.push({ type: "node", ev, cat });
+      const row: NodeRow = { type: "node", ev, cat };
+      rows.push(row);
+      thinkingAnchor = cat === "assistant" ? row : null;
     }
   }
   // Fallback: tools whose start never arrived (truly broken turn) still render,
@@ -1555,7 +1582,10 @@ function workStats(
   for (const { row } of work) {
     if (row.type === "tool") stats.tools += 1;
     else if (row.type === "node" && row.cat === "reasoning") stats.thoughts += 1;
-    else if (row.type === "node" && row.cat === "assistant") stats.messages += 1;
+    else if (row.type === "node" && row.cat === "assistant") {
+      stats.messages += 1;
+      if (row.reasoning) stats.thoughts += 1;
+    }
     else if (row.type === "node" && row.cat === "error") stats.errors += 1;
   }
   const start = Date.parse(prompt.ev.at ?? "");
@@ -1809,10 +1839,13 @@ export function AgentActivity({
                 seg.row.cat === "user" &&
                 isAutonomyNudge(seg.row.ev.text) ? (
                 <ContinueMarker at={seg.row.ev.at} />
+              ) : seg.row.type === "node" && seg.row.cat === "reasoning" ? (
+                <ThinkingNode reasoning={seg.row.ev.text ?? ""} />
               ) : seg.row.type === "node" ? (
                 <MessageNode
                   event={seg.row.ev}
                   category={seg.row.cat}
+                  reasoning={seg.row.reasoning}
                   isLastAnswer={false}
                   autonomy={autonomy}
                   model={modelByEvent.get(seg.row.ev) ?? model}
@@ -2057,6 +2090,9 @@ export function AgentView({
   // them without wanting to be re-subscribed when they move.
   const archivedRef = useRef<AgentEvent[]>([]);
   const cursorRef = useRef(0);
+  // The round's thinking as it streams. Like parked approvals it sits outside
+  // the cursor, and each read replaces it.
+  const [liveThinking, setLiveThinking] = useState<AgentLiveThinking | null>(null);
 
   const loadEvents = useCallback(
     async (
@@ -2081,10 +2117,15 @@ export function AgentView({
         // Parked approval cards live outside the cursor and are replaced whole,
         // so they're re-appended on every read rather than accumulated.
         setEvents(page.pending.length > 0 ? [...archived, ...page.pending] : archived);
+        const thinking = page.thinking ?? null;
+        setLiveThinking((prev) =>
+          prev?.text === thinking?.text && prev?.active === thinking?.active ? prev : thinking,
+        );
       } catch {
         archivedRef.current = [];
         cursorRef.current = 0;
         setEvents([]);
+        setLiveThinking(null);
       }
     },
     [],
@@ -2150,6 +2191,7 @@ export function AgentView({
       archivedRef.current = [];
       cursorRef.current = 0;
       setEvents([]);
+      setLiveThinking(null);
       return;
     }
     // A different agent or run filter is a different sequence, so a carried-over
@@ -2998,7 +3040,7 @@ export function AgentView({
         {(() => {
           const { segments, trailingHooks, latestAnswerKey } = timeline;
 
-          if (segments.length === 0 && trailingHooks.length === 0)
+          if (segments.length === 0 && trailingHooks.length === 0 && !liveThinking)
             return showPending ? (
               <div className="flex flex-col items-center">
                 <div className="flex w-full justify-end">
@@ -3070,10 +3112,13 @@ export function AgentView({
                       />
                     ) : nudge ? (
                       <ContinueMarker at={row.ev.at} />
+                    ) : row.type === "node" && row.cat === "reasoning" ? (
+                      <ThinkingNode reasoning={row.ev.text ?? ""} />
                     ) : row.type === "node" ? (
                       <MessageNode
                         event={row.ev}
                         category={row.cat}
+                        reasoning={showPrefs.thinking ? row.reasoning : null}
                         isLastAnswer={entry.role === "answer"}
                         autonomy={selected.autonomy_enabled}
                         user={userPersona}
@@ -3110,6 +3155,12 @@ export function AgentView({
                 );
               })}
               {trailingHooks.length > 0 && <HookGutter hooks={trailingHooks} />}
+              {liveThinking && showPrefs.thinking && (
+                <>
+                  <StepConnector hooks={[]} />
+                  <ThinkingNode reasoning={liveThinking.text} live={liveThinking.active} />
+                </>
+              )}
               {showPending && (
                 <>
                   <StepConnector hooks={[]} />

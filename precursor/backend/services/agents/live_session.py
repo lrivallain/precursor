@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import Any
 
 from precursor.backend.models import AgentRun, AgentSession
+from precursor.backend.services.agents.live_stream import LiveStream
 
 #: Anything carrying the capability toggles a live session is built from: the
 #: executing ``AgentRun``'s immutable snapshot, or the ``AgentSession`` itself
@@ -94,3 +95,6 @@ class _LiveSession:
     # Monotonic time ``_ensure_live`` last handed this session out, so the idle
     # reaper never disconnects one a caller is about to send on.
     last_used: float = field(default_factory=time.monotonic)
+    # The round being streamed right now (thinking, the opening of the answer).
+    # Streaming frames are never archived, so the live views read them here.
+    stream: LiveStream = field(default_factory=LiveStream)
