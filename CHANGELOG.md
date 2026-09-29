@@ -75,6 +75,13 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Fixed
 
+- **An older build no longer breaks the database for newer ones.** Starting an
+  older Precursor on a database a newer build had migrated used to rewind its
+  schema version without changing the schema. The next newer build then tried
+  to re-apply those migrations and failed to start on every retry
+  (`duplicate column name`). Now the older build refuses to start, names the
+  unknown revision, and leaves the database untouched. Run a build at least as
+  new as the last one that used the database.
 - **Linux: a first install no longer fails to start.** The systemd units run in
   the data directory, but nothing created it when port `8000` was free. systemd
   then refused to start the app (`status=200/CHDIR`) and the installer reported
