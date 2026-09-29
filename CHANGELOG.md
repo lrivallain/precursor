@@ -75,6 +75,13 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Fixed
 
+- **A disabled or uninstalled plugin no longer warns on every prompt.** Its MCP
+  server's on/off switch outlived it, so each turn still asked for the server
+  and reported "MCP server 'kanban.board' unavailable: Unknown MCP server". A
+  turn now skips servers that aren't registered. The switch itself is kept, so
+  re-enabling or reinstalling the plugin brings the server back as you left it.
+  Disabling a plugin also closes its running MCP server at once instead of
+  after the idle timeout.
 - **Linux: a first install no longer fails to start.** The systemd units run in
   the data directory, but nothing created it when port `8000` was free. systemd
   then refused to start the app (`status=200/CHDIR`) and the installer reported
