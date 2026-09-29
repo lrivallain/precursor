@@ -195,7 +195,8 @@ Highlights:
 
 The schema is managed entirely by **Alembic**: `init_db` runs `alembic upgrade
 head` on startup, building a fresh database from migrations or migrating an
-existing one — dev and prod alike, no `create_all`.
+existing one — dev and prod alike, no `create_all`. An older build refuses to
+start on a database a newer build has migrated, and leaves it untouched.
 
 ## GitHub integration
 

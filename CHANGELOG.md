@@ -75,6 +75,13 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Fixed
 
+- **An older build no longer breaks the database for newer ones.** Starting an
+  older Precursor on a database a newer build had migrated used to rewind its
+  schema version without changing the schema. The next newer build then tried
+  to re-apply those migrations and failed to start on every retry
+  (`duplicate column name`). Now the older build refuses to start, names the
+  unknown revision, and leaves the database untouched. Run a build at least as
+  new as the last one that used the database.
 - **A disabled or uninstalled plugin no longer warns on every prompt.** Its MCP
   server's on/off switch outlived it, so each turn still asked for the server
   and reported "MCP server 'kanban.board' unavailable: Unknown MCP server". A
