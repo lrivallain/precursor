@@ -34,6 +34,10 @@ are the per-version history; releasing does not rewrite this file.
   vars `PRECURSOR_IQ_ENABLED`, `PRECURSOR_IQ_INDEX_POLL_SECONDS` and
   `PRECURSOR_IQ_RECONCILE_POLL_SECONDS`. Migration `9b4e2f7a1c3d` adds
   `iq_chunks` / `iq_dirty`. The Postgres full-text path isn't covered by CI.
+  A new **IQ** section (`/iq`, with a home card and a ⌘K entry) is a single
+  question box: matching content appears first and each item opens the real
+  topic, chat, agent or live session, then a cited answer follows whose
+  citations are clickable. Questions aren't saved.
 - **An OpenAI-compatible endpoint for your models.** Point VS Code (as a
   *Custom Endpoint* model provider), Open WebUI, Continue or the `openai` SDK at
   `/api/openai/v1` and use the active provider's models through Precursor —

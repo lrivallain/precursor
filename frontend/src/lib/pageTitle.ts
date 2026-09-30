@@ -61,6 +61,8 @@ function itemParts(s: PageTitleSources): Array<string | null | undefined> {
       const id = s.workflows.activeWorkflowId;
       return [s.workflows.workflowCollection.workflows.find((w) => w.id === id)?.name];
     }
+    case "iq":
+      return [];
     case "workspaces": {
       const ws = s.workspaces.activeWorkspace;
       if (!ws) return [];

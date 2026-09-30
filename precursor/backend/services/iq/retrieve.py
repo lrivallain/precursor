@@ -62,52 +62,17 @@ MAX_LIMIT = 50
 
 # Minimal EN/FR stop list: dropped from the lexical query unless that would
 # leave nothing to search for.
-_STOPWORDS = frozenset(
-    [
-        "a",
-        "an",
-        "and",
-        "are",
-        "as",
-        "at",
-        "be",
-        "by",
-        "de",
-        "des",
-        "du",
-        "en",
-        "est",
-        "et",
-        "for",
-        "from",
-        "how",
-        "i",
-        "in",
-        "is",
-        "it",
-        "la",
-        "le",
-        "les",
-        "of",
-        "on",
-        "or",
-        "ou",
-        "que",
-        "qui",
-        "the",
-        "this",
-        "to",
-        "un",
-        "une",
-        "what",
-        "when",
-        "where",
-        "which",
-        "who",
-        "why",
-        "with",
-    ]
-)
+_STOPWORD_TEXT = """
+    a about all also am an and any are as at be been but by can could did do does
+    for from had has have how i if in into is it its just me my no not of on or our
+    over should so some than that the their them then there these they this those
+    to us was we were what when where which who whom why will with would you your
+    au aux avec ce ces cet cette comment dans de des du elle en est et il ils je la
+    le les leur mais mes ne nous on ou par pas pour pourquoi quand que quel
+    quelle quelles quels qui quoi sa se ses son sont sur ta te tes tu un une vos
+    votre vous
+"""
+_STOPWORDS = frozenset(_STOPWORD_TEXT.split())
 
 _ACCESSORS = {
     "topics": "get_topic / list_messages",

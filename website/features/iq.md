@@ -5,8 +5,8 @@ title: Precursor IQ
 # Precursor IQ
 
 Find anything in your workspace by meaning, not exact wording, and ask
-questions that come back with cited answers. The same engine powers the ⌘K
-palette and the `retrieve` / `ask` MCP tools. It follows the WorkIQ pattern
+questions that come back with cited answers. The same engine powers the **IQ**
+section, the ⌘K palette and the `retrieve` / `ask` MCP tools. It follows the WorkIQ pattern
 (retrieval returns ranked passages plus a grounding block with `[^n]`
 citations), applied to Precursor's own content instead of Microsoft 365.
 
@@ -60,7 +60,25 @@ Titles that contain every query word get a boost, and recent items get a small
 one. Results then keep only the best passage per item, and at most three items
 per topic, chat or session, so one long thread can't fill the list.
 
-## Ask
+## The IQ section
+
+**IQ** in the section rail (or `/iq`) is a single question box. Ask something
+in plain words, or pick one of the example questions:
+
+1. **Matching content** appears first, within a moment. Each row opens the real
+   topic, chat, agent or live session, and items whose title matches your
+   question also show as **Go to** shortcuts above the answer.
+2. The **answer** follows, written by your model from those same numbered
+   passages. Click a citation such as `[3]` to open its source; the ones the
+   answer relies on are marked **cited** in the list.
+
+<Screenshot src="/screenshots/iq-section.png" alt="The IQ section: a question about the latency regression, a short answer with numbered citation links, and eight numbered sources (topics, a live session's transcript, summary and insight, release messages and a brief), three of them marked cited" caption="The IQ section: ask once, then open the sources behind the answer." />
+
+It's a way to find things, not a conversation: questions and answers aren't
+saved, and asking again replaces the previous answer. Memory entries can be
+sources, but they have no page to open.
+
+## Ask from ⌘K
 
 In ⌘K, type a question and press **Tab** (or pick **Ask Precursor**). The top
 passages go to your model, which writes a short answer that cites them as

@@ -26,6 +26,7 @@ import {
   Plus,
   Radio,
   Search,
+  Sparkles,
   StickyNote,
   Workflow as WorkflowIcon,
   X,
@@ -57,7 +58,8 @@ export type CoreSidebarMode =
   | "live"
   | "workspaces"
   | "agents"
-  | "workflows";
+  | "workflows"
+  | "iq";
 
 /**
  * A section key: one of core's own, or the id of a section contributed by a
@@ -92,7 +94,8 @@ function newActionLabel(mode: SidebarMode, section: SectionPlugin | null): strin
 // nothing behind it is worse than no button. Core's own sections always do.
 function supportsNew(mode: SidebarMode, section: SectionPlugin | null): boolean {
   if (section) return section.onNew != null;
-  return CORE_MODE_KEYS.has(mode);
+  // IQ is a question box, not a list of things to create.
+  return CORE_MODE_KEYS.has(mode) && mode !== "iq";
 }
 
 /**
@@ -128,6 +131,7 @@ export interface SidebarSlots {
   workspaces?: ReactNode;
   agents?: ReactNode;
   workflows?: ReactNode;
+  iq?: ReactNode;
   /** Rendered when a plugin section is active (its own list). */
   plugin?: ReactNode;
 }
@@ -421,6 +425,8 @@ export function Sidebar({
         slots.agents
       ) : mode === "workflows" ? (
         slots.workflows
+      ) : mode === "iq" ? (
+        slots.iq
       ) : activeSection ? (
         slots.plugin
       ) : !CORE_MODE_KEYS.has(mode) ? (
@@ -888,6 +894,7 @@ const CORE_MODES: ModeDef[] = [
   { mode: "workspaces", label: SECTION_LABELS.workspaces, Icon: FolderGit2 },
   { mode: "agents", label: SECTION_LABELS.agents, Icon: Bot },
   { mode: "workflows", label: SECTION_LABELS.workflows, Icon: WorkflowIcon },
+  { mode: "iq", label: SECTION_LABELS.iq, Icon: Sparkles },
 ];
 
 // Stable empty default so a caller that passes no plugin sections doesn't

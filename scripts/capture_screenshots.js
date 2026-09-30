@@ -681,6 +681,42 @@ const scenes = {
     },
   },
 
+  // The IQ section: one question box, a cited answer and the sources it rests
+  // on. As in Ask mode, the answer is a fixture over the real retrieved hits.
+  "iq-section": {
+    viewport: { width: 1440, height: 900 },
+    async go(page) {
+      await page.route("**/api/iq/ask", async (route) => {
+        const { question } = JSON.parse(route.request().postData() || "{}");
+        const found = await (
+          await page.request.get(`${BASE}/api/iq/retrieve?q=${encodeURIComponent(question)}&limit=8`)
+        ).json();
+        // Cite the passages that actually carry each claim, as a model would.
+        const n = (field) => found.hits.find((h) => h.field === field)?.id ?? 1;
+        const [decision, cause, owner] = [n("summary"), n("transcript"), n("insight")];
+        await route.fulfill({
+          json: {
+            question,
+            model: "claude-sonnet-5",
+            answer:
+              `The team agreed to **cap retries and add jitter to the backoff** [^${decision}], ` +
+              `because retries amplified load whenever the gateway slowed down [^${cause}]. ` +
+              "Sam owns the follow-up: a bounded-retry regression test and an update " +
+              `to the release checklist [^${owner}].`,
+            citations: [decision, cause, owner].map((id) => found.hits.find((h) => h.id === id)),
+            sources: found.hits,
+          },
+        });
+      });
+      await page.goto(`${BASE}/iq`, { waitUntil: "networkidle" });
+      await page.fill('input[aria-label="Question for Precursor IQ"]', "What did we decide about the latency regression?");
+      await page.keyboard.press("Enter");
+      await page.getByText("Sources", { exact: true }).waitFor({ timeout: 15000 });
+      await sleep(600);
+      return clipToContent(page);
+    },
+  },
+
   // Settings → Skills, listing the demo SKILL.md fixtures found on disk.
   "skills-memory": {
     viewport: { width: 1440, height: 1000 },

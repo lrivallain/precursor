@@ -89,9 +89,9 @@ features:
   - icon: 🔎
     title: Precursor IQ
     details: >-
-      Find anything by meaning with hybrid full-text and semantic ranking, and
-      get cited answers from your own topics, chats, agents and meetings, in ⌘K
-      or over MCP.
+      Ask questions about your own topics, chats, agents and meetings in the
+      IQ section, ⌘K or over MCP, and get cited answers that open their
+      sources.
     link: /features/iq
     linkText: About Precursor IQ
   - icon: 🧠

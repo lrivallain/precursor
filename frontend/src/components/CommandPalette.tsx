@@ -32,12 +32,17 @@ import type {
   AgentSession,
   IQAskResponse,
   IQField,
-  IQHit,
-  SearchField,
   SearchResult,
   SearchSection,
 } from "../lib/types";
 import { agentNeedsAttention, sortAgentsByUrgency } from "../lib/agents";
+import {
+  NAVIGABLE_SECTIONS,
+  navigableHit,
+  plainCitations,
+  toSearchResult,
+  type IQNavHit,
+} from "../lib/iq";
 
 /**
  * A single jump target in the palette. `mode` drives the icon tint (via
@@ -89,43 +94,6 @@ const SECTION_ICON: Record<SearchSection, ComponentType<{ size?: number; classNa
   live: Radio,
   agents: Bot,
 };
-
-/**
- * A content hit as the palette renders it. Precursor IQ hits carry a few more
- * field kinds than the legacy substring search (briefs, attachments), and the
- * palette never shows memory, so the section stays a navigable one.
- */
-interface PaletteHit {
-  section: SearchSection;
-  field: IQField;
-  is_title: boolean;
-  entity_id: number;
-  ref: string | null;
-  title: string;
-  snippet: string;
-  role: string | null;
-  updated_at: string | null;
-}
-
-// Entity kinds the palette can open (memory has no page to jump to).
-const PALETTE_SECTIONS: SearchSection[] = ["topics", "chats", "agents", "live"];
-
-function fromIQ(hit: IQHit): PaletteHit | null {
-  if (hit.section === "memory") return null;
-  return { ...hit, section: hit.section };
-}
-
-// The opener only cares about section + entity; fold IQ-only fields onto the
-// nearest legacy one so the shared `SearchResult` shape still holds.
-function toSearchResult(hit: PaletteHit): SearchResult {
-  const field: SearchField =
-    hit.field === "brief"
-      ? "summary"
-      : hit.field === "attachment" || hit.field === "memory"
-        ? "message"
-        : hit.field;
-  return { ...hit, field };
-}
 
 // Which field matched → badge label + icon. Title hits are grouped separately;
 // the icon still disambiguates the origin of a hit at a glance.
@@ -205,11 +173,6 @@ function highlight(text: string, query: string, cls: string): ReactNode {
   return out;
 }
 
-// Answers cite sources as `[^n]`; show them as plain `[n]` markers that line
-// up with the numbered source list under the answer.
-function plainCitations(answer: string): string {
-  return answer.replace(/\[\^(\d+)\]/g, "[$1]");
-}
 
 /**
  * Keyboard-first launcher **and** content search. Opened with ⌘K / Ctrl+K, or
@@ -236,7 +199,7 @@ export function CommandPalette({
 }: Props) {
   const [query, setQuery] = useState(initialQuery);
   const [active, setActive] = useState(0);
-  const [results, setResults] = useState<PaletteHit[]>([]);
+  const [results, setResults] = useState<IQNavHit[]>([]);
   const [searching, setSearching] = useState(false);
   // Ask mode: the question the answer is for, the answer, and request state.
   const [askedFor, setAskedFor] = useState<string | null>(null);
@@ -349,6 +312,15 @@ export function CommandPalette({
         mode: "workflows",
         run: nav("workflows"),
       },
+      {
+        id: "iq",
+        label: "IQ",
+        hint: "Ask questions about your data",
+        keywords: "iq ask question answer knowledge semantic find",
+        icon: Sparkles,
+        mode: "iq",
+        run: nav("iq"),
+      },
       ...pluginSections.map((plugin) => ({
         id: plugin.id,
         label: plugin.label,
@@ -394,10 +366,10 @@ export function CommandPalette({
     let cancelled = false;
     const handle = setTimeout(async () => {
       try {
-        let hits: PaletteHit[];
+        let hits: IQNavHit[];
         try {
-          const resp = await api.iq.retrieve(q, PALETTE_SECTIONS, 30);
-          hits = resp.hits.map(fromIQ).filter((h): h is PaletteHit => h !== null);
+          const resp = await api.iq.retrieve(q, NAVIGABLE_SECTIONS, 30);
+          hits = resp.hits.map(navigableHit).filter((h): h is IQNavHit => h !== null);
           if (!cancelled) setIqAvailable(true);
         } catch {
           // IQ disabled (404) or failing: the substring search still works.
@@ -424,10 +396,10 @@ export function CommandPalette({
 
   const inAskMode = askedFor !== null;
   // Sources keep their citation number so the list lines up with the answer.
-  const answerSources = useMemo<{ hit: PaletteHit; n: number }[]>(
+  const answerSources = useMemo<{ hit: IQNavHit; n: number }[]>(
     () =>
       (answer?.sources ?? []).flatMap((source) => {
-        const hit = fromIQ(source);
+        const hit = navigableHit(source);
         return hit ? [{ hit, n: source.id }] : [];
       }),
     [answer],
@@ -455,7 +427,7 @@ export function CommandPalette({
   // hits, then content hits, then "Ask Precursor". In Ask mode, the answer's
   // sources are the rows. Keeps ↑/↓/Enter working over the whole list.
   const rowRuns = useMemo<(() => void)[]>(() => {
-    const open = (r: PaletteHit) => () => {
+    const open = (r: IQNavHit) => () => {
       onOpenResult(toSearchResult(r), inAskMode ? "" : query);
       onClose();
     };
@@ -546,7 +518,7 @@ export function CommandPalette({
     sections.length === 0 &&
     results.length === 0;
 
-  function resultRow(r: PaletteHit, index: number, citation?: number): ReactNode {
+  function resultRow(r: IQNavHit, index: number, citation?: number): ReactNode {
     const isActive = index === active;
     const tint = sectionColor(r.section).icon;
     const accent = sectionColor(r.section).accentText;
@@ -586,7 +558,7 @@ export function CommandPalette({
                 {SECTION_LABEL[r.section]}
               </span>
             </span>
-            {!r.is_title && r.snippet && (
+            {!r.is_title && r.snippet && r.snippet !== r.title && (
               <span className="truncate text-[11px] text-muted">
                 {r.role && (
                   <span className="mr-1 font-medium capitalize text-muted/80">

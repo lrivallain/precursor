@@ -374,3 +374,12 @@ async def test_title_only_chunk_reports_its_title_and_short_words_match_whole() 
     assert live.snippet == "Vexillology review"
     # Three-letter words are whole-word matches, not prefixes.
     assert not (await retrieve("eur")).hits
+
+
+def test_question_words_are_not_search_terms() -> None:
+    assert query_tokens("What did we decide about the latency regression?") == [
+        "decide",
+        "latency",
+        "regression",
+    ]
+    assert query_tokens("Quand est prévue la première vague ?") == ["prevue", "premiere", "vague"]
