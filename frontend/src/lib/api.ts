@@ -116,6 +116,10 @@ import type {
   ScheduleUpdate,
   TopicScheduleCreate,
   SearchResponse,
+  IQAskResponse,
+  IQRetrieveResponse,
+  IQSection,
+  IQStatus,
   Settings,
   SettingsUpdate,
   Skill,
@@ -1621,6 +1625,22 @@ export const api = {
       request<SearchResponse>(
         `/api/search?q=${encodeURIComponent(q)}&limit=${limit}`,
       ),
+  },
+
+  iq: {
+    // Precursor IQ: ranked retrieval (the ⌘K palette), cited answers, index state.
+    retrieve: (q: string, sections: IQSection[] = [], limit = 20) =>
+      request<IQRetrieveResponse>(
+        `/api/iq/retrieve?q=${encodeURIComponent(q)}&limit=${limit}` +
+          (sections.length ? `&sections=${sections.join(",")}` : ""),
+      ),
+    ask: (question: string, sections?: IQSection[]) =>
+      request<IQAskResponse>(`/api/iq/ask`, {
+        method: "POST",
+        body: JSON.stringify({ question, sections: sections ?? null }),
+      }),
+    status: () => request<IQStatus>(`/api/iq/status`),
+    reindex: () => request<IQStatus>(`/api/iq/reindex`, { method: "POST" }),
   },
 
   topicSummary: {

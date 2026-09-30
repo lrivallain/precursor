@@ -63,6 +63,7 @@ import { resolveSettingsPages } from "../lib/plugins";
 import { usePluginDescriptors } from "../lib/pluginStore";
 import { WorkflowsSettings } from "./WorkflowsSettings";
 import { OpenAIProxySettings } from "./OpenAIProxySettings";
+import { IQSettings } from "./IQSettings";
 import { DefinitionsMigrationWizard } from "./DefinitionsMigrationWizard";
 
 interface Props {
@@ -705,11 +706,16 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
       }}
     >
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="settings-panel-title"
         className="bg-bg border border-border rounded-lg shadow-2xl flex flex-col w-full overflow-hidden"
         style={{ maxWidth: 960, height: "min(720px, 90vh)" }}
       >
         <header className="flex items-center justify-between px-4 h-12 border-b border-border shrink-0">
-          <h2 className="font-semibold">Settings</h2>
+          <h2 id="settings-panel-title" className="font-semibold">
+            Settings
+          </h2>
           <button
             onClick={onClose}
             className="p-1.5 rounded hover:bg-surface"
@@ -1365,6 +1371,13 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
                   httpUrl={settings?.mcp_http_url ?? null}
                   httpLoopbackOk={settings?.mcp_http_loopback_ok ?? true}
                 />
+                <IQSettings
+                  settings={settings}
+                  onSettings={(next) => {
+                    setSettings(next);
+                    settingsStore.set(next);
+                  }}
+                />
                 <Agent365Card
                   tenant={workiqTenant}
                   setTenant={setWorkiqTenant}
@@ -1962,6 +1975,16 @@ const EXPOSE_SECTIONS: ReadonlyArray<{
     key: "search",
     label: "Search",
     hint: "Search across topics, chats, agents & live sessions.",
+  },
+  {
+    key: "iq",
+    label: "IQ retrieve",
+    hint: "Ranked passages with citations (retrieve). Each hit also needs its own section on.",
+  },
+  {
+    key: "iq_ask",
+    label: "IQ ask",
+    hint: "Cited answers written by your model (ask) — uses provider quota per call.",
   },
   { key: "skills", label: "Skills", hint: "List skills & read their instructions." },
   { key: "memory", label: "Memory", hint: "Read long-term memory entries." },

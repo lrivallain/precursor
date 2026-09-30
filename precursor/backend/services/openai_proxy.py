@@ -170,7 +170,7 @@ async def proxy_availability(session: AsyncSession) -> ProxyAvailability:
 
 def proxy_base_url() -> str:
     """The base URL an OpenAI client is configured with."""
-    from precursor.backend.services.mcp.precursor_server import app_base_url
+    from precursor.backend.services.links import app_base_url
 
     return f"{app_base_url()}{BASE_PATH}"
 

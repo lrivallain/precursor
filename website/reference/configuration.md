@@ -135,7 +135,7 @@ recurrence is stored in the database.
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `PRECURSOR_SCHEDULER_ENABLED` | `true` | Master switch for every background ticker — the scheduler, reminders, and the two retention sweeps. Set `false` for a read-only or CI instance. |
+| `PRECURSOR_SCHEDULER_ENABLED` | `true` | Master switch for every background ticker — the scheduler, reminders, the retention sweeps and the [Precursor IQ](/features/iq) indexer. Set `false` for a read-only or CI instance. |
 | `PRECURSOR_SCHEDULER_POLL_SECONDS` | `30` | How often the scheduler looks for due runs. |
 | `PRECURSOR_SCHEDULER_CONCURRENCY` | `2` | How many scheduled runs may execute at once. |
 | `PRECURSOR_REMINDER_POLL_SECONDS` | `30` | How often the reminder ticker looks for due reminders. |
@@ -166,6 +166,28 @@ Poll cadences (`PRECURSOR_TOOL_RESULT_RETENTION_POLL_SECONDS`,
 `PRECURSOR_LIVE_TRANSCRIPT_RETENTION_POLL_SECONDS`,
 `PRECURSOR_AGENT_EVENT_RETENTION_POLL_SECONDS`) default to `86400` (daily).
 Every sweep is gated by `PRECURSOR_SCHEDULER_ENABLED`.
+
+## Precursor IQ
+
+The retrieval index behind [Precursor IQ](/features/iq): ⌘K ranking, Ask mode,
+`/api/iq/*` and the `retrieve` / `ask` MCP tools.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `PRECURSOR_IQ_ENABLED` | `true` | Build and serve the index. When `false`, ⌘K falls back to substring search and `/api/iq/*` returns `404`. |
+| `PRECURSOR_IQ_INDEX_POLL_SECONDS` | `20` | How often the background indexer processes queued changes and computes missing embeddings (floor 5 s). Gated by `PRECURSOR_SCHEDULER_ENABLED`; queries still process a small batch on their own. |
+| `PRECURSOR_IQ_RECONCILE_POLL_SECONDS` | `3600` | How often the check for bulk edits and deletes that bypassed the change queue runs. |
+
+Runtime settings (**Settings → MCP servers → Precursor IQ**) stored in `AppSetting`:
+
+| Setting | Default | Description |
+| --- | --- | --- |
+| `iq_embeddings_enabled` | `false` | Embed every indexed passage with the active provider (uses quota) and add vector similarity to the ranking. |
+| `iq_embedding_model` | `text-embedding-3-small` | Embeddings model, or the deployment name on Azure AI Foundry. Requested at 256 dimensions. |
+| `iq_ask_model` | `""` | Model that writes Ask answers. Empty uses the chat model. |
+
+Two `mcp_expose` sections gate the MCP tools: `iq` (`retrieve`) and `iq_ask`
+(`ask`), both off by default.
 
 ## Skills directory
 

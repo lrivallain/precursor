@@ -291,6 +291,33 @@ Precursor is both an MCP client and an MCP server.
 
 See the [MCP feature guide](/features/mcp) for the user-facing side.
 
+## Precursor IQ
+
+`services/iq/` keeps a derived retrieval index (`iq_chunks`) of passages from
+topics, briefs, messages, attachments, chats, agents, live sessions and memory.
+It serves the ⌘K palette (`/api/iq/*`) and the `retrieve` / `ask` MCP tools.
+
+- **Change capture**: an `after_flush` hook on every ORM session upserts
+  `(source_kind, source_id)` into `iq_dirty` inside the writer's transaction.
+  `indexer.drain` rebuilds those sources' chunks, rewriting only the ones whose
+  content hash changed. `indexer.reconcile` catches bulk statements and deletes
+  that the hook can't see.
+- **Full text**: the migration creates an external-content **FTS5** table with
+  sync triggers on SQLite, or a generated weighted `tsvector` plus a GIN index on
+  Postgres. `alembic/env.py` keeps autogenerate from proposing to drop them.
+- **Vectors** (opt-in): the provider's `embed()` (OpenAI-style `/embeddings`)
+  fills `iq_chunks.embedding` with normalised 256-dimension float32 vectors. They
+  are compared in-process from an incrementally refreshed cache.
+- **Ranking**: Reciprocal Rank Fusion of the two lists, a title and recency
+  boost, one passage per source and a per-container cap. Archived or deleted
+  containers are dropped at query time.
+- **Ask**: `ask.ask` grounds a single `complete_once` call on the numbered
+  excerpts and returns the `[^n]` citations it used.
+
+`services/iq/ticker.py` drains and embeds in the background, gated by
+`scheduler_enabled`. Retrieval also runs a short, bounded drain first, so it
+stays current when the ticker is off.
+
 ## Scheduler
 
 `services/scheduler.py` drives recurring topics **and** scheduled agents: a single

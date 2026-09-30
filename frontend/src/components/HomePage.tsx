@@ -7,6 +7,7 @@ import {
   MessageSquarePlus,
   MessagesSquare,
   Radio,
+  Sparkles,
   Workflow as WorkflowIcon,
 } from "lucide-react";
 import { api } from "../lib/api";
@@ -246,6 +247,14 @@ export function HomePage({
         "Browse the workspaces and files backing your sessions.",
       openLabel: "Browse files",
       icon: <FolderGit2 size={20} />,
+    },
+    {
+      mode: "iq",
+      title: "IQ",
+      description:
+        "Ask a question about everything in Precursor and jump to the sources behind the answer.",
+      openLabel: "Ask Precursor IQ",
+      icon: <Sparkles size={20} />,
     },
     // Plugin-contributed sections land after core's own cards, in the order the
     // backend published them.

@@ -204,6 +204,16 @@ class Settings(BaseSettings):
     # ``scheduler_enabled``; the retention *levers* are Settings → System values.
     agent_event_retention_poll_seconds: int = 86_400
 
+    # Precursor IQ (services/iq/) — the retrieval index behind the ``retrieve`` /
+    # ``ask`` MCP tools, /api/iq and the ⌘K palette. When off, the palette falls
+    # back to the plain substring search and the IQ endpoints answer 404. The
+    # ticker drains the change queue every ``iq_index_poll_seconds`` (gated by
+    # ``scheduler_enabled``; retrieval drains a bounded batch itself regardless)
+    # and runs the catch-up sweep every ``iq_reconcile_poll_seconds``.
+    iq_enabled: bool = True
+    iq_index_poll_seconds: int = 20
+    iq_reconcile_poll_seconds: int = 3_600
+
     # WorkIQ token keep-alive (services/mcp/workiq_keepalive.py) — a background
     # ticker that silently refreshes the WorkIQ preview OAuth token before it
     # expires, so the hosted session survives without frequent interactive

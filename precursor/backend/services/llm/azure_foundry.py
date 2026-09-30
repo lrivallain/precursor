@@ -19,11 +19,13 @@ from typing import Any
 from openai import AsyncAzureOpenAI
 
 from precursor.backend.services.llm._openai_compat import (
+    embed_openai,
     stream_openai_tools,
     to_openai_messages,
 )
 from precursor.backend.services.llm.base import (
     ChatMessage,
+    EmbeddingResult,
     LLMModel,
     ProviderEvent,
     ToolDef,
@@ -90,6 +92,11 @@ class AzureFoundryProvider:
             request_options=request_options,
         ):
             yield event
+
+    async def embed(
+        self, texts: Sequence[str], *, model: str, dimensions: int | None = None
+    ) -> EmbeddingResult:
+        return await embed_openai(self._client, texts, model=model, dimensions=dimensions)
 
     async def list_models(self) -> list[LLMModel]:
         # No portable catalog endpoint; surface the configured deployment so the

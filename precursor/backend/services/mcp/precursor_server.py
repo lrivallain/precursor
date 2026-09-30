@@ -20,6 +20,9 @@ Sections → tools:
 - ``live``         → list_live_sessions, get_live_session
 - ``search``       → search (cross-entity; chats/agents/live hits are only
                      included when their own section is also exposed)
+- ``iq``           → retrieve (ranked passages + grounding markdown with [^n]
+                     citations; each hit gated by its own section)
+- ``iq_ask``       → ask (retrieve + one model call → cited answer)
 - ``skills``       → list_skills, get_skill
 - ``memory``       → list_memories
 - ``memory_write`` → store_memory, update_memory (write — edits long-term memory)
@@ -78,6 +81,8 @@ from precursor.backend.services.collections import (
     resolve_collection_default_role_id,
     resolve_collection_id,
 )
+from precursor.backend.services.links import app_base_url
+from precursor.backend.services.links import topic_paths as _topic_paths
 from precursor.backend.services.slugs import allocate_unique_slug, slugify
 
 if TYPE_CHECKING:
@@ -215,49 +220,6 @@ def _topic_dict(
 async def _collection_names(session: AsyncSession) -> dict[int, str]:
     rows = await session.execute(select(Collection.id, Collection.name))
     return {cid: name for cid, name in rows.all()}
-
-
-async def _topic_paths(session: AsyncSession) -> dict[int, str]:
-    """Root-first slug path (``collection/parent/child``) for every topic.
-
-    Mirrors the readable URL the SPA uses (``/topics/<collection>/…``), so a
-    path handed to a caller can be pasted straight into the browser.
-
-    Resolved from a single index load rather than a chain walk per topic, so a
-    200-topic ``list_topics`` stays one query instead of 200 — the same trick as
-    :func:`_collection_names`. Callers used to rebuild this by re-fetching each
-    ancestor over MCP.
-    """
-    rows = (
-        await session.execute(select(Topic.id, Topic.slug, Topic.parent_id, Topic.collection_id))
-    ).all()
-    collection_slugs = {
-        cid: slug
-        for cid, slug in (await session.execute(select(Collection.id, Collection.slug))).all()
-    }
-    index: dict[int, tuple[str, int | None]] = {
-        tid: (slug, parent_id) for tid, slug, parent_id, _ in rows
-    }
-    collection_of: dict[int, int | None] = {tid: cid for tid, _, _, cid in rows}
-    paths: dict[int, str] = {}
-    for tid in index:
-        chain: list[str] = []
-        # A self-parenting or cyclic row must terminate, not spin forever.
-        seen: set[int] = set()
-        current: int | None = tid
-        while current is not None and current not in seen:
-            seen.add(current)
-            entry = index.get(current)
-            if entry is None:
-                break
-            slug, parent_id = entry
-            chain.append(slug)
-            current = parent_id
-        chain.reverse()
-        cid = collection_of.get(tid)
-        prefix = collection_slugs.get(cid) if cid is not None else None
-        paths[tid] = "/".join([prefix, *chain]) if prefix else "/".join(chain)
-    return paths
 
 
 async def _topic_ref(session: AsyncSession, topic: Topic) -> dict[str, Any]:
@@ -750,6 +712,105 @@ async def search(query: str, limit: int = 25) -> dict[str, Any]:
             hit["path"] = topic_paths.get(r.entity_id) or r.ref
         results.append(hit)
     return {"query": query, "results": results, "count": len(results)}
+
+
+# --------------------------------------------------------------------------
+# Precursor IQ (ranked retrieval + cited answers)
+# --------------------------------------------------------------------------
+async def _iq_gates(sources: list[str] | None) -> set[str] | dict[str, Any]:
+    """Exposure sections a caller may retrieve from, narrowed by ``sources``.
+
+    Every hit is gated by its own section (topic metadata and briefs by
+    ``topics``, topic conversations by ``messages``, and so on), so IQ never
+    reveals more than the per-section tools would.
+    """
+    from precursor.backend.services.iq.sources import GATE_SECTIONS
+
+    gates = {s for s in GATE_SECTIONS if await _section_enabled(s)}
+    if sources:
+        unknown = sorted(set(sources) - set(GATE_SECTIONS))
+        if unknown:
+            return {
+                "error": f"Unknown source(s): {', '.join(unknown)}. "
+                f"Use any of: {', '.join(GATE_SECTIONS)}."
+            }
+        gates &= set(sources)
+    return gates
+
+
+@mcp.tool()
+async def retrieve(query: str, sources: list[str] | None = None, limit: int = 10) -> dict[str, Any]:
+    """Semantic lookup over this Precursor workspace, ready to ground an answer.
+
+    Ranks passages from topics, topic briefs, messages and attachments, chats,
+    agent prompts/answers, live meeting notes/summaries/transcripts/insights and
+    long-term memory by relevance to a natural-language ``query`` (full-text
+    BM25, fused with vector similarity when embeddings are enabled).
+
+    Returns ``markdown`` — numbered excerpts to ground on, citing them inline as
+    ``[^n]`` — plus ``hits`` with each passage's ``id`` (its citation number),
+    the entity it belongs to (``section``, ``entity_id``, ``ref``, ``path``,
+    ``url``), the matched ``field``, a ``snippet`` and the ``accessor`` tool that
+    reads the full item.
+
+    ``sources`` narrows the search to exposure sections (``topics``,
+    ``messages``, ``chats``, ``agents``, ``live``, ``memory``); hits from a
+    section that isn't exposed are never returned. Prefer this over ``search``
+    for questions; ``search`` stays a literal substring match.
+    """
+    if not await _section_enabled("iq"):
+        return {"error": _GATED.format(section="iq")}
+    if not query.strip():
+        return {"error": "query must not be empty"}
+    gates = await _iq_gates(sources)
+    if isinstance(gates, dict):
+        return gates
+    from precursor.backend.services.iq.retrieve import MAX_LIMIT
+    from precursor.backend.services.iq.retrieve import retrieve as run_retrieve
+
+    result = await run_retrieve(query, gates=gates, limit=max(1, min(limit, MAX_LIMIT)))
+    return {
+        "query": result.query,
+        "markdown": result.markdown,
+        "hits": [h.as_dict() for h in result.hits],
+        "count": len(result.hits),
+        "semantic": result.semantic,
+        "pending": result.pending,
+    }
+
+
+@mcp.tool()
+async def ask(question: str, sources: list[str] | None = None) -> dict[str, Any]:
+    """Answer a question from this Precursor workspace, with citations.
+
+    Retrieves the most relevant passages (see ``retrieve``) and has Precursor's
+    configured model write a concise answer grounded only on them, citing each
+    as ``[^n]``. Returns ``answer``, the ``citations`` it used and every
+    ``sources`` passage it was given. Runs one model call per request.
+
+    ``sources`` narrows grounding to exposure sections, like ``retrieve``.
+    """
+    if not await _section_enabled("iq_ask"):
+        return {"error": _GATED.format(section="iq_ask")}
+    if not question.strip():
+        return {"error": "question must not be empty"}
+    gates = await _iq_gates(sources)
+    if isinstance(gates, dict):
+        return gates
+    from precursor.backend.services.iq.ask import ask as run_ask
+    from precursor.backend.services.llm.one_shot import LLMCallFailed
+
+    try:
+        result = await run_ask(question, gates=gates)
+    except LLMCallFailed as exc:
+        return {"error": exc.detail}
+    return {
+        "question": result.question,
+        "answer": result.answer,
+        "model": result.model,
+        "citations": [h.as_dict() for h in result.citations],
+        "sources": [h.as_dict() for h in result.sources],
+    }
 
 
 # --------------------------------------------------------------------------
@@ -1544,19 +1605,6 @@ def http_endpoint_url() -> str | None:
     if not is_loopback_host(cfg.host):
         return None
     return f"http://{cfg.host}:{cfg.port}/mcp"
-
-
-def app_base_url() -> str:
-    """Origin of the running SPA, so a tool result can link to what it changed.
-
-    Uses the configured bind, mapping a wildcard to ``localhost`` because
-    ``0.0.0.0`` is not something a browser can open. Best-effort: the value is
-    only ever pasted into a human-readable result.
-    """
-    cfg = get_settings()
-    host = {"0.0.0.0": "localhost", "": "localhost", "::": "localhost"}.get(cfg.host, cfg.host)
-    authority = f"[{host}]:{cfg.port}" if ":" in host else f"{host}:{cfg.port}"
-    return f"http://{authority}"
 
 
 # Concrete MCPServer instance for the stdio entrypoint. The HTTP transport builds

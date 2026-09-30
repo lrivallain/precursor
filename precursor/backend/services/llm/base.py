@@ -105,6 +105,14 @@ class UsageEvent:
     total_tokens: int = 0
 
 
+@dataclass(frozen=True, slots=True)
+class EmbeddingResult:
+    """Vectors for a batch of texts, in input order, plus billed input tokens."""
+
+    vectors: list[list[float]]
+    prompt_tokens: int = 0
+
+
 ProviderEvent = TextDeltaEvent | ReasoningDeltaEvent | ToolCallsEvent | TurnDoneEvent | UsageEvent
 
 

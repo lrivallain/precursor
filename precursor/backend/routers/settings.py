@@ -35,6 +35,9 @@ from precursor.backend.services.app_settings import (
     resolve_agents_watchdog_timeout,
     resolve_azure_speech_endpoint,
     resolve_azure_speech_language,
+    resolve_iq_ask_model,
+    resolve_iq_embedding_model,
+    resolve_iq_embeddings_enabled,
     resolve_llm_model,
     resolve_llm_provider,
     resolve_mcp_expose,
@@ -163,6 +166,14 @@ async def _openai_proxy_block(session: AsyncSession) -> dict[str, Any]:
     }
 
 
+async def _iq_block(session: AsyncSession) -> dict[str, Any]:
+    return {
+        "iq_embeddings_enabled": await resolve_iq_embeddings_enabled(session),
+        "iq_embedding_model": await resolve_iq_embedding_model(session),
+        "iq_ask_model": await resolve_iq_ask_model(session),
+    }
+
+
 async def _stt_block(session: AsyncSession) -> dict[str, Any]:
     return {
         "azure_speech_endpoint": await resolve_azure_speech_endpoint(session),
@@ -217,6 +228,7 @@ async def read_settings(session: AsyncSession = Depends(get_session)) -> Setting
     system.update(await _mcp_http_block(session))
     system.update(await _openai_proxy_block(session))
     system.update(await _stt_block(session))
+    system.update(await _iq_block(session))
     system.update(await _llm_block(session, data))
     system.update(await _agents_block(session))
     system.update(await resolve_backup_status(session))
@@ -309,6 +321,15 @@ async def update_settings(
         except Exception:
             logger.exception("Backup nudge failed after settings update")
 
+    # Start vectorising right away rather than on the next indexer tick.
+    if data.get("iq_embeddings_enabled") or "iq_embedding_model" in data:
+        from precursor.backend.services.iq.ticker import get_iq_ticker
+
+        try:
+            await get_iq_ticker().nudge()
+        except Exception:
+            logger.exception("Precursor IQ nudge failed after settings update")
+
     # Re-point the Agent 365 servers when the tenant changes, so a fresh tenant
     # takes effect without a restart (and clearing it disables them cleanly).
     if "workiq_tenant_id" in data:
@@ -335,6 +356,7 @@ async def update_settings(
     system.update(await _mcp_http_block(session))
     system.update(await _openai_proxy_block(session))
     system.update(await _stt_block(session))
+    system.update(await _iq_block(session))
     system.update(await _llm_block(session, refreshed))
     system.update(await _agents_block(session))
     system.update(await resolve_backup_status(session))

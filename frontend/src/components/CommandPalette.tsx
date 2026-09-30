@@ -9,6 +9,9 @@ import {
   FolderGit2,
   Home,
   Lightbulb,
+  Loader2,
+  Paperclip,
+  NotebookText,
   MessageSquare,
   MessagesSquare,
   Radio,
@@ -23,9 +26,23 @@ import type { SidebarMode } from "./Sidebar";
 import { sectionColor } from "../lib/sections";
 import type { SectionPlugin } from "../lib/plugins";
 import { Modal } from "./Modal";
+import { Markdown } from "./Markdown";
 import { api } from "../lib/api";
-import type { AgentSession, SearchField, SearchResult, SearchSection } from "../lib/types";
+import type {
+  AgentSession,
+  IQAskResponse,
+  IQField,
+  SearchResult,
+  SearchSection,
+} from "../lib/types";
 import { agentNeedsAttention, sortAgentsByUrgency } from "../lib/agents";
+import {
+  NAVIGABLE_SECTIONS,
+  navigableHit,
+  plainCitations,
+  toSearchResult,
+  type IQNavHit,
+} from "../lib/iq";
 
 /**
  * A single jump target in the palette. `mode` drives the icon tint (via
@@ -81,7 +98,7 @@ const SECTION_ICON: Record<SearchSection, ComponentType<{ size?: number; classNa
 // Which field matched → badge label + icon. Title hits are grouped separately;
 // the icon still disambiguates the origin of a hit at a glance.
 const FIELD_META: Record<
-  SearchField,
+  IQField,
   { label: string; icon: ComponentType<{ size?: number; className?: string }> }
 > = {
   title: { label: "Title", icon: Type },
@@ -93,7 +110,23 @@ const FIELD_META: Record<
   insight: { label: "Insight", icon: Lightbulb },
   notes: { label: "Notes", icon: StickyNote },
   summary: { label: "Summary", icon: Sparkles },
+  brief: { label: "Brief", icon: NotebookText },
+  attachment: { label: "Attachment", icon: Paperclip },
+  memory: { label: "Memory", icon: StickyNote },
 };
+
+// Words worth highlighting: the query's terms, not the whole phrase, since IQ
+// matches them independently and in any order.
+function queryTerms(query: string): string[] {
+  return Array.from(
+    new Set(
+      query
+        .toLowerCase()
+        .split(/[^\p{L}\p{N}_]+/u)
+        .filter((w) => w.length >= 2),
+    ),
+  ).sort((a, b) => b.length - a.length);
+}
 
 // Human labels for the section chip on a content hit.
 const SECTION_LABEL: Record<SearchSection, string> = {
@@ -109,15 +142,22 @@ const SECTION_LABEL: Record<SearchSection, string> = {
  * carries the section's colour so the highlight reads in that section's hue.
  */
 function highlight(text: string, query: string, cls: string): ReactNode {
-  const q = query.trim();
-  if (!q) return text;
+  const terms = queryTerms(query);
+  if (!terms.length) return text;
   const lower = text.toLowerCase();
-  const lq = q.toLowerCase();
   const out: ReactNode[] = [];
   let i = 0;
   let key = 0;
   for (;;) {
-    const idx = lower.indexOf(lq, i);
+    let idx = -1;
+    let len = 0;
+    for (const t of terms) {
+      const at = lower.indexOf(t, i);
+      if (at >= 0 && (idx < 0 || at < idx)) {
+        idx = at;
+        len = t.length;
+      }
+    }
     if (idx < 0) {
       out.push(text.slice(i));
       break;
@@ -125,13 +165,14 @@ function highlight(text: string, query: string, cls: string): ReactNode {
     if (idx > i) out.push(text.slice(i, idx));
     out.push(
       <mark key={key++} className={`rounded-[3px] px-0.5 ${cls}`}>
-        {text.slice(idx, idx + q.length)}
+        {text.slice(idx, idx + len)}
       </mark>,
     );
-    i = idx + q.length;
+    i = idx + len;
   }
   return out;
 }
+
 
 /**
  * Keyboard-first launcher **and** content search. Opened with ⌘K / Ctrl+K, or
@@ -140,8 +181,10 @@ function highlight(text: string, query: string, cls: string): ReactNode {
  * With an empty query it's the section switcher (type to filter, ↑/↓ to move,
  * Enter to jump, a digit to pick that numbered row). Once you type, it also
  * searches across topics, chats, agents (prompts + final answers) and live
- * sessions: title/name hits are floated above discussion hits, and every hit is
- * badged with its section colour/icon and the field that matched.
+ * sessions with Precursor IQ's relevance ranking: title/name hits are floated
+ * above content hits, and every hit is badged with its section colour/icon and
+ * the field that matched. Tab (or the "Ask Precursor" row) switches to Ask
+ * mode: a cited answer written from the same index.
  */
 export function CommandPalette({
   onClose,
@@ -156,10 +199,19 @@ export function CommandPalette({
 }: Props) {
   const [query, setQuery] = useState(initialQuery);
   const [active, setActive] = useState(0);
-  const [results, setResults] = useState<SearchResult[]>([]);
+  const [results, setResults] = useState<IQNavHit[]>([]);
   const [searching, setSearching] = useState(false);
+  // Ask mode: the question the answer is for, the answer, and request state.
+  const [askedFor, setAskedFor] = useState<string | null>(null);
+  const [answer, setAnswer] = useState<IQAskResponse | null>(null);
+  const [asking, setAsking] = useState(false);
+  const [askError, setAskError] = useState<string | null>(null);
+  // Precursor IQ can be turned off server-side; the palette then keeps the
+  // plain substring search and hides Ask.
+  const [iqAvailable, setIqAvailable] = useState(true);
   const inputRef = useRef<HTMLInputElement>(null);
-  const listRef = useRef<HTMLUListElement>(null);
+  // The scroll container: the result list, or the answer panel in Ask mode.
+  const listRef = useRef<HTMLElement | null>(null);
 
   const items = useMemo<PaletteItem[]>(() => {
     const nav = (mode: SidebarMode) => () => {
@@ -260,6 +312,15 @@ export function CommandPalette({
         mode: "workflows",
         run: nav("workflows"),
       },
+      {
+        id: "iq",
+        label: "IQ",
+        hint: "Ask questions about your data (⌘⇧K)",
+        keywords: "iq ask question answer knowledge semantic find",
+        icon: Sparkles,
+        mode: "iq",
+        run: nav("iq"),
+      },
       ...pluginSections.map((plugin) => ({
         id: plugin.id,
         label: plugin.label,
@@ -305,8 +366,18 @@ export function CommandPalette({
     let cancelled = false;
     const handle = setTimeout(async () => {
       try {
-        const resp = await api.search.query(q);
-        if (!cancelled) setResults(resp.results);
+        let hits: IQNavHit[];
+        try {
+          const resp = await api.iq.retrieve(q, NAVIGABLE_SECTIONS, 30);
+          hits = resp.hits.map(navigableHit).filter((h): h is IQNavHit => h !== null);
+          if (!cancelled) setIqAvailable(true);
+        } catch {
+          // IQ disabled (404) or failing: the substring search still works.
+          const resp = await api.search.query(q);
+          hits = resp.results;
+          if (!cancelled) setIqAvailable(false);
+        }
+        if (!cancelled) setResults(hits);
       } catch {
         if (!cancelled) setResults([]);
       } finally {
@@ -319,27 +390,71 @@ export function CommandPalette({
     };
   }, [query]);
 
-  // Title hits float above discussion hits (the backend already sorts this way,
-  // but we split them into labelled groups to make the priority explicit).
+  // Title hits float above content hits (ranked by relevance within each group).
   const titleHits = useMemo(() => results.filter((r) => r.is_title), [results]);
   const bodyHits = useMemo(() => results.filter((r) => !r.is_title), [results]);
 
+  const inAskMode = askedFor !== null;
+  // Sources keep their citation number so the list lines up with the answer.
+  const answerSources = useMemo<{ hit: IQNavHit; n: number }[]>(
+    () =>
+      (answer?.sources ?? []).flatMap((source) => {
+        const hit = navigableHit(source);
+        return hit ? [{ hit, n: source.id }] : [];
+      }),
+    [answer],
+  );
+
+  async function runAsk(): Promise<void> {
+    const q = query.trim();
+    if (!q || !iqAvailable) return;
+    setAskedFor(q);
+    setAnswer(null);
+    setAskError(null);
+    setAsking(true);
+    setActive(0);
+    try {
+      const resp = await api.iq.ask(q);
+      setAnswer(resp);
+    } catch (e) {
+      setAskError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAsking(false);
+    }
+  }
+
   // Flat activation order across every interactive row: sections, then title
-  // hits, then discussion hits. Keeps ↑/↓/Enter working over the whole list.
+  // hits, then content hits, then "Ask Precursor". In Ask mode, the answer's
+  // sources are the rows. Keeps ↑/↓/Enter working over the whole list.
   const rowRuns = useMemo<(() => void)[]>(() => {
-    const runs: (() => void)[] = sections.map((it) => it.run);
-    const open = (r: SearchResult) => () => {
-      onOpenResult(r, query);
+    const open = (r: IQNavHit) => () => {
+      onOpenResult(toSearchResult(r), inAskMode ? "" : query);
       onClose();
     };
+    if (inAskMode) return answerSources.map(({ hit }) => open(hit));
+    const runs: (() => void)[] = sections.map((it) => it.run);
     for (const r of titleHits) runs.push(open(r));
     for (const r of bodyHits) runs.push(open(r));
+    if (query.trim() && iqAvailable) runs.push(() => void runAsk());
     return runs;
-  }, [sections, titleHits, bodyHits, onOpenResult, onClose, query]);
+    // runAsk reads the current query/iqAvailable, both already listed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    sections,
+    titleHits,
+    bodyHits,
+    onOpenResult,
+    onClose,
+    query,
+    inAskMode,
+    answerSources,
+    iqAvailable,
+  ]);
 
   const sectionCount = sections.length;
   const titleBase = sectionCount;
   const bodyBase = sectionCount + titleHits.length;
+  const askRow = bodyBase + bodyHits.length;
 
   // Clamp the active row whenever the combined set shrinks.
   useEffect(() => {
@@ -347,8 +462,12 @@ export function CommandPalette({
   }, [rowRuns.length]);
 
   // Reset to the top on every new query so the first (best) hit is preselected.
+  // Editing the query also leaves Ask mode: the answer was for the old text.
   useEffect(() => {
     setActive(0);
+    setAskedFor(null);
+    setAnswer(null);
+    setAskError(null);
   }, [query]);
 
   useEffect(() => {
@@ -374,6 +493,9 @@ export function CommandPalette({
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
       setActive((a) => (n ? (a - 1 + n) % n : 0));
+    } else if (e.key === "Tab" && query.trim() && iqAvailable && !inAskMode) {
+      e.preventDefault();
+      void runAsk();
     } else if (e.key === "Enter") {
       e.preventDefault();
       rowRuns[active]?.();
@@ -390,9 +512,13 @@ export function CommandPalette({
 
   const hasQuery = query.trim().length > 0;
   const nothingFound =
-    hasQuery && !searching && sections.length === 0 && results.length === 0;
+    hasQuery &&
+    !searching &&
+    !inAskMode &&
+    sections.length === 0 &&
+    results.length === 0;
 
-  function resultRow(r: SearchResult, index: number): ReactNode {
+  function resultRow(r: IQNavHit, index: number, citation?: number): ReactNode {
     const isActive = index === active;
     const tint = sectionColor(r.section).icon;
     const accent = sectionColor(r.section).accentText;
@@ -415,7 +541,11 @@ export function CommandPalette({
           <span
             className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${tint}`}
           >
-            <SectionIcon size={16} />
+            {citation !== undefined ? (
+              <span className="text-xs font-semibold">{citation}</span>
+            ) : (
+              <SectionIcon size={16} />
+            )}
           </span>
           <span className="flex min-w-0 flex-1 flex-col">
             <span className="flex items-center gap-1.5">
@@ -428,7 +558,7 @@ export function CommandPalette({
                 {SECTION_LABEL[r.section]}
               </span>
             </span>
-            {!r.is_title && r.snippet && (
+            {!r.is_title && r.snippet && r.snippet !== r.title && (
               <span className="truncate text-[11px] text-muted">
                 {r.role && (
                   <span className="mr-1 font-medium capitalize text-muted/80">
@@ -441,7 +571,7 @@ export function CommandPalette({
           </span>
           <span
             className={`ml-auto flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium ${tint}`}
-            title={`Matched in ${meta.label.toLowerCase()}`}
+            data-tooltip={`Matched in ${meta.label.toLowerCase()}`}
           >
             <FieldIcon size={11} />
             {meta.label}
@@ -475,12 +605,68 @@ export function CommandPalette({
           autoComplete="off"
           spellCheck={false}
         />
-        {searching && (
+        {searching && !inAskMode && (
           <span className="shrink-0 text-[10px] text-muted">Searching…</span>
+        )}
+        {hasQuery && iqAvailable && !inAskMode && (
+          <button
+            type="button"
+            onClick={() => void runAsk()}
+            className="flex shrink-0 items-center gap-1 rounded-md border border-border px-1.5 py-0.5 text-[10px] font-medium text-muted hover:text-text"
+            data-tooltip="Answer from your topics, chats, agents and live notes (Tab)"
+          >
+            <Sparkles size={11} />
+            Ask
+          </button>
         )}
       </div>
 
-      <ul ref={listRef} className="min-h-0 flex-1 overflow-y-auto p-1.5">
+      {inAskMode ? (
+        <div
+          ref={(el) => {
+            listRef.current = el;
+          }}
+          className="min-h-0 flex-1 overflow-y-auto p-3"
+        >
+          <div className="mb-2 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted">
+            <Sparkles size={12} className="text-accent" />
+            Precursor answer
+            {answer?.model && (
+              <span className="ml-auto font-normal normal-case tracking-normal">
+                {answer.model}
+              </span>
+            )}
+          </div>
+          {asking && (
+            <div className="flex items-center gap-2 px-1 py-4 text-sm text-muted">
+              <Loader2 size={14} className="animate-spin" />
+              Reading your workspace…
+            </div>
+          )}
+          {askError && (
+            <div className="rounded border border-red-500/50 bg-red-500/10 px-3 py-2 text-xs text-red-600 dark:text-red-400">
+              {askError}
+            </div>
+          )}
+          {answer && (
+            <Markdown className="text-sm">{plainCitations(answer.answer)}</Markdown>
+          )}
+          {answerSources.length > 0 && (
+            <ul className="mt-3 border-t border-border pt-2">
+              <li className="px-2 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted">
+                Sources
+              </li>
+              {answerSources.map(({ hit, n }, i) => resultRow(hit, i, n))}
+            </ul>
+          )}
+        </div>
+      ) : (
+      <ul
+        ref={(el) => {
+          listRef.current = el;
+        }}
+        className="min-h-0 flex-1 overflow-y-auto p-1.5"
+      >
         {nothingFound && (
           <li className="px-3 py-6 text-center text-sm text-muted">
             No matches for “{query.trim()}”.
@@ -551,12 +737,44 @@ export function CommandPalette({
             {bodyHits.map((r, i) => resultRow(r, bodyBase + i))}
           </>
         )}
+
+        {/* Hand the query to Precursor IQ for a cited answer. */}
+        {hasQuery && iqAvailable && (
+          <li>
+            <button
+              type="button"
+              data-row={askRow}
+              onMouseMove={() => setActive(askRow)}
+              onClick={() => rowRuns[askRow]?.()}
+              className={`mt-1 flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left ${
+                active === askRow ? "bg-surface" : "hover:bg-surface/60"
+              }`}
+            >
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent">
+                <Sparkles size={16} />
+              </span>
+              <span className="flex min-w-0 flex-col">
+                <span className="truncate text-sm font-medium">
+                  Ask Precursor: “{query.trim()}”
+                </span>
+                <span className="truncate text-[11px] text-muted">
+                  A cited answer from your topics, chats, agents and live notes
+                </span>
+              </span>
+              <kbd className="ml-auto shrink-0 rounded border border-border px-1.5 py-0.5 text-[10px] font-medium text-muted">
+                Tab
+              </kbd>
+            </button>
+          </li>
+        )}
       </ul>
+      )}
 
       <div className="flex items-center gap-3 border-t border-border px-3 py-1.5 text-[10px] text-muted shrink-0">
         <span>↑↓ Navigate</span>
         <span>↵ Open</span>
         {!hasQuery && <span>0–9 Jump</span>}
+        {hasQuery && iqAvailable && !inAskMode && <span>⇥ Ask</span>}
         <span className="ml-auto">Esc Close</span>
       </div>
     </Modal>

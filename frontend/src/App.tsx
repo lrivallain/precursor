@@ -9,6 +9,8 @@ import {
 import { resolveSections } from "./lib/plugins";
 import { usePluginDescriptors } from "./lib/pluginStore";
 import { CommandPalette } from "./components/CommandPalette";
+import { IQMain, IQSidebar } from "./components/IQMain";
+import type { IQSeed } from "./components/IQMain";
 import { McpAuthBanner } from "./components/McpAuthBanner";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { HomePage } from "./components/HomePage";
@@ -127,7 +129,15 @@ export default function App() {
     if (!narrow) setMobileNavOpen(false);
   }, [narrow]);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  useGlobalShortcuts({ mobileNavOpen, setMobileNavOpen, setPaletteOpen });
+  // What ⌘⇧K hands the IQ section: the selected text, and a counter so a
+  // repeat press while already there still refocuses the question box.
+  const [iqSeed, setIqSeed] = useState<IQSeed | null>(null);
+  useGlobalShortcuts({
+    mobileNavOpen,
+    setMobileNavOpen,
+    setPaletteOpen,
+    onAskIQ: (question) => void askIQ(question),
+  });
   useStreamVersion();
   const streamingTopicIds = streamStore.streamingIds("topic");
   const streamingChatIds = streamStore.streamingIds("chat");
@@ -269,6 +279,7 @@ export default function App() {
         agentsCtl.syncFromRoute(r);
         return;
       }
+      if (r.mode === "iq") return;
       if (r.mode === "topics") {
         topicsCtl.syncFromRoute(r);
         return;
@@ -413,6 +424,8 @@ export default function App() {
     } else if (next === "workflows") {
       workflowsCtl.enterOverview();
       target = "/workflows";
+    } else if (next === "iq") {
+      target = "/iq";
     } else if (isPluginMode(next)) {
       // Re-entering a plugin section restores the sub-route it was left at.
       target = pluginsCtl.sectionUrl(next);
@@ -426,6 +439,17 @@ export default function App() {
     // These section buttons explicitly select the overview, like a list item.
     if (next === "agents" || next === "workflows") closeMobileNav();
   }
+
+  // ⌘⇧K: jump to the IQ section, seeding the question with the selection.
+  async function askIQ(question: string): Promise<void> {
+    setIqSeed((prev) => ({ question, nonce: (prev?.nonce ?? 0) + 1 }));
+    await changeMode("iq");
+  }
+
+  // A seed only applies to the visit it opened; a later visit starts blank.
+  useEffect(() => {
+    if (atHome || sidebarMode !== "iq") setIqSeed(null);
+  }, [atHome, sidebarMode]);
 
   // Enter Topics or Chats to show a conversation the caller has already fetched
   // and selects in the same batch, e.g. a fired reminder's. Unlike changeMode it
@@ -723,6 +747,7 @@ export default function App() {
               onOverview={() => void changeMode("workflows")}
             />
           ),
+          iq: <IQSidebar />,
           plugin: activeSection ? <activeSection.Sidebar host={sectionHost} /> : null,
         }}
         collapsed={!narrow && sidebarCollapsed}
@@ -779,6 +804,8 @@ export default function App() {
                 activeSection.label
               )}
             </span>
+          ) : sidebarMode === "iq" ? (
+            <span className="truncate font-medium min-w-0 flex-1">IQ</span>
           ) : sidebarMode === "workflows" ? (
             <WorkflowsHeader />
           ) : (
@@ -837,6 +864,11 @@ export default function App() {
             <LiveMain controller={liveCtl} tree={tree} collections={collections} />
           ) : activeSection ? (
             <activeSection.Main host={sectionHost} />
+          ) : sidebarMode === "iq" ? (
+            <IQMain
+              seed={iqSeed}
+              onOpenResult={(result, query) => void openSearchResult(result, query)}
+            />
           ) : sidebarMode === "workflows" ? (
             <WorkflowsMain
               controller={workflowsCtl}
