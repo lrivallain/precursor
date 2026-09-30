@@ -96,7 +96,7 @@ from precursor.backend.services.github_client import GitHubClient
 from precursor.backend.services.image_uploads import read_validated_attachment
 from precursor.backend.services.llm import get_llm_provider
 from precursor.backend.services.llm.base import ChatMessage, TextDeltaEvent, UsageEvent
-from precursor.backend.services.meeting_agenda import fetch_agenda
+from precursor.backend.services.meeting_agenda import fetch_agenda, fetch_event_body
 from precursor.backend.services.meeting_analysis import (
     analyze_session,
     context_notes_text,
@@ -1132,6 +1132,9 @@ async def link_meeting(
     to attendees — only speakers confirmed in the transcript seed that list;
     invitees stay suggestions in the summary."""
     ms = await _get_session_or_404(session_id, session)
+    # The agenda list omits bodies to stay small; fetch this one's on link.
+    if not payload.body and payload.id:
+        payload = payload.model_copy(update={"body": await fetch_event_body(payload.id)})
     ms.external_meeting_json = payload.model_dump_json()
     await session.commit()
     await session.refresh(ms)

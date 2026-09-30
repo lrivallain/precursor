@@ -328,3 +328,88 @@ def test_http_status_error_is_still_an_mcp_error() -> None:
     assert isinstance(tagged, MCPError)
     assert tagged.code == INTERNAL_ERROR
     assert str(tagged) == "Server returned an error response (HTTP 502)"
+
+
+@contextlib.asynccontextmanager
+async def _serve_sse_tool_result(text: str) -> AsyncIterator[str]:
+    """Serve a minimal streamable-HTTP endpoint answering requests over SSE.
+
+    ``tools/call`` returns ``text`` as one content block, so the whole result
+    rides in a single SSE event — the shape WorkIQ uses for large fetches.
+    """
+
+    async def app(scope: dict[str, Any], receive: Any, send: Any) -> None:
+        if scope["type"] != "http":
+            return
+        body = b""
+        while True:
+            event = await receive()
+            body += event.get("body", b"")
+            if not event.get("more_body"):
+                break
+        if scope["method"] != "POST":
+            await send({"type": "http.response.start", "status": 405, "headers": []})
+            await send({"type": "http.response.body", "body": b""})
+            return
+        message = json.loads(body or b"{}")
+        if "id" not in message:
+            await send({"type": "http.response.start", "status": 202, "headers": []})
+            await send({"type": "http.response.body", "body": b""})
+            return
+        if message["method"] == "initialize":
+            result: dict[str, Any] = {
+                "protocolVersion": message["params"]["protocolVersion"],
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "big", "version": "1"},
+            }
+        elif message["method"] == "tools/list":
+            result = {"tools": [{"name": "big", "inputSchema": {"type": "object"}}]}
+        else:
+            result = {"content": [{"type": "text", "text": text}], "isError": False}
+        payload = json.dumps({"jsonrpc": "2.0", "id": message["id"], "result": result})
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [(b"content-type", b"text/event-stream")],
+            }
+        )
+        await send(
+            {"type": "http.response.body", "body": f"event: message\ndata: {payload}\n\n".encode()}
+        )
+
+    port = _free_port()
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
+    task = asyncio.create_task(server.serve())
+    try:
+        while not server.started:
+            if task.done():
+                task.result()
+            await asyncio.sleep(0.05)
+        yield f"http://127.0.0.1:{port}/mcp"
+    finally:
+        server.should_exit = True
+        await asyncio.wait_for(task, timeout=15)
+
+
+async def test_a_tool_result_larger_than_httpx2s_sse_cap_is_received() -> None:
+    """httpx2 caps an SSE event at 1 MiB; a bigger tool result must still land
+    instead of failing as "SSE stream ended without a response"."""
+    text = "x" * (3 * 1024 * 1024)
+    async with _serve_sse_tool_result(text) as url, streamable_http_session(url) as session:
+        await session.initialize()
+        result = await session.call_tool("big", {})
+
+    assert result.content[0].text == text  # type: ignore[union-attr]
+
+
+def test_streamable_http_sse_cap_is_raised() -> None:
+    """Guard: an SDK bump that renames the rebinding targets fails here, not
+    silently in production at the 1 MiB default."""
+    import mcp.client.streamable_http as sdk
+
+    from precursor.backend.services.mcp import transport
+
+    assert sdk.EventSource is transport._event_source
+    assert sdk.sse_within_origin.__module__ == transport.__name__
+    assert transport.MCP_SSE_MAX_EVENT_BYTES > 1024 * 1024

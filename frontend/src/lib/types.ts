@@ -2312,7 +2312,6 @@ export interface AgendaEvent {
   is_online: boolean;
   // Teams join URL — used to locate the meeting transcript for summaries.
   join_url?: string | null;
-  body: string | null;
   body_preview: string | null;
 }
 

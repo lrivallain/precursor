@@ -287,7 +287,6 @@ class AgendaEvent(BaseModel):
     is_online: bool = False
     # Teams join URL, used to locate the meeting's transcript later.
     join_url: str | None = None
-    body: str | None = None
     body_preview: str | None = None
 
 
