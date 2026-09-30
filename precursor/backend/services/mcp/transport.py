@@ -9,19 +9,65 @@ with it — is defined once here.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import Any
 
 import httpx2
+import mcp.client.streamable_http as _sdk_streamable_http
 from mcp import ClientSession, MCPError
 from mcp.client.streamable_http import streamable_http_client
+
+logger = logging.getLogger(__name__)
 
 # The values MCP 1's ``streamablehttp_client`` defaulted to. A bare
 # ``httpx2.AsyncClient`` falls back to a flat 5 s timeout, which would drop the
 # long-lived GET stream a server holds open between events.
 HTTP_TIMEOUT_SECONDS = 30.0
 HTTP_SSE_READ_TIMEOUT_SECONDS = 300.0
+
+# A whole tool result travels as one SSE event, and httpx2 caps an event at
+# 1 MiB by default (MCP 1's parser had no cap). A week of WorkIQ calendar events
+# with bodies already exceeds that; the SDK then swallows the ``SSEError`` and
+# fails the call as "SSE stream ended without a response". Servers are
+# configured by the user, so a generous-but-bounded cap is the right trade-off.
+MCP_SSE_MAX_EVENT_BYTES = 16 * 1024 * 1024
+
+
+def _event_source(response: httpx2.Response) -> httpx2.EventSource:
+    return httpx2.EventSource(response, max_event_size=MCP_SSE_MAX_EVENT_BYTES)
+
+
+def _raise_sse_event_cap() -> None:
+    """Make the SDK's streamable-HTTP transport parse SSE with our event cap.
+
+    ``streamable_http_client`` exposes no ``max_event_size`` knob, so rebind the
+    two names its module resolves at call time: ``EventSource`` (POST responses,
+    i.e. tool results) and ``sse_within_origin`` (the GET stream and resumption).
+    """
+    sdk = _sdk_streamable_http
+    if getattr(sdk, "_precursor_sse_cap", False):
+        return
+    original_sse = getattr(sdk, "sse_within_origin", None)
+    if not hasattr(sdk, "EventSource") or original_sse is None:
+        logger.warning(
+            "mcp.client.streamable_http no longer exposes EventSource/sse_within_origin; "
+            "SSE events stay capped at httpx2's 1 MiB default."
+        )
+        return
+
+    @asynccontextmanager
+    async def sse_within_origin(*args: Any, **kwargs: Any) -> AsyncIterator[httpx2.EventSource]:
+        async with original_sse(*args, **kwargs) as event_source:
+            yield _event_source(event_source.response)
+
+    sdk.EventSource = _event_source
+    sdk.sse_within_origin = sse_within_origin  # type: ignore[attr-defined]
+    sdk._precursor_sse_cap = True  # type: ignore[attr-defined]
+
+
+_raise_sse_event_cap()
 
 
 class MCPHTTPStatusError(MCPError):

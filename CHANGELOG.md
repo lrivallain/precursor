@@ -91,6 +91,14 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Fixed
 
+- **Large MCP tool results no longer fail with "SSE stream ended without a
+  response".** Since the move to MCP 2, the client parsed server-sent events
+  with httpx2, which caps a single event at 1 MiB. A tool result is one event,
+  so anything bigger was dropped. The Live agenda was the most visible case:
+  "Couldn't read the agenda" as soon as a week of meetings exceeded the cap.
+  Precursor's MCP transport now allows events of up to 16 MiB. The agenda list
+  also stops downloading every meeting's full HTML body; the body is fetched
+  for one meeting when you link it.
 - **Workflow steps now publish their artifacts.** Every task step is told to
   publish its deliverable with an `ARTIFACT` block, but the block was only read
   for autonomous agents, and a step's agent usually isn't one. Its artifacts
