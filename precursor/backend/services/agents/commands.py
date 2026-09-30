@@ -41,6 +41,10 @@ async def cmd_clear(manager: AgentManager, agent_id: int, argument: str) -> None
     await manager.clear_session(agent_id)
 
 
+async def cmd_compact(manager: AgentManager, agent_id: int, argument: str) -> None:
+    await manager.compact(agent_id, argument)
+
+
 async def cmd_role(manager: AgentManager, agent_id: int, argument: str) -> None:
     name = " ".join(argument.split())
     if not name:
@@ -85,6 +89,7 @@ COMMAND_HANDLERS: dict[str, Callable[[AgentManager, int, str], Awaitable[None]]]
     "rename": cmd_rename,
     "archive": cmd_archive,
     "clear": cmd_clear,
+    "compact": cmd_compact,
     "role": cmd_role,
     "memory-store": cmd_memory_store,
     "memory-update": cmd_memory_update,

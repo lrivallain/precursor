@@ -94,6 +94,14 @@ export interface Conversation {
   onScroll: ChatScroll["onScroll"];
   attachments: ComposerAttachments;
   deletion: Pick<MessageDeletion, "pendingDeletes" | "requestDeleteMessage" | "undoDelete">;
+  compaction: {
+    /** True while a `/compact` summary is being generated. */
+    compacting: boolean;
+    /** Id of the newest compaction marker; older rows are hidden from the model. */
+    markerId: number | null;
+    /** Summarise the conversation so far (`/compact [focus]`). */
+    run: (instructions?: string) => Promise<void>;
+  };
   notes: NotesDraftController;
   reminders: RemindersController;
   /** Whether the composer's role picker is open (a bare `/role` opens it). */
@@ -149,6 +157,7 @@ export function useConversation({
     setPersisted,
   });
   const [roleOpen, setRoleOpen] = useState(false);
+  const [compacting, setCompacting] = useState(false);
   // Set while we handle a user-initiated Stop so the streaming→done effect
   // skips its own reload and lets stop() own the (post-persist) refresh.
   const stoppingRef = useRef(false);
@@ -170,6 +179,12 @@ export function useConversation({
     () => messages.filter((m) => !hiddenIds.has(m.id)),
     [messages, hiddenIds],
   );
+  const compactionMarkerId = useMemo<number | null>(() => {
+    for (let i = visibleMessages.length - 1; i >= 0; i--) {
+      if (visibleMessages[i].kind === "compaction") return visibleMessages[i].id;
+    }
+    return null;
+  }, [visibleMessages]);
   // The prompt to offer a Retry on: set only while the transcript ends on an
   // error notice and nothing is streaming.
   const retryableId = useMemo<number | null>(
@@ -418,6 +433,9 @@ export function useConversation({
       case "clear":
         await runClear();
         return true;
+      case "compact":
+        await runCompact(argument);
+        return true;
       default:
         return false;
     }
@@ -438,6 +456,25 @@ export function useConversation({
       onUpdated();
     } catch (err) {
       systemNote(`Clear failed: ${(err as Error).message}`);
+    }
+  }
+
+  async function runCompact(instructions?: string): Promise<void> {
+    if (compacting) return;
+    if (streaming) {
+      systemNote("Wait for the reply to finish before compacting.");
+      return;
+    }
+    setCompacting(true);
+    try {
+      await containerApi.compact(instructions);
+      await reloadMessages();
+      pinToBottom();
+      onUpdated();
+    } catch (err) {
+      systemNote(`Compaction failed: ${(err as Error).message}`);
+    } finally {
+      setCompacting(false);
     }
   }
 
@@ -515,6 +552,7 @@ export function useConversation({
       onRemove: removeAttachment,
     },
     deletion: { pendingDeletes, requestDeleteMessage, undoDelete },
+    compaction: { compacting, markerId: compactionMarkerId, run: runCompact },
     notes,
     reminders,
     roleOpen,

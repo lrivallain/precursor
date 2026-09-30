@@ -7,6 +7,7 @@ import {
   CircleDot,
   Cog,
   FileText,
+  FoldVertical,
   Globe,
   RotateCw,
   ShieldQuestion,
@@ -120,6 +121,7 @@ export function toolIcon(name: string | null): ReactNode {
 // A "transition" hook (turn start/end, usage, idle…) rendered as a small yellow
 // bubble floated to the right of the workflow — side information, out of the way.
 function HookBubble({ event }: { event: AgentEvent }) {
+  if (event.kind === "compaction") return <CompactionBubble event={event} />;
   return (
     <div
       className="my-0.5 flex items-center gap-1 self-end rounded-full border border-yellow-400/40 bg-yellow-400/15 px-2 py-0.5 text-[9px] uppercase tracking-wide text-yellow-700 dark:text-yellow-300"
@@ -127,6 +129,44 @@ function HookBubble({ event }: { event: AgentEvent }) {
     >
       <CircleDot size={8} className="opacity-70" />
       {event.kind.replace(/_/g, " ").replace(/data$/i, "").trim()}
+    </div>
+  );
+}
+
+function tokensLabel(n: unknown): string | null {
+  if (typeof n !== "number" || !Number.isFinite(n)) return null;
+  return n < 1000 ? String(n) : n < 1_000_000 ? `${Math.round(n / 1000)}k` : `${(n / 1_000_000).toFixed(1)}M`;
+}
+
+// A finished compaction (the SDK's automatic one or /compact): how much it freed,
+// with the summary the agent now works from in the tooltip.
+function CompactionBubble({ event }: { event: AgentEvent }) {
+  const data = event.data ?? {};
+  const failed = data.success === false;
+  const before = tokensLabel(data.pre_compaction_tokens);
+  const after = tokensLabel(data.post_compaction_tokens);
+  const trigger = typeof data.trigger === "string" ? data.trigger.replace(/_/g, " ") : null;
+  const detail = failed
+    ? String(data.error ?? "Compaction failed")
+    : [trigger ? `Trigger: ${trigger}` : null, event.text ? `Summary:\n${event.text.slice(0, 600)}` : null]
+        .filter(Boolean)
+        .join("\n\n");
+  return (
+    <div
+      className={`my-0.5 flex items-center gap-1 self-end rounded-full border px-2 py-0.5 text-[9px] uppercase tracking-wide ${
+        failed
+          ? "border-red-500/40 bg-red-500/10 text-red-600 dark:text-red-300"
+          : "border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300"
+      }`}
+      data-tooltip={detail || undefined}
+    >
+      <FoldVertical size={9} className="opacity-80" />
+      {failed ? "compaction failed" : "context compacted"}
+      {!failed && before && after && (
+        <span className="normal-case tracking-normal">
+          · {before} → {after}
+        </span>
+      )}
     </div>
   );
 }

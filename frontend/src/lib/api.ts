@@ -1,5 +1,6 @@
 import type {
   AgentArtifact,
+  ContextEstimate,
   AgentArtifactCreate,
   AgentBlueprint,
   AgentBlueprintCreate,
@@ -272,6 +273,13 @@ export interface ContainerApi {
    * tool calls still running. Returns the rows created, oldest first.
    */
   saveStopped: (turn: StoppedTurn) => Promise<Message[]>;
+  /**
+   * Summarise the conversation so far into a compaction marker; the model sees
+   * the summary instead of older turns. Deleting the marker undoes it.
+   */
+  compact: (instructions?: string) => Promise<Message>;
+  /** Estimated history the next turn sends to the model. */
+  contextEstimate: () => Promise<ContextEstimate>;
   uploadAttachment: (file: File) => Promise<Attachment>;
   notes: {
     getDraft: () => Promise<NotesDraft>;
@@ -282,6 +290,13 @@ export interface ContainerApi {
     uploadAttachment: (file: File) => Promise<NoteDraftAttachment>;
     deleteAttachment: (attachmentId: number) => Promise<void>;
   };
+}
+
+function compactContainer(base: string, instructions?: string): Promise<Message> {
+  return request<Message>(`${base}/compact`, {
+    method: "POST",
+    body: JSON.stringify({ instructions: instructions?.trim() || null }),
+  });
 }
 
 export const api = {
@@ -870,6 +885,9 @@ export const api = {
           deleteMessage: (mid) => api.messages.remove(id, mid),
           clearMessages: () => api.messages.clear(id),
           saveStopped: (turn) => api.messages.saveStopped(id, turn),
+          compact: (instructions) => compactContainer(`/api/topics/${id}/messages`, instructions),
+          contextEstimate: () =>
+            request<ContextEstimate>(`/api/topics/${id}/messages/context`),
           uploadAttachment: (file) => api.attachments.uploadForTopic(id, file),
           notes: {
             getDraft: () => api.notes.getDraft(id),
@@ -886,6 +904,9 @@ export const api = {
           deleteMessage: (mid) => api.chats.deleteMessage(id, mid),
           clearMessages: () => api.chats.clearMessages(id),
           saveStopped: (turn) => api.chats.saveStoppedMessage(id, turn),
+          compact: (instructions) => compactContainer(`/api/chats/${id}/messages`, instructions),
+          contextEstimate: () =>
+            request<ContextEstimate>(`/api/chats/${id}/messages/context`),
           uploadAttachment: (file) => api.attachments.uploadForChat(id, file),
           notes: {
             getDraft: () => api.chats.getNotesDraft(id),

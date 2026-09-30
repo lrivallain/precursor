@@ -1237,6 +1237,8 @@ export interface Message {
   chat_id?: number | null;
   role: MessageRole;
   content: string;
+  /** Special-row marker; "compaction" = a context-compaction summary (system row). */
+  kind?: string | null;
   /** Assistant turns: the model's thinking for this round, shown collapsed. */
   reasoning?: string | null;
   tool_calls: string | null;
@@ -1268,6 +1270,22 @@ export interface Message {
  * one of the two must be present. `reasoning` is the thinking streamed for that
  * reply, stored with it.
  */
+/**
+ * Estimated history the next turn sends to the model (system prompt and tools
+ * excluded). Mirrors `ContextEstimateRead` in `schemas/message.py`.
+ */
+export interface ContextEstimate {
+  tokens: number;
+  by_role: Record<string, number>;
+  /** Tokens saved by stripping inline binaries and eliding stale tool results. */
+  saved_by_hygiene: number;
+  messages: number;
+  compacted: boolean;
+  compaction_id: number | null;
+  /** Rows the latest compaction marker hides from the model. */
+  compacted_messages: number;
+}
+
 export interface StoppedTurn {
   content?: string;
   tool_call_ids?: string[];
@@ -1404,6 +1422,7 @@ export interface Settings {
   // System settings (effective: env default with DB override applied).
   llm_max_input_tokens: number;
   llm_max_tool_result_tokens: number;
+  llm_tool_result_keep_turns: number;
   llm_max_attachment_chars: number;
   scheduled_run_timeout_seconds: number;
   tool_result_retention_days: number;
@@ -1485,6 +1504,7 @@ export interface SettingsUpdate {
   playwright_browser?: string;
   llm_max_input_tokens?: number;
   llm_max_tool_result_tokens?: number;
+  llm_tool_result_keep_turns?: number;
   llm_max_attachment_chars?: number;
   scheduled_run_timeout_seconds?: number;
   tool_result_retention_days?: number;

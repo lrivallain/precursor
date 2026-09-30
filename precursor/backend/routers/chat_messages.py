@@ -22,6 +22,8 @@ from precursor.backend.models import (
 from precursor.backend.routers.deps import get_chat_or_404
 from precursor.backend.schemas import (
     ChatRequest,
+    CompactRequest,
+    ContextEstimateRead,
     MessageRead,
     NoteDraftAttachmentRead,
     NotesAppendRequest,
@@ -36,6 +38,12 @@ from precursor.backend.schemas import (
 from precursor.backend.services import notes as notes_service
 from precursor.backend.services import skills as skills_service
 from precursor.backend.services.chat_autoname import schedule_autoname, suggest_chat_name
+from precursor.backend.services.compaction import (
+    CompactionError,
+    ContextEstimate,
+    compact_container,
+    estimate_context,
+)
 from precursor.backend.services.conversation_turn import (
     clear_container_messages,
     delete_container_message,
@@ -92,6 +100,33 @@ async def delete_message(
 ) -> None:
     """Hard-delete a single message."""
     await delete_container_message(session, "chat", chat_id, message_id)
+
+
+@router.post(
+    "/compact",
+    response_model=MessageRead,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(get_chat_or_404)],
+)
+async def compact_messages(
+    chat_id: int,
+    payload: CompactRequest,
+    session: AsyncSession = Depends(get_session),
+) -> Message:
+    """Summarise the chat so far into a compaction marker (see services/compaction)."""
+    try:
+        return await compact_container(session, "chat", chat_id, instructions=payload.instructions)
+    except CompactionError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+
+
+@router.get("/context", response_model=ContextEstimateRead, dependencies=[Depends(get_chat_or_404)])
+async def context_estimate(
+    chat_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> ContextEstimate:
+    """Estimated tokens of history the next turn sends to the model."""
+    return await estimate_context(session, "chat", chat_id)
 
 
 @router.post("/stopped", response_model=list[MessageRead])

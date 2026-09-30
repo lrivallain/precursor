@@ -183,7 +183,9 @@ function AgentInsightsPanel({
   artifacts,
   artifactLabel,
   onOpenArtifact,
+  compact,
 }: {
+  compact?: { busy: boolean; disabled: boolean; disabledReason?: string; run: () => void };
   showPrefs: ShowPrefs;
   toggleShow: (k: keyof ShowPrefs) => void;
   events: AgentEvent[];
@@ -240,7 +242,7 @@ function AgentInsightsPanel({
         </button>
       </div>
       <div className="flex flex-col gap-4 overflow-y-auto p-3">
-        <AgentUsageSection events={events} model={model} />
+        <AgentUsageSection events={events} model={model} compact={compact} />
         <div className="border-t border-border" />
         <AgentRunsSection agent={agent} runs={runs} selected={runFilter} onSelect={onRunFilterChange} />
         <div className="border-t border-border" />
@@ -2551,6 +2553,9 @@ export function AgentView({
     }
     try {
       await api.agents.send(selected.id, message);
+      // A slash command runs server-side and never lands as a user turn, so its
+      // echo would otherwise linger; the command has finished by now.
+      if (message.startsWith("/")) setPending(null);
       onReload();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -3236,6 +3241,12 @@ export function AgentView({
         artifacts={artifacts}
         artifactLabel={artifactLabel}
         onOpenArtifact={openArtifact}
+        compact={{
+          busy: busy && pending?.text.startsWith("/compact") === true,
+          disabled: busy || selected.status === "running" || selected.status === "needs_approval",
+          disabledReason: "The agent is busy",
+          run: () => void sendFollowUp("/compact"),
+        }}
       />
       {viewing && (
         <ArtifactViewer agent={selected} artifact={viewing} onClose={() => setViewing(null)} />

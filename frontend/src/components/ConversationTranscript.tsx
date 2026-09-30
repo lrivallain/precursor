@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { CompactionMarker } from "./CompactContext";
 import { MessageBubble } from "./MessageBubble";
 import { ReasoningDisclosure } from "./ReasoningDisclosure";
 import { SuggestedReplies } from "./SuggestedReplies";
@@ -18,6 +19,8 @@ interface TranscriptMessageProps {
   collapsible?: boolean;
   /** Hide the per-message agent badge when an enclosing group already shows one. */
   hideAgentBadge?: boolean;
+  /** Above the latest compaction marker: kept for the reader, hidden from the model. */
+  compacted?: boolean;
 }
 
 /** One persisted-conversation row: a tool call, or a user/assistant/system bubble. */
@@ -29,7 +32,34 @@ export function TranscriptMessage({
   onDelete,
   collapsible,
   hideAgentBadge,
+  compacted,
 }: TranscriptMessageProps) {
+  const row = renderRow(m, streaming, retryable, onRetry, onDelete, collapsible, hideAgentBadge);
+  if (!compacted || row === null) return row;
+  return (
+    <div className="opacity-55 transition-opacity hover:opacity-100" data-compacted>
+      {row}
+    </div>
+  );
+}
+
+function renderRow(
+  m: Message,
+  streaming: boolean,
+  retryable: boolean,
+  onRetry: (message: Message) => void,
+  onDelete: (message: Message) => void,
+  collapsible?: boolean,
+  hideAgentBadge?: boolean,
+) {
+  if (m.kind === "compaction") {
+    return (
+      <CompactionMarker
+        message={m}
+        onUndo={!streaming && m.id > 0 ? () => onDelete(m) : undefined}
+      />
+    );
+  }
   if (m.role === "tool") {
     const meta = parseToolMeta(m.tool_calls);
     return (
@@ -108,6 +138,7 @@ export function TranscriptTail({
 }
 
 function removedLabel(message: Message): string {
+  if (message.kind === "compaction") return "Compaction summary";
   if (message.role === "user") return "Your message";
   return message.role === "assistant" ? "Assistant reply" : "Message";
 }

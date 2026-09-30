@@ -38,9 +38,11 @@ from precursor.backend.services.app_settings import (
     resolve_llm_max_tool_result_tokens,
     resolve_llm_model,
     resolve_llm_reasoning_effort,
+    resolve_llm_tool_result_keep_turns,
     resolve_max_tool_rounds,
 )
 from precursor.backend.services.attachment_extraction import warm_attachment_text_cache
+from precursor.backend.services.context_budget import elide_stale_tool_results
 from precursor.backend.services.github_auth import resolve_github_token
 from precursor.backend.services.llm import get_llm_provider
 from precursor.backend.services.llm.base import ChatMessage, LLMProvider
@@ -204,6 +206,40 @@ def user_echo(
 # -- History ---------------------------------------------------------------
 
 
+async def load_container_rows(
+    session: AsyncSession, kind: ContainerKind, container_id: int
+) -> list[Message]:
+    """Every transcript row of a container, oldest first, attachments loaded."""
+    result = await session.execute(
+        select(Message)
+        .where(_message_fk(kind) == container_id)
+        .options(selectinload(Message.attachments))
+        .order_by(Message.created_at)
+    )
+    return list(result.scalars().all())
+
+
+async def load_model_history(
+    session: AsyncSession,
+    kind: ContainerKind,
+    container_id: int,
+    *,
+    prompt_override: str | None = None,
+) -> list[ChatMessage]:
+    """The container's transcript hydrated for the model, before any elision."""
+    rows = await load_container_rows(session, kind, container_id)
+    # Parsing a large PDF is slow and blocking: fill the on-disk text cache in a
+    # worker thread so hydration below only reads cached text.
+    docs = [(att.sha256, att.mime) for m in rows for att in m.attachments]
+    if docs:
+        await asyncio.to_thread(warm_attachment_text_cache, docs)
+    return hydrate_history(
+        rows,
+        attachment_max_chars=await resolve_llm_max_attachment_chars(session),
+        prompt_override=prompt_override,
+    )
+
+
 async def snapshot_history(
     session: AsyncSession,
     kind: ContainerKind,
@@ -216,32 +252,14 @@ async def snapshot_history(
     ``prompt_override`` is a skill invocation's expanded prompt: the persisted
     user turn stays the literal slash command (so the transcript renders
     ``/to-en bravo``), but the model sees the expansion for this turn only.
+
+    History starts at the latest compaction marker, and large tool results from
+    older turns are shortened (``llm_tool_result_keep_turns``).
     """
-    result = await session.execute(
-        select(Message)
-        .where(_message_fk(kind) == container_id)
-        .options(selectinload(Message.attachments))
-        .order_by(Message.created_at)
+    history = await load_model_history(session, kind, container_id, prompt_override=prompt_override)
+    return elide_stale_tool_results(
+        history, keep_turns=await resolve_llm_tool_result_keep_turns(session)
     )
-    rows = list(result.scalars().all())
-    # Parsing a large PDF is slow and blocking: fill the on-disk text cache in a
-    # worker thread so hydration below only reads cached text.
-    docs = [(att.sha256, att.mime) for m in rows for att in m.attachments]
-    if docs:
-        await asyncio.to_thread(warm_attachment_text_cache, docs)
-    history = hydrate_history(
-        rows, attachment_max_chars=await resolve_llm_max_attachment_chars(session)
-    )
-    if prompt_override:
-        for idx in range(len(history) - 1, -1, -1):
-            if history[idx].role == "user":
-                history[idx] = ChatMessage(
-                    role="user",
-                    content=prompt_override,
-                    image_urls=history[idx].image_urls,
-                )
-                break
-    return history
 
 
 # -- Streaming -------------------------------------------------------------

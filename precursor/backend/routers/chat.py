@@ -11,7 +11,19 @@ from sse_starlette.sse import EventSourceResponse
 from precursor.backend.db import get_session
 from precursor.backend.models import Message, Topic
 from precursor.backend.routers.deps import get_topic_or_404
-from precursor.backend.schemas import ChatRequest, MessageRead, StoppedTurn
+from precursor.backend.schemas import (
+    ChatRequest,
+    CompactRequest,
+    ContextEstimateRead,
+    MessageRead,
+    StoppedTurn,
+)
+from precursor.backend.services.compaction import (
+    CompactionError,
+    ContextEstimate,
+    compact_container,
+    estimate_context,
+)
 from precursor.backend.services.conversation_turn import (
     clear_container_messages,
     delete_container_message,
@@ -67,6 +79,37 @@ async def delete_message(
 ) -> None:
     """Hard-delete a single message. Attachments cascade with the row."""
     await delete_container_message(session, "topic", topic_id, message_id)
+
+
+@router.post(
+    "/compact",
+    response_model=MessageRead,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(get_topic_or_404)],
+)
+async def compact_messages(
+    topic_id: int,
+    payload: CompactRequest,
+    session: AsyncSession = Depends(get_session),
+) -> Message:
+    """Summarise the topic so far into a compaction marker (see services/compaction)."""
+    try:
+        return await compact_container(
+            session, "topic", topic_id, instructions=payload.instructions
+        )
+    except CompactionError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+
+
+@router.get(
+    "/context", response_model=ContextEstimateRead, dependencies=[Depends(get_topic_or_404)]
+)
+async def context_estimate(
+    topic_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> ContextEstimate:
+    """Estimated tokens of history the next turn sends to the model."""
+    return await estimate_context(session, "topic", topic_id)
 
 
 @router.post("/stopped", response_model=list[MessageRead])

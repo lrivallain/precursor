@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from precursor.backend.db import SessionLocal
-from precursor.backend.models import Chat, Message, MessageRole, Topic
+from precursor.backend.models import MESSAGE_KIND_COMPACTION, Chat, Message, MessageRole, Topic
 from precursor.backend.services import memories as memory_service
 from precursor.backend.services import skills as skills_service
 from precursor.backend.services.app_settings import DEFAULT_LLM_MAX_ATTACHMENT_CHARS
@@ -36,7 +36,7 @@ from precursor.backend.services.attachment_extraction import (
     is_image_attachment,
 )
 from precursor.backend.services.collections import resolve_topic_github_repo
-from precursor.backend.services.context_budget import trim_messages
+from precursor.backend.services.context_budget import strip_inline_binaries, trim_messages
 from precursor.backend.services.events import (
     publish_message_changed,
     publish_message_changed_chat,
@@ -206,7 +206,10 @@ def apply_chat_system_prompt(
 
 
 def hydrate_history(
-    rows: list[Message], *, attachment_max_chars: int = DEFAULT_LLM_MAX_ATTACHMENT_CHARS
+    rows: list[Message],
+    *,
+    attachment_max_chars: int = DEFAULT_LLM_MAX_ATTACHMENT_CHARS,
+    prompt_override: str | None = None,
 ) -> list[ChatMessage]:
     """Turn persisted Messages back into ChatMessages, preserving tool calls.
 
@@ -214,7 +217,56 @@ def hydrate_history(
     results) whose tool_call ids are not all answered. Anthropic-backed
     models reject such transcripts with a 400; OpenAI tolerates them but
     we want consistent behaviour.
+
+    History starts at the latest compaction marker: the rows before it are
+    replaced by its summary (see :func:`compaction_summary_prefix`).
+
+    ``prompt_override`` replaces the content of the last user turn (a skill
+    invocation's expanded prompt), keeping its images.
     """
+    summary: str | None = None
+    for idx in range(len(rows) - 1, -1, -1):
+        if rows[idx].kind == MESSAGE_KIND_COMPACTION:
+            summary = rows[idx].content
+            rows = rows[idx + 1 :]
+            break
+    out = _hydrate_rows(rows, attachment_max_chars=attachment_max_chars)
+    if prompt_override:
+        for idx in range(len(out) - 1, -1, -1):
+            if out[idx].role == "user":
+                out[idx] = ChatMessage(
+                    role="user", content=prompt_override, image_urls=out[idx].image_urls
+                )
+                break
+    if summary:
+        out = _with_compaction_summary(out, summary)
+    return out
+
+
+def compaction_summary_prefix(summary: str) -> str:
+    """How a compaction summary is framed for the model."""
+    return (
+        "[Context summary: the earlier part of this conversation was compacted to "
+        "save context. It is summarised below; treat it as what was said before.]\n\n"
+        f"{summary.strip()}\n\n[End of summary — the conversation continues.]"
+    )
+
+
+def _with_compaction_summary(history: list[ChatMessage], summary: str) -> list[ChatMessage]:
+    # Merged into a leading user turn rather than sent as a separate one, so the
+    # transcript keeps strict user/assistant alternation for every provider.
+    prefix = compaction_summary_prefix(summary)
+    if history and history[0].role == "user":
+        first = history[0]
+        merged = f"{prefix}\n\n{first.content}" if first.content else prefix
+        return [
+            ChatMessage(role="user", content=merged, image_urls=first.image_urls),
+            *history[1:],
+        ]
+    return [ChatMessage(role="user", content=prefix), *history]
+
+
+def _hydrate_rows(rows: list[Message], *, attachment_max_chars: int) -> list[ChatMessage]:
     out: list[ChatMessage] = []
     i = 0
     while i < len(rows):
@@ -340,7 +392,11 @@ def format_tool_result(payload: Any) -> str:
             # ``by_alias`` keeps the MCP wire spelling (``mimeType``): MCP 2
             # models dump snake_case field names by default.
             dump = getattr(block, "model_dump", None)
-            blocks.append(json.dumps(dump(by_alias=True) if dump else {}, default=str))
+            # Image/audio blocks carry base64 the model can't see as text; keep
+            # the block's shape (type, mimeType) but not the payload.
+            blocks.append(
+                strip_inline_binaries(json.dumps(dump(by_alias=True) if dump else {}, default=str))
+            )
     if blocks:
         return "\n\n".join(blocks)
     # Some MCP servers (e.g. the hosted WorkIQ endpoint) return no text content

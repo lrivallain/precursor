@@ -106,8 +106,9 @@ budgeting**:
 
 | Setting | Default | Description |
 | --- | --- | --- |
-| `llm_max_input_tokens` | `600000` | Estimated prompt tokens per request. The oldest turns are dropped first. |
+| `llm_max_input_tokens` | `600000` | Estimated prompt tokens per request. The oldest turns are dropped first. [`/compact`](/features/context-compression) keeps them as a summary instead. |
 | `llm_max_tool_result_tokens` | `20000` | Cap on a single tool result before it enters the prompt. |
+| `llm_tool_result_keep_turns` | `5` | Tool results over 2,000 characters from turns older than this many user turns reach the model as a short preview. `0` always sends them in full. See [Context compression](/features/context-compression#automatic-trimming). |
 | `llm_max_attachment_chars` | `200000` | Extracted text kept per attached document (PDF, DOCX, PPTX, text). Anything longer is cut, with an explicit note to the model. Range 1,000–2,000,000. See [Attachments](/features/attachments#how-much-of-a-document-the-model-sees). |
 
 The [OpenAI-compatible endpoint](/features/openai-endpoint) is runtime-only too:

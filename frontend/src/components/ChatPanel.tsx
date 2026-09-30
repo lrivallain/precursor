@@ -568,6 +568,9 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
                 retryable={m.id === conv.retryableId}
                 onRetry={conv.retryTurn}
                 onDelete={conv.deletion.requestDeleteMessage}
+                compacted={
+                  conv.compaction.markerId !== null && m.id > 0 && m.id < conv.compaction.markerId
+                }
                 collapsible={m.role === "user" && topic.schedule != null}
                 hideAgentBadge={grouped}
               />
@@ -716,7 +719,16 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
         </div>
       </div>
       </div>
-      {showStats && <ChatStatsPanel streamKey={streamKey} messages={conv.messages} />}
+      {showStats && (
+        <ChatStatsPanel
+          streamKey={streamKey}
+          messages={conv.messages}
+          kind="topic"
+          containerId={topic.id}
+          streaming={streaming}
+          compaction={conv.compaction}
+        />
+      )}
       {reminders.reminderModal && (
         <ReminderModal
           container="topic"

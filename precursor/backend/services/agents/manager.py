@@ -203,6 +203,8 @@ _WATCHDOG_INTERVAL_SECONDS = 60.0
 # the CLI exhausts its heap and dies. A released session resumes from its on-disk
 # state (``copilot_session_id``) on its next turn.
 _IDLE_SESSION_TTL_SECONDS = 15 * 60
+# A manual /compact is one summarising model call over the whole history.
+_COMPACT_TIMEOUT_SECONDS = 300.0
 
 # Streaming frames aren't archived, but a long stretch of them is still the run
 # being alive: stamp its activity this often so the watchdog (whose timeout
@@ -1340,6 +1342,37 @@ class AgentManager:
                 error=None,
             )
         await self._publish(agent_id, agent_run_id=run.id if run else None)
+
+    async def compact(self, agent_id: int, instructions: str = "") -> None:
+        """Summarise the agent's conversation to free context (``/compact``).
+
+        Delegates to the SDK's own history compaction: older turns are replaced
+        by a summary inside the SDK session, which emits
+        ``session.compaction_start``/``_complete`` events the timeline records.
+        Only an idle agent can be compacted — the SDK would otherwise rewrite a
+        history a turn is still appending to. Raises :class:`ValueError` with a
+        user-facing reason.
+        """
+        agent = await self._load(agent_id)
+        if agent is None:
+            raise ValueError("Agent not found.")
+        run = await self._resolve_run(agent_id)
+        if run is None or (not run.copilot_session_id and run.id not in self._live):
+            raise ValueError("Nothing to compact yet: this agent has no conversation.")
+        if run.status in ("running", "needs_approval"):
+            raise ValueError("The agent is busy. Wait for it to finish, or stop it, first.")
+        from copilot.generated.rpc import SessionHistoryCompactRequest, Trigger
+
+        live = await self._ensure_live(agent, run)
+        result = await live.sdk_session.rpc.history.compact(
+            SessionHistoryCompactRequest(
+                custom_instructions=instructions.strip() or None, trigger=Trigger.MANUAL
+            ),
+            timeout=_COMPACT_TIMEOUT_SECONDS,
+        )
+        if not result.success:
+            raise ValueError("Compaction failed; the conversation was left as it was.")
+        await self._publish(agent_id, agent_run_id=run.id)
 
     async def rerun_task(
         self, agent_id: int, *, extra: str | None = None, trigger: str = "manual"

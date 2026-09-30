@@ -907,6 +907,44 @@ const scenes = {
     },
   },
 
+  // A compacted topic: the dimmed turns above the marker, the summary opened,
+  // and the stats panel's context bar + Compact button. Clipped right of the
+  // sidebar so its persona footer stays out.
+  "context-compression": {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await page.addInitScript(() => localStorage.setItem("precursor:chat-stats:collapsed", "0"));
+      await page.goto(`${BASE}/topics/hosting-options-review`, { waitUntil: "networkidle" });
+      await page.getByRole("button", { name: "Show summary" }).click();
+      await page.getByText("Next turn (estimate)").waitFor();
+      await page.mouse.move(0, 0);
+      await sleep(600);
+      const main = await page.locator("main").first().boundingBox();
+      if (!main) throw new Error("Seed the hosting-options-review topic first.");
+      return { x: Math.floor(main.x), y: 0, width: Math.ceil(main.width), height: page.viewportSize().height };
+    },
+  },
+
+  // The stats panel nudging to compact once the window is 80% full.
+  "context-compression-nudge": {
+    viewport: { width: 1440, height: 900 },
+    async go(page) {
+      await page.addInitScript(() => localStorage.setItem("precursor:chat-stats:collapsed", "0"));
+      await page.goto(`${BASE}/chats/quarterly-capacity-plan`, { waitUntil: "networkidle" });
+      await page.getByText(/Context is \d+% full/).waitFor();
+      await page.mouse.move(0, 0);
+      await sleep(400);
+      const aside = await page.locator("aside", { hasText: "Conversation" }).last().boundingBox();
+      if (!aside) throw new Error("Seed the quarterly-capacity-plan chat first.");
+      return {
+        x: Math.floor(aside.x),
+        y: Math.floor(aside.y),
+        width: Math.ceil(aside.width),
+        height: 420,
+      };
+    },
+  },
+
   // The same screen with the navigation drawer pulled out over it.
   "mobile-drawer": {
     viewport: { width: 390, height: 844 },

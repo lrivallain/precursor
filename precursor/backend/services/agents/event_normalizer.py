@@ -50,6 +50,8 @@ _EVENT_KINDS: dict[str, str] = {
     "AssistantTurnEndData": "turn_end",
     "AssistantUsageData": "usage",
     "SessionUsageInfoData": "context_usage",
+    "SessionCompactionStartData": "compaction_start",
+    "SessionCompactionCompleteData": "compaction",
     "SessionIdleData": "idle",
     "AbortData": "aborted",
 }
@@ -203,6 +205,32 @@ def normalize_event(event: Any) -> AgentEvent:
             val = getattr(data, attr, None)
             if val is not None:
                 extra[attr] = int(val)
+    elif name in ("SessionCompactionStartData", "SessionCompactionCompleteData"):
+        # Surface compactions (the SDK's automatic ones as well as /compact) so
+        # the timeline can mark where older turns were replaced by a summary.
+        for attr in (
+            "current_tokens",
+            "pre_compaction_tokens",
+            "post_compaction_tokens",
+            "tokens_removed",
+            "messages_removed",
+            "token_limit",
+        ):
+            val = getattr(data, attr, None)
+            if val is not None:
+                extra[attr] = int(val)
+        trigger = getattr(data, "trigger", None)
+        if trigger is not None:
+            extra["trigger"] = str(getattr(trigger, "value", trigger))
+        success = getattr(data, "success", None)
+        if success is not None:
+            extra["success"] = bool(success)
+        error = getattr(data, "error", None)
+        if error:
+            extra["error"] = cap(str(error), TOOL_RESULT_CAP)
+        summary = getattr(data, "summary_content", None)
+        if summary:
+            text = summary
     return AgentEvent(
         kind=kind,
         # System prompts are boilerplate repeated on every session start, so

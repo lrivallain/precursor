@@ -144,6 +144,9 @@ export function ChatSessionPanel({
                 retryable={m.id === conv.retryableId}
                 onRetry={conv.retryTurn}
                 onDelete={conv.deletion.requestDeleteMessage}
+                compacted={
+                  conv.compaction.markerId !== null && m.id > 0 && m.id < conv.compaction.markerId
+                }
               />
             ))}
             <TranscriptTail
@@ -197,7 +200,16 @@ export function ChatSessionPanel({
         </div>
       </div>
 
-      {showStats && <ChatStatsPanel streamKey={streamKey} messages={conv.messages} />}
+      {showStats && (
+        <ChatStatsPanel
+          streamKey={streamKey}
+          messages={conv.messages}
+          kind="chat"
+          containerId={chat.id}
+          streaming={streaming}
+          compaction={conv.compaction}
+        />
+      )}
       {reminders.reminderModal && (
         <ReminderModal
           container="chat"

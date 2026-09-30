@@ -150,6 +150,15 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     surfaces: ["topic", "chat", "agent"],
   },
   {
+    name: "compact",
+    label: "/compact",
+    description:
+      "Summarise the conversation so far to free up the model's context window. Older messages stay visible; the model sees the summary instead. Optionally say what the summary should focus on.",
+    argumentHint: "focus (optional)",
+    kind: "builtin",
+    surfaces: ["topic", "chat", "agent"],
+  },
+  {
     name: "role",
     label: "/role",
     description:

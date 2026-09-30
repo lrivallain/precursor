@@ -15,6 +15,28 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **Context compression for long conversations.** Type `/compact [focus]`, or
+  click **Compact context** in the conversation stats panel, to have the model
+  summarise a topic or chat into a compaction marker. From the next turn on, the
+  model sees that summary plus everything after it. The older messages stay
+  visible, dimmed. **Undo** on the marker (deleting it) restores the full
+  history, and compacting again folds the previous summary into the new one.
+  Past 80% of the context window, the stats panel nudges you to compact; it is
+  never automatic. Agents get the same `/compact` and button, backed by the
+  Copilot SDK's own history compaction. Its compactions, automatic ones
+  included, now appear in the timeline with the tokens freed.
+  - Two automatic passes shrink what the model sees without a model call. Inline
+    base64 images in tool results (a browser screenshot is about 150k
+    characters) become a placeholder, and are no longer stored as text either.
+    Tool results over 2,000 characters from turns older than the last 5 reach
+    the model as a preview, set by the new `llm_tool_result_keep_turns` setting
+    (**Settings → Model → Prompt budgeting**; `0` turns it off).
+  - API: `POST /api/{topics,chats}/{id}/messages/compact` and `GET
+    …/messages/context`. Messages gain `kind`. The migration adds
+    `messages.kind`. See
+    [Context compression](https://lrivallain.github.io/precursor/features/context-compression).
+  - The agent composer no longer leaves a slash command's echo hanging after
+    the command has run.
 - **Precursor IQ: semantic search and cited answers over your own content.**
   Topics, topic briefs, messages, attachment text, chats, agent prompts and
   answers, live notes, summaries, transcripts and insights, and memory are now

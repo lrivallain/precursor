@@ -17,6 +17,7 @@ GitHub token saved, so the persona footer reads "Guest / Not connected".
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import shutil
 import subprocess
@@ -56,7 +57,11 @@ from precursor.backend.models.meeting import (  # noqa: E402
     MeetingSession,
 )
 from precursor.backend.models.memory import Memory  # noqa: E402
-from precursor.backend.models.message import Message, MessageRole  # noqa: E402
+from precursor.backend.models.message import (  # noqa: E402
+    MESSAGE_KIND_COMPACTION,
+    Message,
+    MessageRole,
+)
 from precursor.backend.models.role import Role  # noqa: E402
 from precursor.backend.models.settings import AppSetting  # noqa: E402
 from precursor.backend.models.skill import Skill  # noqa: E402
@@ -550,6 +555,157 @@ async def _seed_refined_agent(s: AsyncSession) -> None:
         )
 
 
+async def _seed_compacted_topic(s: AsyncSession, collection_id: int) -> None:
+    topic = Topic(
+        title="Hosting options for the reporting stack",
+        slug="hosting-options-review",
+        description="Where the nightly reporting jobs should run next year.",
+        collection_id=collection_id,
+    )
+    s.add(topic)
+    await s.flush()
+    call = {
+        "id": "call_pricing",
+        "type": "function",
+        "function": {
+            "name": "fetch__fetch",
+            "arguments": '{"url": "https://example.com/pricing/batch"}',
+        },
+    }
+    rows = [
+        Message(
+            role=MessageRole.USER,
+            content=(
+                "Compare running the nightly reporting jobs on managed batch versus "
+                "our own Kubernetes cluster. Cost first, then operations."
+            ),
+            created_at=ago(hours=5),
+        ),
+        Message(
+            role=MessageRole.ASSISTANT,
+            content="",
+            tool_calls=json.dumps([call]),
+            created_at=ago(hours=5),
+        ),
+        Message(
+            role=MessageRole.TOOL,
+            content=(
+                "Batch pricing — pay per vCPU-hour, spot capacity at up to 80% off, "
+                "no charge while idle. Low-priority nodes can be evicted."
+            ),
+            tool_calls=json.dumps(
+                {
+                    "tool_call_id": "call_pricing",
+                    "name": "fetch__fetch",
+                    "arguments": call["function"]["arguments"],
+                }
+            ),
+            created_at=ago(hours=5),
+        ),
+        Message(
+            role=MessageRole.ASSISTANT,
+            content=(
+                "On cost, managed batch wins for a job that runs 2 hours a night: "
+                "you pay for about 60 vCPU-hours a month instead of a cluster that "
+                "idles 22 hours a day. Spot capacity cuts it further, as long as the "
+                "jobs checkpoint so an eviction only loses the current step."
+            ),
+            prompt_tokens=6_450,
+            completion_tokens=310,
+            model="mock",
+            created_at=ago(hours=5),
+        ),
+        Message(
+            role=MessageRole.USER,
+            content="And operationally? We have one person on call.",
+            created_at=ago(hours=4),
+        ),
+        Message(
+            role=MessageRole.ASSISTANT,
+            content=(
+                "With one person on call, managed batch removes node upgrades, "
+                "autoscaler tuning and cluster certificates from their list. What "
+                "stays is the job definitions and alerting on failed runs."
+            ),
+            prompt_tokens=7_020,
+            completion_tokens=240,
+            model="mock",
+            created_at=ago(hours=4),
+        ),
+        Message(
+            role=MessageRole.SYSTEM,
+            kind=MESSAGE_KIND_COMPACTION,
+            content=(
+                "## Goal and context\n"
+                "Choose where the nightly reporting jobs (about 2 h a night) run next "
+                "year: managed batch or the team's own Kubernetes cluster. One person "
+                "is on call.\n\n"
+                "## Key facts and decisions\n"
+                "- Batch bills per vCPU-hour, nothing while idle; spot is up to 80% off "
+                "but can be evicted.\n"
+                "- About 60 vCPU-hours a month on batch versus a cluster idle 22 h a "
+                "day.\n\n"
+                "## Current state and next step\n"
+                "Leaning towards managed batch with spot and checkpointing. Next: "
+                "decide how failed runs are retried and alerted."
+            ),
+            prompt_tokens=5_200,
+            completion_tokens=380,
+            model="mock",
+            created_at=ago(hours=3),
+        ),
+        Message(
+            role=MessageRole.USER,
+            content="How should a failed nightly run be retried?",
+            created_at=ago(hours=2),
+        ),
+        Message(
+            role=MessageRole.ASSISTANT,
+            content=(
+                "Retry each step up to 3 times with backoff, resuming from its last "
+                "checkpoint so a spot eviction doesn't restart the whole night. After "
+                "the third failure, page the on-call person with the step and its log."
+            ),
+            prompt_tokens=1_960,
+            completion_tokens=150,
+            model="mock",
+            created_at=ago(hours=2),
+        ),
+    ]
+    for row in rows:
+        row.topic_id = topic.id
+        s.add(row)
+        # One at a time so ids follow transcript order.
+        await s.flush()
+
+    # A chat that has filled most of the window, so the stats panel shows the
+    # nudge to compact.
+    chat = Chat(title="Quarterly capacity plan", slug="quarterly-capacity-plan")
+    s.add(chat)
+    await s.flush()
+    for row in (
+        Message(
+            role=MessageRole.USER,
+            content="Draft the Q3 capacity plan from the usage exports I pasted above.",
+            created_at=ago(hours=1),
+        ),
+        Message(
+            role=MessageRole.ASSISTANT,
+            content=(
+                "Here is a first cut: storage grows 14% a quarter and compute stays "
+                "flat, so the plan adds two storage nodes in July and holds compute."
+            ),
+            prompt_tokens=6_930,
+            completion_tokens=420,
+            model="mock",
+            created_at=ago(hours=1),
+        ),
+    ):
+        row.chat_id = chat.id
+        s.add(row)
+        await s.flush()
+
+
 async def seed() -> None:
     await init_db()
 
@@ -800,6 +956,12 @@ async def seed() -> None:
                 ),
             ]
         )
+
+        # ---------------- a compacted topic ----------------
+        # A long research thread summarised with /compact: the older turns stay
+        # (dimmed) above the marker, one exchange follows it. Token counts are
+        # sized against the mock model's 8k window so the stats bar reads true.
+        await _seed_compacted_topic(s, platform.id)
 
         # ---------------- chats ----------------
         c_regex = Chat(title="Regex for semver tags", slug="regex-for-semver-tags")

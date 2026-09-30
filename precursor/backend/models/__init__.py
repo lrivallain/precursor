@@ -39,7 +39,7 @@ from precursor.backend.models.meeting import (
     MeetingSession,
 )
 from precursor.backend.models.memory import Memory
-from precursor.backend.models.message import Message, MessageRole
+from precursor.backend.models.message import MESSAGE_KIND_COMPACTION, Message, MessageRole
 from precursor.backend.models.note_draft import NoteDraft
 from precursor.backend.models.note_draft_attachment import NoteDraftAttachment
 from precursor.backend.models.reminder import Reminder
@@ -75,6 +75,7 @@ __all__ = [
     "COLLECTION_ACCENTS",
     "DEFAULT_COLLECTION_ACCENT",
     "DEFAULT_COLLECTION_NAME",
+    "MESSAGE_KIND_COMPACTION",
     "WORKFLOW_STATE_MAX_KEY",
     "WORKFLOW_STATE_MAX_KEYS",
     "WORKFLOW_STATE_MAX_VALUE",

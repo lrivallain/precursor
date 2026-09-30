@@ -70,6 +70,9 @@ These work across the sections above:
   inside a throwaway Docker jail or your local machine.
 - [**Attachments**](/features/attachments) — images as vision input; PDF / DOCX /
   PPTX and text/code files text-extracted; content-addressed on disk, deduped.
+- [**Context compression**](/features/context-compression): inline images
+  and older tool results are trimmed automatically, and `/compact` summarises a
+  long conversation so it can keep going.
 - [**Import & export**](/features/transfer) — share an agent or a workflow as a
   plain YAML file, and choose what happens to anything that already exists on
   import.
