@@ -77,6 +77,7 @@ interface Props {
 interface SystemSettings {
   llm_max_input_tokens: number;
   llm_max_tool_result_tokens: number;
+  llm_max_attachment_chars: number;
   scheduled_run_timeout_seconds: number;
   tool_result_retention_days: number;
   cmd_runner_jail: boolean;
@@ -93,6 +94,7 @@ function pickSystem(s: Settings): SystemSettings {
   return {
     llm_max_input_tokens: s.llm_max_input_tokens,
     llm_max_tool_result_tokens: s.llm_max_tool_result_tokens,
+    llm_max_attachment_chars: s.llm_max_attachment_chars,
     scheduled_run_timeout_seconds: s.scheduled_run_timeout_seconds,
     tool_result_retention_days: s.tool_result_retention_days,
     cmd_runner_jail: s.cmd_runner_jail,
@@ -1041,6 +1043,24 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
                       <p className="text-[11px] text-muted mt-1">
                         Per-message ceiling applied to individual tool outputs
                         before they enter the transcript.
+                      </p>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-muted mb-1">
+                        Max characters per attached document
+                      </label>
+                      <NumberInput
+                        value={sys.llm_max_attachment_chars}
+                        min={1000}
+                        max={2_000_000}
+                        onCommit={(n) =>
+                          setSys({ ...sys, llm_max_attachment_chars: n })
+                        }
+                      />
+                      <p className="text-[11px] text-muted mt-1">
+                        Text extracted from each attached PDF, DOCX, PPTX or
+                        text file. Longer documents are cut, and the model is
+                        told how much it can't see.
                       </p>
                     </div>
                   </div>

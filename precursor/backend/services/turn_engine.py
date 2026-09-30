@@ -29,6 +29,7 @@ from precursor.backend.db import SessionLocal
 from precursor.backend.models import Chat, Message, MessageRole, Topic
 from precursor.backend.services import memories as memory_service
 from precursor.backend.services import skills as skills_service
+from precursor.backend.services.app_settings import DEFAULT_LLM_MAX_ATTACHMENT_CHARS
 from precursor.backend.services.attachment_extraction import (
     attachments_to_image_urls,
     attachments_to_text_context,
@@ -204,7 +205,9 @@ def apply_chat_system_prompt(
 # -- History hydration -----------------------------------------------------
 
 
-def hydrate_history(rows: list[Message]) -> list[ChatMessage]:
+def hydrate_history(
+    rows: list[Message], *, attachment_max_chars: int = DEFAULT_LLM_MAX_ATTACHMENT_CHARS
+) -> list[ChatMessage]:
     """Turn persisted Messages back into ChatMessages, preserving tool calls.
 
     Drops orphan assistant-with-tool_calls turns (and any partial tool
@@ -279,7 +282,8 @@ def hydrate_history(rows: list[Message]) -> list[ChatMessage]:
                 [att for att in user_attachments if is_image_attachment(att)]
             )
             non_image_context = attachments_to_text_context(
-                [att for att in user_attachments if not is_image_attachment(att)]
+                [att for att in user_attachments if not is_image_attachment(att)],
+                max_chars=attachment_max_chars,
             )
             if non_image_context:
                 content = f"{content}\n\n{non_image_context}" if content else non_image_context

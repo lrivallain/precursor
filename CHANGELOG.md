@@ -91,6 +91,17 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Fixed
 
+- **Large attached documents are no longer cut after a page or two.** Text
+  extracted from PDF, DOCX, PPTX and text attachments was capped at 4,000
+  characters, often less than a paper's introduction, and the only sign of the
+  cut was a trailing `…`. The cap is now 200,000 characters and configurable
+  (`llm_max_attachment_chars`, **Settings → Model → Prompt budgeting**). When
+  a document goes past it, the model is told how much it's seeing out of the
+  total. The per-tool-result cap also stopped applying to user messages, where
+  it had been cutting attachment text at about 60k characters. Extracted text
+  is cached next to its blob and parsed off the event loop, so a large PDF
+  isn't re-parsed on every later turn.
+
 - **Workflow steps now publish their artifacts.** Every task step is told to
   publish its deliverable with an `ARTIFACT` block, but the block was only read
   for autonomous agents, and a step's agent usually isn't one. Its artifacts

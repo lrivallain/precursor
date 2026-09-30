@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 
 from precursor.backend.db import SessionLocal
 from precursor.backend.main import create_app
-from precursor.backend.models import AppSetting, Message, MessageRole, Topic
+from precursor.backend.models import AppSetting, Attachment, Message, MessageRole, Topic
 from precursor.backend.services.tool_result_retention import (
     PRUNED_PLACEHOLDER,
     prune_expired_tool_results,
@@ -53,6 +53,10 @@ async def _seed(topic_title: str) -> int:
     async with SessionLocal() as session:
         # Isolate from other tests sharing the session-wide temp DB — the sweep
         # is global, so stray old TOOL rows would skew the affected counts.
+        # SQLite doesn't enforce the attachments FK cascade here, and wiping the
+        # table restarts message ids, so drop attachments too or a later test's
+        # new message inherits a stale one by reused id.
+        await session.execute(delete(Attachment))
         await session.execute(delete(Message))
         await session.execute(delete(Topic))
         topic = Topic(title=topic_title, slug=topic_title)
@@ -191,6 +195,7 @@ def test_clears_expired_thinking_only() -> None:
         old = datetime.now(UTC) - timedelta(days=40)
         recent = datetime.now(UTC) - timedelta(days=1)
         async with SessionLocal() as session:
+            await session.execute(delete(Attachment))
             await session.execute(delete(Message))
             await session.execute(delete(Topic))
             topic = Topic(title="thinking", slug="thinking")

@@ -1399,6 +1399,7 @@ export interface Settings {
   // System settings (effective: env default with DB override applied).
   llm_max_input_tokens: number;
   llm_max_tool_result_tokens: number;
+  llm_max_attachment_chars: number;
   scheduled_run_timeout_seconds: number;
   tool_result_retention_days: number;
   live_transcript_retention_days: number;
@@ -1476,6 +1477,7 @@ export interface SettingsUpdate {
   playwright_browser?: string;
   llm_max_input_tokens?: number;
   llm_max_tool_result_tokens?: number;
+  llm_max_attachment_chars?: number;
   scheduled_run_timeout_seconds?: number;
   tool_result_retention_days?: number;
   live_transcript_retention_days?: number;
