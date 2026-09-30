@@ -128,13 +128,66 @@ jobs:
 
           An existing install updates itself with \`precursor service update\`.
           EOF
-          # Delete-then-create (rather than editing) so the tag moves to this
-          # commit and no stale wheel from a previous run is left behind for a
-          # client to resolve.
-          gh release delete nightly --yes --cleanup-tag || true
+          # Recreate the release rather than editing it, so no stale wheel from
+          # a previous run is left behind for a client to resolve. Every release
+          # on the tag goes, drafts included: a draft is invisible to the tag
+          # lookup `gh release delete` would start from.
+          releases="repos/$GITHUB_REPOSITORY/releases"
+          for id in $(gh api --paginate "$releases?per_page=100" \
+              -q '.[] | select(.tag_name == "nightly") | .id'); do
+            gh api -X DELETE "$releases/$id" --silent
+          done
+          # Move the tag instead of deleting it. GitHub turns the releases of a
+          # deleted tag into drafts asynchronously, so deleting and recreating
+          # it seconds apart could draft the release just published, leaving
+          # every nightly URL a 404 behind a green run.
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/nightly" --silent 2>/dev/null; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/nightly" \
+              -f sha="$GITHUB_SHA" -F force=true --silent
+          else
+            gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" \
+              -f ref=refs/tags/nightly -f sha="$GITHUB_SHA" --silent
+          fi
           gh release create nightly \
             --title "Nightly ($VERSION)" \
             --notes-file notes.md \
             --prerelease \
-            --target "$GITHUB_SHA" \
+            --verify-tag \
             dist/*.whl dist/*.tar.gz dist/version.json
+
+      - name: Check the nightly is downloadable
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download/nightly"
+          # Anonymous, like every client, and only this build counts: a
+          # published release still serving the previous manifest is as broken
+          # for an installer as a 404.
+          serves_this_build() {
+            local manifest
+            manifest=$(curl -fsSL "$base/version.json") || return 1
+            [ "$(jq -r .full_commit <<<"$manifest")" = "$GITHUB_SHA" ] || return 1
+            curl -fsSL -o /dev/null "$(jq -r .wheel_url <<<"$manifest")"
+          }
+          wait_for_downloads() {
+            # Downloads lag a publish by a few seconds.
+            for _ in 1 2 3 4 5 6; do
+              serves_this_build && return 0
+              sleep 10
+            done
+            return 1
+          }
+          wait_for_downloads && exit 0
+          # A draft carrying this build means publishing lost a race after all;
+          # finishing that publish is exactly what `gh release create` meant to do.
+          id=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            -q '.[] | select(.tag_name == "nightly" and .draft) | .id' | sed -n 1p)
+          if [ -n "$id" ]; then
+            echo "::warning::The nightly release was left as a draft; publishing it."
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$id" \
+              -F draft=false -f tag_name=nightly --silent
+            wait_for_downloads && exit 0
+          fi
+          echo "::error::$base/version.json does not serve this build ($GITHUB_SHA)."
+          exit 1
