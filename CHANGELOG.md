@@ -91,6 +91,15 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Fixed
 
+- **Workflow steps now publish their artifacts.** Every task step is told to
+  publish its deliverable with an `ARTIFACT` block, but the block was only read
+  for autonomous agents, and a step's agent usually isn't one. Its artifacts
+  were silently dropped, so later steps never saw the earlier steps' output that
+  `auto` and `selected` context promise. A step's `ARTIFACT:` and `PROGRESS:`
+  lines are now read whether or not its agent is autonomous. The step's
+  instructions now spell out the block syntax, and the next step receives each
+  artifact once instead of twice. A plain agent outside a workflow still
+  ignores these lines.
 - **Nightly installs no longer 404 after a quick run of pushes.** Two nightly
   builds seconds apart could leave the new `nightly` release stuck as a draft.
   Its files then answered 404, so installing, updating and adding a plugin all

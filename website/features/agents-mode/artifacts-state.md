@@ -26,6 +26,11 @@ directive, in one of two shapes:
   on the following lines, closed by `END_ARTIFACT`. Use this for a substantial
   deliverable so it lands whole instead of being truncated to a heading.
 
+Autonomous agents and [workflow](/features/workflows) steps are taught these
+directives, and theirs are the only ones read: a step publishes even when its
+agent isn't autonomous. A plain agent that quotes the syntax in conversation
+publishes nothing.
+
 **The blackboard is freshened, never stacked.** Anything that starts the agent
 *over* — a fresh objective re-run, a webhook re-trigger, or **`/clear`** — wipes
 the previous run's artifacts first. A conversational follow-up is the exception:

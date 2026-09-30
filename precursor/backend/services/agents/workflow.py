@@ -55,6 +55,7 @@ from precursor.backend.models.workflow import (
 from precursor.backend.services.agents.directives import (
     RESULT_SUMMARY_CAP,
     strip_control_directives,
+    strip_published_artifacts,
 )
 from precursor.backend.services.agents.event_normalizer import is_content_free
 from precursor.backend.services.agents.mcp_scope import parse_mcp_scope, scope_includes_precursor
@@ -145,7 +146,8 @@ _GATE_PREAMBLE = (
 # asks a clarifying question just wedges the whole pipeline (the coordinator parks
 # it as ``blocked`` and pauses the run). This forces the step to commit to the
 # most reasonable interpretation of its objective and actually produce the
-# deliverable, rather than stalling to ask what to do.
+# deliverable, rather than stalling to ask what to do. The artifact syntax is
+# spelled out because a step that isn't autonomous never sees the full protocol.
 _TASK_PREAMBLE = (
     "You are an automated step in a workflow — it runs unattended, so there is no "
     "human available to answer questions mid-run. Act fully autonomously: carry "
@@ -154,7 +156,8 @@ _TASK_PREAMBLE = (
     "confirmation, and never emit NEED_INPUT — if a detail is underspecified, "
     "pick the most reasonable interpretation and proceed anyway. Produce the "
     "actual deliverable your objective calls for (not a description of what you "
-    "could do), publish it with an ARTIFACT directive, and end with "
+    "could do), publish it as an artifact — a line 'ARTIFACT: <title>', the full "
+    "deliverable on the lines below it, then a line 'END_ARTIFACT' — and end with "
     "'OBJECTIVE_COMPLETE: <2-3 sentence summary>'."
 )
 
@@ -384,20 +387,27 @@ async def collect_step_context(
         workflow_run_id if artifacts_run_id is _MIRROR_RUN_SCOPE else artifacts_run_id
     )
     parts: list[str] = []
+    artifacts = await _run_scoped_artifacts(session, prev_agent_id, board_run_id)
     prev_run = await _current_run_for(session, prev_agent_id, workflow_run_id)
     if workflow_run_id is None or prev_run is not None:
-        body = await _last_assistant_message(
+        raw = await _last_assistant_message(
             session, prev_agent_id, prev_run.id if prev_run is not None else None
         )
-        if body:
-            body = _DIRECTIVE_LINE_RE.sub("", body).strip()
-        if not body:
+        body = ""
+        lifted = False
+        if raw:
+            # Artifacts follow as blackboard entries; don't forward them twice.
+            kept = strip_published_artifacts(raw, {(a.title, a.content) for a in artifacts})
+            lifted = kept != raw
+            body = _DIRECTIVE_LINE_RE.sub("", kept).strip()
+        # The summary would only repeat the lifted artifacts' bodies.
+        if not body and not lifted:
             summary = await _prev_step_summary(session, prev_agent_id, workflow_run_id)
             if summary:
                 body = summary.strip()
         if body:
             parts.append(body)
-    for art in await _run_scoped_artifacts(session, prev_agent_id, board_run_id):
+    for art in artifacts:
         parts.append(f"[{art.title}]\n{art.content}".strip())
     label = agent.title or f"Step agent {prev_agent_id}"
     if not parts:

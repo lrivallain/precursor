@@ -99,7 +99,8 @@ _AUTONOMY_PROTOCOL = (
 )
 
 # Sentinel directives an autonomous agent embeds in its assistant messages to
-# drive its own lifecycle. Parsed only when ``autonomy_enabled`` so a normal
+# drive its own lifecycle. Parsed only for agents taught the protocol — an
+# autonomous one, or a workflow step (progress and artifacts only) — so a plain
 # agent that happens to type these words is unaffected.
 #
 # Anchored to the *start of a line* (``re.M``) so a directive quoted or explained
@@ -254,26 +255,21 @@ def strip_control_directives(text: str) -> str:
     return cleaned.strip()
 
 
-def _extract_artifacts(text: str) -> list[dict[str, str]]:
-    """Pull every published artifact from an assistant message.
+def _artifact_spans(lines: list[str]) -> list[tuple[int, int, str, str]]:
+    """Locate every published artifact as ``(start, end, title, body)``.
 
-    Supports two shapes so a substantial deliverable is never truncated:
-
-    * **Inline** — ``ARTIFACT: <title> | <body>`` on one line, for short values.
-    * **Block** — a line ``ARTIFACT: <title>`` with no ``|``, then the full
-      Markdown body on the following lines, terminated by an ``END_ARTIFACT``
-      line, the next control directive, or end of message. This is what lets a
-      research inventory, a draft, or a review land whole rather than as a bare
-      heading with the real content stranded in prose.
+    ``lines[start:end]`` is exactly what the artifact occupies (header, body and
+    terminator), so a caller can lift it out of the message. Title and body are
+    uncapped; ``_extract_artifacts`` applies the storage limits.
     """
-    lines = text.splitlines()
-    artifacts: list[dict[str, str]] = []
+    spans: list[tuple[int, int, str, str]] = []
     i, n = 0, len(lines)
     while i < n:
         header = _ARTIFACT_HEADER_RE.match(lines[i])
         if header is None:
             i += 1
             continue
+        start = i
         rest = header.group(1).strip()
         if "|" in rest:  # inline: 'title | body' on this single line
             title, _, body = rest.partition("|")
@@ -294,8 +290,47 @@ def _extract_artifacts(text: str) -> list[dict[str, str]]:
             body = "\n".join(collected).strip()
         body = _strip_trailing_directives(body)
         if title and body:
-            artifacts.append({"title": title[:200], "content": body[:100000]})
-    return artifacts
+            spans.append((start, i, title, body))
+    return spans
+
+
+def _extract_artifacts(text: str) -> list[dict[str, str]]:
+    """Pull every published artifact from an assistant message.
+
+    Supports two shapes so a substantial deliverable is never truncated:
+
+    * **Inline** — ``ARTIFACT: <title> | <body>`` on one line, for short values.
+    * **Block** — a line ``ARTIFACT: <title>`` with no ``|``, then the full
+      Markdown body on the following lines, terminated by an ``END_ARTIFACT``
+      line, the next control directive, or end of message. This is what lets a
+      research inventory, a draft, or a review land whole rather than as a bare
+      heading with the real content stranded in prose.
+    """
+    return [
+        {"title": title[:200], "content": body[:100000]}
+        for _start, _end, title, body in _artifact_spans(text.splitlines())
+    ]
+
+
+def strip_published_artifacts(text: str, published: set[tuple[str, str]]) -> str:
+    """Remove the artifacts in ``published`` (``(title, content)``) from a message.
+
+    A workflow hand-off forwards the previous step's message *and* its
+    blackboard entries, so an artifact would otherwise reach the next step twice.
+    Only an exact match is lifted: one the blackboard truncated or never stored
+    stays in the prose, where it is the only copy.
+    """
+    if not published:
+        return text
+    lines = text.splitlines()
+    lifted = False
+    for start, end, title, body in reversed(_artifact_spans(lines)):
+        if (title, body) in published:
+            del lines[start:end]
+            lifted = True
+    if not lifted:
+        return text
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
 
 
 def parse_agent_directives(text: str | None) -> dict[str, Any]:
