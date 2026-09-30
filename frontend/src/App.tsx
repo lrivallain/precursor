@@ -10,6 +10,7 @@ import { resolveSections } from "./lib/plugins";
 import { usePluginDescriptors } from "./lib/pluginStore";
 import { CommandPalette } from "./components/CommandPalette";
 import { IQMain, IQSidebar } from "./components/IQMain";
+import type { IQSeed } from "./components/IQMain";
 import { McpAuthBanner } from "./components/McpAuthBanner";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { HomePage } from "./components/HomePage";
@@ -128,7 +129,15 @@ export default function App() {
     if (!narrow) setMobileNavOpen(false);
   }, [narrow]);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  useGlobalShortcuts({ mobileNavOpen, setMobileNavOpen, setPaletteOpen });
+  // What ⌘⇧K hands the IQ section: the selected text, and a counter so a
+  // repeat press while already there still refocuses the question box.
+  const [iqSeed, setIqSeed] = useState<IQSeed | null>(null);
+  useGlobalShortcuts({
+    mobileNavOpen,
+    setMobileNavOpen,
+    setPaletteOpen,
+    onAskIQ: (question) => void askIQ(question),
+  });
   useStreamVersion();
   const streamingTopicIds = streamStore.streamingIds("topic");
   const streamingChatIds = streamStore.streamingIds("chat");
@@ -430,6 +439,17 @@ export default function App() {
     // These section buttons explicitly select the overview, like a list item.
     if (next === "agents" || next === "workflows") closeMobileNav();
   }
+
+  // ⌘⇧K: jump to the IQ section, seeding the question with the selection.
+  async function askIQ(question: string): Promise<void> {
+    setIqSeed((prev) => ({ question, nonce: (prev?.nonce ?? 0) + 1 }));
+    await changeMode("iq");
+  }
+
+  // A seed only applies to the visit it opened; a later visit starts blank.
+  useEffect(() => {
+    if (atHome || sidebarMode !== "iq") setIqSeed(null);
+  }, [atHome, sidebarMode]);
 
   // Enter Topics or Chats to show a conversation the caller has already fetched
   // and selects in the same batch, e.g. a fired reminder's. Unlike changeMode it
@@ -845,7 +865,10 @@ export default function App() {
           ) : activeSection ? (
             <activeSection.Main host={sectionHost} />
           ) : sidebarMode === "iq" ? (
-            <IQMain onOpenResult={(result, query) => void openSearchResult(result, query)} />
+            <IQMain
+              seed={iqSeed}
+              onOpenResult={(result, query) => void openSearchResult(result, query)}
+            />
           ) : sidebarMode === "workflows" ? (
             <WorkflowsMain
               controller={workflowsCtl}

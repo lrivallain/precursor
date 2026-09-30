@@ -37,7 +37,8 @@ are the per-version history; releasing does not rewrite this file.
   A new **IQ** section (`/iq`, with a home card and a ⌘K entry) is a single
   question box: matching content appears first and each item opens the real
   topic, chat, agent or live session, then a cited answer follows whose
-  citations are clickable. Questions aren't saved.
+  citations are clickable. Questions aren't saved. **⌘⇧K** (Ctrl+Shift+K)
+  opens it from anywhere, with any selected text pre-filled as the question.
 - **An OpenAI-compatible endpoint for your models.** Point VS Code (as a
   *Custom Endpoint* model provider), Open WebUI, Continue or the `openai` SDK at
   `/api/openai/v1` and use the active provider's models through Precursor —

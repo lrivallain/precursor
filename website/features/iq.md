@@ -62,8 +62,11 @@ per topic, chat or session, so one long thread can't fill the list.
 
 ## The IQ section
 
-**IQ** in the section rail (or `/iq`) is a single question box. Ask something
-in plain words, or pick one of the example questions:
+**IQ** in the section rail (or `/iq`) is a single question box. Press
+**⌘⇧K** (**Ctrl+Shift+K**) from anywhere in Precursor, even mid-typing or with
+⌘K open, to jump straight to it. Text you had selected (a line of a message, a
+meeting note) is pre-filled as the question, ready to edit before you press
+Enter. Ask something in plain words, or pick one of the example questions:
 
 1. **Matching content** appears first, within a moment. Each row opens the real
    topic, chat, agent or live session, and items whose title matches your
@@ -78,7 +81,7 @@ It's a way to find things, not a conversation: questions and answers aren't
 saved, and asking again replaces the previous answer. Memory entries can be
 sources, but they have no page to open.
 
-## Ask from ⌘K
+## Ask from ⌘K {#ask-from-k}
 
 In ⌘K, type a question and press **Tab** (or pick **Ask Precursor**). The top
 passages go to your model, which writes a short answer that cites them as

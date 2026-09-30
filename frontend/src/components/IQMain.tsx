@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ComponentType, FormEvent, MouseEvent } from "react";
 import {
   AlignLeft,
@@ -67,9 +67,16 @@ const EXAMPLES = [
 // early results and the answer's sources share their numbering.
 const SOURCE_LIMIT = 8;
 
+/** A question handed in by the ⌘⇧K shortcut; `nonce` changes on every press. */
+export interface IQSeed {
+  question: string;
+  nonce: number;
+}
+
 interface Props {
   /** Open the item a source belongs to (topic, chat, agent, live session). */
   onOpenResult: (result: SearchResult, query: string) => void;
+  seed?: IQSeed | null;
 }
 
 /**
@@ -78,7 +85,7 @@ interface Props {
  * then adds the cited answer once the model has written it. Nothing is kept:
  * this is a way to find things, not a conversation.
  */
-export function IQMain({ onOpenResult }: Props) {
+export function IQMain({ onOpenResult, seed = null }: Props) {
   const [draft, setDraft] = useState("");
   const [asked, setAsked] = useState<string | null>(null);
   const [hits, setHits] = useState<IQHit[] | null>(null);
@@ -88,6 +95,25 @@ export function IQMain({ onOpenResult }: Props) {
   // Guards against a slow reply landing after a newer question was asked.
   const requestId = useRef(0);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Pre-fill (not ask) so the selected text can be edited into a question.
+  const selectOnRender = useRef(false);
+  useEffect(() => {
+    if (!seed) return;
+    selectOnRender.current = true;
+    if (seed.question) setDraft(seed.question);
+    // Keyed on the nonce: each press re-applies, even with the same text.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seed?.nonce]);
+  // Runs once the seeded draft has rendered, so the selection spans it. With
+  // an empty seed (nothing was selected) the current draft is selected as is.
+  useEffect(() => {
+    if (!selectOnRender.current) return;
+    if (seed?.question && inputRef.current?.value !== seed.question) return;
+    selectOnRender.current = false;
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  });
 
   async function ask(question: string): Promise<void> {
     const q = question.trim();
@@ -381,8 +407,8 @@ export function IQSidebar() {
         sources.
       </p>
       <p>
-        Click a source to open it. Questions and answers aren't saved. Press ⌘K and then
-        Tab to ask from anywhere.
+        Click a source to open it. Questions and answers aren't saved. Press ⌘⇧K from
+        anywhere to come back here, with any selected text as the question.
       </p>
     </div>
   );

@@ -315,7 +315,7 @@ export function CommandPalette({
       {
         id: "iq",
         label: "IQ",
-        hint: "Ask questions about your data",
+        hint: "Ask questions about your data (⌘⇧K)",
         keywords: "iq ask question answer knowledge semantic find",
         icon: Sparkles,
         mode: "iq",
