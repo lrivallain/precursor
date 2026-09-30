@@ -91,6 +91,17 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Fixed
 
+- **Large attached documents are no longer cut after a page or two.** Text
+  extracted from PDF, DOCX, PPTX and text attachments was capped at 4,000
+  characters, often less than a paper's introduction, and the only sign of the
+  cut was a trailing `…`. The cap is now 200,000 characters and configurable
+  (`llm_max_attachment_chars`, **Settings → Model → Prompt budgeting**). When
+  a document goes past it, the model is told how much it's seeing out of the
+  total. The per-tool-result cap also stopped applying to user messages, where
+  it had been cutting attachment text at about 60k characters. Extracted text
+  is cached next to its blob and parsed off the event loop, so a large PDF
+  isn't re-parsed on every later turn.
+
 - **Large MCP tool results no longer fail with "SSE stream ended without a
   response".** Since the move to MCP 2, the client parsed server-sent events
   with httpx2, which caps a single event at 1 MiB. A tool result is one event,

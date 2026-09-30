@@ -8,8 +8,9 @@ model's context window (e.g. "prompt is too long: 1.29M > 1M tokens").
 This module trims the ``messages`` list to a token budget right before each
 provider call, without mutating the caller's list. Strategy:
 
-1. Truncate any single oversized message (mainly tool results) to a per-message
-   cap so one giant payload can't dominate the prompt.
+1. Truncate any single oversized tool result to a per-message cap so one giant
+   payload can't dominate the prompt. User turns are exempt: their document
+   attachments already carry their own cap (``llm_max_attachment_chars``).
 2. Always keep ``system`` messages and as many of the *most recent* turns as fit
    the overall budget, dropping the oldest first.
 3. Strip leading orphan ``tool`` messages so we never send a tool result whose
@@ -64,9 +65,9 @@ def trim_messages(
 ) -> list[ChatMessage]:
     """Return a budget-trimmed copy of ``messages`` (inputs are not mutated).
 
-    ``system`` messages are always retained (but still subject to per-message
-    truncation). Among the rest, the newest turns are kept up to
-    ``max_input_tokens``; the oldest are dropped first.
+    ``tool`` results are truncated to ``per_message_max_tokens``. ``system``
+    messages are always retained. Among the rest, the newest turns are kept up
+    to ``max_input_tokens``; the oldest are dropped first.
     """
     if not messages:
         return messages
@@ -74,7 +75,11 @@ def trim_messages(
     # 1. Per-message truncation (copy; never mutate the caller's objects).
     capped: list[ChatMessage] = []
     for m in messages:
-        if m.content and len(m.content) > per_message_max_tokens * _CHARS_PER_TOKEN:
+        if (
+            m.role == "tool"
+            and m.content
+            and len(m.content) > per_message_max_tokens * _CHARS_PER_TOKEN
+        ):
             capped.append(replace(m, content=_truncate_content(m.content, per_message_max_tokens)))
         else:
             capped.append(m)
