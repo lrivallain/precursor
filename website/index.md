@@ -86,6 +86,14 @@ features:
       a command runner, WorkIQ, and your own.
     link: /features/mcp
     linkText: About MCP
+  - icon: 🔎
+    title: Precursor IQ
+    details: >-
+      Find anything by meaning with hybrid full-text and semantic ranking, and
+      get cited answers from your own topics, chats, agents and meetings, in ⌘K
+      or over MCP.
+    link: /features/iq
+    linkText: About Precursor IQ
   - icon: 🧠
     title: Skills & memory
     details: >-

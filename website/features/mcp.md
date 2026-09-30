@@ -407,7 +407,8 @@ tenant is known the entries stay unconfigured and say so.
 
 Precursor runs an MCP server (the SDK's `MCPServer`) named **`precursor`** that exposes its own data
 to MCP hosts (VS Code, CLI agents): topics, messages, chats, agents, live
-(meeting) sessions, cross-entity search, skills, memory,
+(meeting) sessions, cross-entity search, [Precursor IQ](/features/iq)
+retrieval and cited answers, skills, memory,
 [agent state](/features/agents-mode/artifacts-state#durable-state-the-private-scratchpad),
 [workflow state](/features/workflows/steps#pipeline-state-what-a-workflow-remembers),
 `append_note`, `post_message`, schedules, and reminders.
@@ -441,11 +442,18 @@ external host that launches `python -m …precursor_server` on its own gets no
 token and so relays nothing; point it at the **HTTP endpoint** below instead,
 which runs inside the app process and therefore updates the UI directly.
 
-**Search spans every surface** — the same ⌘K palette engine — so a host can find
-a topic, chat, agent task or meeting by content and then follow the hit's
+**Search spans every surface**, using the same substring lookup the ⌘K palette
+falls back to, so a host can find a topic, chat, agent task or meeting by content and then follow the hit's
 `accessor` hint (`get_chat`, `get_agent`, …) to read the full record. Chat, agent
 and live hits only appear when their own section is exposed, since their snippets
 disclose that content.
+
+**[Precursor IQ](/features/iq) adds ranked, cited retrieval.** `retrieve`
+returns the passages most relevant to a natural-language query, plus a
+grounding Markdown block that numbers them as `[^n]` citations, WorkIQ-style.
+`ask` has Precursor's model write a cited answer from those passages. Each has
+its own toggle (`iq`, `iq_ask`), and every hit is also gated by its source's
+section, so IQ never returns more than the per-section tools would.
 
 **Topics come back with their tree position resolved.** Every topic payload
 carries a `path` — the ancestor slugs joined root-first with `/` — so a caller

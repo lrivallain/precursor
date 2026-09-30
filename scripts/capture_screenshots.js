@@ -627,6 +627,60 @@ const scenes = {
     },
   },
 
+  // ⌘K ranked by Precursor IQ: words matched out of order, title hits first,
+  // then the most relevant passages across topics, chats and live sessions.
+  "iq-palette": {
+    viewport: { width: 1280, height: 860 },
+    async go(page) {
+      await page.goto(`${BASE}/`, { waitUntil: "networkidle" });
+      await page.keyboard.press("ControlOrMeta+k");
+      await page.waitForSelector("#command-palette-input");
+      await page.fill("#command-palette-input", "retries latency regression");
+      await page.locator("text=Ask Precursor").first().waitFor({ timeout: 10000 });
+      await sleep(700);
+      return clipOf(page, "[role=dialog]", 0);
+    },
+  },
+
+  // Ask mode: a cited answer grounded on the same index. The demo has no model,
+  // so the answer text is a fixture built from the real retrieved sources.
+  "iq-ask": {
+    viewport: { width: 1280, height: 860 },
+    async go(page) {
+      await page.route("**/api/iq/ask", async (route) => {
+        const { question } = JSON.parse(route.request().postData() || "{}");
+        const found = await (
+          await page.request.get(
+            `${BASE}/api/iq/retrieve?q=${encodeURIComponent(question)}&limit=5`,
+          )
+        ).json();
+        await route.fulfill({
+          json: {
+            question,
+            model: "claude-sonnet-5",
+            answer:
+              "The latency regression came from **retries amplifying load** when " +
+              "the search backend slowed down [^1]. The weekly sync agreed to cap " +
+              "retries and add jittered backoff before the next release [^2], and " +
+              "the follow-up is tracked in the release notes [^3].",
+            citations: found.hits.slice(0, 3),
+            sources: found.hits,
+          },
+        });
+      });
+      await page.goto(`${BASE}/`, { waitUntil: "networkidle" });
+      await page.keyboard.press("ControlOrMeta+k");
+      await page.waitForSelector("#command-palette-input");
+      await page.fill("#command-palette-input", "why did search latency regress?");
+      await page.locator("text=Ask Precursor").first().waitFor({ timeout: 10000 });
+      await page.keyboard.press("Tab");
+      await page.locator("text=Precursor answer").first().waitFor({ timeout: 10000 });
+      await page.getByText("Sources", { exact: true }).waitFor({ timeout: 10000 });
+      await sleep(700);
+      return clipOf(page, "[role=dialog]", 0);
+    },
+  },
+
   // Settings → Skills, listing the demo SKILL.md fixtures found on disk.
   "skills-memory": {
     viewport: { width: 1440, height: 1000 },

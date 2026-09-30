@@ -171,6 +171,11 @@ def _extract_non_image_text(att: Attachment) -> str:
     return ""
 
 
+def extract_attachment_text(att: Attachment) -> str:
+    """Best-effort plain text of a non-image attachment (``""`` when none)."""
+    return _extract_non_image_text(att)
+
+
 def attachments_to_text_context(atts: list[Attachment]) -> str:
     if not atts:
         return ""

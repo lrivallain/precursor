@@ -1389,6 +1389,11 @@ export interface Settings {
   // Whether the active provider can back the endpoint, and why not.
   openai_proxy_available: boolean;
   openai_proxy_unavailable_reason: string | null;
+  // Precursor IQ: opt-in embeddings (spend provider quota), the embeddings
+  // model/deployment, and the model writing cited answers ("" = chat model).
+  iq_embeddings_enabled: boolean;
+  iq_embedding_model: string;
+  iq_ask_model: string;
   // Tenant GUID used by the Agent 365 servers (the workiq-* family).
   workiq_tenant_id: string;
   // True when the tenant above was read off a stored token rather than typed.
@@ -1472,6 +1477,9 @@ export interface SettingsUpdate {
   mcp_http_enabled?: boolean;
   plugin_install_enabled?: boolean;
   openai_proxy_enabled?: boolean;
+  iq_embeddings_enabled?: boolean;
+  iq_embedding_model?: string;
+  iq_ask_model?: string;
   workiq_tenant_id?: string;
   playwright_browser?: string;
   llm_max_input_tokens?: number;
@@ -2547,6 +2555,61 @@ export interface SearchResult {
 export interface SearchResponse {
   query: string;
   results: SearchResult[];
+}
+
+// Precursor IQ — mirrors precursor/backend/schemas/iq.py.
+export type IQSection = SearchSection | "memory";
+
+export type IQField = SearchField | "brief" | "attachment" | "memory";
+
+export interface IQHit {
+  // Citation number: the answer cites this hit as [^id].
+  id: number;
+  section: IQSection;
+  field: IQField;
+  source_kind: string;
+  entity_id: number;
+  ref: string | null;
+  // Topics only: root-first slug path.
+  path: string | null;
+  title: string;
+  snippet: string;
+  excerpt: string;
+  role: string | null;
+  is_title: boolean;
+  score: number;
+  updated_at: string | null;
+  url: string | null;
+}
+
+export interface IQRetrieveResponse {
+  query: string;
+  hits: IQHit[];
+  markdown: string;
+  lexical_backend: string;
+  semantic: boolean;
+  pending: number;
+}
+
+export interface IQAskResponse {
+  question: string;
+  answer: string;
+  model: string | null;
+  citations: IQHit[];
+  sources: IQHit[];
+}
+
+export interface IQStatus {
+  enabled: boolean;
+  chunks: number;
+  pending: number;
+  sections: Record<string, number>;
+  lexical_backend: string;
+  embeddings_enabled: boolean;
+  embeddings_available: boolean;
+  embedding_model: string;
+  embedded: number;
+  reconciled_at: string | null;
 }
 
 // ── Refine with AI ──────────────────────────────────────────────────────────

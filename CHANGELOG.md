@@ -15,6 +15,25 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **Precursor IQ: semantic search and cited answers over your own content.**
+  Topics, topic briefs, messages, attachment text, chats, agent prompts and
+  answers, live notes, summaries, transcripts and insights, and memory are now
+  indexed as passages (SQLite FTS5, or `tsvector` on Postgres). The index is
+  kept current through a change queue written in the same transaction as each
+  write, plus an hourly check for bulk edits. **⌘K** now ranks results by
+  relevance, so words match in any order, without accents and in any field, and
+  its new **Ask** mode (Tab) answers with numbered citations. MCP hosts get the
+  same thing WorkIQ-style: `retrieve` returns ranked hits plus grounding
+  Markdown with `[^n]` citations, and `ask` returns a cited answer. They sit
+  behind two new exposure sections, `iq` and `iq_ask` (off by default), and each
+  hit is also gated by its own section. Opt-in **embeddings**
+  (`text-embedding-3-small` at 256 dimensions, via the active provider) add
+  paraphrase matching, fused with full-text by Reciprocal Rank Fusion, with no
+  new dependency. New `/api/iq/{retrieve,ask,status,reindex}`, the settings
+  `iq_embeddings_enabled`, `iq_embedding_model` and `iq_ask_model`, and the env
+  vars `PRECURSOR_IQ_ENABLED`, `PRECURSOR_IQ_INDEX_POLL_SECONDS` and
+  `PRECURSOR_IQ_RECONCILE_POLL_SECONDS`. Migration `9b4e2f7a1c3d` adds
+  `iq_chunks` / `iq_dirty`. The Postgres full-text path isn't covered by CI.
 - **An OpenAI-compatible endpoint for your models.** Point VS Code (as a
   *Custom Endpoint* model provider), Open WebUI, Continue or the `openai` SDK at
   `/api/openai/v1` and use the active provider's models through Precursor —

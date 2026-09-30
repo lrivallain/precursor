@@ -28,6 +28,7 @@ from precursor.backend.models.collection import (
     DEFAULT_COLLECTION_NAME,
     Collection,
 )
+from precursor.backend.models.iq import IQChunk, IQDirty
 from precursor.backend.models.issue_context import IssueContextCache
 from precursor.backend.models.mcp_server import MCPServer
 from precursor.backend.models.mcp_tool_cache import MCPToolCache
@@ -91,6 +92,8 @@ __all__ = [
     "Base",
     "Chat",
     "Collection",
+    "IQChunk",
+    "IQDirty",
     "IssueContextCache",
     "MCPServer",
     "MCPToolCache",

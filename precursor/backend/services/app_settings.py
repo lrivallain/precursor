@@ -68,6 +68,10 @@ MCP_EXPOSE_SECTIONS: tuple[str, ...] = (
     "agents",
     "live",
     "search",
+    # Precursor IQ: ranked retrieval with grounding + citations. ``iq_ask`` also
+    # runs a model call per request, so it spends the provider's quota.
+    "iq",
+    "iq_ask",
     "skills",
     "memory",
     "memory_write",
@@ -715,6 +719,32 @@ async def resolve_openai_proxy_enabled(session: AsyncSession) -> bool:
 async def resolve_openai_proxy_key(session: AsyncSession) -> str:
     """The OpenAI-compatible endpoint's API key, or ``""`` before one is minted."""
     return await resolve(session, SettingSpec("openai_proxy_key", _nonempty_str(), default=""))
+
+
+# Precursor IQ embeddings are opt-in: every indexed chunk is sent to the active
+# provider's embeddings endpoint, which spends quota. Retrieval stays full-text
+# only until the user turns them on.
+DEFAULT_IQ_EMBEDDINGS_ENABLED = False
+DEFAULT_IQ_EMBEDDING_MODEL = "text-embedding-3-small"
+
+
+async def resolve_iq_embeddings_enabled(session: AsyncSession) -> bool:
+    return await resolve(
+        session,
+        SettingSpec("iq_embeddings_enabled", _boolean, default=DEFAULT_IQ_EMBEDDINGS_ENABLED),
+    )
+
+
+async def resolve_iq_embedding_model(session: AsyncSession) -> str:
+    return await resolve(
+        session,
+        SettingSpec("iq_embedding_model", _nonempty_str(), default=DEFAULT_IQ_EMBEDDING_MODEL),
+    )
+
+
+async def resolve_iq_ask_model(session: AsyncSession) -> str:
+    """Model that writes IQ answers; ``""`` falls back to the chat model."""
+    return await resolve(session, SettingSpec("iq_ask_model", _any_str, default=""))
 
 
 async def resolve_mcp_enabled(session: AsyncSession) -> dict[str, bool]:

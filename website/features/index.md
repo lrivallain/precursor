@@ -59,6 +59,9 @@ These work across the sections above:
   reminders.
 - [**MCP (both ways)**](/features/mcp) — Precursor is an MCP server *and* an MCP
   client, with built-in tool servers and support for your own.
+- [**Precursor IQ**](/features/iq): ranked, cited retrieval over your own
+  content. It powers the ⌘K palette and its Ask mode, and serves `retrieve` /
+  `ask` to MCP hosts, WorkIQ-style.
 - [**OpenAI-compatible endpoint**](/features/openai-endpoint) — let VS Code or
   any OpenAI client use the active provider's models through Precursor.
 - [**Command runner**](/features/command-runner) — execute bash / python / node
