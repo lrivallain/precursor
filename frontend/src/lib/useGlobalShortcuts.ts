@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import type { Dispatch, SetStateAction } from "react";
 
 // Shell state the window-level shortcuts drive. Both setters are React state
@@ -8,6 +8,17 @@ export interface GlobalShortcutsDeps {
   mobileNavOpen: boolean;
   setMobileNavOpen: Dispatch<SetStateAction<boolean>>;
   setPaletteOpen: Dispatch<SetStateAction<boolean>>;
+  /** ⌘⇧K: open the IQ section, seeding the question with the selected text. */
+  onAskIQ: (question: string) => void;
+}
+
+// The palette is a modal too, but ⌘⇧K is allowed to replace it.
+const OTHER_MODAL = '[aria-modal="true"]:not([aria-labelledby="command-palette-input"])';
+// Mirrors the backend's cap on a question (schemas/iq.py IQAskRequest).
+const MAX_QUESTION = 4000;
+
+function selectedText(): string {
+  return (window.getSelection()?.toString() ?? "").replace(/\s+/g, " ").trim().slice(0, MAX_QUESTION);
 }
 
 // Surfaces that take text without being a form control or contenteditable.
@@ -37,7 +48,10 @@ function isTypingTarget(e: KeyboardEvent): boolean {
 // attached while the drawer is open, so folding it into the palette's
 // always-on listener would change when (and in which order) it's registered.
 export function useGlobalShortcuts(deps: GlobalShortcutsDeps): void {
-  const { mobileNavOpen, setMobileNavOpen, setPaletteOpen } = deps;
+  const { mobileNavOpen, setMobileNavOpen, setPaletteOpen, onAskIQ } = deps;
+  // The listener registers once; read the latest callback through a ref.
+  const askRef = useRef(onAskIQ);
+  askRef.current = onAskIQ;
 
   useEffect(() => {
     if (!mobileNavOpen) return;
@@ -51,9 +65,17 @@ export function useGlobalShortcuts(deps: GlobalShortcutsDeps): void {
   // Global ⌘K / Ctrl+K toggles the command palette — a width-independent way to
   // jump to any section regardless of the sidebar's horizontal overflow. A bare
   // "/" opens it too (search-first, like GitHub), but only when the user isn't
-  // typing and no other dialog owns the screen.
+  // typing and no other dialog owns the screen. ⌘⇧K / Ctrl+Shift+K asks IQ
+  // instead, from anywhere — typing included, since it's a chord.
   useEffect(() => {
     function onKey(e: KeyboardEvent): void {
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && e.shiftKey && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        if (document.querySelector(OTHER_MODAL)) return;
+        setPaletteOpen(false);
+        askRef.current(selectedText());
+        return;
+      }
       if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "k") {
         e.preventDefault();
         setPaletteOpen((o) => !o);

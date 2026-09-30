@@ -13,6 +13,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from precursor.backend.config import get_settings
+from precursor.backend.services.iq import events as _iq_events
 
 if TYPE_CHECKING:
     from alembic.config import Config
@@ -49,6 +50,12 @@ if engine.dialect.name == "sqlite":
         finally:
             cursor.close()
 
+
+# Precursor IQ queues changed rows for re-indexing from a session-wide flush
+# hook. Installed here rather than by the IQ package so every process that
+# writes through ``SessionLocal`` (the app, the stdio MCP server, scripts)
+# keeps the index current, not only the ones that happen to import IQ.
+_iq_events.install()
 
 SessionLocal: async_sessionmaker[AsyncSession] = async_sessionmaker(
     engine,

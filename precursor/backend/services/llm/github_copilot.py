@@ -22,11 +22,13 @@ from openai import AsyncOpenAI
 from precursor.backend.services.llm._openai_compat import (
     ModelNotEntitledError,
     UnsupportedEndpointError,
+    embed_openai,
     stream_openai_tools,
 )
 from precursor.backend.services.llm._responses_compat import stream_responses_tools
 from precursor.backend.services.llm.base import (
     ChatMessage,
+    EmbeddingResult,
     LLMModel,
     ProviderEvent,
     TextDeltaEvent,
@@ -145,6 +147,11 @@ class GitHubCopilotProvider:
             request_options=request_options,
         ):
             yield event
+
+    async def embed(
+        self, texts: Sequence[str], *, model: str, dimensions: int | None = None
+    ) -> EmbeddingResult:
+        return await embed_openai(self._client, texts, model=model, dimensions=dimensions)
 
     async def list_models(self) -> list[LLMModel]:
         headers = {

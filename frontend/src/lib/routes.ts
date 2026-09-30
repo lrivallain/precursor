@@ -12,6 +12,7 @@ import { topicSlugPath } from "./topicTree";
 //   /live/<slug>                                         → live meeting sessions
 //   /agents/<public-id>                                  → agents
 //   /workflows/<id>[/run/<n|latest>]                     → workflows
+//   /iq                                                  → ask Precursor IQ
 //   /ws/<slug>/<file/path>                               → workspaces
 //   /<plugin-section>/<opaque…>[#hash]                   → plugin sections
 // Topic slugs are globally unique, so the trailing slug alone identifies the
@@ -111,6 +112,7 @@ export function parseAppRoute(): AppRoute {
       workflowRunRef: runRef,
     };
   }
+  if (segs[0] === "iq") return { ...base, mode: "iq" };
   if (segs[0] === "chats") {
     return { ...base, mode: "chats", chatSlug: segs[1] ? decodeURIComponent(segs[1]) : null };
   }
@@ -157,6 +159,7 @@ const CORE_MODES: ReadonlySet<string> = new Set([
   "workspaces",
   "agents",
   "workflows",
+  "iq",
 ]);
 
 /** Whether `mode` is a plugin section rather than one of core's own. */

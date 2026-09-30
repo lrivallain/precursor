@@ -86,6 +86,14 @@ features:
       a command runner, WorkIQ, and your own.
     link: /features/mcp
     linkText: About MCP
+  - icon: 🔎
+    title: Precursor IQ
+    details: >-
+      Ask questions about your own topics, chats, agents and meetings in the
+      IQ section, ⌘K or over MCP, and get cited answers that open their
+      sources.
+    link: /features/iq
+    linkText: About Precursor IQ
   - icon: 🧠
     title: Skills & memory
     details: >-

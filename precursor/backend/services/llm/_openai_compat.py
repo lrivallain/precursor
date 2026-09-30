@@ -7,10 +7,11 @@ import re
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from typing import Any
 
-from openai import APIStatusError, AsyncOpenAI
+from openai import APIStatusError, AsyncOpenAI, BadRequestError
 
 from precursor.backend.services.llm.base import (
     ChatMessage,
+    EmbeddingResult,
     LLMError,
     ProviderEvent,
     ReasoningDeltaEvent,
@@ -271,3 +272,30 @@ async def stream_openai_tools(
     if usage is not None:
         yield usage
     yield TurnDoneEvent(finish_reason=finish_reason)
+
+
+async def embed_openai(
+    client: AsyncOpenAI,
+    texts: Sequence[str],
+    *,
+    model: str,
+    dimensions: int | None = None,
+) -> EmbeddingResult:
+    """Call ``/embeddings`` for ``texts``; retry without ``dimensions`` if refused.
+
+    Older models (``text-embedding-ada-002``) reject the parameter and only
+    serve their native width, which is still usable — just larger.
+    """
+    kwargs: dict[str, Any] = {"model": model, "input": list(texts)}
+    if dimensions:
+        kwargs["dimensions"] = dimensions
+    try:
+        resp = await client.embeddings.create(**kwargs)
+    except BadRequestError:
+        if "dimensions" not in kwargs:
+            raise
+        kwargs.pop("dimensions")
+        resp = await client.embeddings.create(**kwargs)
+    ordered = sorted(resp.data, key=lambda d: d.index)
+    tokens = getattr(resp.usage, "prompt_tokens", 0) if resp.usage is not None else 0
+    return EmbeddingResult(vectors=[list(d.embedding) for d in ordered], prompt_tokens=tokens or 0)

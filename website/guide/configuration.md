@@ -118,7 +118,7 @@ feature it configures:
 | **Model** | Active provider + credentials, default chat model, prompt budgeting (including how long tool results stay in full; see [context compression](/features/context-compression#automatic-trimming)), and the [OpenAI-compatible endpoint](/features/openai-endpoint) that lets other clients use those models (off by default). |
 | **Chat** | Stats sidebar, notifications, and [auto-naming](/features/chats#chats-name-themselves) for new chats. |
 | **GitHub** | Token, default repository, issue-context behaviour. |
-| **MCP** | Enable [tool servers](/features/mcp), and choose which of your own sections the built-in server exposes (off by default). |
+| **MCP** | Enable [tool servers](/features/mcp), choose which of your own sections the built-in server exposes (off by default), and manage the [Precursor IQ](/features/iq) index: status, rebuild, opt-in embeddings and the Ask answer model. |
 | **Collections** | Create and edit [collections](/features/collections). |
 | **Agents** | Turn [Agents mode](/features/agents-mode) on/off, set the global [approval policy](/features/agents-mode/running#approval-policy-per-agent), manage [blueprints](/features/agents-mode/orchestration#blueprints-reusable-templates), and bound [timeline retention](/features/storage#why-agent-timelines-have-two-levers). |
 | **Workflows** | The [defaults a new pipeline starts from](/features/workflows/building). |

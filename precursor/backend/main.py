@@ -45,6 +45,7 @@ from precursor.backend.routers import (
     drawio,
     events,
     github,
+    iq,
     issue,
     live,
     llm,
@@ -129,6 +130,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             logger.info("Pruned %d archived agent event(s) on startup", pruned_events.rows)
     except Exception:  # pragma: no cover - best-effort cleanup
         logger.warning("Agent-event retention sweep failed", exc_info=True)
+    if get_settings().iq_enabled:
+        from precursor.backend.services.iq import indexer as iq_indexer
+
+        try:
+            await iq_indexer.ensure_index_version()
+        except Exception:  # pragma: no cover - the index is derived; never fatal
+            logger.warning("Precursor IQ index bootstrap failed", exc_info=True)
     from precursor.backend.services.mcp.user_servers import hydrate_user_entries
 
     await hydrate_user_entries()
@@ -190,6 +198,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     backup_ticker = get_backup_ticker()
     await backup_ticker.start()
+    from precursor.backend.services.iq.ticker import get_iq_ticker
+
+    iq_ticker = get_iq_ticker()
+    await iq_ticker.start()
     from precursor.backend.services.mcp.workiq_keepalive import get_workiq_keepalive
 
     workiq_keepalive = get_workiq_keepalive()
@@ -221,6 +233,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await live_transcript_ticker.stop()
         await agent_event_ticker.stop()
         await backup_ticker.stop()
+        await iq_ticker.stop()
+        from precursor.backend.services.iq import indexer as iq_indexer
+
+        await iq_indexer.shutdown()
         await workiq_keepalive.stop()
         await mcp_warmup.stop()
         await agent_manager.stop()
@@ -419,6 +435,7 @@ def create_app() -> FastAPI:
         version.router,
         stats.router,
         search.router,
+        iq.router,
         refine.router,
     ):
         app.include_router(r)
