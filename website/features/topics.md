@@ -137,6 +137,10 @@ past it, a reply keeps its answer but loses its Thinking area — see
 - **`/clear`** (or **Topic settings → Clear chat**) erases the whole transcript
   after a confirmation. It always leaves it empty: a reply still streaming is
   stopped first, so its answer can't land afterwards without its prompt.
+- **`/compact [focus]`** summarises a long conversation so it fits the model's
+  window again. The older messages stay visible, and **Undo** on the marker
+  restores them for the model. See
+  [context compression](/features/context-compression).
 - **Stop** keeps what already streamed, marked _(stopped)_. A
   [tool call](/features/mcp) still running settles as **stopped** instead of
   spinning, and stays in the transcript after a reload — so the next turn knows

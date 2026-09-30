@@ -93,6 +93,14 @@ features:
       the Copilot CLI) plus long-term memory injected into conversation.
     link: /features/skills-memory
     linkText: About skills & memory
+  - icon: 🗜️
+    title: Context compression
+    details: >-
+      Long threads stay usable: screenshots and older tool output are trimmed
+      automatically, and /compact summarises the conversation so far so you
+      can keep going.
+    link: /features/context-compression
+    linkText: About context compression
   - icon: ⏰
     title: Scheduler & reminders
     details: >-

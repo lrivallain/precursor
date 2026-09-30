@@ -115,7 +115,7 @@ feature it configures:
 | Tab | Covers |
 | --- | --- |
 | **Appearance** | Light/dark/system theme and the reading font, including dyslexia-friendly options like OpenDyslexic, Atkinson Hyperlegible and Lexend — see [Accessibility](/features/accessibility). |
-| **Model** | Active provider + credentials, default chat model, and the [OpenAI-compatible endpoint](/features/openai-endpoint) that lets other clients use those models (off by default). |
+| **Model** | Active provider + credentials, default chat model, prompt budgeting (including how long tool results stay in full; see [context compression](/features/context-compression#automatic-trimming)), and the [OpenAI-compatible endpoint](/features/openai-endpoint) that lets other clients use those models (off by default). |
 | **Chat** | Stats sidebar, notifications, and [auto-naming](/features/chats#chats-name-themselves) for new chats. |
 | **GitHub** | Token, default repository, issue-context behaviour. |
 | **MCP** | Enable [tool servers](/features/mcp), and choose which of your own sections the built-in server exposes (off by default). |

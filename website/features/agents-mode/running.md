@@ -65,6 +65,14 @@ interrupted, and whenever Agents mode or the Copilot runtime is unavailable.
 Use **Stop** for an active run, or the timeline's **Resume** action to continue
 an interrupted turn rather than replace it.
 
+### Keeping a long run within the window
+
+The runtime compacts a long conversation on its own when the context window runs
+low. **`/compact [focus]`** in the composer, or **Compact context** under
+**Usage** in the insights sidebar, does it now. Each compaction shows in the
+timeline as a *context compacted* marker with the tokens freed. See
+[context compression](/features/context-compression#compacting-an-agent).
+
 ## Approval policy (per agent)
 
 Every agent action is gated by an **approval policy**. There's a global default

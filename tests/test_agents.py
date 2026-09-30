@@ -991,6 +991,7 @@ def test_agent_command_registry_is_source_of_truth() -> None:
         "rename",
         "archive",
         "clear",
+        "compact",
         "role",
         "memory-store",
         "memory-update",

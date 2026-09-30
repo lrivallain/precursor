@@ -77,6 +77,7 @@ interface Props {
 interface SystemSettings {
   llm_max_input_tokens: number;
   llm_max_tool_result_tokens: number;
+  llm_tool_result_keep_turns: number;
   llm_max_attachment_chars: number;
   scheduled_run_timeout_seconds: number;
   tool_result_retention_days: number;
@@ -94,6 +95,7 @@ function pickSystem(s: Settings): SystemSettings {
   return {
     llm_max_input_tokens: s.llm_max_input_tokens,
     llm_max_tool_result_tokens: s.llm_max_tool_result_tokens,
+    llm_tool_result_keep_turns: s.llm_tool_result_keep_turns,
     llm_max_attachment_chars: s.llm_max_attachment_chars,
     scheduled_run_timeout_seconds: s.scheduled_run_timeout_seconds,
     tool_result_retention_days: s.tool_result_retention_days,
@@ -1043,6 +1045,24 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
                       <p className="text-[11px] text-muted mt-1">
                         Per-message ceiling applied to individual tool outputs
                         before they enter the transcript.
+                      </p>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-muted mb-1">
+                        Keep tool results in full for the last N turns
+                      </label>
+                      <NumberInput
+                        value={sys.llm_tool_result_keep_turns}
+                        min={0}
+                        max={1000}
+                        onCommit={(n) =>
+                          setSys({ ...sys, llm_tool_result_keep_turns: n })
+                        }
+                      />
+                      <p className="text-[11px] text-muted mt-1">
+                        Larger tool outputs from older turns reach the model as
+                        a short preview; it can call the tool again when it
+                        needs the rest. 0 always sends them in full.
                       </p>
                     </div>
                     <div>

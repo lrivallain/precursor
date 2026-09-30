@@ -51,6 +51,24 @@ class MessageCreate(BaseModel):
     content: str = Field(min_length=1)
 
 
+class CompactRequest(BaseModel):
+    """``/compact`` options: what the summary should focus on, if anything."""
+
+    instructions: str | None = Field(default=None, max_length=4000)
+
+
+class ContextEstimateRead(BaseModel):
+    """Estimated history the next turn sends (system prompt and tools excluded)."""
+
+    tokens: int
+    by_role: dict[str, int]
+    saved_by_hygiene: int
+    messages: int
+    compacted: bool
+    compaction_id: int | None = None
+    compacted_messages: int = 0
+
+
 class StoppedTurn(BaseModel):
     """What a user-stopped turn leaves behind, to persist as-is.
 
@@ -78,6 +96,8 @@ class MessageRead(BaseModel):
     chat_id: int | None = None
     role: MessageRole
     content: str
+    # Special-row marker; "compaction" = a context-compaction summary.
+    kind: str | None = None
     # The model's thinking for this assistant round, shown collapsed.
     reasoning: str | None = None
     tool_calls: str | None = None

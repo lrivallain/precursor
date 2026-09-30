@@ -69,6 +69,8 @@ from precursor.backend.schemas.memory import (
 from precursor.backend.schemas.message import (
     AttachmentRead,
     ChatRequest,
+    CompactRequest,
+    ContextEstimateRead,
     MessageCreate,
     MessageRead,
     NoteDraftAttachmentRead,
@@ -159,6 +161,8 @@ __all__ = [
     "CollectionRead",
     "CollectionUpdate",
     "CommitRequest",
+    "CompactRequest",
+    "ContextEstimateRead",
     "ContextNoteAdd",
     "ContextNotesUpdate",
     "FileContent",

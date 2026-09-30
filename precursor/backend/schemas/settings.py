@@ -76,6 +76,9 @@ class SettingsPayload(BaseModel):
     # Prompt budgeting.
     llm_max_input_tokens: int | None = None
     llm_max_tool_result_tokens: int | None = None
+    # Large tool results older than this many user turns reach the model as a
+    # short preview (0 = always send them in full).
+    llm_tool_result_keep_turns: int | None = None
     # Extracted-text cap per document attachment, in characters.
     llm_max_attachment_chars: int | None = None
     # Scheduler (only the live-applicable timeout is editable).
@@ -188,6 +191,7 @@ class SettingsRead(BaseModel):
     # --- System settings (effective: env default with DB override applied) ---
     llm_max_input_tokens: int = 600_000
     llm_max_tool_result_tokens: int = 20_000
+    llm_tool_result_keep_turns: int = 5
     llm_max_attachment_chars: int = 200_000
     scheduled_run_timeout_seconds: int = 600
     tool_result_retention_days: int = 0

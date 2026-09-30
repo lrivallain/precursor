@@ -326,19 +326,44 @@ async def publish_message_changed_chat(chat_id: int) -> None:
     await _bus.publish({"type": "message.changed", "chat_id": chat_id})
 
 
+# Turns currently generating, per container: every streamed or unattended turn
+# brackets itself with the stream.started / stream.ended publishers below, so
+# this is the one place that knows a transcript is mid-write (compaction must
+# not summarise a turn that is still being appended to).
+_live_streams: dict[tuple[str, int], int] = {}
+
+
+def _stream_delta(kind: str, container_id: int, delta: int) -> None:
+    key = (kind, container_id)
+    count = _live_streams.get(key, 0) + delta
+    if count > 0:
+        _live_streams[key] = count
+    else:
+        _live_streams.pop(key, None)
+
+
+def is_streaming(kind: str, container_id: int) -> bool:
+    """True while a turn is generating in this topic (``"topic"``) or chat."""
+    return (kind, container_id) in _live_streams
+
+
 async def publish_stream_started(topic_id: int) -> None:
+    _stream_delta("topic", topic_id, 1)
     await _bus.publish({"type": "stream.started", "topic_id": topic_id})
 
 
 async def publish_stream_started_chat(chat_id: int) -> None:
+    _stream_delta("chat", chat_id, 1)
     await _bus.publish({"type": "stream.started", "chat_id": chat_id})
 
 
 async def publish_stream_ended(topic_id: int) -> None:
+    _stream_delta("topic", topic_id, -1)
     await _bus.publish({"type": "stream.ended", "topic_id": topic_id})
 
 
 async def publish_stream_ended_chat(chat_id: int) -> None:
+    _stream_delta("chat", chat_id, -1)
     await _bus.publish({"type": "stream.ended", "chat_id": chat_id})
 
 

@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import type { ReactNode } from "react";
 import { BarChart3 } from "lucide-react";
 import type { AgentEvent } from "../lib/types";
+import { CompactContextButton } from "./CompactContext";
 
 // Per-agent token usage distilled from the workflow timeline. `usage` events
 // (one per metered LLM round) carry input/output tokens; `context_usage` events
@@ -48,6 +49,13 @@ export function computeAgentUsage(events: AgentEvent[]): AgentUsage {
         contextUsed = numField(ev.data, "current_tokens");
         contextLimit = limit;
       }
+    } else if (kind === "compaction" && ev.data?.success !== false) {
+      // The window shrinks the moment a compaction lands, before the next
+      // context_usage report.
+      const post = ev.data?.post_compaction_tokens;
+      if (typeof post === "number" && Number.isFinite(post)) contextUsed = post;
+      const limit = numField(ev.data, "token_limit");
+      if (limit > 0) contextLimit = limit;
     }
   }
   return { lastInput, lastOutput, totalInput, totalOutput, rounds, contextUsed, contextLimit };
@@ -139,11 +147,18 @@ function ContextWindowBar({
 export function AgentUsageSection({
   events,
   model,
+  compact,
 }: {
   events: AgentEvent[];
   model: string | null;
+  /** The /compact control; omitted where the agent can't be compacted. */
+  compact?: { busy: boolean; disabled: boolean; disabledReason?: string; run: () => void };
 }) {
   const usage = useAgentUsage(events);
+  const pct =
+    usage.contextLimit !== null && usage.contextUsed !== null && usage.contextLimit > 0
+      ? (usage.contextUsed / usage.contextLimit) * 100
+      : null;
   const hasUsage = usage.rounds > 0 || usage.contextLimit !== null;
   return (
     <div className="space-y-3 text-sm">
@@ -160,6 +175,15 @@ export function AgentUsageSection({
               used={usage.contextUsed}
               limit={usage.contextLimit}
               model={model}
+            />
+          )}
+          {compact && (
+            <CompactContextButton
+              pct={pct}
+              busy={compact.busy}
+              disabled={compact.disabled}
+              disabledReason={compact.disabledReason}
+              onCompact={compact.run}
             />
           )}
           <UsageGroup title="Last turn">

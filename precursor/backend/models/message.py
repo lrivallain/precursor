@@ -5,7 +5,7 @@ from __future__ import annotations
 import enum
 from typing import TYPE_CHECKING
 
-from sqlalchemy import CheckConstraint, Enum, ForeignKey, Integer, Text
+from sqlalchemy import CheckConstraint, Enum, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from precursor.backend.models.base import Base, TimestampMixin
@@ -22,6 +22,10 @@ class MessageRole(str, enum.Enum):  # noqa: UP042 - StrEnum would change str() s
     ASSISTANT = "assistant"
     SYSTEM = "system"
     TOOL = "tool"
+
+
+# ``Message.kind`` for a context-compaction summary row (see services/compaction.py).
+MESSAGE_KIND_COMPACTION = "compaction"
 
 
 class Message(Base, TimestampMixin):
@@ -58,6 +62,11 @@ class Message(Base, TimestampMixin):
     agent_session_id: Mapped[int | None] = mapped_column(
         ForeignKey("agent_sessions.id", ondelete="SET NULL"), index=True, nullable=True
     )
+
+    # Marks a special row. ``"compaction"``: a SYSTEM row whose content summarises
+    # everything before it; the model sees that summary instead of the older
+    # rows, which stay in the transcript (deleting the marker undoes it).
+    kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     # Optional serialized tool-call payload (JSON string) for assistant turns.
     tool_calls: Mapped[str | None] = mapped_column(Text, nullable=True)
