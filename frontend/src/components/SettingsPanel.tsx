@@ -704,11 +704,16 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
       }}
     >
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="settings-panel-title"
         className="bg-bg border border-border rounded-lg shadow-2xl flex flex-col w-full overflow-hidden"
         style={{ maxWidth: 960, height: "min(720px, 90vh)" }}
       >
         <header className="flex items-center justify-between px-4 h-12 border-b border-border shrink-0">
-          <h2 className="font-semibold">Settings</h2>
+          <h2 id="settings-panel-title" className="font-semibold">
+            Settings
+          </h2>
           <button
             onClick={onClose}
             className="p-1.5 rounded hover:bg-surface"
