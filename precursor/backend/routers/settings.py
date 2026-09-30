@@ -39,6 +39,8 @@ from precursor.backend.services.app_settings import (
     resolve_llm_provider,
     resolve_mcp_expose,
     resolve_mcp_http_enabled,
+    resolve_openai_proxy_enabled,
+    resolve_openai_proxy_key,
     resolve_plugin_install_enabled,
     resolve_system_settings,
     resolve_workflows_default_capabilities,
@@ -53,6 +55,12 @@ from precursor.backend.services.mcp.precursor_server import (
     is_loopback_host,
 )
 from precursor.backend.services.model_catalog import invalidate_model_catalog
+from precursor.backend.services.openai_proxy import (
+    ensure_proxy_key,
+    proxy_availability,
+    proxy_base_url,
+    rotate_proxy_key,
+)
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -144,6 +152,17 @@ async def _mcp_http_block(session: AsyncSession) -> dict[str, Any]:
     }
 
 
+async def _openai_proxy_block(session: AsyncSession) -> dict[str, Any]:
+    availability = await proxy_availability(session)
+    return {
+        "openai_proxy_enabled": await resolve_openai_proxy_enabled(session),
+        "openai_proxy_url": proxy_base_url(),
+        "openai_proxy_key": await resolve_openai_proxy_key(session),
+        "openai_proxy_available": availability.available,
+        "openai_proxy_unavailable_reason": availability.reason,
+    }
+
+
 async def _stt_block(session: AsyncSession) -> dict[str, Any]:
     return {
         "azure_speech_endpoint": await resolve_azure_speech_endpoint(session),
@@ -196,6 +215,7 @@ async def read_settings(session: AsyncSession = Depends(get_session)) -> Setting
     system = await resolve_system_settings(session)
     system["mcp_expose"] = await resolve_mcp_expose(session)
     system.update(await _mcp_http_block(session))
+    system.update(await _openai_proxy_block(session))
     system.update(await _stt_block(session))
     system.update(await _llm_block(session, data))
     system.update(await _agents_block(session))
@@ -248,6 +268,9 @@ async def update_settings(
 
     for key, value in data.items():
         await _upsert(session, key, value)
+    # First switch-on mints the key, so the endpoint is usable straight away.
+    if data.get("openai_proxy_enabled"):
+        await ensure_proxy_key(session)
     await session.commit()
 
     # Reconcile the agents runtime live so toggling the setting doesn't require a
@@ -310,11 +333,25 @@ async def update_settings(
     system = await resolve_system_settings(session)
     system["mcp_expose"] = await resolve_mcp_expose(session)
     system.update(await _mcp_http_block(session))
+    system.update(await _openai_proxy_block(session))
     system.update(await _stt_block(session))
     system.update(await _llm_block(session, refreshed))
     system.update(await _agents_block(session))
     system.update(await resolve_backup_status(session))
     return _as_read(refreshed, system, docker_available()[0], await resolve_llm_model(session))
+
+
+@router.post("/openai-proxy/key")
+async def regenerate_openai_proxy_key(
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, str]:
+    """Replace the OpenAI-compatible endpoint's API key.
+
+    Clients holding the previous key are refused from the next request on.
+    """
+    key = await rotate_proxy_key(session)
+    await session.commit()
+    return {"key": key}
 
 
 @router.post("/backup/run")

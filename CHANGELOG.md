@@ -15,6 +15,22 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **An OpenAI-compatible endpoint for your models.** Point VS Code (as a
+  *Custom Endpoint* model provider), Open WebUI, Continue or the `openai` SDK at
+  `/api/openai/v1` and use the active provider's models through Precursor —
+  streamed or not, with tools, images and the model's thinking. It's off by
+  default: switch it on in **Settings → Model**, which mints an API key that
+  stays readable there, and copy a ready-made VS Code config. It relays to
+  GitHub Copilot, OpenAI, Mistral AI, Hugging Face and Ollama, and answers `503`
+  with the Mock or Azure AI Foundry provider — or an unconfigured one — active,
+  instead of replying with canned text. Its token usage is counted under
+  `openai-endpoint`. Settings gain `openai_proxy_enabled`, `openai_proxy_url`,
+  `openai_proxy_key` and `openai_proxy_available`, `POST
+  /api/settings/openai-proxy/key` regenerates the key, catalogue models gain
+  `max_output_tokens` and `vision`, and providers `openai_proxy`. With Copilot
+  as the provider, keep it to interactive use: proxied, automated traffic can
+  trip GitHub's abuse detection.
+
 - **See the model think.** In topics and chats, a reasoning model's thinking
   now streams into a collapsed **Thinking** area above its reply. While the
   model works, the row pulses and previews the step it is on, so a long pause

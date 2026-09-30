@@ -129,6 +129,7 @@ export default withMermaid(
             { text: "Skills, roles & memory", link: "/features/skills-memory" },
             { text: "Scheduler & reminders", link: "/features/scheduler" },
             { text: "MCP (tools both ways)", link: "/features/mcp" },
+            { text: "OpenAI-compatible endpoint", link: "/features/openai-endpoint" },
             { text: "Command runner", link: "/features/command-runner" },
             { text: "Attachments", link: "/features/attachments" },
             { text: "Storage & retention", link: "/features/storage" },

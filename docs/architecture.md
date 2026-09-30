@@ -264,6 +264,19 @@ onto the same four provider events — lives in `services/llm/_responses_compat.
 Adding a provider is one `ProviderSpec` in the registry plus an implementation
 class.
 
+**Serving the models outward.** The OpenAI-compatible endpoint
+(`routers/openai_proxy.py` → `services/openai_proxy.py`, under `/api/openai/v1`)
+lets outside OpenAI clients use the active provider. It is a pure relay: the
+client's messages and function tools are translated into `ChatMessage` /
+`ToolDef`, `stream_chat_with_tools` runs once (the client owns the tool loop),
+and the provider events are rendered back as chat-completion chunks or a single
+completion. Sampling options travel as the protocol's `request_options`, which
+`_responses_compat.to_responses_options` respells for Responses-only models. The
+first event is pulled before the response starts so a provider refusal is a real
+HTTP error. It is opt-in (`openai_proxy_enabled`), needs the generated
+`openai_proxy_key` as a bearer token, and only relays to providers whose
+`ProviderSpec.openai_proxy` is set — never to the mock fallback.
+
 **One-shot calls.** Features that ask the model once with no tools (the `/gh-*`
 drafts, `/notes rephrase`, `/refine`, auto-naming, the issue and topic
 summaries, the live recap, analysis and translation) go through

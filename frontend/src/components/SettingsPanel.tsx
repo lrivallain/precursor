@@ -62,6 +62,7 @@ import { PluginsSettings } from "./PluginsSettings";
 import { resolveSettingsPages } from "../lib/plugins";
 import { usePluginDescriptors } from "../lib/pluginStore";
 import { WorkflowsSettings } from "./WorkflowsSettings";
+import { OpenAIProxySettings } from "./OpenAIProxySettings";
 import { DefinitionsMigrationWizard } from "./DefinitionsMigrationWizard";
 
 interface Props {
@@ -1044,6 +1045,17 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
                     </div>
                   </div>
                 )}
+
+                <OpenAIProxySettings
+                  settings={settings}
+                  onSettings={(next) => {
+                    setSettings(next);
+                    settingsStore.set(next);
+                  }}
+                  models={
+                    provider === settings?.llm_provider && !modelsError ? models : null
+                  }
+                />
               </section>
             )}
 

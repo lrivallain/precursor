@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 
@@ -37,6 +37,10 @@ class LLMModel:
     # reasoning-capable or the provider doesn't advertise the set — the UI hides
     # the effort picker in that case.
     supported_reasoning_efforts: list[str] = field(default_factory=list)
+    # Largest reply the model can produce, ``None`` when not advertised.
+    max_output_tokens: int | None = None
+    # Whether the model accepts image input, as far as the provider tells us.
+    vision: bool = False
 
 
 @dataclass(slots=True)
@@ -137,12 +141,18 @@ class LLMProvider(Protocol):
         messages: Sequence[ChatMessage],
         tools: Sequence[ToolDef],
         reasoning_effort: str | None = None,
+        request_options: Mapping[str, Any] | None = None,
     ) -> AsyncIterator[ProviderEvent]:
         """Yield typed events for a tool-capable assistant reply.
 
         The chat router consumes this in a loop: collect text + tool calls,
         execute the calls, append ``tool`` messages, call again until the
         model returns no further tool calls.
+
+        ``request_options`` carries extra sampling / output controls in
+        chat-completions vocabulary (``temperature``, ``tool_choice``,
+        ``response_format``…). Only the OpenAI-compatible endpoint sets them;
+        providers forward what their API understands and drop the rest.
         """
         ...
 

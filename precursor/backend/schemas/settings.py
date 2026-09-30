@@ -64,6 +64,9 @@ class SettingsPayload(BaseModel):
     # Serve the built-in 'precursor' MCP server over HTTP (localhost) too.
     mcp_http_enabled: bool | None = None
     plugin_install_enabled: bool | None = None
+    # Serve the OpenAI-compatible endpoint (/api/openai/v1). Turning it on mints
+    # the API key if there isn't one yet; the key itself isn't writable here.
+    openai_proxy_enabled: bool | None = None
     # Entra tenant GUID for the Agent 365 MCP servers (the workiq-* family).
     workiq_tenant_id: str | None = None
     # Browser channel the built-in 'playwright' server drives (--browser).
@@ -163,6 +166,16 @@ class SettingsRead(BaseModel):
     mcp_http_url: str | None = None
     # True when the app is bound to a loopback host (HTTP transport is allowed).
     mcp_http_loopback_ok: bool = True
+    # OpenAI-compatible endpoint: the switch, the base URL clients are pointed at,
+    # and its API key. The key is returned in clear on purpose — Precursor runs
+    # on a trusted host and the user must be able to paste it into more clients
+    # later. "" until the endpoint is first enabled.
+    openai_proxy_enabled: bool = False
+    openai_proxy_url: str = ""
+    openai_proxy_key: str = ""
+    # Whether the active provider can back the endpoint, and why not.
+    openai_proxy_available: bool = False
+    openai_proxy_unavailable_reason: str | None = None
     # Effective Entra tenant GUID used by the Agent 365 MCP servers ("" when unset).
     workiq_tenant_id: str = ""
     # True when the tenant above came from a signed-in token rather than config.

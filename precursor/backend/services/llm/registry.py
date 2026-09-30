@@ -47,6 +47,11 @@ class ProviderSpec:
     )
     # Hint for the UI: whether ``list_models`` is expected to return a catalog.
     discovers_models: bool = True
+    # Whether the OpenAI-compatible endpoint may relay to this provider. Opt-in:
+    # only providers that are simple to set up and publish a model catalogue a
+    # client can discover. The mock would answer with canned text, and Azure
+    # needs per-deployment wiring the endpoint can't express.
+    openai_proxy: bool = False
 
 
 def _build_azure(cfg: dict[str, str], _token: str) -> LLMProvider:
@@ -87,6 +92,7 @@ PROVIDERS: dict[str, ProviderSpec] = {
         label="GitHub Copilot",
         uses_github_token=True,
         build=lambda _cfg, token: GitHubCopilotProvider(token=token),
+        openai_proxy=True,
     ),
     "azure_foundry": ProviderSpec(
         id="azure_foundry",
@@ -119,12 +125,14 @@ PROVIDERS: dict[str, ProviderSpec] = {
         label="OpenAI",
         fields=(_KEY_FIELD, _BASE_URL_OPTIONAL),
         build=_build_openai_compatible("openai", "https://api.openai.com/v1", "OpenAI"),
+        openai_proxy=True,
     ),
     "mistral": ProviderSpec(
         id="mistral",
         label="Mistral AI",
         fields=(_KEY_FIELD, _BASE_URL_OPTIONAL),
         build=_build_openai_compatible("mistral", "https://api.mistral.ai/v1", "Mistral"),
+        openai_proxy=True,
     ),
     "huggingface": ProviderSpec(
         id="huggingface",
@@ -138,6 +146,7 @@ PROVIDERS: dict[str, ProviderSpec] = {
         build=_build_openai_compatible(
             "huggingface", "https://router.huggingface.co/v1", "Hugging Face"
         ),
+        openai_proxy=True,
     ),
     "ollama": ProviderSpec(
         id="ollama",
@@ -150,6 +159,7 @@ PROVIDERS: dict[str, ProviderSpec] = {
             ),
         ),
         build=_build_openai_compatible("ollama", "http://localhost:11434/v1", "Ollama"),
+        openai_proxy=True,
     ),
     "mock": ProviderSpec(
         id="mock",

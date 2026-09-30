@@ -10,7 +10,7 @@ endpoint when available; callers fall back to manual model entry when it isn't.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from typing import Any
 
 import httpx
@@ -81,6 +81,7 @@ class OpenAICompatibleProvider:
         messages: Sequence[ChatMessage],
         tools: Sequence[ToolDef],
         reasoning_effort: str | None = None,
+        request_options: Mapping[str, Any] | None = None,
     ) -> AsyncIterator[ProviderEvent]:
         async for event in stream_openai_tools(
             client=self._client,
@@ -88,6 +89,7 @@ class OpenAICompatibleProvider:
             messages=messages,
             tools=tools,
             reasoning_effort=reasoning_effort,
+            request_options=request_options,
         ):
             yield event
 

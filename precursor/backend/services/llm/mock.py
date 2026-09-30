@@ -6,7 +6,8 @@ Useful for development without a GITHUB_TOKEN and for tests.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
+from typing import Any
 
 from precursor.backend.services.llm.base import (
     ChatMessage,
@@ -61,9 +62,10 @@ class MockProvider:
         messages: Sequence[ChatMessage],
         tools: Sequence[ToolDef],
         reasoning_effort: str | None = None,
+        request_options: Mapping[str, Any] | None = None,
     ) -> AsyncIterator[ProviderEvent]:
         # Mock never issues tool calls; replay the plain text path.
-        _ = tools
+        _ = tools, request_options
         if reasoning_effort:
             # Think out loud like a reasoning model, so the thinking disclosure
             # can be exercised without a real provider.

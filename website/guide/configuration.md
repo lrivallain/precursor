@@ -46,6 +46,12 @@ network is no reason to second-guess you.
 The catalogue is cached briefly, and re-read immediately when you change provider
 or credentials.
 
+::: tip Use these models from other clients
+**Settings → Model** can also serve the active provider's models to VS Code or
+any OpenAI-compatible client, behind an API key — see the
+[OpenAI-compatible endpoint](/features/openai-endpoint). It's off by default.
+:::
+
 ::: tip Agents pick their own
 [Agent](/features/agents-mode) sessions default to **`auto`**, which lets the
 Copilot SDK runtime choose a current model. That's an agents-only value — it is
@@ -109,7 +115,7 @@ feature it configures:
 | Tab | Covers |
 | --- | --- |
 | **Appearance** | Light/dark/system theme and the reading font, including dyslexia-friendly options like OpenDyslexic, Atkinson Hyperlegible and Lexend — see [Accessibility](/features/accessibility). |
-| **Model** | Active provider + credentials, default chat model. |
+| **Model** | Active provider + credentials, default chat model, and the [OpenAI-compatible endpoint](/features/openai-endpoint) that lets other clients use those models (off by default). |
 | **Chat** | Stats sidebar, notifications, and [auto-naming](/features/chats#chats-name-themselves) for new chats. |
 | **GitHub** | Token, default repository, issue-context behaviour. |
 | **MCP** | Enable [tool servers](/features/mcp), and choose which of your own sections the built-in server exposes (off by default). |

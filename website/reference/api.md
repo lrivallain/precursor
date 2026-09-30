@@ -58,8 +58,9 @@ The JSON API lives under `/api/*`. Routers are grouped by domain:
 | `chats` | Quick throwaway chats, including read/unread state. `POST /{id}/promote` turns one into a topic and takes `?collection_id=` for where it lands. `POST /{id}/messages/suggest-name` re-derives the title from the transcript; `POST /api/chats` takes `autoname: true` to mark the supplied title a placeholder the server may replace, and an optional `role_id` to assign an assistant [role](/features/skills-memory) at creation (omit or `null` for the default role). |
 | `commands` | The `/slash` [commands](/features/skills-memory) a topic composer can run. |
 | `attachments` | Upload / fetch [attachments](/features/attachments) on a topic or chat. |
-| `settings` | Runtime settings and provider/GitHub configuration (secrets never echoed). |
-| `llm` | The provider catalogue and the models the active provider offers. |
+| `settings` | Runtime settings and provider/GitHub configuration (secrets never echoed — bar the [OpenAI-compatible endpoint](/features/openai-endpoint)'s key, returned in clear as `openai_proxy_key` so it can be pasted into more clients). `POST /api/settings/openai-proxy/key` replaces that key. |
+| `llm` | The provider catalogue and the models the active provider offers. Each model carries its `context_window`, `max_output_tokens`, `supported_reasoning_efforts` and `vision` when the provider advertises them; each provider says whether the OpenAI-compatible endpoint can relay to it (`openai_proxy`). |
+| `openai` | The [OpenAI-compatible endpoint](/features/openai-endpoint) under `/api/openai/v1`: `GET /models`, `GET /models/{id}` and `POST /chat/completions` (streamed or not), in OpenAI's wire format and error shape. Off by default, and every request needs `Authorization: Bearer <openai_proxy_key>`; answers `404` when switched off and `503` when the active provider can't be relayed to. |
 | `me` | The connected GitHub identity for the sidebar persona, plus `GET /api/me/copilot` for Copilot AI-credit usage (both degrade to `null` when no token is configured). |
 | `github` | Issue/label/comment operations behind topic linking. |
 | `github/projects` | GitHub Projects v2 columns and cards behind the [Kanban board](/features/kanban). Contributed by the `precursor-kanban` [plugin](/features/plugins) — absent when it isn't installed. |

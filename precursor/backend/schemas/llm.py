@@ -11,6 +11,8 @@ class LLMModelRead(BaseModel):
     tags: list[str] = []
     context_window: int | None = None
     supported_reasoning_efforts: list[str] = []
+    max_output_tokens: int | None = None
+    vision: bool = False
 
 
 class ProviderFieldRead(BaseModel):
@@ -28,4 +30,6 @@ class ProviderRead(BaseModel):
     fields: list[ProviderFieldRead] = []
     uses_github_token: bool = False
     discovers_models: bool = True
+    # Whether the OpenAI-compatible endpoint can relay to this provider.
+    openai_proxy: bool = False
     # Non-empty => upstream is gone; the text explains what to use instead.

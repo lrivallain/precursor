@@ -101,6 +101,11 @@ Model** — not via the environment. The GitHub providers fall back to your
 | --- | --- | --- |
 | `PRECURSOR_GITHUB_CLI_USER` | *(empty)* | Which `gh` login supplies the token (`gh auth token --user …`). Set it when several accounts are signed in, so the resolved token doesn't depend on the CLI's active account — see [GitHub authentication](/guide/configuration#several-accounts-signed-in-to-gh). |
 
+The [OpenAI-compatible endpoint](/features/openai-endpoint) is runtime-only too:
+its switch (`openai_proxy_enabled`, off by default) and its API key live in the
+database, set from **Settings → Model**, with no environment twin. Its base URL
+follows `PRECURSOR_HOST` / `PRECURSOR_PORT`.
+
 ## Backup
 
 A periodic copy of the SQLite DB + attachment blobs into a plain folder (e.g. a
