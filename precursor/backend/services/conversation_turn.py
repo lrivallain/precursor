@@ -19,6 +19,7 @@ chat routers stay one-liners over the same behaviour.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator, Collection
 from dataclasses import dataclass
@@ -32,12 +33,14 @@ from sqlalchemy.orm import InstrumentedAttribute, selectinload
 from precursor.backend.models import Attachment, Message, MessageRole
 from precursor.backend.schemas import ChatRequest
 from precursor.backend.services.app_settings import (
+    resolve_llm_max_attachment_chars,
     resolve_llm_max_input_tokens,
     resolve_llm_max_tool_result_tokens,
     resolve_llm_model,
     resolve_llm_reasoning_effort,
     resolve_max_tool_rounds,
 )
+from precursor.backend.services.attachment_extraction import warm_attachment_text_cache
 from precursor.backend.services.github_auth import resolve_github_token
 from precursor.backend.services.llm import get_llm_provider
 from precursor.backend.services.llm.base import ChatMessage, LLMProvider
@@ -220,7 +223,15 @@ async def snapshot_history(
         .options(selectinload(Message.attachments))
         .order_by(Message.created_at)
     )
-    history = hydrate_history(list(result.scalars().all()))
+    rows = list(result.scalars().all())
+    # Parsing a large PDF is slow and blocking: fill the on-disk text cache in a
+    # worker thread so hydration below only reads cached text.
+    docs = [(att.sha256, att.mime) for m in rows for att in m.attachments]
+    if docs:
+        await asyncio.to_thread(warm_attachment_text_cache, docs)
+    history = hydrate_history(
+        rows, attachment_max_chars=await resolve_llm_max_attachment_chars(session)
+    )
     if prompt_override:
         for idx in range(len(history) - 1, -1, -1):
             if history[idx].role == "user":

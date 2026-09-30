@@ -101,6 +101,15 @@ Model** — not via the environment. The GitHub providers fall back to your
 | --- | --- | --- |
 | `PRECURSOR_GITHUB_CLI_USER` | *(empty)* | Which `gh` login supplies the token (`gh auth token --user …`). Set it when several accounts are signed in, so the resolved token doesn't depend on the CLI's active account — see [GitHub authentication](/guide/configuration#several-accounts-signed-in-to-gh). |
 
+Prompt budgeting is runtime-only as well, under **Settings → Model → Prompt
+budgeting**:
+
+| Setting | Default | Description |
+| --- | --- | --- |
+| `llm_max_input_tokens` | `600000` | Estimated prompt tokens per request. The oldest turns are dropped first. |
+| `llm_max_tool_result_tokens` | `20000` | Cap on a single tool result before it enters the prompt. |
+| `llm_max_attachment_chars` | `200000` | Extracted text kept per attached document (PDF, DOCX, PPTX, text). Anything longer is cut, with an explicit note to the model. Range 1,000–2,000,000. See [Attachments](/features/attachments#how-much-of-a-document-the-model-sees). |
+
 The [OpenAI-compatible endpoint](/features/openai-endpoint) is runtime-only too:
 its switch (`openai_proxy_enabled`, off by default) and its API key live in the
 database, set from **Settings → Model**, with no environment twin. Its base URL
