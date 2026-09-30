@@ -297,12 +297,20 @@ gate contract instead; `approval` steps run no agent at all.
 > never emit NEED_INPUT — if a detail is underspecified, pick the most
 > reasonable interpretation and proceed anyway. Produce the actual deliverable
 > your objective calls for (not a description of what you could do), publish it
-> with an ARTIFACT directive, and end with 'OBJECTIVE_COMPLETE: \<2-3 sentence
-> summary\>'.
+> as an artifact — a line 'ARTIFACT: \<title\>', the full deliverable on the
+> lines below it, then a line 'END_ARTIFACT' — and end with
+> 'OBJECTIVE_COMPLETE: \<2-3 sentence summary\>'.
 
 Do not restate this in your instructions. Do write objectives that are
 answerable without clarification — a step that genuinely cannot proceed parks
 the whole run as `blocked`.
+
+Every step's `PROGRESS:` and `ARTIFACT:` lines are read, whether or not its
+agent is autonomous, so what a step publishes lands on the artifact board. The
+immediate hand-off forwards each published artifact once, as a board entry, and
+drops its copy from the message text. `OBJECTIVE_COMPLETE:` and `NEED_INPUT:`
+only steer an autonomous agent; a step whose agent isn't autonomous finishes
+when its turn ends.
 
 ## Context modes
 

@@ -1703,15 +1703,24 @@ class AgentManager:
         Progress (``PROGRESS: n | label``) is applied whenever present and resets
         the stall counter on a fresh value. Mutates ``patch`` in place.
 
+        A **workflow step** that isn't autonomous still reports progress and
+        publishes artifacts: its kickoff tells it to, and the next steps read the
+        blackboard. Only the terminal directives stay autonomy-only, so such a
+        step rests at ``idle`` for the coordinator however it signs off.
+
         Step count and progress are read from ``run``: each execution pursues the
         objective on its own budget, so a sibling run can't spend this one's steps.
         """
         live = self._live.get(run.id)
+        speaks_protocol = agent.autonomy_enabled or run.workflow_run_id is not None
         directives = (
             parse_agent_directives(live.pending_answer)
-            if live is not None and agent.autonomy_enabled
+            if live is not None and speaks_protocol
             else {}
         )
+        if not agent.autonomy_enabled:
+            directives.pop("complete", None)
+            directives.pop("blocked", None)
         if live is not None:
             live.directive = directives or None
 
@@ -1820,6 +1829,10 @@ class AgentManager:
         patch["status"] = "idle"
         patch["active_prompt"] = None
         await self._notify_back(agent, run)
+        # Idle is not sticky, so a trailing idle (a background sub-agent settling)
+        # re-enters here: consume the answer so its artifacts publish only once.
+        if live is not None:
+            live.pending_answer = None
 
     async def _advance_goal_loop(self, run_id: int) -> None:
         """Take the next autonomous step toward the objective.
