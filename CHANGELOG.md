@@ -75,6 +75,12 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Fixed
 
+- **Nightly installs no longer 404 after a quick run of pushes.** Two nightly
+  builds seconds apart could leave the new `nightly` release stuck as a draft.
+  Its files then answered 404, so installing, updating and adding a plugin all
+  failed on a nightly install while the build showed green. The workflow now
+  moves the tag instead of deleting it. It also checks the published files
+  download, and fails the build if they don't.
 - **An older build no longer breaks the database for newer ones.** Starting an
   older Precursor on a database a newer build had migrated used to rewind its
   schema version without changing the schema. The next newer build then tried
