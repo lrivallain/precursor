@@ -14,12 +14,16 @@ import json
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from urllib.parse import quote
 
 from precursor.backend.services.mcp.client import get_mcp_client_manager
 
 logger = logging.getLogger(__name__)
 
 WORKIQ_SERVER = "workiq"
+# Linked-meeting bodies are stored for context; cap them so a huge invite can't
+# bloat the session row.
+_BODY_MAX_CHARS = 60000
 
 
 def _sanitize_iso(value: str | None) -> str | None:
@@ -138,10 +142,6 @@ def _normalize_event(raw: dict[str, Any]) -> dict[str, Any]:
         name, email = _person_name(a)
         if name:
             attendees.append({"name": name, "email": email})
-    body = raw.get("body")
-    body_html = None
-    if isinstance(body, dict) and isinstance(body.get("content"), str):
-        body_html = body["content"][:60000]
     preview = raw.get("bodyPreview")
     return {
         "id": raw.get("id"),
@@ -152,7 +152,6 @@ def _normalize_event(raw: dict[str, Any]) -> dict[str, Any]:
         "attendees": attendees,
         "is_online": bool(raw.get("isOnlineMeeting")),
         "join_url": _join_url(raw),
-        "body": body_html,
         "body_preview": (str(preview)[:4000] if isinstance(preview, str) else None),
     }
 
@@ -193,8 +192,10 @@ async def fetch_agenda(
             "/me/calendarView"
             f"?startDateTime={start}"
             f"&endDateTime={end}"
+            # No full ``body``: a week of HTML invites overflows a single MCP
+            # response. It's fetched per meeting on link (``fetch_event_body``).
             "&$select=subject,start,end,organizer,attendees,isOnlineMeeting,"
-            "onlineMeeting,bodyPreview,body"
+            "onlineMeeting,bodyPreview"
             "&$orderby=start/dateTime&$top=100"
         )
         try:
@@ -213,6 +214,51 @@ async def fetch_agenda(
         data = _result_to_json(result)
         events = [_normalize_event(e) for e in _events_from(data)]
         return True, events, None
+    finally:
+        if bundle.ephemeral:
+            await bundle.aclose()
+
+
+def _body_from(data: Any) -> str | None:
+    """Pull ``body.content`` from a single-event Graph payload, unwrapping the
+    WorkIQ ``{"results": [{"data": …}]}`` envelope when present."""
+    if isinstance(data, dict) and isinstance(data.get("results"), list):
+        for res in data["results"]:
+            if isinstance(res, dict) and res.get("statusCode") in (None, 200):
+                found = _body_from(res.get("data"))
+                if found:
+                    return found
+        return None
+    if isinstance(data, list):
+        return _body_from(data[0]) if data else None
+    body = data.get("body") if isinstance(data, dict) else None
+    if isinstance(body, dict) and isinstance(body.get("content"), str):
+        return body["content"][:_BODY_MAX_CHARS] or None
+    return None
+
+
+async def fetch_event_body(event_id: str) -> str | None:
+    """Return one calendar event's HTML body via WorkIQ, or ``None``. Never raises."""
+    if not event_id.strip():
+        return None
+    manager = get_mcp_client_manager()
+    try:
+        bundle = await manager.acquire([WORKIQ_SERVER])
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.info("WorkIQ acquire failed: %s", exc)
+        return None
+
+    try:
+        tool_names = {t.name for t in bundle.tools if t.server == WORKIQ_SERVER}
+        if WORKIQ_SERVER not in bundle.workers or "fetch" not in tool_names:
+            return None
+        path = f"/me/events/{quote(event_id.strip(), safe='')}?$select=body"
+        try:
+            result = await bundle.call_tool(WORKIQ_SERVER, "fetch", {"entityUrls": [path]})
+        except Exception as exc:
+            logger.info("WorkIQ event body fetch failed: %s", exc)
+            return None
+        return _body_from(_result_to_json(result))
     finally:
         if bundle.ephemeral:
             await bundle.aclose()

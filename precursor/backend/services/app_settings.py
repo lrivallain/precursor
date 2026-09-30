@@ -471,6 +471,9 @@ async def azure_stt_ready(session: AsyncSession) -> bool:
 # applied to a single tool result before it is trimmed.
 DEFAULT_LLM_MAX_INPUT_TOKENS = 600_000
 DEFAULT_LLM_MAX_TOOL_RESULT_TOKENS = 20_000
+# Extracted text kept per document attachment (PDF/DOCX/PPTX/text). ~50k tokens:
+# a full research paper fits, a book is cut with an explicit note to the model.
+DEFAULT_LLM_MAX_ATTACHMENT_CHARS = 200_000
 
 # Wall-clock ceiling for one scheduled/automated run.
 DEFAULT_SCHEDULED_RUN_TIMEOUT_SECONDS = 600
@@ -493,6 +496,7 @@ DEFAULT_AGENT_EVENT_MAX_PER_SESSION = 2000
 # Clamp bounds.
 _MIN_INPUT_TOKENS, _MAX_INPUT_TOKENS = 1_000, 5_000_000
 _MIN_TOOL_RESULT_TOKENS, _MAX_TOOL_RESULT_TOKENS = 100, 2_000_000
+_MIN_ATTACHMENT_CHARS, MAX_ATTACHMENT_CHARS = 1_000, 2_000_000
 _MIN_RUN_TIMEOUT, _MAX_RUN_TIMEOUT = 10, 24 * 3600
 _MIN_CMD_TIMEOUT, _MAX_CMD_TIMEOUT = 1, 3600
 _MIN_CMD_OUTPUT, _MAX_CMD_OUTPUT = 1_000, 50_000_000
@@ -525,6 +529,17 @@ async def resolve_llm_max_tool_result_tokens(session: AsyncSession) -> int:
             "llm_max_tool_result_tokens",
             _clamped_int(_MIN_TOOL_RESULT_TOKENS, _MAX_TOOL_RESULT_TOKENS),
             default=DEFAULT_LLM_MAX_TOOL_RESULT_TOKENS,
+        ),
+    )
+
+
+async def resolve_llm_max_attachment_chars(session: AsyncSession) -> int:
+    return await resolve(
+        session,
+        SettingSpec(
+            "llm_max_attachment_chars",
+            _clamped_int(_MIN_ATTACHMENT_CHARS, MAX_ATTACHMENT_CHARS),
+            default=DEFAULT_LLM_MAX_ATTACHMENT_CHARS,
         ),
     )
 
@@ -656,6 +671,7 @@ async def resolve_system_settings(session: AsyncSession) -> dict[str, Any]:
     return {
         "llm_max_input_tokens": await resolve_llm_max_input_tokens(session),
         "llm_max_tool_result_tokens": await resolve_llm_max_tool_result_tokens(session),
+        "llm_max_attachment_chars": await resolve_llm_max_attachment_chars(session),
         "scheduled_run_timeout_seconds": await resolve_scheduled_run_timeout_seconds(session),
         "tool_result_retention_days": await resolve_tool_result_retention_days(session),
         "live_transcript_retention_days": await resolve_live_transcript_retention_days(session),

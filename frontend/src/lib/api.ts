@@ -1421,7 +1421,6 @@ export const api = {
           attendees: event.attendees,
           is_online: event.is_online,
           join_url: event.join_url,
-          body: event.body,
           body_preview: event.body_preview,
         }),
       }),

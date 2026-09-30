@@ -1227,6 +1227,100 @@ def test_agenda_parser_unwraps_workiq_envelope() -> None:
     assert _events_from({"results": [{"data": {}, "statusCode": 400, "error": "denied"}]}) == []
 
 
+def _fake_agenda_workiq(monkeypatch, respond):  # type: ignore[no-untyped-def]
+    """Point ``meeting_agenda`` at a fake WorkIQ whose ``fetch`` calls ``respond(path)``."""
+    from mcp.types import CallToolResult
+
+    import precursor.backend.services.meeting_agenda as agenda
+
+    class _Tool:
+        name = "fetch"
+        server = "workiq"
+
+    class _Bundle:
+        def __init__(self) -> None:
+            self.workers = {"workiq": object()}
+            self.tools = [_Tool()]
+            self.unavailable: list[tuple[str, str]] = []
+            self.ephemeral = False
+            self.paths: list[str] = []
+
+        async def call_tool(self, server: str, name: str, args: dict) -> object:  # type: ignore[type-arg]
+            path = args["entityUrls"][0]
+            self.paths.append(path)
+            return CallToolResult(content=[], structured_content=respond(path))
+
+    bundle = _Bundle()
+
+    class _Manager:
+        async def acquire(self, names, **kwargs):  # type: ignore[no-untyped-def]
+            return bundle
+
+    monkeypatch.setattr(agenda, "get_mcp_client_manager", lambda: _Manager())
+    return bundle
+
+
+def test_agenda_list_omits_full_body(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    import asyncio
+
+    from precursor.backend.services.meeting_agenda import fetch_agenda
+
+    event = {"id": "e1", "subject": "Sync", "bodyPreview": "Hello", "body": {"content": "<p/>"}}
+    bundle = _fake_agenda_workiq(
+        monkeypatch, lambda _p: {"results": [{"data": {"value": [event]}, "statusCode": 200}]}
+    )
+    available, events, detail = asyncio.run(
+        fetch_agenda("2026-09-22T22:00:00.000Z", "2026-09-30T22:00:00.000Z")
+    )
+    assert (available, detail) == (True, None)
+    # A week of HTML bodies overflows one MCP response: select the preview only.
+    select = bundle.paths[0].split("$select=")[1].split("&")[0].split(",")
+    assert "bodyPreview" in select and "body" not in select
+    assert events[0]["body_preview"] == "Hello"
+    assert "body" not in events[0]
+
+
+def test_fetch_event_body_unwraps_single_event(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    import asyncio
+
+    from precursor.backend.services.meeting_agenda import fetch_event_body
+
+    bundle = _fake_agenda_workiq(
+        monkeypatch,
+        lambda _p: {
+            "results": [
+                {"data": {"id": "a/b=", "body": {"content": "<p>x</p>"}}, "statusCode": 200}
+            ]
+        },
+    )
+    assert asyncio.run(fetch_event_body("a/b=")) == "<p>x</p>"
+    assert bundle.paths == ["/me/events/a%2Fb%3D?$select=body"]
+
+
+def test_link_meeting_fetches_missing_body(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    import precursor.backend.routers.live as live_router
+
+    calls: list[str] = []
+
+    async def _fake_body(event_id: str) -> str | None:
+        calls.append(event_id)
+        return "<p>Agenda</p>" if event_id == "ok" else None
+
+    monkeypatch.setattr(live_router, "fetch_event_body", _fake_body)
+    app = create_app()
+    with TestClient(app) as client:
+        sid = client.post("/api/live", json={"title": "Body"}).json()["id"]
+        r = client.post(f"/api/live/{sid}/meeting", json={"id": "ok", "subject": "S"})
+        assert r.json()["external_meeting"]["body"] == "<p>Agenda</p>"
+        # A failed fetch still links the meeting, just without a body.
+        r = client.post(f"/api/live/{sid}/meeting", json={"id": "gone", "subject": "S"})
+        assert r.status_code == 200
+        assert r.json()["external_meeting"]["body"] is None
+        # A body the client already has isn't re-fetched.
+        client.post(f"/api/live/{sid}/meeting", json={"id": "x", "subject": "S", "body": "<b/>"})
+    assert calls == ["ok", "gone"]
+
+
 def test_ensure_chat_creates_and_reuses() -> None:
     app = create_app()
     with TestClient(app) as client:
