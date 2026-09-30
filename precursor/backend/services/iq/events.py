@@ -20,7 +20,6 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 
 from precursor.backend.config import get_settings
-from precursor.backend.services.iq.sources import source_key
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +50,10 @@ def _ready(conn: Connection) -> bool:
 def _after_flush(session: Session, _flush_context: Any) -> None:
     if not get_settings().iq_enabled:
         return
+    # Imported here: ``db`` installs this hook at import time, before the models
+    # that ``sources`` needs are guaranteed to be loaded.
+    from precursor.backend.services.iq.sources import source_key
+
     keys: set[tuple[str, int]] = set()
     for bucket in (session.new, session.dirty, session.deleted):
         for obj in bucket:

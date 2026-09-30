@@ -54,6 +54,8 @@ _TITLE_BONUS = 1.0 / (_RRF_K + 1)
 _RECENCY_BONUS = 0.25 / (_RRF_K + 1)
 _RECENCY_HALF_LIFE_DAYS = 45.0
 _SNIPPET_PAD = 90
+# Shorter words match whole-word only: "eur" shouldn't pull in every "Europe".
+_PREFIX_MIN = 4
 _SNIPPET_LEAD = 40
 _EXCERPT_CHARS = 900
 MAX_LIMIT = 50
@@ -240,7 +242,7 @@ async def _lexical(
     where, params = _section_filter(gates, containers)
     params["n"] = _CANDIDATES
     if backend == "fts5":
-        match = " OR ".join(f'"{t}"*' if len(t) >= 3 else f'"{t}"' for t in tokens)
+        match = " OR ".join(f'"{t}"*' if len(t) >= _PREFIX_MIN else f'"{t}"' for t in tokens)
         params["q"] = match
         rows = await session.execute(
             text(
@@ -252,7 +254,7 @@ async def _lexical(
         )
         return [r[0] for r in rows.all()]
     if backend == "tsvector":
-        params["q"] = " | ".join(f"{t}:*" for t in tokens)
+        params["q"] = " | ".join(f"{t}:*" if len(t) >= _PREFIX_MIN else t for t in tokens)
         rows = await session.execute(
             text(
                 "SELECT c.id FROM iq_chunks c "
@@ -526,19 +528,22 @@ async def retrieve(
         container = live_containers[ckey]
         section = CONTAINER_SECTIONS.get(chunk.container_kind, chunk.container_kind)
         body = chunk.text or ""
+        # A heading-only chunk (a title with no body yet) can only have
+        # matched on its title, even when not every query word is in it.
+        title_only = not body.strip()
         result.hits.append(
             Hit(
                 n=len(result.hits) + 1,
                 section=section,
                 gate=chunk.section,
-                field="title" if is_title else chunk.field,
+                field="title" if is_title or title_only else chunk.field,
                 source_kind=chunk.source_kind,
                 source_id=chunk.source_id,
                 entity_id=chunk.container_id,
                 ref=container.ref,
                 path=container.path,
                 title=container.title,
-                snippet=container.title if is_title else _snippet(body, tokens),
+                snippet=container.title if is_title or title_only else _snippet(body, tokens),
                 excerpt=_excerpt(body) or container.title,
                 role=chunk.role,
                 is_title=is_title,

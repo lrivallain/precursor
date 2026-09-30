@@ -346,3 +346,31 @@ def test_rest_endpoints_round_trip() -> None:
         assert settings["iq_embeddings_enabled"] is False
         assert settings["iq_embedding_model"] == "text-embedding-3-small"
         assert settings["mcp_expose"]["iq"] is False
+
+
+def test_any_process_using_the_db_module_queues_changes() -> None:
+    """Scripts and the stdio MCP server write without importing the IQ package."""
+    import subprocess
+    import sys
+
+    code = (
+        "import precursor.backend.db\n"
+        "from sqlalchemy import event\n"
+        "from sqlalchemy.orm import Session\n"
+        "from precursor.backend.services.iq import events\n"
+        "assert event.contains(Session, 'after_flush', events._after_flush)\n"
+    )
+    subprocess.run([sys.executable, "-c", code], check=True)
+
+
+async def test_title_only_chunk_reports_its_title_and_short_words_match_whole() -> None:
+    async with SessionLocal() as session:
+        session.add(MeetingSession(title="Vexillology review", slug="iq-vexillology-review"))
+        await session.commit()
+    await _topic("Eurozone plans", description="Europe expansion for the frobwidget")
+    hits = (await retrieve("vexillology frobwidget")).hits
+    live = next(h for h in hits if h.section == "live")
+    assert live.field == "title"
+    assert live.snippet == "Vexillology review"
+    # Three-letter words are whole-word matches, not prefixes.
+    assert not (await retrieve("eur")).hits

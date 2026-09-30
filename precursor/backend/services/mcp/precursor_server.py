@@ -72,10 +72,6 @@ from precursor.backend.models import (
     WorkflowStep,
 )
 from precursor.backend.schemas.schedule import RecurrenceRule
-
-# Installs the flush hook, so writes made through this server (post_message,
-# memory tools…) are queued for re-indexing like the app's own.
-from precursor.backend.services import iq as _iq  # noqa: F401
 from precursor.backend.services.app_settings import (
     MCP_EXPOSE_SECTIONS,
     resolve_mcp_expose,
