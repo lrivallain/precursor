@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight, BarChart3, Shrink } from "lucide-react";
+import { AlarmClock, ChevronLeft, ChevronRight, BarChart3, Shrink } from "lucide-react";
 import { streamStore } from "../lib/streamStore";
 import { api } from "../lib/api";
 import { modelsStore, useCurrentModel } from "../lib/modelsStore";
 import { useIsNarrow } from "../lib/useMediaQuery";
 import type { ContextEstimate, Message, ReminderContainer } from "../lib/types";
 import { COMPACT_NUDGE_PERCENT, CompactContextButton } from "./CompactContext";
+import { ReminderSection, reminderSummary, type ReminderPanelControls } from "./ChatStatsReminder";
 
 interface ChatStatsPanelProps {
   streamKey: string;
@@ -18,6 +19,7 @@ interface ChatStatsPanelProps {
     markerId: number | null;
     run: (instructions?: string) => Promise<void>;
   };
+  reminder: ReminderPanelControls;
 }
 
 interface RoundStat {
@@ -98,6 +100,7 @@ export function ChatStatsPanel({
   containerId,
   streaming,
   compaction,
+  reminder,
 }: ChatStatsPanelProps) {
   const narrow = useIsNarrow();
   const [collapsed, setCollapsed] = useState<boolean>(() => {
@@ -191,6 +194,21 @@ export function ChatStatsPanel({
           <ChevronLeft size={16} />
         </button>
         <BarChart3 size={16} className="mt-2 text-muted" />
+        {reminder.reminder && (
+          <button
+            type="button"
+            onClick={() => setCollapsed(false)}
+            className={`mt-2 rounded p-1.5 ${
+              reminder.reminder.status === "fired"
+                ? "text-amber-600 hover:bg-amber-500/15 dark:text-amber-400"
+                : "text-accent hover:bg-accent/10"
+            }`}
+            data-tooltip={reminderSummary(reminder.reminder)}
+            aria-label="Show reminder"
+          >
+            <AlarmClock size={16} />
+          </button>
+        )}
         {windowPct !== null && windowPct >= COMPACT_NUDGE_PERCENT && !compactDisabled && (
           <button
             type="button"
@@ -226,6 +244,8 @@ export function ChatStatsPanel({
       </div>
 
       <div className="flex-1 overflow-y-auto p-3 space-y-4 text-sm">
+        <ReminderSection {...reminder} />
+
         {contextWindow !== null && contextWindow > 0 && (
           <ContextWindowSection
             used={windowUsed}

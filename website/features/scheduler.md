@@ -124,6 +124,17 @@ Two companion commands manage the lifecycle:
 - **`/done`** — mark a **fired** reminder as handled, removing it from the
   Reminders section.
 
+### Seeing a pending reminder
+
+A scheduled reminder doesn't flag the conversation in the sidebar until it
+fires. To check one, open the **conversation stats** panel on the right of the
+transcript: its **Reminder** section shows the time, how far away it is, and the
+note. **Edit** changes or cancels it. Once it fires, a **Done** button appears
+next to Edit. With no reminder set, the section offers **Set reminder**. When the
+panel is collapsed, an alarm-clock icon on its rail shows that a reminder is set;
+hover it for the details or click it to open the panel. The section updates
+live, so a reminder an agent sets through MCP shows up without a reload.
+
 Reminders are also exposed through the built-in `precursor`
 [MCP server](/features/mcp), so the model (or another MCP host) can set, list,
 and cancel them too.
