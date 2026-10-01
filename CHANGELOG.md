@@ -137,6 +137,11 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Fixed
 
+- **The macOS menu-bar icon no longer crashes on launch.** `precursor tray`
+  died with a `trace trap` a moment after starting on recent macOS releases:
+  its periodic refresh redrew the status item from a background thread, which
+  AppKit now refuses with a hard trap. Redraws are handed to the main thread.
+
 - **Large attached documents are no longer cut after a page or two.** Text
   extracted from PDF, DOCX, PPTX and text attachments was capped at 4,000
   characters, often less than a paper's introduction, and the only sign of the

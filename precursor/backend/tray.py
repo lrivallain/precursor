@@ -27,7 +27,7 @@ import sys
 import threading
 import time
 import webbrowser
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, Literal
 
@@ -258,6 +258,22 @@ def _make_image(state: IconState) -> Any:
     return image.resize((_ICON_SIZE, _ICON_SIZE), image_mod.LANCZOS)
 
 
+def _on_ui_thread(fn: Callable[[], None]) -> None:
+    """Run ``fn`` where the platform allows touching the status item.
+
+    pystray's macOS backend mutates the ``NSStatusItem`` from whichever thread
+    sets ``icon``/``title`` or calls ``update_menu``, and the tray refreshes from
+    its poll and background-action threads. AppKit has always required the main
+    thread for that; recent macOS releases enforce it with a trap that kills the
+    process the first time a refresh lands off it. So on macOS the redraw is
+    handed to the main run loop, which ``icon.run()`` drives.
+    """
+    if sys.platform != "darwin" or threading.current_thread() is threading.main_thread():
+        fn()
+        return
+    importlib.import_module("PyObjCTools.AppHelper").callAfter(fn)
+
+
 def _notify_mode() -> str:
     """What the tray does when a background check finds a new build.
 
@@ -319,9 +335,15 @@ class TrayApp:
     def _refresh(self) -> None:
         self._status = supervisor.status()
         if self._icon is not None:
-            self._icon.icon = _make_image(self._icon_state())
-            self._icon.title = self._title()
-            self._icon.update_menu()
+            _on_ui_thread(self._redraw)
+
+    def _redraw(self) -> None:
+        icon = self._icon
+        if icon is None:
+            return
+        icon.icon = _make_image(self._icon_state())
+        icon.title = self._title()
+        icon.update_menu()
 
     def _title(self) -> str:
         if self._busy:
