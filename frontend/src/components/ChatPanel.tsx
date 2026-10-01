@@ -727,6 +727,12 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
           containerId={topic.id}
           streaming={streaming}
           compaction={conv.compaction}
+          reminder={{
+            reminder: reminders.reminder,
+            busy: reminders.reminderBusy,
+            onEdit: () => reminders.setReminderModal({ note: "" }),
+            onDone: () => void reminders.runReminderClear(true),
+          }}
         />
       )}
       {reminders.reminderModal && (

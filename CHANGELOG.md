@@ -15,6 +15,14 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **See a conversation's pending reminder in the stats panel.** A scheduled
+  reminder used to be invisible until it fired. The conversation stats panel
+  now has a **Reminder** section with the time, how far away it is, and the
+  note. It has buttons to **Edit**, **Done** once the reminder has fired, or
+  **Set reminder** when none is set. The collapsed stats rail shows an
+  alarm-clock icon while a reminder is set. The section updates live when an
+  agent sets or changes the reminder over MCP.
+
 - **Context compression for long conversations.** Type `/compact [focus]`, or
   click **Compact context** in the conversation stats panel, to have the model
   summarise a topic or chat into a compaction marker. From the next turn on, the

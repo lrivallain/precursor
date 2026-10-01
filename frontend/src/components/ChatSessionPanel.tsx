@@ -208,6 +208,12 @@ export function ChatSessionPanel({
           containerId={chat.id}
           streaming={streaming}
           compaction={conv.compaction}
+          reminder={{
+            reminder: reminders.reminder,
+            busy: reminders.reminderBusy,
+            onEdit: () => reminders.setReminderModal({ note: "" }),
+            onDone: () => void reminders.runReminderClear(true),
+          }}
         />
       )}
       {reminders.reminderModal && (
