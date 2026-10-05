@@ -7781,6 +7781,162 @@ async def test_cumulative_board_still_scopes_the_handoff_body_to_this_run() -> N
     assert "last run's prose" not in context
 
 
+async def _seed_step_attempt(
+    session,
+    agent_id: int,
+    workflow_run_id: int,
+    position: int,
+    attempt: int,
+    artifact: str | None,
+    *,
+    title: str = "Draft",
+):
+    """One step attempt as ``_launch_step`` leaves it: a run, its trace, its artifact."""
+    from precursor.backend.models import AgentArtifact
+    from precursor.backend.models.workflow import WorkflowRunStep
+
+    run = await _seed_agent_run(session, agent_id, workflow_run_id)
+    session.add(
+        WorkflowRunStep(
+            run_id=workflow_run_id,
+            position=position,
+            kind="task",
+            label=f"Step {position + 1}",
+            agent_id=agent_id,
+            agent_run_id=run.id,
+            attempt=attempt,
+            status="completed",
+        )
+    )
+    if artifact is not None:
+        session.add(
+            AgentArtifact(agent_id=agent_id, agent_run_id=run.id, title=title, content=artifact)
+        )
+    await session.commit()
+    return run
+
+
+async def _seed_board_workflow(session, *, clear_artifacts: bool = True):
+    from precursor.backend.models import AgentSession
+    from precursor.backend.models.workflow import Workflow, WorkflowRun
+
+    producer = AgentSession(title="Drafter", task_prompt="draft", status="idle")
+    wf = Workflow(name="Loop", status="running", clear_artifacts=clear_artifacts)
+    session.add_all([producer, wf])
+    await session.commit()
+    await session.refresh(producer)
+    await session.refresh(wf)
+    wf_run = WorkflowRun(workflow_id=wf.id, run_number=1, status="running", trigger="manual")
+    session.add(wf_run)
+    await session.commit()
+    await session.refresh(wf_run)
+    return producer, wf, wf_run
+
+
+@pytest.mark.asyncio
+async def test_gate_loop_back_hands_over_only_the_current_attempts_artifact() -> None:
+    """#397: a retry's deliverable replaces the failed attempt's, it doesn't stack.
+
+    Each loop-back opens a new agent run under the same workflow run. Reading
+    every one of them handed the gate 1, 2, 3… copies of the draft, and it
+    failed on the duplication until ``max_loops`` ran out.
+    """
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.services.agents.workflow import collect_step_context
+
+    await _ensure_schema()
+    async with SessionLocal() as session:
+        producer, _wf, wf_run = await _seed_board_workflow(session)
+        for attempt in (1, 2, 3):
+            await _seed_step_attempt(
+                session, producer.id, wf_run.id, 0, attempt, f"draft v{attempt}"
+            )
+
+        context = await collect_step_context(session, producer.id, workflow_run_id=wf_run.id)
+
+    assert context.count("[Draft]") == 1
+    assert "draft v3" in context
+    assert "draft v1" not in context and "draft v2" not in context
+
+
+@pytest.mark.asyncio
+async def test_retry_that_publishes_nothing_does_not_inherit_the_failed_attempts_artifact() -> None:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.services.agents.workflow import collect_step_context
+
+    await _ensure_schema()
+    async with SessionLocal() as session:
+        producer, _wf, wf_run = await _seed_board_workflow(session)
+        await _seed_step_attempt(session, producer.id, wf_run.id, 0, 1, "the rejected draft")
+        await _seed_step_attempt(session, producer.id, wf_run.id, 0, 2, None)
+
+        context = await collect_step_context(session, producer.id, workflow_run_id=wf_run.id)
+
+    assert "the rejected draft" not in context
+
+
+@pytest.mark.asyncio
+async def test_board_keeps_only_each_earlier_steps_latest_attempt() -> None:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.services.agents.workflow import collect_prior_artifacts
+
+    await _ensure_schema()
+    async with SessionLocal() as session:
+        producer, _wf, wf_run = await _seed_board_workflow(session)
+        await _seed_step_attempt(session, producer.id, wf_run.id, 0, 1, "inventory v1")
+        await _seed_step_attempt(session, producer.id, wf_run.id, 0, 2, "inventory v2")
+
+        digest = await collect_prior_artifacts(session, [producer.id], workflow_run_id=wf_run.id)
+
+    assert digest.count("[Draft]") == 1
+    assert "inventory v2" in digest
+    assert "inventory v1" not in digest
+
+
+@pytest.mark.asyncio
+async def test_agent_reused_at_two_steps_keeps_both_steps_deliverables() -> None:
+    """Superseding is per step, not per agent: a second step is not a retry of the first."""
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.services.agents.workflow import collect_prior_artifacts
+
+    await _ensure_schema()
+    async with SessionLocal() as session:
+        producer, _wf, wf_run = await _seed_board_workflow(session)
+        await _seed_step_attempt(session, producer.id, wf_run.id, 0, 1, "outline", title="Outline")
+        await _seed_step_attempt(session, producer.id, wf_run.id, 2, 1, "chapter", title="Chapter")
+
+        digest = await collect_prior_artifacts(session, [producer.id], workflow_run_id=wf_run.id)
+
+    assert "outline" in digest and "chapter" in digest
+
+
+@pytest.mark.asyncio
+async def test_cumulative_board_drops_an_earlier_runs_superseded_attempts() -> None:
+    """``clear_artifacts`` unset keeps earlier runs' final deliverables, not their retries."""
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models.workflow import WorkflowRun
+    from precursor.backend.services.agents.workflow import collect_step_context
+
+    await _ensure_schema()
+    async with SessionLocal() as session:
+        producer, wf, first = await _seed_board_workflow(session, clear_artifacts=False)
+        await _seed_step_attempt(session, producer.id, first.id, 0, 1, "first run, rejected")
+        await _seed_step_attempt(session, producer.id, first.id, 0, 2, "first run, accepted")
+        second = WorkflowRun(workflow_id=wf.id, run_number=2, status="running", trigger="manual")
+        session.add(second)
+        await session.commit()
+        await session.refresh(second)
+        await _seed_step_attempt(session, producer.id, second.id, 0, 1, "second run")
+
+        context = await collect_step_context(
+            session, producer.id, workflow_run_id=second.id, artifacts_run_id=None
+        )
+
+    assert "first run, accepted" in context
+    assert "second run" in context
+    assert "first run, rejected" not in context
+
+
 @pytest.mark.asyncio
 async def test_boot_recovery_frees_the_fleet_slot_a_crash_held() -> None:
     """A crash mid-turn must release its concurrency slot.

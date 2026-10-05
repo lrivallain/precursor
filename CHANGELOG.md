@@ -145,6 +145,13 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Fixed
 
+- **A workflow gate can now recover from a FAIL.** Each loop-back re-ran the
+  producing step as a new execution, and the gate was handed every attempt's
+  artifacts side by side, so it saw two copies of the deliverable, then three,
+  then four. It then failed on the duplicates themselves until `max_loops` ran
+  out. A retry's artifacts now replace the attempt they supersede, both in the
+  hand-off and on the shared board, so the gate judges only the current attempt.
+
 - **MCP servers over streamable HTTP work with `mcp` 2.3.** A fresh install
   that resolved `mcp` 2.3.0 failed every streamable-HTTP call with "SSE stream
   ended without a response": Precursor's patch raising the SDK's 1 MiB limit on
