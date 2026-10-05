@@ -145,6 +145,13 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Fixed
 
+- **A workflow gate can now recover from a FAIL.** Each loop-back re-ran the
+  producing step as a new execution, and the gate was handed every attempt's
+  artifacts side by side, so it saw two copies of the deliverable, then three,
+  then four. It then failed on the duplicates themselves until `max_loops` ran
+  out. A retry's artifacts now replace the attempt they supersede, both in the
+  hand-off and on the shared board, so the gate judges only the current attempt.
+
 - **The macOS menu-bar icon no longer crashes on launch.** `precursor tray`
   died with a `trace trap` a moment after starting on recent macOS releases:
   its periodic refresh redrew the status item from a background thread, which

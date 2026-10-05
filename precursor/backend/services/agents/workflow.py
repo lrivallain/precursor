@@ -36,8 +36,8 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import func, select
-from sqlalchemy.orm import selectinload
+from sqlalchemy import exists, func, or_, select
+from sqlalchemy.orm import aliased, selectinload
 
 from precursor.backend.models.agent_artifact import AgentArtifact
 from precursor.backend.models.agent_event import AgentEventRecord
@@ -330,6 +330,29 @@ async def _last_assistant_message(
 _MIRROR_RUN_SCOPE: Any = object()
 
 
+def _superseded_attempt_runs() -> Any:
+    """Agent runs a later attempt of the *same step* has replaced.
+
+    Every step attempt — a gate loop-back, an unblock, a rejected approval's
+    re-drive, a replay — opens a fresh ``AgentRun`` under the same workflow run
+    and leaves a ``WorkflowRunStep`` trace at the step's position. An attempt is
+    superseded once a newer trace at that ``(run_id, position)`` points at a
+    different run. Keyed on the position rather than the agent, so an agent
+    reused at two steps of one workflow keeps both steps' deliverables.
+    """
+    newer = aliased(WorkflowRunStep)
+    return select(WorkflowRunStep.agent_run_id).where(
+        WorkflowRunStep.agent_run_id.is_not(None),
+        exists().where(
+            newer.run_id == WorkflowRunStep.run_id,
+            newer.position == WorkflowRunStep.position,
+            newer.id > WorkflowRunStep.id,
+            newer.agent_run_id.is_not(None),
+            newer.agent_run_id != WorkflowRunStep.agent_run_id,
+        ),
+    )
+
+
 async def _run_scoped_artifacts(
     session: AsyncSession,
     agent_id: int,
@@ -343,8 +366,19 @@ async def _run_scoped_artifacts(
     same agent can't leak its deliverables into this one's context. Falls back to
     the agent-wide read when no workflow run is in play (a manual call, or rows
     written before runs existed).
+
+    Either way, an attempt a later attempt of the same step superseded never
+    reaches the board. Stacked, a gate that failed once would judge every
+    earlier draft beside the current one and fail on the duplication itself
+    until ``max_loops`` ran out.
     """
-    stmt = select(AgentArtifact).where(AgentArtifact.agent_id == agent_id)
+    stmt = select(AgentArtifact).where(
+        AgentArtifact.agent_id == agent_id,
+        or_(
+            AgentArtifact.agent_run_id.is_(None),
+            AgentArtifact.agent_run_id.not_in(_superseded_attempt_runs()),
+        ),
+    )
     if workflow_run_id is not None:
         stmt = stmt.join(AgentRun, AgentArtifact.agent_run_id == AgentRun.id).where(
             AgentRun.workflow_run_id == workflow_run_id

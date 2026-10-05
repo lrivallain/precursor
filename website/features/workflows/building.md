@@ -118,7 +118,9 @@ OBJECTIVE_COMPLETE: FAIL: <reason>
 
 - **PASS** → the workflow advances to the next step as usual.
 - **FAIL** → the gate's **on-fail target** step is re-driven, with the gate's
-  critique injected as a preamble so the retry knows *what* to fix.
+  critique injected as a preamble so the retry knows *what* to fix. The retry's
+  deliverable **replaces** the failed attempt's: the gate (and every later step)
+  only ever sees the current attempt's artifacts, never a pile of earlier drafts.
 - The verdict is **fail-open**: an empty or ambiguous answer counts as PASS, so a
   gate never wedges the pipeline.
 

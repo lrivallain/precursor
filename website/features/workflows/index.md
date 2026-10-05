@@ -59,8 +59,9 @@ trigger another one. **All** the chaining lives on the workflow:
   **artifacts published by every earlier step** in the run, labelled by step and
   oldest-first. A reviewer three stages down still sees the research inventory the
   first step produced — without the middle steps having to re-forward it. Steps
-  that published nothing are skipped, and gates (which leave no deliverable)
-  never appear on the board.
+  that published nothing are skipped, gates (which leave no deliverable)
+  never appear on the board, and a step that was re-run (a gate loop-back, a
+  retry) contributes only its latest attempt.
 
 ## The four kinds of step
 
