@@ -145,6 +145,13 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Fixed
 
+- **MCP servers over streamable HTTP work with `mcp` 2.3.** A fresh install
+  that resolved `mcp` 2.3.0 failed every streamable-HTTP call with "SSE stream
+  ended without a response": Precursor's patch raising the SDK's 1 MiB limit on
+  a single server-sent event rejected the argument 2.3 now passes. On 2.3+ the
+  16 MiB limit is handed to the SDK's own `max_sse_event_size` setting instead;
+  2.2 keeps the patch. Tool results over 1 MiB still arrive on both.
+
 - **The macOS menu-bar icon no longer crashes on launch.** `precursor tray`
   died with a `trace trap` a moment after starting on recent macOS releases:
   its periodic refresh redrew the status item from a background thread, which

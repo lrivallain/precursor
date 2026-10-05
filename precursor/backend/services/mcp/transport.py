@@ -9,6 +9,7 @@ with it — is defined once here.
 
 from __future__ import annotations
 
+import inspect
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -34,18 +35,28 @@ HTTP_SSE_READ_TIMEOUT_SECONDS = 300.0
 # configured by the user, so a generous-but-bounded cap is the right trade-off.
 MCP_SSE_MAX_EVENT_BYTES = 16 * 1024 * 1024
 
+# mcp 2.3 made the cap a ``streamable_http_client`` argument; 2.2 has no knob, so
+# the cap is patched into the module instead. Drop the patch once the floor is 2.3.
+SDK_HAS_SSE_EVENT_SIZE = (
+    "max_sse_event_size" in inspect.signature(streamable_http_client).parameters
+)
 
-def _event_source(response: httpx2.Response) -> httpx2.EventSource:
+
+def _event_source(response: httpx2.Response, **_ignored: Any) -> httpx2.EventSource:
+    # Swallows ``max_event_size`` and the like: a newer SDK passing its own cap
+    # must not turn into a TypeError that the SDK reports as a dropped stream.
     return httpx2.EventSource(response, max_event_size=MCP_SSE_MAX_EVENT_BYTES)
 
 
 def _raise_sse_event_cap() -> None:
-    """Make the SDK's streamable-HTTP transport parse SSE with our event cap.
+    """Make mcp 2.2's streamable-HTTP transport parse SSE with our event cap.
 
-    ``streamable_http_client`` exposes no ``max_event_size`` knob, so rebind the
-    two names its module resolves at call time: ``EventSource`` (POST responses,
-    i.e. tool results) and ``sse_within_origin`` (the GET stream and resumption).
+    That release exposes no ``max_event_size`` knob, so rebind the two names its
+    module resolves at call time: ``EventSource`` (POST responses, i.e. tool
+    results) and ``sse_within_origin`` (the GET stream and resumption).
     """
+    if SDK_HAS_SSE_EVENT_SIZE:
+        return
     sdk = _sdk_streamable_http
     if getattr(sdk, "_precursor_sse_cap", False):
         return
@@ -144,11 +155,14 @@ async def streamable_http_session(
     """
     timeout = httpx2.Timeout(HTTP_TIMEOUT_SECONDS, read=HTTP_SSE_READ_TIMEOUT_SECONDS)
     hook, last_error_status = _post_status_recorder()
+    sse_cap: dict[str, Any] = (
+        {"max_sse_event_size": MCP_SSE_MAX_EVENT_BYTES} if SDK_HAS_SSE_EVENT_SIZE else {}
+    )
     async with (
         httpx2.AsyncClient(
             headers=headers, auth=auth, timeout=timeout, event_hooks={"response": [hook]}
         ) as http_client,
-        streamable_http_client(url, http_client=http_client) as (read, write),
+        streamable_http_client(url, http_client=http_client, **sse_cap) as (read, write),
         _StatusTrackingSession(read, write, last_error_status=last_error_status) as session,
     ):
         yield session

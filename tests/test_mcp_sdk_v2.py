@@ -26,6 +26,7 @@ from importlib.metadata import version
 from typing import Any
 
 import httpx
+import httpx2
 import pytest
 import uvicorn
 from mcp.server.mcpserver import MCPServer
@@ -404,12 +405,52 @@ async def test_a_tool_result_larger_than_httpx2s_sse_cap_is_received() -> None:
 
 
 def test_streamable_http_sse_cap_is_raised() -> None:
-    """Guard: an SDK bump that renames the rebinding targets fails here, not
-    silently in production at the 1 MiB default."""
+    """Guard: an SDK bump that neither takes ``max_sse_event_size`` nor exposes
+    the rebinding targets fails here, not silently in production at 1 MiB."""
     import mcp.client.streamable_http as sdk
 
     from precursor.backend.services.mcp import transport
 
-    assert sdk.EventSource is transport._event_source
-    assert sdk.sse_within_origin.__module__ == transport.__name__
     assert transport.MCP_SSE_MAX_EVENT_BYTES > 1024 * 1024
+    if transport.SDK_HAS_SSE_EVENT_SIZE:
+        # mcp 2.3+: the SDK owns the cap, so its internals stay untouched.
+        assert sdk.EventSource is httpx2.EventSource
+        assert not getattr(sdk, "_precursor_sse_cap", False)
+    else:
+        assert sdk.EventSource is transport._event_source
+        assert sdk.sse_within_origin.__module__ == transport.__name__
+
+
+def test_patched_event_source_accepts_the_sdks_own_cap() -> None:
+    """mcp 2.3 calls ``EventSource(response, max_event_size=...)``; the 2.2
+    replacement must take that call shape and keep Precursor's cap (#399)."""
+    from precursor.backend.services.mcp import transport
+
+    response = httpx2.Response(200)
+    source = transport._event_source(response, max_event_size=1024)
+    assert isinstance(source, httpx2.EventSource)
+    assert source._max_event_size == transport.MCP_SSE_MAX_EVENT_BYTES
+
+
+async def test_session_passes_the_cap_to_the_sdk_when_it_takes_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from precursor.backend.services.mcp import transport
+
+    seen: dict[str, Any] = {}
+
+    @contextlib.asynccontextmanager
+    async def fake_client(url: str, **kwargs: Any) -> AsyncIterator[Any]:
+        seen.update(kwargs)
+        raise RuntimeError("stop")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(transport, "streamable_http_client", fake_client)
+    with pytest.raises(RuntimeError, match="stop"):
+        async with streamable_http_session("http://127.0.0.1:1/mcp"):
+            pass
+
+    if transport.SDK_HAS_SSE_EVENT_SIZE:
+        assert seen["max_sse_event_size"] == transport.MCP_SSE_MAX_EVENT_BYTES
+    else:
+        assert "max_sse_event_size" not in seen
