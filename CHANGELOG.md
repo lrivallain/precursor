@@ -15,6 +15,19 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **Side chats.** Start a chat from a topic to explore a tangent without adding
+  it to the topic. Start one from an assistant reply's toolbar (**Start a chat
+  from this reply**), from **Side chats** in the topic's right panel, or with the
+  new `/side-chat` command. On every turn, the chat gets the topic's title,
+  description and summary. A chat started from a reply also gets a copy of that
+  reply, quoted at its top with an **Open in topic** link back to it. The topic's
+  right panel lists its side chats with their unread counts, reminders, message
+  counts and last activity. In a side chat, the header links back to the topic,
+  and the Chats list marks it with an arrow icon. Deleting the topic keeps its
+  side chats and only removes the link. New endpoints: `GET/POST
+  /api/topics/{id}/chats`. Chats gain `parent_topic_id`, `parent_topic_title`,
+  `parent_message_id` and `seed_content`.
+
 - **Timeline and rewind for topics and chats.** A column of short dashes on the
   right edge of the transcript shows one dash per turn. Dashes for turns on
   screen are brighter, and the turn you're reading is blue, with a matching blue

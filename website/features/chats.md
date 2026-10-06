@@ -99,3 +99,48 @@ browser notification fires. Opening the chat clears its badge.
 
 Right-click a chat in the left sidebar to rename, pin, set a reminder, open
 `/notes`, or archive it.
+
+## Side chats
+
+A **side chat** is a chat started from a [topic](/features/topics), for a
+tangent you want to explore without adding it to the topic's own conversation.
+It stays linked to that topic.
+
+<Screenshot src="/screenshots/side-chats.png" alt="A side chat quoting the topic reply it was started from, with a back-link to the topic in the header" caption="A side chat started from a reply: the reply is quoted on top and the header links back to the topic." />
+
+Start one from a topic in three ways:
+
+- **From a reply**: hover an assistant reply and click **Start a chat from this
+  reply** in its toolbar. The chat quotes that reply at the top.
+- **From the whole topic**: click **New** under **Side chats** in the topic's
+  right panel.
+- **With `/side-chat`** in the topic's composer. Any text after the command is
+  sent as the chat's first message.
+
+What the side chat knows:
+
+- On every turn, the model gets the parent topic's **title**, **description**
+  and **[summary](/features/topic-summary)** (when it has one) as background.
+- A chat started from a reply also gets **a copy of that reply**. It's a copy,
+  not a live link: it stays if the reply is later
+  [rewound](/features/rewind) or deleted in the topic. Only the **Open in
+  topic** shortcut on the quote goes away then.
+- The chat starts with the topic's assistant [role](/features/skills-memory).
+  You can change it like in any chat.
+
+Getting around:
+
+- The chat header shows the parent topic with a back arrow. Click it to return
+  to the topic.
+- **Open in topic**, on the quoted reply, opens the topic and scrolls to that
+  reply.
+- The topic's right panel lists its side chats. Each row shows the chat's
+  unread count, a bell when it has a [reminder](/features/scheduler), how many
+  messages it has, and when it was last active. Archived side chats leave
+  that list. Unarchiving one brings it back.
+- In the Chats list, a side chat has a small arrow icon. Hover it to see which
+  topic the chat belongs to.
+
+Deleting the topic keeps its side chats. They just stop being linked to it,
+and a chat started from a reply keeps its copy of that reply. Promoting a side
+chat to a topic makes a new, separate topic.

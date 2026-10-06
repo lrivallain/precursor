@@ -16,6 +16,7 @@ import { ReminderModal } from "./ReminderModal";
 import { ReminderBanner } from "./ReminderBanner";
 import type { Chat } from "../lib/types";
 import { RoleSelector } from "./RoleSelector";
+import { SideChatSeedCard } from "./SideChatSeedCard";
 
 interface ChatSessionPanelProps {
   chat: Chat;
@@ -135,6 +136,7 @@ export function ChatSessionPanel({
                 Loading earlier messages…
               </div>
             )}
+            {!conv.hasOlder && <SideChatSeedCard chat={chat} />}
             {visibleMessages.length === 0 && !streaming && (
               <div className="text-sm text-muted text-center pt-8">
                 Send a message to start the conversation.

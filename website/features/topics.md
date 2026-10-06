@@ -84,6 +84,16 @@ short brief of where it stands and what is still open, generated on request
 from the conversation, notes and attachments, and merged change by change once
 you have edited it yourself.
 
+## Side chats
+
+To explore a tangent without adding it to the topic's conversation, start a
+[**side chat**](/features/chats#side-chats). Start one from a reply's toolbar,
+from **Side chats** in the right panel, or with `/side-chat`. The chat knows the
+topic's title, description and summary, and the topic's right panel lists its
+side chats.
+
+<Screenshot src="/screenshots/side-chats-panel.png" alt="A topic's right panel listing three side chats with unread, reminder and activity details" caption="The topic's side chats in its right panel: unread counts, reminders and last activity at a glance." />
+
 ## Scheduling & reminders
 
 Any topic can carry a **schedule** so a prompt runs on a cadence, or a one-shot

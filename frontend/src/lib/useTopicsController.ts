@@ -11,6 +11,7 @@ import { eventBus } from "./events";
 import { notifyIfUnfocused } from "./notifications";
 import { openNotes } from "./notesOpen";
 import { navigate, topicsModeUrl, topicUrl, type AppRoute } from "./routes";
+import { OPEN_TOPIC_EVENT, type OpenTopicDetail } from "./sideChats";
 import { convKey, streamStore } from "./streamStore";
 import { findTitle, totalUnread } from "./topicTree";
 import type { Collection, Topic, TopicNode } from "./types";
@@ -430,6 +431,27 @@ export function useTopicsController(deps: TopicsControllerDeps): TopicsControlle
     // Foreground turn finished — notify if the user has switched away.
     maybeNotify(id);
   }
+
+  // A side chat's back-link: leave for Topics and open its parent.
+  useEffect(() => {
+    function onOpenTopic(e: Event): void {
+      const id = (e as CustomEvent<OpenTopicDetail>).detail?.topicId;
+      if (id == null) return;
+      void (async () => {
+        try {
+          const topic = await api.topics.get(id);
+          setAtHome(false);
+          setSidebarMode("topics");
+          closeMobileNav();
+          await selectTopic(topic);
+        } catch {
+          // deleted since the link was drawn; stay put
+        }
+      })();
+    }
+    window.addEventListener(OPEN_TOPIC_EVENT, onOpenTopic);
+    return () => window.removeEventListener(OPEN_TOPIC_EVENT, onOpenTopic);
+  }, []);
 
   async function handleSelect(id: number): Promise<void> {
     closeMobileNav();

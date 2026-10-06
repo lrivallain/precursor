@@ -7,10 +7,13 @@ import { TranscriptMessage, TranscriptTail, UndoDeleteToasts } from "./Conversat
 import { Composer } from "./Composer";
 import { ComposerModelControls } from "./ComposerModelControls";
 import { ChatStatsPanel } from "./ChatStatsPanel";
+import { useSideChats } from "./SideChatsSection";
 import { api } from "../lib/api";
 import { GITHUB_SLASH_COMMANDS } from "../lib/commands";
 import { detachedDraftStore } from "../lib/detachedDraftStore";
 import { useSettings } from "../lib/settingsStore";
+import { hasPendingJump, startSideChat, takePendingJump } from "../lib/sideChats";
+import { convKey, streamStore } from "../lib/streamStore";
 import { useResizableWidth } from "../lib/useResizableWidth";
 import { useResizableHeight } from "../lib/useResizableHeight";
 import { useComposerInput } from "../lib/useComposerInput";
@@ -139,6 +142,38 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
   });
   const { streamKey, setPersisted, systemNote, visibleMessages, streaming, reminders } = conv;
 
+  const sideChatItems = useSideChats(topic.id);
+  const [startingSideChat, setStartingSideChat] = useState(false);
+
+  // Start a side chat on the whole topic or on one reply, then leave for it.
+  // A first message, when given, is sent as the chat opens.
+  async function runSideChat(messageId: number | null, firstMessage = ""): Promise<void> {
+    if (startingSideChat) return;
+    setStartingSideChat(true);
+    try {
+      const chat = await startSideChat(topic.id, messageId);
+      const text = firstMessage.trim();
+      if (text) void streamStore.start(convKey("chat", chat.id), text);
+    } catch (err) {
+      systemNote(`Couldn't start the side chat: ${(err as Error).message}`);
+    } finally {
+      setStartingSideChat(false);
+    }
+  }
+
+  // Arrived from a side chat's "Open in topic": scroll to its source reply's
+  // turn once the turn index knows it.
+  const { turns: timelineTurns, jumpTo } = conv.timeline;
+  useEffect(() => {
+    if (!hasPendingJump(topic.id) || timelineTurns.length === 0) return;
+    const messageId = takePendingJump(topic.id);
+    if (messageId == null) return;
+    const index = timelineTurns.findIndex(
+      (t) => t.message_id <= messageId && messageId <= t.last_message_id,
+    );
+    if (index >= 0) void jumpTo(index);
+  }, [topic.id, timelineTurns, jumpTo]);
+
   const summary = useTopicSummary(topic.id);
   const toggleSummary = summary.toggleVisible;
   // The panel is reached from the shared topic header, which doesn't own its
@@ -178,6 +213,10 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
     }
     if (name === "new") {
       await runNew(argument);
+      return;
+    }
+    if (name === "side-chat") {
+      await runSideChat(null, argument);
       return;
     }
     if (name === "pin" || name === "unpin") {
@@ -586,6 +625,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
                 }
                 collapsible={m.role === "user" && topic.schedule != null}
                 hideAgentBadge={grouped}
+                onStartSideChat={streaming ? undefined : (msg) => void runSideChat(msg.id)}
               />
             );
 
@@ -753,6 +793,11 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
             busy: reminders.reminderBusy,
             onEdit: () => reminders.setReminderModal({ note: "" }),
             onDone: () => void reminders.runReminderClear(true),
+          }}
+          sideChats={{
+            items: sideChatItems,
+            starting: startingSideChat,
+            onStart: () => void runSideChat(null),
           }}
         />
       )}

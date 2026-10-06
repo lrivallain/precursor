@@ -35,6 +35,7 @@ from sqlalchemy import delete, select
 from precursor.backend.config import get_settings
 from precursor.backend.db import SessionLocal
 from precursor.backend.models import Message, MessageRole, Role, Topic
+from precursor.backend.services import side_chats
 from precursor.backend.services.events import (
     publish_mcp_auth_required,
     publish_message_changed,
@@ -920,6 +921,9 @@ async def _set_pinned(topic_id: int, pinned: bool) -> None:
 
 async def _clear_messages(topic_id: int) -> None:
     async with SessionLocal() as session:
+        await side_chats.detach_messages(
+            session, select(Message.id).where(Message.topic_id == topic_id)
+        )
         await session.execute(delete(Message).where(Message.topic_id == topic_id))
         await session.commit()
     await publish_message_changed(topic_id)

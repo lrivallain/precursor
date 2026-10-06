@@ -5,6 +5,7 @@ import { api } from "./api";
 import { eventBus } from "./events";
 import { openNotes } from "./notesOpen";
 import { chatUrl, navigate, type AppRoute } from "./routes";
+import { OPEN_CHAT_EVENT, type OpenChatDetail } from "./sideChats";
 import { convKey, streamStore } from "./streamStore";
 import type { Chat } from "./types";
 import { windowFocused } from "./windowFocus";
@@ -169,6 +170,20 @@ export function useChatsController(deps: ChatsControllerDeps): ChatsController {
     return () => {
       off();
     };
+  }, []);
+
+  // A side chat was started (or picked) from a topic: leave for Chats and open it.
+  useEffect(() => {
+    function onOpenChat(e: Event): void {
+      const chat = (e as CustomEvent<OpenChatDetail>).detail?.chat;
+      if (!chat) return;
+      setAtHome(false);
+      setSidebarMode("chats");
+      setChatListReloadKey((k) => k + 1);
+      void handleSelectChat(chat);
+    }
+    window.addEventListener(OPEN_CHAT_EVENT, onOpenChat);
+    return () => window.removeEventListener(OPEN_CHAT_EVENT, onOpenChat);
   }, []);
 
   // The chat branch of the stream completion (`useReadSync`): keep the chat

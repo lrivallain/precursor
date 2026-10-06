@@ -17,6 +17,8 @@ from precursor.backend.schemas.chat import (
     ChatCreate,
     ChatRead,
     ChatUpdate,
+    SideChatCreate,
+    SideChatItem,
 )
 from precursor.backend.schemas.collection import (
     CollectionCreate,
@@ -225,6 +227,8 @@ __all__ = [
     "RoleUpdate",
     "SettingsPayload",
     "SettingsRead",
+    "SideChatCreate",
+    "SideChatItem",
     "SkillCreate",
     "SkillRead",
     "SkillUpdate",

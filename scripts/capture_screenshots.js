@@ -288,6 +288,44 @@ const scenes = {
     },
   },
 
+  // The parent topic's right panel listing its side chats. Listed before
+  // `side-chats`, which opens (and so marks read) the chat that has a badge.
+  "side-chats-panel": {
+    viewport: { width: 1440, height: 900 },
+    async go(page) {
+      await page.addInitScript(() =>
+        localStorage.setItem("precursor:chat-stats:collapsed", "0"),
+      );
+      await page.goto(`${BASE}/topics/billing-db-migration`, { waitUntil: "networkidle" });
+      await page.locator("[data-testid=side-chats] li").first().waitFor();
+      await page.mouse.move(0, 0);
+      return clipOf(page, "main");
+    },
+  },
+
+  // A side chat started from a topic reply: the quoted reply, and the back-link
+  // to its topic in the header. Clipped to the main pane so the sidebar persona
+  // stays out.
+  "side-chats": {
+    viewport: { width: 1440, height: 900 },
+    async go(page) {
+      await page.addInitScript(() =>
+        localStorage.setItem("precursor:chat-stats:collapsed", "0"),
+      );
+      await page.goto(`${BASE}/chats/logical-replication-gotchas`, { waitUntil: "networkidle" });
+      const seed = page.locator("[data-testid=side-chat-seed]");
+      await seed.waitFor();
+      // The transcript opens at its latest turn; the quoted reply is on top.
+      await seed.evaluate((el) => {
+        const box = el.closest(".overflow-y-auto");
+        if (box) box.scrollTop = 0;
+      });
+      await page.mouse.move(0, 0);
+      await sleep(300);
+      return clipOf(page, "main");
+    },
+  },
+
   // A reply's collapsed "Thinking" area, opened — just the exchange, so the
   // sidebar and its persona footer stay out of the shot.
   thinking: {

@@ -10,6 +10,7 @@ import {
   Code2,
   Copy,
   History,
+  MessageSquarePlus,
   Paperclip,
   Pencil,
   RotateCcw,
@@ -63,6 +64,8 @@ interface Props {
   onEditResend?: () => void;
   /** Keep the action toolbar visible without hovering (the selected prompt). */
   revealActions?: boolean;
+  /** Assistant replies in a topic: start a side chat seeded with this reply. */
+  onStartSideChat?: () => void;
 }
 
 const roleLabel: Record<MessageRole, string> = {
@@ -87,7 +90,7 @@ function matchSkillInvocation(
   return { skill, argument: (m[2] ?? "").trim() };
 }
 
-export function MessageBubble({ role, content, reasoning, pending, attachments, onDelete, onStop, collapsible, agentSessionId, createdAt, model, elapsedMs, isError, onRetry, highlighted, onRewindHere, onEditResend, revealActions }: Props) {
+export function MessageBubble({ role, content, reasoning, pending, attachments, onDelete, onStop, collapsible, agentSessionId, createdAt, model, elapsedMs, isError, onRetry, highlighted, onRewindHere, onEditResend, revealActions, onStartSideChat }: Props) {
   const isUser = role === "user";
   const skills = useSkills();
   const skillInvocation =
@@ -289,6 +292,17 @@ export function MessageBubble({ role, content, reasoning, pending, attachments, 
                   )}
                 </button>
               </>
+            )}
+            {onStartSideChat && (
+              <button
+                type="button"
+                onClick={onStartSideChat}
+                className="p-1 rounded-full text-muted hover:text-accent"
+                aria-label="Start a chat from this reply"
+                data-tooltip={"Start a chat from this reply\nDiscuss it on the side, without adding to this topic"}
+              >
+                <MessageSquarePlus size={12} />
+              </button>
             )}
             {onRewindHere && (
               <button

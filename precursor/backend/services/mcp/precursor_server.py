@@ -263,6 +263,8 @@ def _chat_dict(c: Chat) -> dict[str, Any]:
         "description": c.description,
         "pinned": c.pinned,
         "archived": c.archived_at is not None,
+        "parent_topic_id": c.parent_topic_id,
+        "parent_message_id": c.parent_message_id,
         "created_at": _iso(c.created_at),
         "updated_at": _iso(c.updated_at),
     }

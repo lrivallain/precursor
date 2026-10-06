@@ -94,6 +94,7 @@ import type {
   MeetingTranscriptListResult,
   MeetingTranscriptSummaryResult,
   Message,
+  SideChatItem,
   StoppedTurn,
   NotesDraft,
   NoteDraftAttachment,
@@ -393,6 +394,15 @@ export const api = {
       request<Schedule>(`/api/topics/${topicId}/schedule/run`, { method: "POST" }),
   },
 
+  sideChats: {
+    // Chats started from a topic, or from one of its assistant replies.
+    list: (topicId: number) => request<SideChatItem[]>(`/api/topics/${topicId}/chats`),
+    create: (topicId: number, messageId?: number | null) =>
+      request<Chat>(`/api/topics/${topicId}/chats`, {
+        method: "POST",
+        body: JSON.stringify({ message_id: messageId ?? null }),
+      }),
+  },
   chats: {
     // Chats (flat conversation sessions — no tree, no GitHub link)
     list: (q?: string) =>

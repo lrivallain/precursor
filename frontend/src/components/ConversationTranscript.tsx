@@ -33,6 +33,8 @@ interface TranscriptMessageProps {
   rewindActions?: PromptRewindActions;
   /** Show the prompt's action toolbar without hovering. */
   revealActions?: boolean;
+  /** Topic transcripts: start a side chat from an assistant reply. */
+  onStartSideChat?: (message: Message) => void;
 }
 
 /** One persisted-conversation row: a tool call, or a user/assistant/system bubble. */
@@ -87,6 +89,7 @@ function renderRow({
   current,
   rewindActions,
   revealActions,
+  onStartSideChat,
 }: TranscriptMessageProps) {
   if (m.kind === "compaction") {
     return (
@@ -137,6 +140,11 @@ function renderRow({
       onRewindHere={rewindActions?.here}
       onEditResend={rewindActions?.edit}
       revealActions={revealActions && Boolean(rewindActions)}
+      onStartSideChat={
+        onStartSideChat && m.role === "assistant" && m.id > 0 && !m.kind && !m.is_error
+          ? () => onStartSideChat(m)
+          : undefined
+      }
     />
   );
 }

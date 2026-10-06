@@ -114,6 +114,28 @@ export interface Chat {
   role_id: number | null;
   created_at: string;
   updated_at: string;
+  /** Side chat: the topic it was started from (null once that topic is deleted). */
+  parent_topic_id?: number | null;
+  parent_topic_title?: string | null;
+  /** The reply it was started from, while that reply still exists. */
+  parent_message_id?: number | null;
+  /** Frozen copy of that reply; survives its rewind or deletion. */
+  seed_content?: string | null;
+}
+
+// A side chat as listed in its parent topic's right panel. Mirrors the
+// backend SideChatItem schema.
+export interface SideChatItem {
+  id: number;
+  slug: string;
+  title: string;
+  parent_message_id: number | null;
+  from_reply: boolean;
+  unread_count: number;
+  message_count: number;
+  last_message_at: string | null;
+  created_at: string;
+  reminder: { remind_at: string; status: string } | null;
 }
 
 export interface ChatCreate {

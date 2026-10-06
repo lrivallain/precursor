@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   AlarmClock,
   Archive,
+  CornerDownRight,
   Loader2,
   Mail,
   MailOpen,
@@ -183,6 +184,15 @@ export function ChatList({
                 chat.unread_count > 0 || reminderChatIds?.has(chat.id) ? "font-semibold" : ""
               }`}
             />
+          )}
+          {chat.parent_topic_title && (
+            <span
+              className="shrink-0 text-muted"
+              aria-label={`Side chat of ${chat.parent_topic_title}`}
+              data-tooltip={`Side chat of “${chat.parent_topic_title}”`}
+            >
+              <CornerDownRight size={13} />
+            </span>
           )}
           {reminderChatIds?.has(chat.id) && (
             <AlarmClock
