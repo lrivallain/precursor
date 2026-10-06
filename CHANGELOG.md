@@ -15,6 +15,11 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **Light or dark for diagrams only.** A sun/moon button in the header of an
+  open `.drawio` file switches the diagram editor between light and dark
+  without changing the app theme. The choice is remembered for every diagram;
+  switching back to match the app theme makes the editor follow the app again.
+
 - **Timeline and rewind for topics and chats.** A column of short dashes on the
   right edge of the transcript shows one dash per turn. Dashes for turns on
   screen are brighter, and the turn you're reading is blue, with a matching blue
