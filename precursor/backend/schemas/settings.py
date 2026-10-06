@@ -113,6 +113,7 @@ class SettingsPayload(BaseModel):
     agents_default_model: str | None = None
     agents_reasoning_effort: str | None = None
     agents_context_tier: str | None = None
+    agents_file_change_tracking: bool | None = None
     agents_approval_policy: str | None = None
     agents_system_prompt: str | None = None
     agents_watchdog_timeout_seconds: int | None = None
@@ -235,6 +236,8 @@ class SettingsRead(BaseModel):
     # and "default" tier leave the SDK defaults unchanged.
     agents_reasoning_effort: str = ""
     agents_context_tier: str = "default"
+    # Capture file changes in new agent sessions so a rewind can restore them.
+    agents_file_change_tracking: bool = True
     # Default approval policy for agent actions: manual | balanced | autonomous.
     agents_approval_policy: str = "balanced"
     # Extra system-message preamble appended to every agent session.

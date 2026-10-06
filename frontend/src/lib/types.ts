@@ -468,6 +468,9 @@ export interface AgentEvent {
   // Which execution produced this event, so a shared agent's concurrent runs can
   // be read one at a time instead of interleaved.
   agent_run_id: number | null;
+  // The SDK id of a user prompt: what a rewind truncates from. Absent on other
+  // events and on prompts archived before rewind existed.
+  event_id?: string | null;
 }
 
 // One incremental read of an agent's transcript (mirrors AgentEventPage).
@@ -492,9 +495,55 @@ export interface AgentEventPage {
   thinking?: AgentLiveThinking | null;
   // Send this back as `after` on the next read.
   cursor: number;
-  // The cursor no longer addresses this transcript (cleared, pruned, or taken
-  // against another run): replace what you hold instead of appending to it.
+  // The cursor no longer addresses this transcript (cleared, rewound, pruned, or
+  // taken against another run): replace what you hold instead of appending to it.
   reset: boolean;
+  // Names the archive the cursor counts into; send it back with `after`.
+  epoch?: string;
+  /**
+   * Runs whose prompts a rewind can cut: the current run and earlier runs of the
+   * same SDK session. Empty while a workflow step drives the current run.
+   */
+  rewindable_run_ids?: number[];
+}
+
+export type AgentRewindMode = "conversation" | "conversation-and-files";
+
+/** Mirrors `AgentRewindSkippedFile` in `schemas/agent.py`. */
+export interface AgentRewindSkippedFile {
+  path: string;
+  /** `user-modified` (changed since the agent edited it) or `skipped-capture`. */
+  reason: string;
+}
+
+/** Mirrors `AgentRewindResult` in `schemas/agent.py`. */
+export interface AgentRewindResult {
+  events_removed: number;
+  sdk_events_removed: number | null;
+  outcome?: string;
+  restored_files?: string[];
+  skipped_files?: AgentRewindSkippedFile[];
+}
+
+/** Mirrors `AgentRewindFile` in `schemas/agent.py`. */
+export interface AgentRewindFile {
+  path: string;
+  /** created | modified | deleted */
+  change_type: string;
+  lines_added: number;
+  lines_removed: number;
+}
+
+/** Mirrors `AgentRewindPreview` in `schemas/agent.py`. */
+export interface AgentRewindPreview {
+  event_id: string;
+  /** The SDK session captured file changes from its first turn. */
+  file_tracking: boolean;
+  /** Authoritative for offering file restore; see `unavailable_reason` when false. */
+  files_available: boolean;
+  unavailable_reason: string | null;
+  file_count: number;
+  files: AgentRewindFile[];
 }
 
 export type AgentPermissionDecisionValue = "approve-once" | "approve-always" | "deny";
@@ -1472,6 +1521,8 @@ export interface Settings {
   agents_default_model: string;
   agents_reasoning_effort: string;
   agents_context_tier: string;
+  /** New agent sessions capture file changes so a rewind can restore them. */
+  agents_file_change_tracking: boolean;
   agents_approval_policy: AgentApprovalPolicy;
   agents_system_prompt: string;
   agents_watchdog_timeout_seconds: number;
@@ -1544,6 +1595,7 @@ export interface SettingsUpdate {
   agents_default_model?: string;
   agents_reasoning_effort?: string;
   agents_context_tier?: string;
+  agents_file_change_tracking?: boolean;
   agents_approval_policy?: AgentApprovalPolicy;
   agents_system_prompt?: string;
   agents_watchdog_timeout_seconds?: number;

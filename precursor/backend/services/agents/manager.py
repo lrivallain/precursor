@@ -47,6 +47,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import contextvars
+import inspect
 import json
 import logging
 import os
@@ -69,7 +70,13 @@ from precursor.backend.models import (
     MessageRole,
     Topic,
 )
-from precursor.backend.schemas.agent import AgentEvent, AgentEventPage
+from precursor.backend.schemas.agent import (
+    AgentEvent,
+    AgentEventPage,
+    AgentRewindMode,
+    AgentRewindPreview,
+    AgentRewindResult,
+)
 from precursor.backend.services.agents import (
     commands,
     fleet,
@@ -80,6 +87,7 @@ from precursor.backend.services.agents import (
     timeline,
     usage,
 )
+from precursor.backend.services.agents import rewind as rewind_mod
 from precursor.backend.services.agents.artifacts import ArtifactStore, clear_artifacts
 from precursor.backend.services.agents.directives import (
     _CONTINUE_NUDGE,
@@ -112,6 +120,7 @@ from precursor.backend.services.app_settings import (
     resolve_agents_context_tier,
     resolve_agents_default_model,
     resolve_agents_enabled,
+    resolve_agents_file_change_tracking,
     resolve_agents_reasoning_effort,
     resolve_agents_watchdog_timeout,
 )
@@ -217,6 +226,15 @@ _STREAM_ACTIVITY_INTERVAL_SECONDS = 10.0
 _STREAM_PUBLISH_INTERVAL_SECONDS = 0.25
 
 
+def _accepts_kwarg(func: Any, name: str) -> bool:
+    """Whether ``func`` takes keyword ``name`` (an older SDK may not)."""
+    try:
+        params = inspect.signature(func).parameters
+    except (TypeError, ValueError):
+        return False
+    return name in params or any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
+
+
 def _runtime_env() -> dict[str, str]:
     """Environment for the spawned CLI, pinned to the binary the probe resolved.
 
@@ -263,6 +281,11 @@ class AgentManager:
         # Agents whose DB archive has been hydrated into ``_events`` this process.
         self._loaded: set[int] = set()
         self._events_lock = asyncio.Lock()
+        # Per-agent count of archive truncations (rewinds, clears), and a nonce
+        # for this process, together naming the archive a reader's cursor counts
+        # into (see ``Timeline.epoch``).
+        self._transcript_epochs: dict[int, int] = {}
+        self._epoch_nonce = os.urandom(4).hex()
         # Per-agent locks serialising event handling so SDK events are processed
         # in arrival order — otherwise an idle handler can race ahead of the
         # assistant-message handler and post a stale answer back to the topic.
@@ -813,6 +836,7 @@ class AgentManager:
             default_model = await resolve_agents_default_model(s)
             effort = await resolve_agents_reasoning_effort(s)
             tier = await resolve_agents_context_tier(s)
+            track_files = await resolve_agents_file_change_tracking(s)
         model = run.model or default_model
         model = await self._sanitize_model(agent.id, model)
         if model:
@@ -823,6 +847,13 @@ class AgentManager:
             kwargs["context_tier"] = tier
         if run.copilot_session_id:
             kwargs["session_id"] = run.copilot_session_id
+        # Lets a rewind put back the files the dropped turns changed. Only a
+        # session tracked from its first turn can, so a resumed untracked one
+        # stays conversation-only (the SDK reports that).
+        if track_files and _accepts_kwarg(
+            self._client.create_session, "enable_file_change_tracking"
+        ):
+            kwargs["enable_file_change_tracking"] = True
         # An agent with MCP switched off gets no tool servers at all — not even
         # the first-party one. Whole catalogues of tool schemas are a large,
         # fixed context cost, so a step that only has to transform text pays
@@ -1212,11 +1243,16 @@ class AgentManager:
         return await self._transcript.get_events(agent_id, agent_run_id=agent_run_id)
 
     async def get_events_page(
-        self, agent_id: int, *, agent_run_id: int | None = None, after: int = 0
+        self,
+        agent_id: int,
+        *,
+        agent_run_id: int | None = None,
+        after: int = 0,
+        epoch: str | None = None,
     ) -> AgentEventPage:
         """The transcript from ``after`` onward, for an incremental live reader."""
         return await self._transcript.get_events_page(
-            agent_id, agent_run_id=agent_run_id, after=after
+            agent_id, agent_run_id=agent_run_id, after=after, epoch=epoch
         )
 
     async def _teardown_run(self, run_id: int, *, forget: bool = False) -> None:
@@ -1242,6 +1278,7 @@ class AgentManager:
         self._loaded.discard(agent_id)
         self._event_locks.pop(agent_id, None)
         self._auth_announced.pop(agent_id, None)
+        self._transcript.bump_epoch(agent_id)
         # SQLite doesn't enforce ON DELETE CASCADE unless the foreign_keys
         # pragma is on, so clear the archive explicitly (the codebase manages
         # such cleanups in the app layer — see roles/topics delete).
@@ -1284,6 +1321,7 @@ class AgentManager:
             self._event_locks.pop(agent_id, None)
             self._auth_announced.pop(agent_id, None)
             self._agent_runs.pop(agent_id, None)
+            self._transcript.bump_epoch(agent_id)
             async with SessionLocal() as session:
                 await session.execute(
                     delete(AgentEventRecord).where(AgentEventRecord.agent_session_id == agent_id)
@@ -1373,6 +1411,20 @@ class AgentManager:
         if not result.success:
             raise ValueError("Compaction failed; the conversation was left as it was.")
         await self._publish(agent_id, agent_run_id=run.id)
+
+    async def rewind(
+        self, agent_id: int, event_id: str, mode: AgentRewindMode = "conversation"
+    ) -> AgentRewindResult:
+        """Drop a prompt of the current session and everything after it.
+
+        See :mod:`.rewind`. Raises :class:`~.rewind.RewindError` with a
+        user-facing reason and its HTTP status.
+        """
+        return await rewind_mod.rewind(self, agent_id, event_id, mode)
+
+    async def preview_rewind(self, agent_id: int, event_id: str) -> AgentRewindPreview:
+        """What rewinding to ``event_id`` would restore on disk (see :mod:`.rewind`)."""
+        return await rewind_mod.preview(self, agent_id, event_id)
 
     async def rerun_task(
         self, agent_id: int, *, extra: str | None = None, trigger: str = "manual"

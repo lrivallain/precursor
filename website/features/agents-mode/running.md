@@ -73,6 +73,10 @@ low. **`/compact [focus]`** in the composer, or **Compact context** under
 timeline as a *context compacted* marker with the tokens freed. See
 [context compression](/features/context-compression#compacting-an-agent).
 
+To drop only the last few turns instead of the whole context, [rewind](/features/rewind#in-agent-sessions)
+from the timeline rail or a prompt's toolbar. Unlike `/clear`, the turns before
+the cut stay in the agent's context.
+
 ## Approval policy (per agent)
 
 Every agent action is gated by an **approval policy**. There's a global default

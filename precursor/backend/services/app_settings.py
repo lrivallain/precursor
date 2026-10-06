@@ -866,6 +866,17 @@ async def resolve_agents_context_tier(session: AsyncSession) -> str:
     )
 
 
+async def resolve_agents_file_change_tracking(session: AsyncSession) -> bool:
+    """Whether new agent sessions capture file changes so a rewind can restore them.
+
+    On by default. The SDK snapshots each file an agent edits, and only a session
+    tracked from its first turn can put its files back (issue #401).
+    """
+    return await resolve(
+        session, SettingSpec("agents_file_change_tracking", _boolean, default=True)
+    )
+
+
 AGENTS_APPROVAL_POLICIES = ("manual", "balanced", "autonomous")
 # ``manual`` asks for everything, ``balanced`` auto-approves read-only actions,
 # ``autonomous`` approves all.

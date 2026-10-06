@@ -16,6 +16,9 @@ import type {
   AgentModelInfo,
   AgentPermissionDecisionValue,
   AgentPermissionGrant,
+  AgentRewindMode,
+  AgentRewindPreview,
+  AgentRewindResult,
   AgentRun,
   AgentRuntimeStatus,
   AgentSchedule,
@@ -510,16 +513,31 @@ export const api = {
       }),
     // `agentRunId` narrows the transcript to one execution — without it a
     // reusable agent driven by two workflows at once reads as one conversation.
-    // `after` is the cursor from the previous read: the timeline is append-only,
-    // so a live view asks only for the events it hasn't seen. Omit it for the
-    // whole transcript.
-    getEvents: (id: number, agentRunId?: number | null, after = 0) => {
+    // `after` is the cursor from the previous read: the timeline only grows
+    // between rewinds, so a live view asks only for the events it hasn't seen.
+    // `epoch` from that read resets the cursor when a rewind happened since.
+    // Omit both for the whole transcript.
+    getEvents: (id: number, agentRunId?: number | null, after = 0, epoch?: string | null) => {
       const qs = new URLSearchParams();
       if (agentRunId != null) qs.set("agent_run_id", String(agentRunId));
       if (after > 0) qs.set("after", String(after));
+      if (after > 0 && epoch) qs.set("epoch", epoch);
       const suffix = qs.toString() ? `?${qs.toString()}` : "";
       return request<AgentEventPage>(`/api/agents/${id}/events${suffix}`);
     },
+    // Drop the prompt `eventId` (an `AgentEvent.event_id`) of the current run
+    // and everything after it, in the SDK session and the transcript. Irreversible.
+    // `conversation-and-files` also restores the files the dropped turns changed.
+    rewind: (id: number, eventId: string, mode: AgentRewindMode = "conversation") =>
+      request<AgentRewindResult>(`/api/agents/${id}/rewind`, {
+        method: "POST",
+        body: JSON.stringify({ event_id: eventId, mode }),
+      }),
+    // Checks a rewind to `eventId` and lists the files it could restore. Changes nothing.
+    previewRewind: (id: number, eventId: string) =>
+      request<AgentRewindPreview>(
+        `/api/agents/${id}/rewind/preview?${new URLSearchParams({ event_id: eventId })}`,
+      ),
     listModels: () => request<AgentModelInfo[]>(`/api/agents/models`),
     // Runtime capability + provisioning. Unlike the rest of this namespace these
     // stay reachable when the runtime is down — they are how it gets fixed.

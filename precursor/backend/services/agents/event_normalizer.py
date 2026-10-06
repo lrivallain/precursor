@@ -67,6 +67,9 @@ LIVE_ONLY_KINDS = frozenset(
         "AssistantStreamingDeltaData",
         "AssistantToolCallDeltaData",
         "AssistantMessageStartData",
+        # Emitted by the SDK while a rewind runs under the agent's event lock,
+        # so it would be archived just after the cut it reports, as a stray node.
+        "SessionSnapshotRewindData",
     }
 )
 
@@ -231,6 +234,11 @@ def normalize_event(event: Any) -> AgentEvent:
         summary = getattr(data, "summary_content", None)
         if summary:
             text = summary
+    # A prompt's SDK id is what a rewind truncates from. It lives on the event
+    # envelope, not its data, and only prompts need it.
+    event_id = (
+        getattr(event, "id", None) if name == "UserMessageData" and data is not event else None
+    )
     return AgentEvent(
         kind=kind,
         # System prompts are boilerplate repeated on every session start, so
@@ -244,4 +252,5 @@ def normalize_event(event: Any) -> AgentEvent:
         tool_status=tool_status,
         request_id=getattr(data, "tool_call_id", None),
         data=extra or None,
+        event_id=str(event_id) if event_id else None,
     )

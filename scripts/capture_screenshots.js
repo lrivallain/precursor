@@ -199,6 +199,39 @@ async function stubPluginReleases(page, { installed }) {
 }
 
 // The seeded "Onboarding guide writer": one run whose result was refined twice.
+// The demo has no Copilot runtime to ask, so answer the rewind file preview
+// with fixed files (an empty list: the turns changed no tracked files).
+async function mockRewindPreview(page, files) {
+  await page.route("**/api/agents/*/rewind/preview**", (route) =>
+    route.fulfill({
+      json: {
+        event_id: "demo",
+        file_tracking: true,
+        files_available: true,
+        unavailable_reason: null,
+        file_count: files.length,
+        files,
+      },
+    }),
+  );
+}
+
+// Preview a rewind to the refined agent's first turn; returns the main-pane clip.
+async function previewAgentRewind(page, ready = async () => {}) {
+  await gotoRefinedAgent(page);
+  await page.getByRole("tab", { name: /Activity/ }).click();
+  const nav = page.locator('nav[aria-label="Conversation timeline"]');
+  await nav.locator("[data-tick]").nth(0).hover();
+  await nav.getByRole("button", { name: "Rewind here" }).click();
+  await page.getByRole("button", { name: "Rewind", exact: true }).waitFor();
+  await ready();
+  await page.mouse.move(0, 0);
+  await sleep(1200);
+  const main = await page.locator("main").first().boundingBox();
+  if (!main) throw new Error("Seed the demo Onboarding guide writer first.");
+  return { x: Math.floor(main.x), y: 0, width: Math.ceil(main.width), height: page.viewportSize().height };
+}
+
 async function gotoRefinedAgent(page) {
   const response = await page.request.get(`${BASE}/api/agents`);
   const agents = await response.json();
@@ -983,6 +1016,32 @@ const scenes = {
       const main = await page.locator("main").first().boundingBox();
       if (!main) throw new Error("Seed the garden-irrigation-plan chat first.");
       return { x: Math.floor(main.x), y: 0, width: Math.ceil(main.width), height: page.viewportSize().height };
+    },
+  },
+
+  // A rewind previewed in an agent session: no undo, so the confirmation warns
+  // it's final. Never confirmed (the demo has no runtime to rewind anyway).
+  "rewind-agent": {
+    viewport: { width: 1440, height: 900 },
+    async go(page) {
+      await mockRewindPreview(page, []);
+      return previewAgentRewind(page);
+    },
+  },
+
+  // The same preview offering to restore the files the dropped turns changed.
+  "rewind-agent-files": {
+    viewport: { width: 1440, height: 900 },
+    async go(page) {
+      await mockRewindPreview(page, [
+        { path: "/Users/demo/guide/docs/onboarding.md", change_type: "modified", lines_added: 42, lines_removed: 7 },
+        { path: "/Users/demo/guide/docs/checklist.md", change_type: "created", lines_added: 18, lines_removed: 0 },
+      ]);
+      const clip = await previewAgentRewind(page, async () => {
+        await page.getByText(/Also restore 2 files/).waitFor();
+        await page.getByText("Show files").click();
+      });
+      return clip;
     },
   },
 

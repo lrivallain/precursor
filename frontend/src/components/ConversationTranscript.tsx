@@ -62,7 +62,7 @@ export function TranscriptMessage(props: TranscriptMessageProps) {
   );
 }
 
-function RewindCutLine() {
+export function RewindCutLine() {
   return (
     <div
       className="flex items-center gap-3 text-[11px] font-semibold text-amber-700 dark:text-amber-300"

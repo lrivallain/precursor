@@ -211,6 +211,13 @@ process-level knobs:
 | `PRECURSOR_AGENTS_MAX_CONCURRENT` | `3` | Concurrency governor — the max agents the [orchestrator](/features/agents-mode/orchestration#budgets-the-concurrency-governor) lets execute a turn at once. Extra ready agents queue and are released as slots free up. `0` or negative disables the cap (unbounded). |
 | `PRECURSOR_AGENTS_RETRY_BACKOFF_SECONDS` | `60` | Base backoff for [auto-retry](/features/agents-mode/orchestration#retry-auto-recovery) of a failed agent. Delay grows exponentially per attempt (`base × 2ⁿ`); the scheduler re-runs the agent once its retry time is due, up to the agent's `max_retries`. |
 
+A runtime setting (an `AppSetting`, edited in **Settings → Agents**) shapes new
+agent sessions:
+
+| Setting | Default | Description |
+| --- | --- | --- |
+| `agents_file_change_tracking` | `true` | New Copilot sessions capture the files an agent changes, so a [rewind](/features/rewind#restoring-files) can restore them. Applies to sessions created after the change; a session not tracked from its first turn rewinds its conversation only. |
+
 Per-agent **token budget** and **max retries** aren't env vars — they're set in
 each agent's settings drawer (or baked into a
 [blueprint](/features/agents-mode/orchestration#blueprints-reusable-templates)).

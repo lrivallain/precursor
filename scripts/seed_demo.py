@@ -22,6 +22,7 @@ import os
 import shutil
 import subprocess
 import sys
+import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -468,7 +469,15 @@ async def _seed_refined_agent(s: AsyncSession) -> None:
             clock[0] = clock[0] + timedelta(seconds=seconds)
             return clock[0]
 
-        events.append(AgentEvent(kind="UserMessageData", text=turn["prompt"], at=start))
+        # Prompts carry an SDK id, as live ones do, so the demo can preview a rewind.
+        events.append(
+            AgentEvent(
+                kind="UserMessageData",
+                text=turn["prompt"],
+                at=start,
+                event_id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"demo-guide-{n}")),
+            )
+        )
         events.append(AgentEvent(kind="turn_start", at=tick(1)))
         for i, step in enumerate(turn["steps"]):
             if step[0] == "say":

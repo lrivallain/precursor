@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -50,6 +50,9 @@ from precursor.backend.schemas.agent import (
     AgentPermissionDecision,
     AgentPermissionGrant,
     AgentProvisionJob,
+    AgentRewindPreview,
+    AgentRewindRequest,
+    AgentRewindResult,
     AgentRunRead,
     AgentRuntimeStatus,
     AgentSendRequest,
@@ -75,6 +78,7 @@ from precursor.backend.services.agents import fleet, provision, runtime
 from precursor.backend.services.agents.directives import parse_agent_command
 from precursor.backend.services.agents.manager import get_agent_manager
 from precursor.backend.services.agents.mcp_scope import normalize_mcp_scope
+from precursor.backend.services.agents.rewind import RewindError
 from precursor.backend.services.app_settings import resolve_agents_enabled
 from precursor.backend.services.definitions import anchors as definition_anchors
 from precursor.backend.services.definitions import overlay as definition_overlay
@@ -794,6 +798,7 @@ async def get_agent_events(
     agent_id: str,
     agent_run_id: int | None = None,
     after: int = 0,
+    epoch: str | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> AgentEventPage:
     """The agent's transcript, optionally narrowed to one execution.
@@ -805,8 +810,9 @@ async def get_agent_events(
     ``after`` is the cursor from a previous read: the archived timeline is
     append-only, so a live view re-reading on every ``agent.changed`` signal asks
     only for what it hasn't seen. Omit it (or pass 0) for the whole transcript.
-    See :class:`AgentEventPage` for how the delta, the volatile approval cards
-    and the ``reset`` flag fit together.
+    Send back the ``epoch`` of that read too, so a rewind in between resets the
+    cursor. See :class:`AgentEventPage` for how the delta, the volatile approval
+    cards and the ``reset`` flag fit together.
     """
     agent = await _get_or_404(session, agent_id)
     if agent_run_id is not None:
@@ -814,8 +820,48 @@ async def get_agent_events(
         if run is None or run.agent_id != agent.id:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent run not found")
     return await get_agent_manager().get_events_page(
-        agent.id, agent_run_id=agent_run_id, after=after
+        agent.id, agent_run_id=agent_run_id, after=after, epoch=epoch
     )
+
+
+@router.post("/{agent_id}/rewind", response_model=AgentRewindResult)
+async def rewind_agent(
+    agent_id: str,
+    payload: AgentRewindRequest,
+    session: AsyncSession = Depends(get_session),
+) -> AgentRewindResult:
+    """Drop a prompt of the agent's current session and everything after it.
+
+    Truncates the SDK session's history and Precursor's transcript together;
+    ``mode: conversation-and-files`` also restores the files the dropped turns
+    changed. Irreversible; refused while a turn is in flight and for runs a
+    workflow step drives.
+    """
+    await _require_runtime(session)
+    agent = await _get_or_404(session, agent_id)
+    try:
+        return await get_agent_manager().rewind(agent.id, payload.event_id, payload.mode)
+    except RewindError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+
+
+@router.get("/{agent_id}/rewind/preview", response_model=AgentRewindPreview)
+async def preview_agent_rewind(
+    agent_id: str,
+    event_id: str = Query(min_length=1, max_length=64),
+    session: AsyncSession = Depends(get_session),
+) -> AgentRewindPreview:
+    """Check a rewind to ``event_id`` and list the files it could restore.
+
+    Applies the same checks as the rewind itself, and resumes the agent's SDK
+    session to ask it. Changes nothing.
+    """
+    await _require_runtime(session)
+    agent = await _get_or_404(session, agent_id)
+    try:
+        return await get_agent_manager().preview_rewind(agent.id, event_id)
+    except RewindError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
 
 
 @router.get("/{agent_id}/runs", response_model=list[AgentRunRead])
