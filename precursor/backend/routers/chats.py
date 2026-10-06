@@ -11,13 +11,27 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.db import get_session
 from precursor.backend.models import Chat, Message, MessageRole, Topic
-from precursor.backend.schemas import ChatCreate, ChatRead, ChatUpdate
+from precursor.backend.schemas import (
+    ChatCreate,
+    ChatRead,
+    ChatUpdate,
+    MessageRead,
+    TopicNoteDraft,
+    TopicNoteDraftRequest,
+    TopicNoteSend,
+)
 from precursor.backend.schemas.topic import TopicRead
+from precursor.backend.services import side_chat_notes
 from precursor.backend.services.collections import (
     resolve_collection_default_role_id,
     resolve_collection_id,
 )
 from precursor.backend.services.events import publish_read_changed, publish_topic_changed
+from precursor.backend.services.side_chats import (
+    discard_if_untouched,
+    to_chat_read,
+    to_chat_reads,
+)
 from precursor.backend.services.slugs import allocate_unique_slug, slugify
 from precursor.backend.services.unread import message_unread_counts
 
@@ -53,11 +67,7 @@ async def list_chats(
             session, Chat, Message.chat_id, container_ids=chat_ids
         )
 
-    chat_reads: list[ChatRead] = []
-    for chat in chats:
-        data = {**chat.__dict__, "unread_count": unread_by_id.get(chat.id, 0)}
-        chat_reads.append(ChatRead(**data))
-    return chat_reads
+    return await to_chat_reads(session, chats, unread_by_id)
 
 
 @router.get("/archived", response_model=list[ChatRead])
@@ -68,15 +78,14 @@ async def list_archived_chats(
     result = await session.execute(
         select(Chat).where(Chat.archived_at.is_not(None)).order_by(Chat.archived_at.desc())
     )
-    chats = result.scalars().all()
-    return [ChatRead.model_validate(c) for c in chats]
+    return await to_chat_reads(session, list(result.scalars().all()))
 
 
 @router.post("", response_model=ChatRead, status_code=status.HTTP_201_CREATED)
 async def create_chat(
     payload: ChatCreate,
     session: AsyncSession = Depends(get_session),
-) -> Chat:
+) -> ChatRead:
     """Create a new chat.
 
     Unlike topics, a chat's default slug is a random UUID rather than one derived
@@ -97,29 +106,29 @@ async def create_chat(
     )
     session.add(chat)
     await session.commit()
-    return chat
+    return await to_chat_read(session, chat)
 
 
 @router.get("/by-slug/{slug}", response_model=ChatRead)
-async def get_chat_by_slug(slug: str, session: AsyncSession = Depends(get_session)) -> Chat:
+async def get_chat_by_slug(slug: str, session: AsyncSession = Depends(get_session)) -> ChatRead:
     """Resolve a chat by its slug (for /chats/<slug> deep links)."""
     result = await session.execute(select(Chat).where(Chat.slug == slug))
     chat = result.scalar_one_or_none()
     if chat is None:
         raise HTTPException(status_code=404, detail="Chat not found")
-    return chat
+    return await to_chat_read(session, chat)
 
 
 @router.get("/{chat_id}", response_model=ChatRead)
 async def get_chat(
     chat_id: int,
     session: AsyncSession = Depends(get_session),
-) -> Chat:
+) -> ChatRead:
     """Get a specific chat."""
     chat = await session.get(Chat, chat_id)
     if not chat:
         raise HTTPException(status_code=404, detail="Chat not found")
-    return chat
+    return await to_chat_read(session, chat)
 
 
 @router.patch("/{chat_id}", response_model=ChatRead)
@@ -127,7 +136,7 @@ async def update_chat(
     chat_id: int,
     payload: ChatUpdate,
     session: AsyncSession = Depends(get_session),
-) -> Chat:
+) -> ChatRead:
     """Update a chat."""
     chat = await session.get(Chat, chat_id)
     if not chat:
@@ -151,7 +160,7 @@ async def update_chat(
         chat.slug = slug
 
     await session.commit()
-    return chat
+    return await to_chat_read(session, chat)
 
 
 @router.delete("/{chat_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -163,8 +172,47 @@ async def delete_chat(
     chat = await session.get(Chat, chat_id)
     if not chat:
         raise HTTPException(status_code=404, detail="Chat not found")
+    parent_topic_id = chat.parent_topic_id
     await session.delete(chat)
     await session.commit()
+    if parent_topic_id is not None:
+        await publish_topic_changed(parent_topic_id)
+
+
+@router.post("/{chat_id}/discard", status_code=status.HTTP_204_NO_CONTENT)
+async def discard_untouched_side_chat(
+    chat_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    """Delete a side chat the user left without using it (``409`` keeps it)."""
+    parent_topic_id = await discard_if_untouched(session, chat_id)
+    if parent_topic_id is not None:
+        await publish_topic_changed(parent_topic_id)
+
+
+@router.post("/{chat_id}/topic-note/draft", response_model=TopicNoteDraft)
+async def draft_topic_note(
+    chat_id: int,
+    payload: TopicNoteDraftRequest,
+    session: AsyncSession = Depends(get_session),
+) -> TopicNoteDraft:
+    """Have the model sum up a side chat for its parent topic (nothing saved)."""
+    text, topic = await side_chat_notes.draft_topic_note(
+        session, chat_id, instructions=payload.instructions
+    )
+    return TopicNoteDraft(text=text, topic_id=topic.id, topic_title=topic.title)
+
+
+@router.post(
+    "/{chat_id}/topic-note", response_model=MessageRead, status_code=status.HTTP_201_CREATED
+)
+async def send_topic_note(
+    chat_id: int,
+    payload: TopicNoteSend,
+    session: AsyncSession = Depends(get_session),
+) -> MessageRead:
+    """File a (reviewed) note into the side chat's parent topic."""
+    return await side_chat_notes.send_topic_note(session, chat_id, payload.text)
 
 
 @router.post("/{chat_id}/read", status_code=status.HTTP_204_NO_CONTENT)
@@ -206,28 +254,32 @@ async def mark_chat_unread(
 async def archive_chat(
     chat_id: int,
     session: AsyncSession = Depends(get_session),
-) -> Chat:
+) -> ChatRead:
     """Archive a chat."""
     chat = await session.get(Chat, chat_id)
     if not chat:
         raise HTTPException(status_code=404, detail="Chat not found")
     chat.archived_at = datetime.now(UTC)
     await session.commit()
-    return chat
+    if chat.parent_topic_id is not None:
+        await publish_topic_changed(chat.parent_topic_id)
+    return await to_chat_read(session, chat)
 
 
 @router.post("/{chat_id}/unarchive", response_model=ChatRead)
 async def unarchive_chat(
     chat_id: int,
     session: AsyncSession = Depends(get_session),
-) -> Chat:
+) -> ChatRead:
     """Restore an archived chat."""
     chat = await session.get(Chat, chat_id)
     if not chat:
         raise HTTPException(status_code=404, detail="Chat not found")
     chat.archived_at = None
     await session.commit()
-    return chat
+    if chat.parent_topic_id is not None:
+        await publish_topic_changed(chat.parent_topic_id)
+    return await to_chat_read(session, chat)
 
 
 @router.post("/{chat_id}/promote", response_model=TopicRead)
@@ -245,18 +297,32 @@ async def promote_chat_to_topic(
     Chats have no collection of their own, so the caller passes the one it is
     looking at; anything unresolvable falls back to the default. Leaving it null
     would strand the topic — no collection filter matches a null membership.
+
+    A side chat becomes a sub-topic of the topic it was started from, in that
+    topic's collection: a subtree never spans collections, so ``collection_id``
+    is ignored then.
     """
     chat = await session.get(Chat, chat_id)
     if not chat:
         raise HTTPException(status_code=404, detail="Chat not found")
 
-    resolved_collection_id = await resolve_collection_id(session, collection_id)
+    parent = (
+        await session.get(Topic, chat.parent_topic_id) if chat.parent_topic_id is not None else None
+    )
+    resolved_collection_id = (
+        parent.collection_id
+        if parent is not None and parent.collection_id is not None
+        else await resolve_collection_id(session, collection_id)
+    )
     topic = Topic(
         title=chat.title,
         slug=await allocate_unique_slug(session, slugify(chat.title) or "topic", Topic),
         description=chat.description,
         pinned=chat.pinned,
+        parent_id=parent.id if parent is not None else None,
         collection_id=resolved_collection_id,
+        # Keep the quoted reply: the transcript alone lacks what it answered.
+        seed_content=chat.seed_content,
         role_id=await resolve_collection_default_role_id(session, resolved_collection_id),
     )
     session.add(topic)
@@ -267,8 +333,11 @@ async def promote_chat_to_topic(
     await session.execute(
         update(Message).where(Message.chat_id == chat_id).values(topic_id=topic.id, chat_id=None)
     )
+    parent_topic_id = chat.parent_topic_id
     await session.delete(chat)
     await session.commit()
     await session.refresh(topic)
     await publish_topic_changed(topic.id)
+    if parent_topic_id is not None:
+        await publish_topic_changed(parent_topic_id)
     return topic

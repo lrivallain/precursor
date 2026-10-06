@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   AlertTriangle,
   ArrowUpRight,
@@ -10,6 +10,7 @@ import {
   Code2,
   Copy,
   History,
+  MessageSquarePlus,
   Paperclip,
   Pencil,
   RotateCcw,
@@ -63,6 +64,12 @@ interface Props {
   onEditResend?: () => void;
   /** Keep the action toolbar visible without hovering (the selected prompt). */
   revealActions?: boolean;
+  /** Assistant replies in a topic: start a side chat seeded with this reply. */
+  onStartSideChat?: () => void;
+  /** Rendered under the bubble's meta row (e.g. links to side chats). */
+  footer?: ReactNode;
+  /** Marks the content as a reply a side chat can quote (see SelectionSideChat). */
+  quotableId?: number;
 }
 
 const roleLabel: Record<MessageRole, string> = {
@@ -87,7 +94,7 @@ function matchSkillInvocation(
   return { skill, argument: (m[2] ?? "").trim() };
 }
 
-export function MessageBubble({ role, content, reasoning, pending, attachments, onDelete, onStop, collapsible, agentSessionId, createdAt, model, elapsedMs, isError, onRetry, highlighted, onRewindHere, onEditResend, revealActions }: Props) {
+export function MessageBubble({ role, content, reasoning, pending, attachments, onDelete, onStop, collapsible, agentSessionId, createdAt, model, elapsedMs, isError, onRetry, highlighted, onRewindHere, onEditResend, revealActions, onStartSideChat, footer, quotableId }: Props) {
   const isUser = role === "user";
   const skills = useSkills();
   const skillInvocation =
@@ -290,6 +297,17 @@ export function MessageBubble({ role, content, reasoning, pending, attachments, 
                 </button>
               </>
             )}
+            {onStartSideChat && (
+              <button
+                type="button"
+                onClick={onStartSideChat}
+                className="p-1 rounded-full text-muted hover:text-accent"
+                aria-label="Start a chat from this reply"
+                data-tooltip={"Start a chat from this reply\nDiscuss it on the side, without adding to this topic"}
+              >
+                <MessageSquarePlus size={12} />
+              </button>
+            )}
             {onRewindHere && (
               <button
                 type="button"
@@ -404,7 +422,7 @@ export function MessageBubble({ role, content, reasoning, pending, attachments, 
                 ))}
               </div>
             )}
-            <div ref={contentRef}>
+            <div ref={contentRef} data-reply-id={quotableId}>
               <Markdown className="text-sm leading-relaxed">
                 {content || "\u200B"}
               </Markdown>
@@ -443,6 +461,7 @@ export function MessageBubble({ role, content, reasoning, pending, attachments, 
           align={isUser ? "end" : "start"}
         />
       )}
+      {footer}
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import {
   ChevronRight,
   FileText,
+  MessageSquarePlus,
   Pin,
   PinOff,
   Settings as SettingsIcon,
@@ -12,6 +13,7 @@ import { IssueLabelChip, IssueStateBadge } from "./IssueTags";
 import { TopicStartHero } from "./StartHero";
 import { TopicSettingsPanel } from "./TopicSettingsPanel";
 import { api } from "../lib/api";
+import { startSideChat } from "../lib/sideChats";
 import { toggleTopicSummary } from "../lib/summaryOpen";
 import { topicAncestors } from "../lib/topicTree";
 import type { TopicsController } from "../lib/useTopicsController";
@@ -94,6 +96,16 @@ export function TopicsHeader({
           onClick={() => toggleTopicSummary(activeTopic.id)}
         >
           <FileText size={18} />
+        </button>
+      )}
+      {activeTopic && (
+        <button
+          className="p-2 rounded hover:bg-surface shrink-0"
+          aria-label="New side chat"
+          data-tooltip={"New side chat\nStart a chat linked to this topic, to explore a tangent without adding it here"}
+          onClick={() => void startSideChat(activeTopic.id).catch(() => {})}
+        >
+          <MessageSquarePlus size={18} />
         </button>
       )}
       {activeTopic && (

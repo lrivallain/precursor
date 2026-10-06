@@ -1,9 +1,17 @@
-import { Pin, PinOff, Settings as SettingsIcon } from "lucide-react";
+import {
+  ChevronRight,
+  CornerLeftUp,
+  Merge,
+  Pin,
+  PinOff,
+  Settings as SettingsIcon,
+} from "lucide-react";
 import { ChatList } from "./ChatList";
 import { ChatSessionPanel } from "./ChatSessionPanel";
 import { ChatSettingsPanel } from "./ChatSettingsPanel";
 import { InlineTitle } from "./InlineTitle";
 import { ChatStartHero } from "./StartHero";
+import { openTopic, requestTopicNote } from "../lib/sideChats";
 import type { Chat, Topic } from "../lib/types";
 import type { ChatsController } from "../lib/useChatsController";
 
@@ -17,6 +25,20 @@ export function ChatsHeader({ controller }: { controller: ChatsController }) {
   const { activeChat, handleRenameChat, toggleChatPin, setChatSettingsOpen } = controller;
   return (
     <>
+      {activeChat?.parent_topic_id != null && activeChat.parent_topic_title && (
+        <>
+          <button
+            type="button"
+            onClick={() => openTopic(activeChat.parent_topic_id!)}
+            className="flex max-w-[12rem] shrink items-center gap-1 truncate text-sm text-muted hover:text-fg hover:underline"
+            data-tooltip={`Side chat of “${activeChat.parent_topic_title}”\nGo back to the topic`}
+          >
+            <CornerLeftUp size={14} className="shrink-0" />
+            <span className="truncate">{activeChat.parent_topic_title}</span>
+          </button>
+          <ChevronRight size={14} className="shrink-0 text-muted" />
+        </>
+      )}
       {activeChat ? (
         <InlineTitle
           title={activeChat.title}
@@ -28,6 +50,16 @@ export function ChatsHeader({ controller }: { controller: ChatsController }) {
         <span className="truncate font-medium min-w-0 flex-1">
           Select or create a chat
         </span>
+      )}
+      {activeChat?.parent_topic_id != null && (
+        <button
+          className="p-2 rounded hover:bg-surface shrink-0"
+          aria-label="Send to topic"
+          data-tooltip={"Send to topic\nSum up this chat and file it into its topic, after you review it"}
+          onClick={() => requestTopicNote(activeChat.id)}
+        >
+          <Merge size={18} />
+        </button>
       )}
       {activeChat && (
         <button

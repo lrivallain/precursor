@@ -2039,6 +2039,12 @@ const EXPOSE_SECTIONS: ReadonlyArray<{
     danger: true,
   },
   {
+    key: "side_chats",
+    label: "Side chats",
+    hint: "Let callers start a chat linked to a topic or one of its replies.",
+    danger: true,
+  },
+  {
     key: "schedules",
     label: "Scheduled tasks",
     hint: "List, create, pause and trigger recurring automations.",

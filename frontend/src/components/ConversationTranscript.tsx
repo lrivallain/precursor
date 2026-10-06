@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { CompactionMarker } from "./CompactContext";
 import { MessageBubble } from "./MessageBubble";
+import { SideChatLinks } from "./SideChatsSection";
 import { ReasoningDisclosure } from "./ReasoningDisclosure";
 import { SuggestedReplies } from "./SuggestedReplies";
 import { ToolCallBubble } from "./ToolCallBubble";
@@ -8,7 +9,7 @@ import { stripSuggestionBlock } from "../lib/suggestions";
 import { parseToolMeta } from "../lib/toolMeta";
 import type { MessageDeletion, PendingDelete } from "../lib/useMessageDeletion";
 import { TURN_ANCHOR_ATTR } from "../lib/useTurnTimeline";
-import type { Message } from "../lib/types";
+import type { Message, SideChatItem } from "../lib/types";
 import type { PromptRewindActions } from "../lib/useConversation";
 
 interface TranscriptMessageProps {
@@ -33,6 +34,10 @@ interface TranscriptMessageProps {
   rewindActions?: PromptRewindActions;
   /** Show the prompt's action toolbar without hovering. */
   revealActions?: boolean;
+  /** Topic transcripts: start a side chat from an assistant reply. */
+  onStartSideChat?: (message: Message) => void;
+  /** Side chats started from this reply, linked under it. */
+  sideChats?: SideChatItem[];
 }
 
 /** One persisted-conversation row: a tool call, or a user/assistant/system bubble. */
@@ -87,6 +92,8 @@ function renderRow({
   current,
   rewindActions,
   revealActions,
+  onStartSideChat,
+  sideChats,
 }: TranscriptMessageProps) {
   if (m.kind === "compaction") {
     return (
@@ -119,6 +126,8 @@ function renderRow({
   }
   const canDelete =
     !streaming && m.id > 0 && (m.role === "user" || m.role === "assistant");
+  const sideChatSource =
+    Boolean(onStartSideChat) && m.role === "assistant" && m.id > 0 && !m.kind && !m.is_error;
   return (
     <MessageBubble
       role={m.role}
@@ -137,6 +146,9 @@ function renderRow({
       onRewindHere={rewindActions?.here}
       onEditResend={rewindActions?.edit}
       revealActions={revealActions && Boolean(rewindActions)}
+      onStartSideChat={sideChatSource ? () => onStartSideChat?.(m) : undefined}
+      quotableId={sideChatSource ? m.id : undefined}
+      footer={sideChats && sideChats.length > 0 ? <SideChatLinks items={sideChats} /> : undefined}
     />
   );
 }

@@ -273,7 +273,7 @@ def test_compact_is_refused_while_a_reply_is_generating(monkeypatch) -> None:
 
 def test_chunks_split_an_oversized_transcript() -> None:
     blocks = ["a" * 40, "b" * 40, "c" * 40]
-    assert compaction_mod._chunks(blocks, 100) == ["a" * 40 + "\n\n" + "b" * 40, "c" * 40]
+    assert compaction_mod.chunk_blocks(blocks, 100) == ["a" * 40 + "\n\n" + "b" * 40, "c" * 40]
 
 
 # -- Agents -----------------------------------------------------------------

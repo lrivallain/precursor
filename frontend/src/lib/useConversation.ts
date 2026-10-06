@@ -87,6 +87,8 @@ export interface Conversation {
   persisted: Message[];
   setPersisted: Dispatch<SetStateAction<Message[]>>;
   loadingOlder: boolean;
+  /** Older history exists above the loaded window. */
+  hasOlder: boolean;
   /** Persisted window merged with the live buffered turn. */
   messages: Message[];
   /** `messages` minus rows pending an undoable delete. */
@@ -597,6 +599,7 @@ export function useConversation({
     persisted,
     setPersisted,
     loadingOlder,
+    hasOlder: win.hasMoreOlder,
     messages,
     visibleMessages,
     streaming,

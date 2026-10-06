@@ -33,6 +33,7 @@ from sqlalchemy.orm import InstrumentedAttribute, selectinload
 
 from precursor.backend.models import MESSAGE_KIND_COMPACTION, Attachment, Message, MessageRole
 from precursor.backend.schemas import ChatRequest
+from precursor.backend.services import side_chats
 from precursor.backend.services.app_settings import (
     resolve_llm_max_attachment_chars,
     resolve_llm_max_input_tokens,
@@ -316,6 +317,10 @@ async def clear_container_messages(
     session: AsyncSession, kind: ContainerKind, container_id: int
 ) -> None:
     """Wipe a container's transcript. The container itself is kept."""
+    if kind == "topic":
+        await side_chats.detach_messages(
+            session, select(Message.id).where(Message.topic_id == container_id)
+        )
     await session.execute(delete(Message).where(_message_fk(kind) == container_id))
     await session.commit()
     await publish_container_changed(kind, container_id)
@@ -329,6 +334,8 @@ async def delete_container_message(
     owner = None if msg is None else (msg.topic_id if kind == "topic" else msg.chat_id)
     if msg is None or owner != container_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Message not found")
+    if kind == "topic":
+        await side_chats.detach_messages(session, select(Message.id).where(Message.id == msg.id))
     await session.delete(msg)
     await session.commit()
     await publish_container_changed(kind, container_id)
@@ -446,6 +453,8 @@ async def rewind_container(
     await session.execute(
         delete(Attachment).where(Attachment.message_id.in_(select(Message.id).where(*in_cut)))
     )
+    if kind == "topic":
+        await side_chats.detach_messages(session, select(Message.id).where(*in_cut))
     result = await session.execute(delete(Message).where(*in_cut))
     await session.commit()
     await publish_container_changed(kind, container_id)

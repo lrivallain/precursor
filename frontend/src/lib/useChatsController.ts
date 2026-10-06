@@ -5,6 +5,7 @@ import { api } from "./api";
 import { eventBus } from "./events";
 import { openNotes } from "./notesOpen";
 import { chatUrl, navigate, type AppRoute } from "./routes";
+import { OPEN_CHAT_EVENT, type OpenChatDetail } from "./sideChats";
 import { convKey, streamStore } from "./streamStore";
 import type { Chat } from "./types";
 import { windowFocused } from "./windowFocus";
@@ -92,6 +93,29 @@ export function useChatsController(deps: ChatsControllerDeps): ChatsController {
     }
   }
 
+  // A side chat opened and left without being used is discarded, so starting
+  // one to "just look" leaves nothing behind. The server decides what counts
+  // as used (a message, a rename, a reminder…) and keeps those (409).
+  const lastViewedRef = useRef<Chat | null>(null);
+  useEffect(() => {
+    const viewing = !atHome && sidebarMode === "chats" ? activeChat : null;
+    const prev = lastViewedRef.current;
+    lastViewedRef.current = viewing;
+    if (!prev || prev.id === viewing?.id) return;
+    if (prev.parent_topic_id == null && !prev.seed_content) return;
+    // Its first message may still be on its way.
+    if (streamStore.isStreaming(convKey("chat", prev.id))) return;
+    api.sideChats
+      .discard(prev.id)
+      .then(() => {
+        setChatListReloadKey((k) => k + 1);
+        setActiveChat((cur) => (cur?.id === prev.id ? null : cur));
+      })
+      .catch(() => {
+        // kept: it was used
+      });
+  }, [activeChat, sidebarMode, atHome]);
+
   // activeChat -> /chats/<slug>.
   useEffect(() => {
     if (atHome) return;
@@ -169,6 +193,20 @@ export function useChatsController(deps: ChatsControllerDeps): ChatsController {
     return () => {
       off();
     };
+  }, []);
+
+  // A side chat was started (or picked) from a topic: leave for Chats and open it.
+  useEffect(() => {
+    function onOpenChat(e: Event): void {
+      const chat = (e as CustomEvent<OpenChatDetail>).detail?.chat;
+      if (!chat) return;
+      setAtHome(false);
+      setSidebarMode("chats");
+      setChatListReloadKey((k) => k + 1);
+      void handleSelectChat(chat);
+    }
+    window.addEventListener(OPEN_CHAT_EVENT, onOpenChat);
+    return () => window.removeEventListener(OPEN_CHAT_EVENT, onOpenChat);
   }, []);
 
   // The chat branch of the stream completion (`useReadSync`): keep the chat

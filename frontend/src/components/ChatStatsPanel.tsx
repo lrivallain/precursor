@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { AlarmClock, ChevronLeft, ChevronRight, BarChart3, Shrink } from "lucide-react";
+import { AlarmClock, ChevronLeft, ChevronRight, BarChart3, MessagesSquare, Shrink } from "lucide-react";
 import { streamStore } from "../lib/streamStore";
 import { api } from "../lib/api";
 import { modelsStore, useCurrentModel } from "../lib/modelsStore";
@@ -7,6 +7,7 @@ import { useIsNarrow } from "../lib/useMediaQuery";
 import type { ContextEstimate, Message, ReminderContainer } from "../lib/types";
 import { COMPACT_NUDGE_PERCENT, CompactContextButton } from "./CompactContext";
 import { ReminderSection, reminderSummary, type ReminderPanelControls } from "./ChatStatsReminder";
+import { SideChatsSection, type SideChatsControls } from "./SideChatsSection";
 
 interface ChatStatsPanelProps {
   streamKey: string;
@@ -20,6 +21,8 @@ interface ChatStatsPanelProps {
     run: (instructions?: string) => Promise<void>;
   };
   reminder: ReminderPanelControls;
+  /** Topics only: the side chats started from this topic. */
+  sideChats?: SideChatsControls;
 }
 
 interface RoundStat {
@@ -101,6 +104,7 @@ export function ChatStatsPanel({
   streaming,
   compaction,
   reminder,
+  sideChats,
 }: ChatStatsPanelProps) {
   const narrow = useIsNarrow();
   const [collapsed, setCollapsed] = useState<boolean>(() => {
@@ -209,6 +213,20 @@ export function ChatStatsPanel({
             <AlarmClock size={16} />
           </button>
         )}
+        {sideChats && sideChats.items.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setCollapsed(false)}
+            className="relative mt-2 rounded p-1.5 text-muted hover:bg-surface"
+            data-tooltip={`${sideChats.items.length} side ${sideChats.items.length === 1 ? "chat" : "chats"}`}
+            aria-label="Show side chats"
+          >
+            <MessagesSquare size={16} />
+            {sideChats.items.some((c) => c.unread_count > 0) && (
+              <span className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-accent" />
+            )}
+          </button>
+        )}
         {windowPct !== null && windowPct >= COMPACT_NUDGE_PERCENT && !compactDisabled && (
           <button
             type="button"
@@ -245,6 +263,7 @@ export function ChatStatsPanel({
 
       <div className="flex-1 overflow-y-auto p-3 space-y-4 text-sm">
         <ReminderSection {...reminder} />
+        {sideChats && <SideChatsSection {...sideChats} />}
 
         {contextWindow !== null && contextWindow > 0 && (
           <ContextWindowSection

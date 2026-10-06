@@ -11,19 +11,29 @@ from sqlalchemy.orm import selectinload
 
 from precursor.backend.db import get_session
 from precursor.backend.models import Message, MessageRole, Topic, TopicSchedule
-from precursor.backend.schemas import TopicCreate, TopicNode, TopicRead, TopicUpdate
+from precursor.backend.schemas import (
+    ChatRead,
+    SideChatCreate,
+    SideChatItem,
+    TopicCreate,
+    TopicNode,
+    TopicRead,
+    TopicUpdate,
+)
 from precursor.backend.schemas.schedule import (
     ScheduleRead,
     ScheduleSummary,
     ScheduleUpdate,
     TopicScheduleCreate,
 )
+from precursor.backend.services import side_chats
 from precursor.backend.services.collections import (
     move_subtree_to_collection,
     resolve_collection_default_role_id,
     resolve_collection_id,
 )
 from precursor.backend.services.events import (
+    publish_chat_changed,
     publish_message_changed,
     publish_read_changed,
     publish_topic_changed,
@@ -314,9 +324,34 @@ async def delete_topic(topic_id: int, session: AsyncSession = Depends(get_sessio
     await session.execute(
         update(Topic).where(Topic.parent_id == topic_id).values(parent_id=new_parent_id)
     )
+    detached = await side_chats.detach_topic(session, topic_id)
     await session.delete(topic)
     await session.commit()
     await publish_topic_changed(topic_id)
+    for chat_id in detached:
+        await publish_chat_changed(chat_id)
+
+
+@router.get("/{topic_id}/chats", response_model=list[SideChatItem])
+async def list_topic_side_chats(
+    topic_id: int, session: AsyncSession = Depends(get_session)
+) -> list[SideChatItem]:
+    """Side chats started from this topic (archived ones excluded)."""
+    return await side_chats.list_side_chats(session, topic_id)
+
+
+@router.post("/{topic_id}/chats", response_model=ChatRead, status_code=status.HTTP_201_CREATED)
+async def create_topic_side_chat(
+    topic_id: int,
+    payload: SideChatCreate,
+    session: AsyncSession = Depends(get_session),
+) -> ChatRead:
+    """Start a side chat from this topic, or from one of its assistant replies."""
+    chat = await side_chats.create_side_chat(
+        session, topic_id, message_id=payload.message_id, quote=payload.quote
+    )
+    await publish_topic_changed(topic_id)
+    return await side_chats.to_chat_read(session, chat)
 
 
 @router.post("/{topic_id}/read", status_code=status.HTTP_204_NO_CONTENT)
@@ -357,16 +392,25 @@ async def mark_topic_unread(
 @router.post("/{topic_id}/archive", response_model=TopicRead)
 async def archive_topic(
     topic_id: int,
+    side_chats_too: bool = False,
     session: AsyncSession = Depends(get_session),
 ) -> Topic:
+    """Archive a topic; ``side_chats_too`` archives its open side chats with it."""
     topic = await session.get(Topic, topic_id)
     if topic is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
     if topic.archived_at is None:
         topic.archived_at = datetime.now(UTC)
+        archived_chats = (
+            await side_chats.archive_with_topic(session, topic_id, topic.archived_at)
+            if side_chats_too
+            else []
+        )
         await session.commit()
         await session.refresh(topic)
         await publish_topic_changed(topic_id)
+        if archived_chats:
+            await publish_chat_changed()
     return topic
 
 
@@ -379,10 +423,14 @@ async def unarchive_topic(
     if topic is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
     if topic.archived_at is not None:
+        # Side chats archived along with the topic come back with it.
+        restored = await side_chats.unarchive_with_topic(session, topic_id, topic.archived_at)
         topic.archived_at = None
         await session.commit()
         await session.refresh(topic)
         await publish_topic_changed(topic_id)
+        if restored:
+            await publish_chat_changed()
     return topic
 
 

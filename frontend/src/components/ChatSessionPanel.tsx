@@ -1,3 +1,5 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import { CommandDraftCard } from "./CommandDraftCard";
 import { Composer } from "./Composer";
 import { ComposerModelControls } from "./ComposerModelControls";
 import { ChatStatsPanel } from "./ChatStatsPanel";
@@ -8,6 +10,7 @@ import { RewindBar } from "./RewindBar";
 import { TimelineRail } from "./TimelineRail";
 import { api } from "../lib/api";
 import { useSettings } from "../lib/settingsStore";
+import { subscribeTopicNote } from "../lib/sideChats";
 import { useResizableWidth } from "../lib/useResizableWidth";
 import { useResizableHeight } from "../lib/useResizableHeight";
 import { useComposerInput } from "../lib/useComposerInput";
@@ -16,6 +19,15 @@ import { ReminderModal } from "./ReminderModal";
 import { ReminderBanner } from "./ReminderBanner";
 import type { Chat } from "../lib/types";
 import { RoleSelector } from "./RoleSelector";
+import { SideChatSeedCard } from "./SideChatSeedCard";
+
+interface TopicNoteState {
+  loading: boolean;
+  posting: boolean;
+  body: string;
+  error: string | null;
+  topicTitle: string | null;
+}
 
 interface ChatSessionPanelProps {
   chat: Chat;
@@ -42,7 +54,14 @@ export function ChatSessionPanel({
   const settings = useSettings();
   const showStats = settings?.show_chat_stats ?? true;
 
-  const composer = useComposerInput({ surface: "chat" });
+  // `/send-to-topic` only means something in a chat linked to a topic.
+  const linked = chat.parent_topic_id != null;
+  const excludedCommands = useMemo<ReadonlySet<string>>(
+    () => new Set(linked ? [] : ["send-to-topic"]),
+    [linked],
+  );
+  const composer = useComposerInput({ surface: "chat", exclude: excludedCommands });
+  const [topicNote, setTopicNote] = useState<TopicNoteState | null>(null);
   const conv = useConversation({
     kind: "chat",
     id: chat.id,
@@ -68,6 +87,47 @@ export function ChatSessionPanel({
       min: 40,
       max: 480,
     });
+
+  // Draft a note summing up this side chat for its topic, for review.
+  async function startTopicNote(focus: string): Promise<void> {
+    if (!linked) {
+      systemNote("This chat isn't linked to a topic.");
+      return;
+    }
+    setTopicNote({ loading: true, posting: false, body: "", error: null, topicTitle: null });
+    try {
+      const draft = await api.sideChats.draftTopicNote(chat.id, focus.trim() || undefined);
+      setTopicNote((prev) =>
+        prev ? { ...prev, loading: false, body: draft.text, topicTitle: draft.topic_title } : prev,
+      );
+    } catch (err) {
+      setTopicNote((prev) =>
+        prev ? { ...prev, loading: false, error: (err as Error).message } : prev,
+      );
+    }
+  }
+
+  async function sendTopicNote(body: string): Promise<void> {
+    setTopicNote((prev) => (prev ? { ...prev, posting: true, error: null } : prev));
+    try {
+      await api.sideChats.sendTopicNote(chat.id, body);
+      const where = topicNote?.topicTitle ?? chat.parent_topic_title ?? "the topic";
+      setTopicNote(null);
+      systemNote(`Sent a note to “${where}”.`);
+    } catch (err) {
+      setTopicNote((prev) =>
+        prev ? { ...prev, posting: false, error: (err as Error).message } : prev,
+      );
+    }
+  }
+
+  // The header's "Send to topic" button asks through lib/sideChats.
+  const startTopicNoteRef = useRef(startTopicNote);
+  startTopicNoteRef.current = startTopicNote;
+  useEffect(
+    () => subscribeTopicNote(chat.id, () => void startTopicNoteRef.current("")),
+    [chat.id],
+  );
 
   async function dispatchCommand(name: string, argument: string): Promise<void> {
     if (name === "rename") {
@@ -106,6 +166,10 @@ export function ChatSessionPanel({
       }
       return;
     }
+    if (name === "send-to-topic") {
+      await startTopicNote(argument);
+      return;
+    }
     if (name === "archive") {
       try {
         await api.chats.archive(chat.id);
@@ -135,6 +199,7 @@ export function ChatSessionPanel({
                 Loading earlier messages…
               </div>
             )}
+            {!conv.hasOlder && <SideChatSeedCard chat={chat} />}
             {visibleMessages.length === 0 && !streaming && (
               <div className="text-sm text-muted text-center pt-8">
                 Send a message to start the conversation.
@@ -192,6 +257,22 @@ export function ChatSessionPanel({
               hasIssue={false}
               allowPostComment={false}
             />
+            {topicNote && (
+              <CommandDraftCard
+                title="Send to topic"
+                subtitle={topicNote.topicTitle ?? chat.parent_topic_title ?? undefined}
+                initialBody={topicNote.body}
+                bodyPlaceholder="What this side chat concluded, in Markdown…"
+                loading={topicNote.loading}
+                posting={topicNote.posting}
+                error={topicNote.error}
+                sendLabel="Send to topic"
+                postingLabel="Sending…"
+                confirmHint="Filed into the topic as a note, with a link back to this chat."
+                onSend={({ body }) => sendTopicNote(body)}
+                onCancel={() => setTopicNote(null)}
+              />
+            )}
             <Composer
               value={composer.draft}
               onChange={composer.setDraft}

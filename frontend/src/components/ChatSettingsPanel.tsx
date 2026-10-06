@@ -72,7 +72,9 @@ export function ChatSettingsPanel({
     if (
       !(await confirmAction({
         message:
-          "Promote this chat to a full topic? It moves out of Chats and gains the topic tree + GitHub features. The transcript is kept.",
+          chat.parent_topic_title
+            ? `Promote this chat to a sub-topic of "${chat.parent_topic_title}"? It moves out of Chats and gains the topic tree + GitHub features. The transcript is kept.`
+            : "Promote this chat to a full topic? It moves out of Chats and gains the topic tree + GitHub features. The transcript is kept.",
         confirmLabel: "Promote chat",
         variant: "warning",
       }))
@@ -229,8 +231,9 @@ export function ChatSettingsPanel({
                   {promoting ? "Promoting…" : "Promote to topic"}
                 </button>
                 <p className="text-[11px] text-muted mt-1">
-                  Moves this conversation into Topics, where it gains the tree organisation and
-                  GitHub issue association. The transcript is kept.
+                  {chat.parent_topic_title
+                    ? `Moves this conversation into Topics as a sub-topic of “${chat.parent_topic_title}”, where it gains the tree organisation and GitHub issue association. The transcript is kept.`
+                    : "Moves this conversation into Topics, where it gains the tree organisation and GitHub issue association. The transcript is kept."}
                 </p>
               </div>
               <div>

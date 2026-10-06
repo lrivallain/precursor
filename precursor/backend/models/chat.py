@@ -60,11 +60,31 @@ class Chat(Base, TimestampMixin):
     # intact (messages, metadata) so it can be restored later.
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # Side chat: started from a topic (and optionally one of its replies) so a
+    # tangent doesn't pollute the topic's transcript. SET NULL keeps the chat
+    # when its parent goes away; SQLite doesn't enforce it, so the delete paths
+    # in services/side_chats.py null these explicitly.
+    parent_topic_id: Mapped[int | None] = mapped_column(
+        ForeignKey("topics.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    # ``use_alter`` because chats <-> messages is a cycle.
+    parent_message_id: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "messages.id", ondelete="SET NULL", use_alter=True, name="fk_chat_parent_message"
+        ),
+        nullable=True,
+        index=True,
+    )
+    # Frozen copy of the reply the chat was started from, so the chat keeps
+    # its grounding after the source turn is rewound or deleted.
+    seed_content: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     messages: Mapped[list[Message]] = relationship(
         "Message",
         back_populates="chat",
         cascade="all, delete-orphan",
         order_by="Message.created_at",
+        foreign_keys="Message.chat_id",
     )
 
     # Optional one-shot reminder. One-to-one; deleting the chat cascades to it.

@@ -13,6 +13,7 @@ import {
   Home,
   Layers,
   MessageSquare,
+  MessageSquarePlus,
   Mail,
   MailOpen,
   MessagesSquare,
@@ -31,6 +32,7 @@ import {
   Workflow as WorkflowIcon,
   X,
 } from "lucide-react";
+import { startSideChat } from "../lib/sideChats";
 import type { Collection, ReminderItem, TopicNode } from "../lib/types";
 import type { RemindersController } from "../lib/useRemindersController";
 import type { TopicsController } from "../lib/useTopicsController";
@@ -50,6 +52,13 @@ import type { DropSide } from "../lib/useSectionOrder";
 import { useSidebarNavStyle } from "../lib/useSidebarNavStyle";
 import { ContextMenu } from "./ContextMenu";
 import type { ContextMenuItem } from "./ContextMenu";
+
+// Starts a side chat on the whole topic and leaves for it (see lib/sideChats).
+function openSideChat(topicId: number): void {
+  void startSideChat(topicId).catch(() => {
+    // the topic may have gone since the menu opened; stay put
+  });
+}
 
 /** The sections core itself ships. */
 export type CoreSidebarMode =
@@ -713,6 +722,11 @@ function TopicItem({
               label: "New notes",
               icon: StickyNote,
               onSelect: () => onOpenNotes(node.id),
+            },
+            {
+              label: "New side chat",
+              icon: MessageSquarePlus,
+              onSelect: () => openSideChat(node.id),
             },
             ...moveToCollectionItems(node, collections, onMoveToCollection),
             {
@@ -1469,6 +1483,11 @@ function PinnedItem({
               label: "New notes",
               icon: StickyNote,
               onSelect: () => onOpenNotes(node.id),
+            },
+            {
+              label: "New side chat",
+              icon: MessageSquarePlus,
+              onSelect: () => openSideChat(node.id),
             },
             ...moveToCollectionItems(node, collections, onMoveToCollection),
             {

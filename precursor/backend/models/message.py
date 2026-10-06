@@ -93,7 +93,10 @@ class Message(Base, TimestampMixin):
     elapsed_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     topic: Mapped[Topic | None] = relationship("Topic", back_populates="messages")
-    chat: Mapped[Chat | None] = relationship("Chat", back_populates="messages")
+    # Explicit: Chat.parent_message_id is a second FK path between the tables.
+    chat: Mapped[Chat | None] = relationship(
+        "Chat", back_populates="messages", foreign_keys=[chat_id]
+    )
     # Read-only link to the agent that posted this exchange, eager-loaded so the
     # UI can surface the agent's public (UUID) id for deep links / the /agent
     # command without an extra round-trip. We only ever write the FK column.

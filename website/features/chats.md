@@ -99,3 +99,85 @@ browser notification fires. Opening the chat clears its badge.
 
 Right-click a chat in the left sidebar to rename, pin, set a reminder, open
 `/notes`, or archive it.
+
+## Side chats
+
+A **side chat** is a chat started from a [topic](/features/topics), for a
+tangent you want to explore without adding it to the topic's own conversation.
+It stays linked to that topic.
+
+<Screenshot src="/screenshots/side-chats.png" alt="A side chat quoting the topic reply it was started from, with a back-link to the topic in the header" caption="A side chat started from a reply: the reply is quoted on top and the header links back to the topic." />
+
+Start one from a topic in four ways:
+
+- **From a reply**: hover an assistant reply and click **Start a chat from this
+  reply** in its toolbar. The chat quotes that reply at the top.
+- **From part of a reply**: select some text in an assistant reply and click
+  **Side chat from selection**. The chat quotes only the selected text.
+- **From the whole topic**: click the **New side chat** button (a speech bubble
+  with a plus) in the topic's header, choose **New side chat** when you
+  right-click the topic in the sidebar, or click **New** under **Side chats**
+  in the topic's right panel.
+- **With `/side-chat`** in the topic's composer. Any text after the command is
+  sent as the chat's first message.
+
+What the side chat knows:
+
+- On every turn, the model gets the parent topic's **title**, **description**
+  and **[summary](/features/topic-summary)** (when it has one) as background.
+- A chat started from a reply also gets **a copy of that reply**. It's a copy,
+  not a live link: it stays if the reply is later
+  [rewound](/features/rewind) or deleted in the topic. Only the **Open in
+  topic** shortcut on the quote goes away then.
+- The chat starts with the topic's assistant [role](/features/skills-memory).
+  You can change it like in any chat.
+- A new side chat is called **Side chat** until its first message, when it
+  [names itself](#chats-name-themselves).
+- If you open a side chat and leave without using it, it's deleted, so a
+  quick look leaves nothing behind. It's kept as soon as it has a message, a
+  title you chose, a reminder, a description, a pin or notes.
+
+Getting around:
+
+- The chat header shows the parent topic with a back arrow. Click it to return
+  to the topic.
+- **Open in topic**, on the quoted reply, opens the topic and scrolls to that
+  reply.
+- In the topic, a reply that side chats were started from shows a link chip
+  for each of them under it. A chip shows the chat's title, its unread count
+  and a bell when it has a reminder. Click it to open the chat.
+- The topic's right panel lists its side chats. Each row shows the chat's
+  unread count, a bell when it has a [reminder](/features/scheduler), how many
+  messages it has, and when it was last active. Archived side chats leave
+  that list. Unarchiving one brings it back.
+- In the Chats list, a side chat has a small split icon. Hover it to see which
+  topic the chat belongs to.
+
+### Sending the outcome back to the topic
+
+When a side chat has settled something, file it into its topic so the topic's
+history and [summary](/features/topic-summary) pick it up. Click **Send to
+topic** (the merge icon) in the chat's header, or run `/send-to-topic`. Any
+text after the command says what to focus on.
+
+The model writes a short note: what was explored, the conclusions and the
+follow-ups. You review and edit it, then **Send to topic** files it into the
+topic as a note, headed by a link back to the side chat. Nothing is sent until
+you confirm.
+
+### Archiving and deleting
+
+When you archive a topic that has open side chats, Precursor asks whether to
+archive them too. **Keep them open** archives only the topic. Restoring the
+topic brings back the side chats that were archived with it, but not ones you
+archived on their own.
+
+Deleting the topic keeps its side chats. They just stop being linked to it,
+and a chat started from a reply keeps its copy of that reply.
+
+**Promoting** a side chat to a topic (from its settings) creates a
+**sub-topic of the topic it was started from**, in that topic's collection. A
+chat started from a reply keeps its quoted reply: the new topic shows it above
+its transcript and gives it to the model on every turn, as the chat did. A
+side chat whose topic was deleted becomes a top-level topic, like any other
+promoted chat.

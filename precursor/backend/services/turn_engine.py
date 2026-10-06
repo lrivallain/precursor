@@ -28,6 +28,7 @@ from sqlalchemy.orm import selectinload
 from precursor.backend.db import SessionLocal
 from precursor.backend.models import MESSAGE_KIND_COMPACTION, Chat, Message, MessageRole, Topic
 from precursor.backend.services import memories as memory_service
+from precursor.backend.services import side_chats
 from precursor.backend.services import skills as skills_service
 from precursor.backend.services.app_settings import DEFAULT_LLM_MAX_ATTACHMENT_CHARS
 from precursor.backend.services.attachment_extraction import (
@@ -101,6 +102,8 @@ async def build_system_context(session: AsyncSession, topic: Topic) -> str:
     parts.append(f"Topic title: {topic.title}")
     if topic.description:
         parts.append(f"Topic description: {topic.description}")
+    if topic.seed_content:
+        parts.append(side_chats.seed_prompt(topic.seed_content, "topic"))
 
     repo = await resolve_topic_github_repo(session, topic)
     token = await resolve_github_token(session)
@@ -158,6 +161,11 @@ async def build_chat_system_context(session: AsyncSession, chat: Chat) -> str:
     if chat.description and not chat.description_as_system_prompt:
         description = await skills_service.expand_references(session, chat.description)
         parts.append(f"Chat description: {description}")
+
+    # A side chat stays grounded in the topic (and reply) it was started from.
+    parent_context = await side_chats.build_parent_topic_context(session, chat)
+    if parent_context:
+        parts.append(parent_context)
 
     # When this chat is attached to a live meeting session, fold in the current
     # meeting grounding (transcript/insights/notes/…), rebuilt every turn.
@@ -475,6 +483,10 @@ async def prepare_retry_turn(
     if user_msg.role != MessageRole.USER:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Only a user turn can be retried")
 
+    if kind == "topic":
+        await side_chats.detach_messages(
+            session, select(Message.id).where(fk == container_id, Message.id > message_id)
+        )
     await session.execute(delete(Message).where(fk == container_id, Message.id > message_id))
     await session.commit()
     await publish_container_changed(kind, container_id)

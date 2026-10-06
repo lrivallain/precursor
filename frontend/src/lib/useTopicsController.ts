@@ -11,6 +11,8 @@ import { eventBus } from "./events";
 import { notifyIfUnfocused } from "./notifications";
 import { openNotes } from "./notesOpen";
 import { navigate, topicsModeUrl, topicUrl, type AppRoute } from "./routes";
+import { useConfirm } from "../components/ConfirmDialog";
+import { archiveTopic, OPEN_TOPIC_EVENT, type OpenTopicDetail } from "./sideChats";
 import { convKey, streamStore } from "./streamStore";
 import { findTitle, totalUnread } from "./topicTree";
 import type { Collection, Topic, TopicNode } from "./types";
@@ -85,6 +87,7 @@ export function useTopicsController(deps: TopicsControllerDeps): TopicsControlle
     setAtHome,
     closeMobileNav,
   } = deps;
+  const confirmAction = useConfirm();
 
   const [tree, setTree] = useState<TopicNode[]>([]);
   const [activeTopic, setActiveTopic] = useState<Topic | null>(null);
@@ -431,6 +434,27 @@ export function useTopicsController(deps: TopicsControllerDeps): TopicsControlle
     maybeNotify(id);
   }
 
+  // A side chat's back-link: leave for Topics and open its parent.
+  useEffect(() => {
+    function onOpenTopic(e: Event): void {
+      const id = (e as CustomEvent<OpenTopicDetail>).detail?.topicId;
+      if (id == null) return;
+      void (async () => {
+        try {
+          const topic = await api.topics.get(id);
+          setAtHome(false);
+          setSidebarMode("topics");
+          closeMobileNav();
+          await selectTopic(topic);
+        } catch {
+          // deleted since the link was drawn; stay put
+        }
+      })();
+    }
+    window.addEventListener(OPEN_TOPIC_EVENT, onOpenTopic);
+    return () => window.removeEventListener(OPEN_TOPIC_EVENT, onOpenTopic);
+  }, []);
+
   async function handleSelect(id: number): Promise<void> {
     closeMobileNav();
     await selectTopic(await api.topics.get(id));
@@ -468,7 +492,7 @@ export function useTopicsController(deps: TopicsControllerDeps): TopicsControlle
   }
 
   async function handleArchiveTopic(id: number): Promise<void> {
-    await api.topics.archive(id);
+    await archiveTopic(id, confirmAction);
     if (activeTopicRef.current?.id === id) setActiveTopic(null);
     await refreshTree();
   }

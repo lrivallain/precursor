@@ -98,6 +98,11 @@ class Topic(Base, TimestampMixin):
     # in the tree.
     pinned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
 
+    # Frozen copy of the reply this topic's conversation started from, kept when
+    # a side chat started from a reply is promoted (see routers/chats.py), so
+    # the topic doesn't lose the grounding the chat had.
+    seed_content: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     # When non-null, the topic is archived: hidden from the main tree but kept
     # intact (issue link, parent_id, messages…) so it can be restored later.
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

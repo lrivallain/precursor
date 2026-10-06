@@ -11,6 +11,7 @@ import {
   PinOff,
   Search,
   Settings2,
+  Split,
   StickyNote,
 } from "lucide-react";
 import { api } from "../lib/api";
@@ -183,6 +184,15 @@ export function ChatList({
                 chat.unread_count > 0 || reminderChatIds?.has(chat.id) ? "font-semibold" : ""
               }`}
             />
+          )}
+          {chat.parent_topic_title && (
+            <span
+              className="shrink-0 text-muted"
+              aria-label={`Side chat of ${chat.parent_topic_title}`}
+              data-tooltip={`Side chat of “${chat.parent_topic_title}”`}
+            >
+              <Split size={13} />
+            </span>
           )}
           {reminderChatIds?.has(chat.id) && (
             <AlarmClock

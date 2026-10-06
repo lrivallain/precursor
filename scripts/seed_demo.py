@@ -83,6 +83,7 @@ from precursor.backend.services.agents.directives import (  # noqa: E402
     strip_control_directives,
 )
 from precursor.backend.services.schedule_timing import RecurrenceRule  # noqa: E402
+from scripts.demo_side_chats import seed_side_chats  # noqa: E402
 
 NOW = datetime.now(UTC)
 
@@ -1068,6 +1069,8 @@ async def seed() -> None:
         # sized against the mock model's 8k window so the stats bar reads true.
         await _seed_compacted_topic(s, platform.id)
         await _seed_timeline_chat(s)
+        # A topic with side chats started from it and from its replies.
+        await seed_side_chats(s, platform.id)
 
         # ---------------- chats ----------------
         c_regex = Chat(title="Regex for semver tags", slug="regex-for-semver-tags")
