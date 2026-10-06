@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import {
   AlarmClock,
   Archive,
-  CornerDownRight,
   Loader2,
   Mail,
   MailOpen,
@@ -12,6 +11,7 @@ import {
   PinOff,
   Search,
   Settings2,
+  Split,
   StickyNote,
 } from "lucide-react";
 import { api } from "../lib/api";
@@ -191,7 +191,7 @@ export function ChatList({
               aria-label={`Side chat of ${chat.parent_topic_title}`}
               data-tooltip={`Side chat of “${chat.parent_topic_title}”`}
             >
-              <CornerDownRight size={13} />
+              <Split size={13} />
             </span>
           )}
           {reminderChatIds?.has(chat.id) && (

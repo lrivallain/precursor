@@ -26,7 +26,7 @@ are the per-version history; releasing does not rewrite this file.
   counts and last activity. A reply that side chats were started from links to
   them with a chip under it. Promoting a side chat makes it a sub-topic of the
   topic it came from, and keeps its quoted reply (topics gain `seed_content`). In a side chat, the header links back to the topic,
-  and the Chats list marks it with an arrow icon. Deleting the topic keeps its
+  and the Chats list marks it with a split icon. Deleting the topic keeps its
   side chats and only removes the link. New endpoints: `GET/POST
   /api/topics/{id}/chats`. Chats gain `parent_topic_id`, `parent_topic_title`,
   `parent_message_id` and `seed_content`.

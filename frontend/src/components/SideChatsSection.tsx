@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlarmClock, CornerDownRight, MessageSquarePlus, MessagesSquare, Quote } from "lucide-react";
+import { AlarmClock, MessageSquarePlus, MessagesSquare, Quote, Split } from "lucide-react";
 import { api } from "../lib/api";
 import { eventBus } from "../lib/events";
 import { openChatById } from "../lib/sideChats";
@@ -183,7 +183,7 @@ export function SideChatLinks({ items }: { items: SideChatItem[] }) {
             className="inline-flex max-w-[18rem] items-center gap-1 rounded-full border border-accent/30 bg-accent/[0.06] px-2 py-0.5 text-[11px] text-accent hover:border-accent/60 hover:bg-accent/10"
             data-tooltip={tooltip}
           >
-            <CornerDownRight size={11} className="shrink-0" />
+            <Split size={11} className="shrink-0" />
             <span className={`truncate ${item.unread_count > 0 ? "font-semibold" : ""}`}>
               {item.title}
             </span>

@@ -143,7 +143,7 @@ Getting around:
   unread count, a bell when it has a [reminder](/features/scheduler), how many
   messages it has, and when it was last active. Archived side chats leave
   that list. Unarchiving one brings it back.
-- In the Chats list, a side chat has a small arrow icon. Hover it to see which
+- In the Chats list, a side chat has a small split icon. Hover it to see which
   topic the chat belongs to.
 
 Deleting the topic keeps its side chats. They just stop being linked to it,
