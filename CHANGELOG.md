@@ -175,6 +175,11 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Fixed
 
+- **The draw.io editor switches theme while a diagram is open.** It used to
+  stay in the theme it opened with until you reopened the file. Saving a new
+  theme in Settings now reloads it in light or dark, keeping your unsaved edits
+  (draw.io's own undo history starts over).
+
 - **A workflow gate can now recover from a FAIL.** Each loop-back re-ran the
   producing step as a new execution, and the gate was handed every attempt's
   artifacts side by side, so it saw two copies of the deliverable, then three,

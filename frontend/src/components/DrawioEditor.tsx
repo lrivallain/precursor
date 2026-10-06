@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Download, Loader2, RefreshCw } from "lucide-react";
 import { api } from "../lib/api";
+import { useIsDark } from "../lib/theme";
 import type { DrawioStatus } from "../lib/types";
 
 // Embed flags: `embed=1&proto=json` turns on the postMessage protocol,
@@ -21,10 +22,6 @@ const EMBED_PARAMS = [
 function editorUrl(dark: boolean): string {
   const params = [...EMBED_PARAMS, `dark=${dark ? 1 : 0}`];
   return `/drawio/index.html?${params.join("&")}`;
-}
-
-function isDark(): boolean {
-  return document.documentElement.classList.contains("dark");
 }
 
 function formatMb(bytes: number): string {
@@ -53,7 +50,10 @@ export function DrawioEditor({
   const [status, setStatus] = useState<DrawioStatus | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [installing, setInstalling] = useState(false);
-  const dark = isDark();
+  // draw.io only takes its theme from the URL, so a theme flip remounts the
+  // frame (see `key` below). Nothing is lost: autosave has already streamed
+  // every edit into `xml`, and `init` reloads the latest copy.
+  const dark = useIsDark();
 
   // The editor is seeded once per file; later `xml` changes are echoes of the
   // editor's own edits and must not reload it (that would reset the viewport
@@ -197,7 +197,8 @@ export function DrawioEditor({
 
   return (
     <iframe
-      // Remount on file switch so the editor reloads with the new diagram.
+      // Remount on file switch or theme flip so the editor reloads with the
+      // new diagram or theme.
       key={`${path}:${dark}`}
       ref={frameRef}
       title={path}
