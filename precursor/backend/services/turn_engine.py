@@ -102,6 +102,8 @@ async def build_system_context(session: AsyncSession, topic: Topic) -> str:
     parts.append(f"Topic title: {topic.title}")
     if topic.description:
         parts.append(f"Topic description: {topic.description}")
+    if topic.seed_content:
+        parts.append(side_chats.seed_prompt(topic.seed_content, "topic"))
 
     repo = await resolve_topic_github_repo(session, topic)
     token = await resolve_github_token(session)

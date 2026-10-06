@@ -272,6 +272,8 @@ async def promote_chat_to_topic(
         pinned=chat.pinned,
         parent_id=parent.id if parent is not None else None,
         collection_id=resolved_collection_id,
+        # Keep the quoted reply: the transcript alone lacks what it answered.
+        seed_content=chat.seed_content,
         role_id=await resolve_collection_default_role_id(session, resolved_collection_id),
     )
     session.add(topic)

@@ -8,6 +8,7 @@ import { Composer } from "./Composer";
 import { ComposerModelControls } from "./ComposerModelControls";
 import { ChatStatsPanel } from "./ChatStatsPanel";
 import { useSideChats } from "./SideChatsSection";
+import { TopicSeedCard } from "./SideChatSeedCard";
 import { api } from "../lib/api";
 import { GITHUB_SLASH_COMMANDS } from "../lib/commands";
 import { detachedDraftStore } from "../lib/detachedDraftStore";
@@ -594,6 +595,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
               Loading earlier messages…
             </div>
           )}
+          {!conv.hasOlder && <TopicSeedCard topic={topic} />}
           {visibleMessages.length === 0 && !streaming && (
             <div className="text-sm text-muted text-center pt-8">
               Send a message to start the conversation.

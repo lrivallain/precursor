@@ -102,15 +102,18 @@ async def build_parent_topic_context(session: AsyncSession, chat: Chat) -> str:
         if summary and summary.strip():
             parts.append(f"Parent topic summary:\n{summary.strip()}")
     if chat.seed_content:
-        parts.append(
-            "The user started this chat from the following assistant reply"
-            + (" in that topic" if topic is not None else "")
-            + ". Treat it as the subject of the discussion:\n"
-            + "<<<REPLY\n"
-            + chat.seed_content
-            + "\nREPLY>>>"
-        )
+        parts.append(seed_prompt(chat.seed_content, "chat", in_parent_topic=topic is not None))
     return "\n\n".join(parts)
+
+
+def seed_prompt(seed: str, container: str, *, in_parent_topic: bool = False) -> str:
+    """Frame the reply a conversation started from for the system prompt."""
+    where = " in that topic" if in_parent_topic else ""
+    return (
+        f"The user started this {container} from the following assistant reply{where}. "
+        "Treat it as the subject of the discussion:\n"
+        f"<<<REPLY\n{seed}\nREPLY>>>"
+    )
 
 
 async def parent_topic_titles(session: AsyncSession, chats: list[Chat]) -> dict[int, str]:

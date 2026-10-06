@@ -246,3 +246,33 @@ def test_promoting_a_detached_side_chat_makes_a_root_topic() -> None:
 
         data = client.post(f"/api/chats/{chat['id']}/promote").json()
         assert data["parent_id"] is None
+
+
+def test_promoting_keeps_the_quoted_reply_in_the_topic() -> None:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import Topic
+    from precursor.backend.services.turn_engine import build_system_context
+
+    with TestClient(create_app()) as client:
+        topic = _topic(client, "Promote seed parent")
+        _, reply_id = _seed_turn(topic["id"], "q", "Use blue-green deploys.")
+        chat = client.post(f"/api/topics/{topic['id']}/chats", json={"message_id": reply_id}).json()
+
+        promoted = client.post(f"/api/chats/{chat['id']}/promote").json()
+        assert promoted["seed_content"] == "Use blue-green deploys."
+        assert client.get(f"/api/topics/{promoted['id']}").json()["seed_content"] == (
+            "Use blue-green deploys."
+        )
+
+        async def _go() -> str:
+            async with SessionLocal() as session:
+                row = await session.get(Topic, promoted["id"])
+                assert row is not None
+                return await build_system_context(session, row)
+
+        ctx: str = _run(_go)
+        assert "started this topic from the following assistant reply" in ctx
+        assert "Use blue-green deploys." in ctx
+
+        # An ordinary topic carries no quote.
+        assert topic["seed_content"] is None

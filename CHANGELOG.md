@@ -24,7 +24,7 @@ are the per-version history; releasing does not rewrite this file.
   reply, quoted at its top with an **Open in topic** link back to it. The topic's
   right panel lists its side chats with their unread counts, reminders, message
   counts and last activity. Promoting a side chat makes it a sub-topic of the
-  topic it came from. In a side chat, the header links back to the topic,
+  topic it came from, and keeps its quoted reply (topics gain `seed_content`). In a side chat, the header links back to the topic,
   and the Chats list marks it with an arrow icon. Deleting the topic keeps its
   side chats and only removes the link. New endpoints: `GET/POST
   /api/topics/{id}/chats`. Chats gain `parent_topic_id`, `parent_topic_title`,

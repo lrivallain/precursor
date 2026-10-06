@@ -31,6 +31,8 @@ export interface Topic {
   updated_at: string;
   // Recurrence summary when the topic runs on a schedule (null otherwise).
   schedule: ScheduleSummary | null;
+  /** Quoted reply the conversation started from (a promoted side chat's). */
+  seed_content?: string | null;
 }
 
 // One "when to run" clause of a schedule (mirrors backend RecurrenceRule). A

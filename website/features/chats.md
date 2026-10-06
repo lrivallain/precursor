@@ -148,5 +148,7 @@ and a chat started from a reply keeps its copy of that reply.
 
 **Promoting** a side chat to a topic (from its settings) creates a
 **sub-topic of the topic it was started from**, in that topic's collection. A
+chat started from a reply keeps its quoted reply: the new topic shows it above
+its transcript and gives it to the model on every turn, as the chat did. A
 side chat whose topic was deleted becomes a top-level topic, like any other
 promoted chat.

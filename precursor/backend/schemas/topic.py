@@ -60,6 +60,8 @@ class TopicRead(TopicBase):
     # Recurrence summary when the topic runs on a schedule (null otherwise).
     # Eager-loaded (selectin) so any topic read carries it.
     schedule: ScheduleSummary | None = None
+    # Quoted reply the conversation started from (a promoted side chat's).
+    seed_content: str | None = None
 
 
 class TopicNode(TopicRead):
