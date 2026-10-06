@@ -66,6 +66,7 @@ export function SelectionSideChat({
   }, [scrollRef]);
 
   if (!picked || disabled) return null;
+  // It floats over the transcript, so no state may use a translucent fill.
   return createPortal(
     <button
       type="button"
@@ -76,7 +77,7 @@ export function SelectionSideChat({
         window.getSelection()?.removeAllRanges();
         setPicked(null);
       }}
-      className="fixed z-40 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-accent/40 bg-surface px-2.5 py-1 text-xs font-medium text-accent shadow-md hover:bg-accent/10"
+      className="fixed z-40 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-accent/40 bg-surface px-2.5 py-1 text-xs font-medium text-accent shadow-md hover:border-accent hover:bg-accent hover:text-white"
       style={{ left: picked.x, top: Math.max(8, picked.y - 36) }}
       data-tooltip="Start a side chat quoting only the selected text"
     >
