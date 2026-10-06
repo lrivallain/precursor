@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { GithubIcon as Github } from "./icons/GithubIcon";
 import { api } from "../lib/api";
+import { archiveTopic } from "../lib/sideChats";
 import { clearConversation } from "../lib/useConversation";
 import { useSettings } from "../lib/settingsStore";
 import type { Collection, Schedule, Topic, TopicNode } from "../lib/types";
@@ -247,7 +248,7 @@ export function TopicSettingsPanel({
     setArchiving(true);
     setError(null);
     try {
-      await api.topics.archive(topic.id);
+      await archiveTopic(topic.id, confirmAction);
       onDeleted();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

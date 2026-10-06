@@ -96,6 +96,7 @@ import type {
   Message,
   SideChatItem,
   StoppedTurn,
+  TopicNoteDraft,
   NotesDraft,
   NoteDraftAttachment,
   InstalledPlugin,
@@ -369,8 +370,13 @@ export const api = {
           ? `/api/topics/archived`
           : `/api/topics/archived?collection_id=${collectionId}`,
       ),
-    archive: (id: number) =>
-      request<Topic>(`/api/topics/${id}/archive`, { method: "POST" }),
+    // `sideChatsToo` archives the topic's open side chats with it; restoring
+    // the topic brings those back.
+    archive: (id: number, opts?: { sideChatsToo?: boolean }) =>
+      request<Topic>(
+        `/api/topics/${id}/archive${opts?.sideChatsToo ? "?side_chats_too=true" : ""}`,
+        { method: "POST" },
+      ),
     unarchive: (id: number) =>
       request<Topic>(`/api/topics/${id}/unarchive`, { method: "POST" }),
 
@@ -397,10 +403,25 @@ export const api = {
   sideChats: {
     // Chats started from a topic, or from one of its assistant replies.
     list: (topicId: number) => request<SideChatItem[]>(`/api/topics/${topicId}/chats`),
-    create: (topicId: number, messageId?: number | null) =>
+    // `quote` narrows the copied reply to an excerpt of it (a text selection).
+    create: (topicId: number, messageId?: number | null, quote?: string | null) =>
       request<Chat>(`/api/topics/${topicId}/chats`, {
         method: "POST",
-        body: JSON.stringify({ message_id: messageId ?? null }),
+        body: JSON.stringify({ message_id: messageId ?? null, quote: quote ?? null }),
+      }),
+    // Delete a side chat left untouched; rejects (409) when it was used.
+    discard: (chatId: number) =>
+      request<void>(`/api/chats/${chatId}/discard`, { method: "POST" }),
+    // Have the model sum up a side chat for its parent topic (nothing saved).
+    draftTopicNote: (chatId: number, instructions?: string) =>
+      request<TopicNoteDraft>(`/api/chats/${chatId}/topic-note/draft`, {
+        method: "POST",
+        body: JSON.stringify({ instructions: instructions || null }),
+      }),
+    sendTopicNote: (chatId: number, text: string) =>
+      request<Message>(`/api/chats/${chatId}/topic-note`, {
+        method: "POST",
+        body: JSON.stringify({ text }),
       }),
   },
   chats: {

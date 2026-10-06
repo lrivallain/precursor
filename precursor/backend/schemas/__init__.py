@@ -19,6 +19,9 @@ from precursor.backend.schemas.chat import (
     ChatUpdate,
     SideChatCreate,
     SideChatItem,
+    TopicNoteDraft,
+    TopicNoteDraftRequest,
+    TopicNoteSend,
 )
 from precursor.backend.schemas.collection import (
     CollectionCreate,
@@ -245,6 +248,9 @@ __all__ = [
     "SummaryTemplateSelection",
     "TopicCreate",
     "TopicNode",
+    "TopicNoteDraft",
+    "TopicNoteDraftRequest",
+    "TopicNoteSend",
     "TopicRead",
     "TopicSummaryGenerate",
     "TopicSummaryItem",

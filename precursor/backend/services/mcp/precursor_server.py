@@ -13,7 +13,8 @@ Settings → MCP servers → "Precursor capabilities", because exposing
 conversation history / write actions outbound is a deliberate disclosure.
 
 Sections → tools:
-- ``topics``       → list_topics, get_topic
+- ``topics``       → list_topics, get_topic (its side chats are listed only
+                     when ``chats`` is exposed too)
 - ``messages``     → list_messages
 - ``chats``        → list_chats, get_chat, list_chat_messages
 - ``agents``       → list_agents, get_agent
@@ -33,6 +34,7 @@ Sections → tools:
                      memory, readable by every step and across runs)
 - ``notes``       → append_note (write — persists text verbatim, no LLM turn)
 - ``post_message`` → post_message (write — runs a full assistant turn)
+- ``side_chats``   → create_side_chat (write — starts a chat linked to a topic)
 - ``schedules``    → list_schedules, get_schedule, create_schedule,
                      set_schedule_enabled, run_schedule_now
 - ``reminders``    → list_reminders, get_reminder, set_reminder,
@@ -46,6 +48,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypeVar
 from urllib.parse import quote
+from urllib.parse import quote as quote_url
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
@@ -425,7 +428,23 @@ async def get_topic(topic_id: int) -> dict[str, Any]:
             return {"error": f"Topic {topic_id} not found"}
         names = await _collection_names(session)
         paths = await _topic_paths(session)
-    return _topic_dict(topic, names, paths)
+        data = _topic_dict(topic, names, paths)
+        # Side chat titles disclose chat content: listed only with ``chats`` on.
+        if await _section_enabled("chats"):
+            from precursor.backend.services import side_chats
+
+            items = await side_chats.list_side_chats(session, topic_id)
+            data["side_chats"] = [
+                {
+                    "id": i.id,
+                    "title": i.title,
+                    "parent_message_id": i.parent_message_id,
+                    "message_count": i.message_count,
+                    "last_message_at": _iso(i.last_message_at),
+                }
+                for i in items
+            ]
+    return data
 
 
 # --------------------------------------------------------------------------
@@ -1247,6 +1266,50 @@ async def append_note(topic_id: int, text: str) -> dict[str, Any]:
         "topic": ref,
         "message_id": result.message.id,
         "posted": True,
+    }
+
+
+# --------------------------------------------------------------------------
+# side chats (write)
+# --------------------------------------------------------------------------
+@mcp.tool()
+async def create_side_chat(
+    topic_id: int, message_id: int | None = None, quote: str | None = None
+) -> dict[str, Any]:
+    """Start a side chat: a chat linked to a topic, for a tangent off it.
+
+    The chat's model sees the topic's title, description and summary on every
+    turn. Pass ``message_id`` (an assistant reply of that topic, from
+    ``list_messages``) to start from that reply: the chat keeps a copy of it.
+    ``quote`` narrows that copy to an excerpt of the reply.
+
+    Nothing is generated: the chat is created empty, ready for the user. The
+    result carries the chat's in-app ``url`` and its ``topic``; report those
+    rather than numeric ids.
+    """
+    if not await _section_enabled("side_chats"):
+        return {"error": _GATED.format(section="side_chats")}
+    # Imported lazily: drags in the FastAPI stack the read tools don't need.
+    from fastapi import HTTPException
+
+    from precursor.backend.services import side_chats
+    from precursor.backend.services.events import publish_topic_changed
+
+    async with SessionLocal() as session:
+        try:
+            chat = await side_chats.create_side_chat(
+                session, topic_id, message_id=message_id, quote=quote
+            )
+        except HTTPException as exc:
+            return {"error": str(exc.detail)}
+        topic = await session.get(Topic, topic_id)
+        assert topic is not None
+        ref = await _topic_ref(session, topic)
+    await publish_topic_changed(topic_id)
+    return {
+        **_chat_dict(chat),
+        "url": f"{app_base_url()}/chats/{quote_url(chat.slug)}",
+        "topic": ref,
     }
 
 

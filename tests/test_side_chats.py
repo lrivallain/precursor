@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import anyio
+import pytest
 from fastapi.testclient import TestClient
 
 from precursor.backend.main import create_app
@@ -276,3 +277,185 @@ def test_promoting_keeps_the_quoted_reply_in_the_topic() -> None:
 
         # An ordinary topic carries no quote.
         assert topic["seed_content"] is None
+
+
+def _chat_turn(chat_id: int, prompt: str, reply: str) -> None:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import Message, MessageRole
+
+    async def _go() -> None:
+        async with SessionLocal() as session:
+            session.add(Message(chat_id=chat_id, role=MessageRole.USER, content=prompt))
+            await session.flush()
+            session.add(Message(chat_id=chat_id, role=MessageRole.ASSISTANT, content=reply))
+            await session.commit()
+
+    _run(_go)
+
+
+def test_side_chats_start_with_a_short_placeholder_title() -> None:
+    with TestClient(create_app()) as client:
+        topic = _topic(client, "Placeholder parent")
+        chat = client.post(f"/api/topics/{topic['id']}/chats", json={}).json()
+        assert chat["title"] == "Side chat"
+
+
+def test_a_side_chat_can_quote_an_excerpt_of_a_reply() -> None:
+    with TestClient(create_app()) as client:
+        topic = _topic(client, "Excerpt parent")
+        _, reply_id = _seed_turn(topic["id"], "q", "First point. Second point.")
+        chat = client.post(
+            f"/api/topics/{topic['id']}/chats",
+            json={"message_id": reply_id, "quote": "  Second point.  "},
+        ).json()
+        assert chat["seed_content"] == "Second point."
+        assert chat["parent_message_id"] == reply_id
+
+        # A quote must say which reply it comes from.
+        res = client.post(f"/api/topics/{topic['id']}/chats", json={"quote": "orphan"})
+        assert res.status_code == 422
+
+
+def test_an_untouched_side_chat_is_discarded_and_a_used_one_kept() -> None:
+    with TestClient(create_app()) as client:
+        topic = _topic(client, "Discard parent")
+        untouched = client.post(f"/api/topics/{topic['id']}/chats", json={}).json()
+        assert client.post(f"/api/chats/{untouched['id']}/discard").status_code == 204
+        assert client.get(f"/api/chats/{untouched['id']}").status_code == 404
+
+        used = client.post(f"/api/topics/{topic['id']}/chats", json={}).json()
+        _chat_turn(used["id"], "hello", "hi")
+        assert client.post(f"/api/chats/{used['id']}/discard").status_code == 409
+
+        renamed = client.post(f"/api/topics/{topic['id']}/chats", json={}).json()
+        client.patch(f"/api/chats/{renamed['id']}", json={"title": "Keep me"})
+        assert client.post(f"/api/chats/{renamed['id']}/discard").status_code == 409
+
+        # Never an ordinary chat, even an empty one on its placeholder.
+        plain = client.post("/api/chats", json={"title": "New chat", "autoname": True}).json()
+        assert client.post(f"/api/chats/{plain['id']}/discard").status_code == 409
+        for c in (used, renamed, plain):
+            client.delete(f"/api/chats/{c['id']}")
+
+
+def test_archiving_a_topic_can_take_its_side_chats_and_restore_them() -> None:
+    with TestClient(create_app()) as client:
+        topic = _topic(client, "Archive-together parent")
+        kept_apart = client.post(f"/api/topics/{topic['id']}/chats", json={}).json()
+        client.post(f"/api/chats/{kept_apart['id']}/archive")
+        live = client.post(f"/api/topics/{topic['id']}/chats", json={}).json()
+
+        client.post(f"/api/topics/{topic['id']}/archive?side_chats_too=true")
+        assert client.get(f"/api/chats/{live['id']}").json()["archived_at"] is not None
+
+        client.post(f"/api/topics/{topic['id']}/unarchive")
+        # Only the chat archived with the topic comes back.
+        assert client.get(f"/api/chats/{live['id']}").json()["archived_at"] is None
+        assert client.get(f"/api/chats/{kept_apart['id']}").json()["archived_at"] is not None
+
+
+def test_archiving_a_topic_leaves_side_chats_by_default() -> None:
+    with TestClient(create_app()) as client:
+        topic = _topic(client, "Archive-alone parent")
+        chat = client.post(f"/api/topics/{topic['id']}/chats", json={}).json()
+        client.post(f"/api/topics/{topic['id']}/archive")
+        assert client.get(f"/api/chats/{chat['id']}").json()["archived_at"] is None
+
+
+def _fake_note_llm(monkeypatch: pytest.MonkeyPatch, reply: str) -> list[str]:
+    from precursor.backend.services import side_chat_notes
+    from precursor.backend.services.llm.base import UsageEvent
+    from precursor.backend.services.llm.one_shot import OneShotResult
+
+    seen: list[str] = []
+
+    async def _complete_once(_session: Any, *, system: str, user: str, **kwargs: Any) -> Any:
+        _ = system, kwargs
+        seen.append(user)
+        return OneShotResult(
+            text=reply,
+            model="fake-model",
+            usage=UsageEvent(prompt_tokens=10, completion_tokens=5, total_tokens=15),
+        )
+
+    monkeypatch.setattr(side_chat_notes, "complete_once", _complete_once)
+    return seen
+
+
+def test_a_side_chat_sends_a_reviewed_note_to_its_topic(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen = _fake_note_llm(monkeypatch, "Explored X.\n\n**Conclusions**\n- Use Y")
+    with TestClient(create_app()) as client:
+        topic = _topic(client, "Note parent")
+        chat = client.post(f"/api/topics/{topic['id']}/chats", json={}).json()
+
+        # Nothing to sum up yet.
+        assert client.post(f"/api/chats/{chat['id']}/topic-note/draft", json={}).status_code == 409
+
+        _chat_turn(chat["id"], "Which option?", "Use Y, it is cheaper.")
+        draft = client.post(
+            f"/api/chats/{chat['id']}/topic-note/draft", json={"instructions": "be brief"}
+        ).json()
+        assert draft["text"].startswith("Explored X.")
+        assert draft["topic_id"] == topic["id"]
+        assert "Main topic: Note parent" in seen[0]
+        assert "Use Y, it is cheaper." in seen[0]
+        assert "be brief" in seen[0]
+
+        sent = client.post(f"/api/chats/{chat['id']}/topic-note", json={"text": "Edited note"})
+        assert sent.status_code == 201, sent.text
+        message = sent.json()
+        assert message["topic_id"] == topic["id"]
+        assert message["role"] == "user"
+        assert f"(/chats/{chat['slug']})" in message["content"]
+        assert message["content"].endswith("Edited note")
+
+
+def test_a_detached_side_chat_has_no_topic_to_send_to(monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_note_llm(monkeypatch, "note")
+    with TestClient(create_app()) as client:
+        topic = _topic(client, "Note doomed parent")
+        chat = client.post(f"/api/topics/{topic['id']}/chats", json={}).json()
+        client.delete(f"/api/topics/{topic['id']}")
+        res = client.post(f"/api/chats/{chat['id']}/topic-note", json={"text": "x"})
+        assert res.status_code == 409
+
+
+def test_mcp_creates_side_chats_and_lists_them_on_the_topic() -> None:
+    from precursor.backend.services.mcp import precursor_server as server
+
+    async def _set_expose(value: dict[str, bool]) -> None:
+        import json
+
+        from precursor.backend.db import SessionLocal
+        from precursor.backend.models import AppSetting
+
+        async with SessionLocal() as session:
+            row = await session.get(AppSetting, "mcp_expose")
+            if row is None:
+                session.add(AppSetting(key="mcp_expose", value=json.dumps(value)))
+            else:
+                row.value = json.dumps(value)
+            await session.commit()
+
+    with TestClient(create_app()) as client:
+        topic = _topic(client, "MCP side chat parent")
+        _, reply_id = _seed_turn(topic["id"], "q", "An MCP reply.")
+
+    async def _go() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
+        await _set_expose({})
+        gated = await server.create_side_chat(topic["id"])
+        await _set_expose({"side_chats": True, "topics": True})
+        created = await server.create_side_chat(topic["id"], message_id=reply_id)
+        hidden = await server.get_topic(topic["id"])
+        await _set_expose({"side_chats": True, "topics": True, "chats": True})
+        shown = await server.get_topic(topic["id"])
+        await _set_expose({})
+        return gated, created, hidden, shown
+
+    gated, created, hidden, shown = _run(_go)
+    assert "error" in gated
+    assert created["parent_topic_id"] == topic["id"]
+    assert created["url"].endswith(f"/chats/{created['slug']}")
+    assert created["topic"]["title"] == "MCP side chat parent"
+    assert "side_chats" not in hidden
+    assert [c["id"] for c in shown["side_chats"]] == [created["id"]]

@@ -140,6 +140,13 @@ export interface SideChatItem {
   reminder: { remind_at: string; status: string } | null;
 }
 
+// A side chat's outcome, drafted for its parent topic. Mirrors TopicNoteDraft.
+export interface TopicNoteDraft {
+  text: string;
+  topic_id: number;
+  topic_title: string;
+}
+
 export interface ChatCreate {
   title: string;
   description?: string | null;

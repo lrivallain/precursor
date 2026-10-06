@@ -16,20 +16,35 @@ are the per-version history; releasing does not rewrite this file.
 ### Added
 
 - **Side chats.** Start a chat from a topic to explore a tangent without adding
-  it to the topic. Start one from an assistant reply's toolbar (**Start a chat
-  from this reply**), from the **New side chat** button in the topic's header or
-  the topic's right-click menu in the sidebar, from **Side chats** in the
-  topic's right panel, or with the new `/side-chat` command. On every turn, the chat gets the topic's title,
-  description and summary. A chat started from a reply also gets a copy of that
-  reply, quoted at its top with an **Open in topic** link back to it. The topic's
-  right panel lists its side chats with their unread counts, reminders, message
-  counts and last activity. A reply that side chats were started from links to
-  them with a chip under it. Promoting a side chat makes it a sub-topic of the
-  topic it came from, and keeps its quoted reply (topics gain `seed_content`). In a side chat, the header links back to the topic,
-  and the Chats list marks it with a split icon. Deleting the topic keeps its
-  side chats and only removes the link. New endpoints: `GET/POST
-  /api/topics/{id}/chats`. Chats gain `parent_topic_id`, `parent_topic_title`,
-  `parent_message_id` and `seed_content`.
+  it to the topic's conversation.
+  - **Starting one:** from an assistant reply's toolbar (**Start a chat from
+    this reply**), from text selected in a reply (**Side chat from selection**),
+    from the **New side chat** button in the topic's header or its right-click
+    menu in the sidebar, from **Side chats** in the topic's right panel, or with
+    the new `/side-chat` command.
+  - **Context:** on every turn the chat gets the topic's title, description and
+    summary. A chat started from a reply, or part of one, also gets a copy of
+    it, quoted at its top with an **Open in topic** link back.
+  - **Getting around:** the topic's right panel lists its side chats with their
+    unread counts, reminders, message counts and last activity, and a reply
+    links to the side chats started from it with a chip under it. In a side
+    chat, the header links back to the topic. The Chats list marks side chats
+    with a split icon.
+  - **Sending back:** **Send to topic** (header button or `/send-to-topic`) has
+    the model sum up the side chat; you review the note, then it's filed into
+    the topic with a link back to the chat.
+  - **Lifecycle:** a new side chat is called "Side chat" until it names itself,
+    and one you open and leave unused is deleted. Archiving a topic offers to
+    archive its side chats too, and restoring it brings them back. Deleting the
+    topic keeps its side chats and only removes the link. Promoting a side chat
+    makes it a sub-topic of its topic and keeps its quoted reply (topics gain
+    `seed_content`).
+  - **API and MCP:** new `GET/POST /api/topics/{id}/chats`, plus discard and
+    topic-note endpoints on chats. Over MCP, the new opt-in `side_chats` section
+    adds `create_side_chat`, and `get_topic` lists side chats when `chats` is
+    exposed. Chats gain `parent_topic_id`, `parent_topic_title`,
+    `parent_message_id` and `seed_content`. In-app `/chats/…` links now open
+    without reloading the page.
 
 - **Timeline and rewind for topics and chats.** A column of short dashes on the
   right edge of the transcript shows one dash per turn. Dashes for turns on

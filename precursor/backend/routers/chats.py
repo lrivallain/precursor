@@ -11,14 +11,27 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.db import get_session
 from precursor.backend.models import Chat, Message, MessageRole, Topic
-from precursor.backend.schemas import ChatCreate, ChatRead, ChatUpdate
+from precursor.backend.schemas import (
+    ChatCreate,
+    ChatRead,
+    ChatUpdate,
+    MessageRead,
+    TopicNoteDraft,
+    TopicNoteDraftRequest,
+    TopicNoteSend,
+)
 from precursor.backend.schemas.topic import TopicRead
+from precursor.backend.services import side_chat_notes
 from precursor.backend.services.collections import (
     resolve_collection_default_role_id,
     resolve_collection_id,
 )
 from precursor.backend.services.events import publish_read_changed, publish_topic_changed
-from precursor.backend.services.side_chats import to_chat_read, to_chat_reads
+from precursor.backend.services.side_chats import (
+    discard_if_untouched,
+    to_chat_read,
+    to_chat_reads,
+)
 from precursor.backend.services.slugs import allocate_unique_slug, slugify
 from precursor.backend.services.unread import message_unread_counts
 
@@ -164,6 +177,42 @@ async def delete_chat(
     await session.commit()
     if parent_topic_id is not None:
         await publish_topic_changed(parent_topic_id)
+
+
+@router.post("/{chat_id}/discard", status_code=status.HTTP_204_NO_CONTENT)
+async def discard_untouched_side_chat(
+    chat_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    """Delete a side chat the user left without using it (``409`` keeps it)."""
+    parent_topic_id = await discard_if_untouched(session, chat_id)
+    if parent_topic_id is not None:
+        await publish_topic_changed(parent_topic_id)
+
+
+@router.post("/{chat_id}/topic-note/draft", response_model=TopicNoteDraft)
+async def draft_topic_note(
+    chat_id: int,
+    payload: TopicNoteDraftRequest,
+    session: AsyncSession = Depends(get_session),
+) -> TopicNoteDraft:
+    """Have the model sum up a side chat for its parent topic (nothing saved)."""
+    text, topic = await side_chat_notes.draft_topic_note(
+        session, chat_id, instructions=payload.instructions
+    )
+    return TopicNoteDraft(text=text, topic_id=topic.id, topic_title=topic.title)
+
+
+@router.post(
+    "/{chat_id}/topic-note", response_model=MessageRead, status_code=status.HTTP_201_CREATED
+)
+async def send_topic_note(
+    chat_id: int,
+    payload: TopicNoteSend,
+    session: AsyncSession = Depends(get_session),
+) -> MessageRead:
+    """File a (reviewed) note into the side chat's parent topic."""
+    return await side_chat_notes.send_topic_note(session, chat_id, payload.text)
 
 
 @router.post("/{chat_id}/read", status_code=status.HTTP_204_NO_CONTENT)

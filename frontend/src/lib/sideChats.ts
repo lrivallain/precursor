@@ -55,9 +55,70 @@ export function hasPendingJump(topicId: number): boolean {
   return pendingJump?.topicId === topicId;
 }
 
-/** Start a side chat from `topicId` (or one of its replies) and open it. */
-export async function startSideChat(topicId: number, messageId?: number | null): Promise<Chat> {
-  const chat = await api.sideChats.create(topicId, messageId);
+/** Open a chat from an in-app `/chats/<slug>` link without reloading. */
+export async function openChatBySlug(slug: string): Promise<void> {
+  openChat(await api.chats.getBySlug(slug));
+}
+
+/**
+ * Start a side chat from `topicId` and open it. `messageId` starts it from one
+ * of the topic's replies; `quote` narrows that reply to an excerpt.
+ */
+export async function startSideChat(
+  topicId: number,
+  messageId?: number | null,
+  quote?: string | null,
+): Promise<Chat> {
+  const chat = await api.sideChats.create(topicId, messageId, quote);
   openChat(chat);
   return chat;
+}
+
+type Confirm = (options: {
+  title?: string;
+  message: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
+}) => Promise<boolean>;
+
+/**
+ * Archive a topic, first asking whether its open side chats go with it. Only
+ * asks when it has some. Declining still archives the topic.
+ */
+export async function archiveTopic(topicId: number, confirm: Confirm): Promise<void> {
+  let count = 0;
+  try {
+    count = (await api.sideChats.list(topicId)).length;
+  } catch {
+    // can't tell: archive the topic alone
+  }
+  const sideChatsToo =
+    count > 0 &&
+    (await confirm({
+      title: "Archive its side chats too?",
+      message:
+        count === 1
+          ? "This topic has 1 open side chat. Archive it with the topic? Restoring the topic brings it back."
+          : `This topic has ${count} open side chats. Archive them with the topic? Restoring the topic brings them back.`,
+      confirmLabel: "Archive side chats too",
+      cancelLabel: "Keep them open",
+    }));
+  await api.topics.archive(topicId, { sideChatsToo });
+}
+
+// "Send to topic" is offered both in the chat's header and as `/send-to-topic`;
+// the header doesn't own the chat panel, so it asks through this channel (like
+// lib/summaryOpen.ts does for the topic summary).
+const TOPIC_NOTE_EVENT = "precursor:side-chat-topic-note";
+
+export function requestTopicNote(chatId: number): void {
+  window.dispatchEvent(new CustomEvent<number>(TOPIC_NOTE_EVENT, { detail: chatId }));
+}
+
+export function subscribeTopicNote(chatId: number, fn: () => void): () => void {
+  const handler = (e: Event) => {
+    if ((e as CustomEvent<number>).detail === chatId) fn();
+  };
+  window.addEventListener(TOPIC_NOTE_EVENT, handler);
+  return () => window.removeEventListener(TOPIC_NOTE_EVENT, handler);
 }

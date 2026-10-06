@@ -17,17 +17,24 @@ from typing import Any
 from uuid import uuid4
 
 from fastapi import HTTPException, status
-from sqlalchemy import Select, func, select, update
+from sqlalchemy import Select, exists, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from precursor.backend.models import Chat, Message, MessageRole, Reminder, Topic, TopicSummary
+from precursor.backend.models import (
+    Chat,
+    Message,
+    MessageRole,
+    NoteDraft,
+    Reminder,
+    Topic,
+    TopicSummary,
+)
 from precursor.backend.schemas.chat import ChatRead, SideChatItem, SideChatReminder
 from precursor.backend.services.slugs import allocate_unique_slug
 from precursor.backend.services.unread import message_unread_counts
 
 # The copied reply rides along in every turn's system prompt: keep it bounded.
 SEED_MAX_CHARS = 12_000
-_TITLE_MAX = 255
 
 
 def _truncate_seed(text: str) -> str:
@@ -37,18 +44,30 @@ def _truncate_seed(text: str) -> str:
     return text[:SEED_MAX_CHARS].rstrip() + "\n\n…(truncated)"
 
 
-def _side_chat_title(topic: Topic) -> str:
-    # A placeholder: autonaming replaces it from the first message.
-    return f"Side chat · {topic.title}"[:_TITLE_MAX]
+# A placeholder: autonaming replaces it from the first message. The topic isn't
+# repeated in it — every place a side chat is listed already shows its topic.
+PLACEHOLDER_TITLE = "Side chat"
 
 
 async def create_side_chat(
-    session: AsyncSession, topic_id: int, *, message_id: int | None = None
+    session: AsyncSession,
+    topic_id: int,
+    *,
+    message_id: int | None = None,
+    quote: str | None = None,
 ) -> Chat:
-    """Create a chat linked to ``topic_id`` (and to one of its replies)."""
+    """Create a chat linked to ``topic_id`` (and to one of its replies).
+
+    ``quote`` narrows the copied reply to an excerpt of it (a text selection).
+    """
     topic = await session.get(Topic, topic_id)
     if topic is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
+    excerpt = (quote or "").strip()
+    if excerpt and message_id is None:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, "A quote needs the reply it comes from."
+        )
 
     seed: str | None = None
     if message_id is not None:
@@ -60,11 +79,11 @@ async def create_side_chat(
                 status.HTTP_422_UNPROCESSABLE_CONTENT,
                 "A side chat can only start from an assistant reply.",
             )
-        seed = _truncate_seed(msg.content)
+        seed = _truncate_seed(excerpt or msg.content)
 
     # A random slug, like any other new chat (see routers/chats.py).
     chat = Chat(
-        title=_side_chat_title(topic),
+        title=PLACEHOLDER_TITLE,
         slug=await allocate_unique_slug(session, uuid4().hex, Chat),
         role_id=topic.role_id,
         autoname_pending=True,
@@ -232,3 +251,71 @@ async def detach_messages(session: AsyncSession, message_ids: Select[Any]) -> No
     await session.execute(
         update(Chat).where(Chat.parent_message_id.in_(message_ids)).values(parent_message_id=None)
     )
+
+
+async def discard_if_untouched(session: AsyncSession, chat_id: int) -> int | None:
+    """Delete a side chat the user opened and left without using it.
+
+    Untouched means: still on its placeholder title, no messages, nothing the
+    user set on it (reminder, notes draft, description, pin). Anything else is
+    kept. Returns the parent topic id when the chat was deleted (``None`` for
+    a detached one, which is deleted all the same), or raises 404/409.
+    """
+    chat = await session.get(Chat, chat_id)
+    if chat is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Chat not found")
+    used = (
+        not chat.autoname_pending
+        or chat.pinned
+        or bool((chat.description or "").strip())
+        or (chat.parent_topic_id is None and chat.seed_content is None)
+        or await session.scalar(select(exists().where(Message.chat_id == chat_id)))
+        or await session.scalar(select(exists().where(Reminder.chat_id == chat_id)))
+        or await session.scalar(select(exists().where(NoteDraft.chat_id == chat_id)))
+    )
+    if used:
+        raise HTTPException(status.HTTP_409_CONFLICT, "This chat is in use; it was kept.")
+    parent_topic_id = chat.parent_topic_id
+    await session.delete(chat)
+    await session.commit()
+    return parent_topic_id
+
+
+async def archive_with_topic(session: AsyncSession, topic_id: int, at: datetime) -> list[int]:
+    """Archive a topic's live side chats with it, stamped with the topic's time.
+
+    Sharing the timestamp is what lets :func:`unarchive_with_topic` restore
+    exactly these, and not a side chat archived on its own. Doesn't commit.
+    """
+    ids = list(
+        (
+            await session.execute(
+                select(Chat.id).where(Chat.parent_topic_id == topic_id, Chat.archived_at.is_(None))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if ids:
+        await session.execute(update(Chat).where(Chat.id.in_(ids)).values(archived_at=at))
+    return ids
+
+
+async def unarchive_with_topic(
+    session: AsyncSession, topic_id: int, archived_at: datetime
+) -> list[int]:
+    """Restore the side chats archived along with the topic. Doesn't commit."""
+    ids = list(
+        (
+            await session.execute(
+                select(Chat.id).where(
+                    Chat.parent_topic_id == topic_id, Chat.archived_at == archived_at
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if ids:
+        await session.execute(update(Chat).where(Chat.id.in_(ids)).values(archived_at=None))
+    return ids

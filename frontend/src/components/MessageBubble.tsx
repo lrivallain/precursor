@@ -68,6 +68,8 @@ interface Props {
   onStartSideChat?: () => void;
   /** Rendered under the bubble's meta row (e.g. links to side chats). */
   footer?: ReactNode;
+  /** Marks the content as a reply a side chat can quote (see SelectionSideChat). */
+  quotableId?: number;
 }
 
 const roleLabel: Record<MessageRole, string> = {
@@ -92,7 +94,7 @@ function matchSkillInvocation(
   return { skill, argument: (m[2] ?? "").trim() };
 }
 
-export function MessageBubble({ role, content, reasoning, pending, attachments, onDelete, onStop, collapsible, agentSessionId, createdAt, model, elapsedMs, isError, onRetry, highlighted, onRewindHere, onEditResend, revealActions, onStartSideChat, footer }: Props) {
+export function MessageBubble({ role, content, reasoning, pending, attachments, onDelete, onStop, collapsible, agentSessionId, createdAt, model, elapsedMs, isError, onRetry, highlighted, onRewindHere, onEditResend, revealActions, onStartSideChat, footer, quotableId }: Props) {
   const isUser = role === "user";
   const skills = useSkills();
   const skillInvocation =
@@ -420,7 +422,7 @@ export function MessageBubble({ role, content, reasoning, pending, attachments, 
                 ))}
               </div>
             )}
-            <div ref={contentRef}>
+            <div ref={contentRef} data-reply-id={quotableId}>
               <Markdown className="text-sm leading-relaxed">
                 {content || "\u200B"}
               </Markdown>

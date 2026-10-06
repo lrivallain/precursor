@@ -101,7 +101,7 @@ class ContextEstimate:
     compacted_messages: int
 
 
-def _render(history: list[ChatMessage]) -> list[str]:
+def render_transcript(history: list[ChatMessage]) -> list[str]:
     """One text block per message, capped, for the summariser to read."""
     blocks: list[str] = []
     for m in history:
@@ -128,7 +128,7 @@ def _render(history: list[ChatMessage]) -> list[str]:
     return blocks
 
 
-def _chunks(blocks: list[str], max_chars: int) -> list[str]:
+def chunk_blocks(blocks: list[str], max_chars: int) -> list[str]:
     out: list[str] = []
     current: list[str] = []
     size = 0
@@ -163,7 +163,7 @@ async def compact_container(
 
     budget_tokens = await resolve_llm_max_input_tokens(session)
     chunk_chars = int(budget_tokens * _CHUNK_BUDGET_RATIO) * _CHARS_PER_TOKEN
-    chunks = _chunks(_render(history), chunk_chars)
+    chunks = chunk_blocks(render_transcript(history), chunk_chars)
     focus = (instructions or "").strip()
     fk = container_message_kwargs(kind, container_id)
 

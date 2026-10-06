@@ -11,7 +11,8 @@ import { eventBus } from "./events";
 import { notifyIfUnfocused } from "./notifications";
 import { openNotes } from "./notesOpen";
 import { navigate, topicsModeUrl, topicUrl, type AppRoute } from "./routes";
-import { OPEN_TOPIC_EVENT, type OpenTopicDetail } from "./sideChats";
+import { useConfirm } from "../components/ConfirmDialog";
+import { archiveTopic, OPEN_TOPIC_EVENT, type OpenTopicDetail } from "./sideChats";
 import { convKey, streamStore } from "./streamStore";
 import { findTitle, totalUnread } from "./topicTree";
 import type { Collection, Topic, TopicNode } from "./types";
@@ -86,6 +87,7 @@ export function useTopicsController(deps: TopicsControllerDeps): TopicsControlle
     setAtHome,
     closeMobileNav,
   } = deps;
+  const confirmAction = useConfirm();
 
   const [tree, setTree] = useState<TopicNode[]>([]);
   const [activeTopic, setActiveTopic] = useState<Topic | null>(null);
@@ -490,7 +492,7 @@ export function useTopicsController(deps: TopicsControllerDeps): TopicsControlle
   }
 
   async function handleArchiveTopic(id: number): Promise<void> {
-    await api.topics.archive(id);
+    await archiveTopic(id, confirmAction);
     if (activeTopicRef.current?.id === id) setActiveTopic(null);
     await refreshTree();
   }

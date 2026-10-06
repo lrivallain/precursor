@@ -18,6 +18,7 @@ import rehypeHighlight from "rehype-highlight";
 import { SvgBlock } from "./SvgBlock";
 import { MermaidBlock } from "./MermaidBlock";
 import { makeHighlightRehype, useSearchHighlight } from "../lib/searchHighlight";
+import { openChatBySlug } from "../lib/sideChats";
 import { makeMarkdownCaretRehype, markdownCaretAtPoint } from "../lib/markdownCaret";
 
 interface MarkdownProps {
@@ -84,6 +85,13 @@ const TaskListItem: NonNullable<Components["li"]> = ({ node, children, ...props 
 };
 
 /** Open external (http/https) links in a new tab; keep in-app anchors inline. */
+// An in-app chat link (`/chats/<slug>`, e.g. a side chat's note filed into its
+// topic) opens in place rather than reloading the app.
+function inAppChatSlug(href: string | undefined): string | null {
+  const m = href?.match(/^\/chats\/([^/?#]+)$/);
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
 function isExternalHref(href: string | undefined): boolean {
   if (!href) return false;
   return /^https?:\/\//i.test(href);
@@ -275,12 +283,24 @@ export const Markdown = memo(function Markdown({
           },
           a({ href, children: linkChildren, ...props }) {
             const external = isExternalHref(href);
+            const chatSlug = inAppChatSlug(href);
             return (
               <a
                 href={href}
                 {...props}
                 {...(external
                   ? { target: "_blank", rel: "noopener noreferrer" }
+                  : {})}
+                {...(chatSlug
+                  ? {
+                      onClick: (e: React.MouseEvent<HTMLAnchorElement>) => {
+                        if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+                        e.preventDefault();
+                        void openChatBySlug(chatSlug).catch(() => {
+                          window.location.assign(href ?? "/chats");
+                        });
+                      },
+                    }
                   : {})}
               >
                 {linkChildren}

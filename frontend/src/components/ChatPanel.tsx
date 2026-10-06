@@ -9,11 +9,13 @@ import { ComposerModelControls } from "./ComposerModelControls";
 import { ChatStatsPanel } from "./ChatStatsPanel";
 import { useSideChats } from "./SideChatsSection";
 import { TopicSeedCard } from "./SideChatSeedCard";
+import { SelectionSideChat } from "./SelectionSideChat";
 import { api } from "../lib/api";
 import { GITHUB_SLASH_COMMANDS } from "../lib/commands";
 import { detachedDraftStore } from "../lib/detachedDraftStore";
 import { useSettings } from "../lib/settingsStore";
-import { hasPendingJump, startSideChat, takePendingJump } from "../lib/sideChats";
+import { archiveTopic, hasPendingJump, startSideChat, takePendingJump } from "../lib/sideChats";
+import { useConfirm } from "./ConfirmDialog";
 import { convKey, streamStore } from "../lib/streamStore";
 import { useResizableWidth } from "../lib/useResizableWidth";
 import { useResizableHeight } from "../lib/useResizableHeight";
@@ -116,6 +118,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
   const [composerFocusToken, setComposerFocusToken] = useState(0);
   const [pendingCommand, setPendingCommand] = useState<PendingCommand | null>(null);
 
+  const confirmAction = useConfirm();
   const settings = useSettings();
   const showStats = settings?.show_chat_stats ?? true;
   const issueAssociationsEnabled = settings?.issue_associations_enabled ?? true;
@@ -162,11 +165,15 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
 
   // Start a side chat on the whole topic or on one reply, then leave for it.
   // A first message, when given, is sent as the chat opens.
-  async function runSideChat(messageId: number | null, firstMessage = ""): Promise<void> {
+  async function runSideChat(
+    messageId: number | null,
+    firstMessage = "",
+    quote: string | null = null,
+  ): Promise<void> {
     if (startingSideChat) return;
     setStartingSideChat(true);
     try {
-      const chat = await startSideChat(topic.id, messageId);
+      const chat = await startSideChat(topic.id, messageId, quote);
       const text = firstMessage.trim();
       if (text) void streamStore.start(convKey("chat", chat.id), text);
     } catch (err) {
@@ -438,7 +445,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
 
   async function runArchive(): Promise<void> {
     try {
-      await api.topics.archive(topic.id);
+      await archiveTopic(topic.id, confirmAction);
       onArchived?.();
     } catch (err) {
       systemNote(`Archive failed: ${(err as Error).message}`);
@@ -598,6 +605,11 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
           onDismissError={summary.clearError}
         />
         <div className="relative flex min-h-0 flex-1">
+        <SelectionSideChat
+          scrollRef={conv.scrollRef}
+          disabled={streaming || startingSideChat}
+          onStart={(messageId, quote) => void runSideChat(messageId, "", quote)}
+        />
         <div ref={conv.scrollRef} onScroll={conv.onScroll} className="flex-1 overflow-y-auto p-4 pr-12 min-w-0">
           <div
             className="relative mx-auto space-y-3"

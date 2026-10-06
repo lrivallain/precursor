@@ -411,7 +411,8 @@ to MCP hosts (VS Code, CLI agents): topics, messages, chats, agents, live
 retrieval and cited answers, skills, memory,
 [agent state](/features/agents-mode/artifacts-state#durable-state-the-private-scratchpad),
 [workflow state](/features/workflows/steps#pipeline-state-what-a-workflow-remembers),
-`append_note`, `post_message`, schedules, and reminders.
+`append_note`, `post_message`, [side chats](/features/chats#side-chats), schedules,
+and reminders.
 
 `append_note` and `post_message` are deliberately different tools. `append_note`
 persists the text you hand it and returns — the right call for filing an
@@ -454,6 +455,13 @@ grounding Markdown block that numbers them as `[^n]` citations, WorkIQ-style.
 `ask` has Precursor's model write a cited answer from those passages. Each has
 its own toggle (`iq`, `iq_ask`), and every hit is also gated by its source's
 section, so IQ never returns more than the per-section tools would.
+
+**Side chats.** `create_side_chat` starts a chat linked to a topic, optionally
+from one of its replies (`message_id`) or an excerpt of it (`quote`). It
+generates nothing: the chat is created empty for the user, and the result
+carries its in-app URL. It has its own write toggle, `side_chats`. `get_topic`
+lists the topic's side chats only when `chats` is exposed too, since their
+titles disclose chat content.
 
 **Topics come back with their tree position resolved.** Every topic payload
 carries a `path` — the ancestor slugs joined root-first with `/` — so a caller

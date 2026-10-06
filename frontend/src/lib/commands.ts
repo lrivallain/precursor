@@ -113,6 +113,15 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     surfaces: ["topic"],
   },
   {
+    name: "send-to-topic",
+    label: "/send-to-topic",
+    description:
+      "Side chats only: have the model sum up this chat, review the note, then file it into the topic the chat was started from. Text after the command says what the note should focus on.",
+    argumentHint: "focus (optional)",
+    kind: "builtin",
+    surfaces: ["chat"],
+  },
+  {
     name: "pin",
     label: "/pin",
     description: "Pin this conversation to the top of the sidebar.",

@@ -55,9 +55,27 @@ class ChatRead(ChatBase):
 
 
 class SideChatCreate(BaseModel):
-    """Start a side chat from a topic, optionally from one of its replies."""
+    """Start a side chat from a topic, optionally from one of its replies.
+
+    ``quote`` narrows the copied reply to an excerpt of it (a text selection).
+    """
 
     message_id: int | None = None
+    quote: str | None = Field(default=None, max_length=50_000)
+
+
+class TopicNoteDraftRequest(BaseModel):
+    instructions: str | None = Field(default=None, max_length=2_000)
+
+
+class TopicNoteDraft(BaseModel):
+    text: str
+    topic_id: int
+    topic_title: str
+
+
+class TopicNoteSend(BaseModel):
+    text: str = Field(min_length=1, max_length=100_000)
 
 
 class SideChatReminder(BaseModel):

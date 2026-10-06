@@ -126,6 +126,8 @@ function renderRow({
   }
   const canDelete =
     !streaming && m.id > 0 && (m.role === "user" || m.role === "assistant");
+  const sideChatSource =
+    Boolean(onStartSideChat) && m.role === "assistant" && m.id > 0 && !m.kind && !m.is_error;
   return (
     <MessageBubble
       role={m.role}
@@ -144,11 +146,8 @@ function renderRow({
       onRewindHere={rewindActions?.here}
       onEditResend={rewindActions?.edit}
       revealActions={revealActions && Boolean(rewindActions)}
-      onStartSideChat={
-        onStartSideChat && m.role === "assistant" && m.id > 0 && !m.kind && !m.is_error
-          ? () => onStartSideChat(m)
-          : undefined
-      }
+      onStartSideChat={sideChatSource ? () => onStartSideChat?.(m) : undefined}
+      quotableId={sideChatSource ? m.id : undefined}
       footer={sideChats && sideChats.length > 0 ? <SideChatLinks items={sideChats} /> : undefined}
     />
   );

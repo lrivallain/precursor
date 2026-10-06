@@ -108,10 +108,12 @@ It stays linked to that topic.
 
 <Screenshot src="/screenshots/side-chats.png" alt="A side chat quoting the topic reply it was started from, with a back-link to the topic in the header" caption="A side chat started from a reply: the reply is quoted on top and the header links back to the topic." />
 
-Start one from a topic in three ways:
+Start one from a topic in four ways:
 
 - **From a reply**: hover an assistant reply and click **Start a chat from this
   reply** in its toolbar. The chat quotes that reply at the top.
+- **From part of a reply**: select some text in an assistant reply and click
+  **Side chat from selection**. The chat quotes only the selected text.
 - **From the whole topic**: click the **New side chat** button (a speech bubble
   with a plus) in the topic's header, choose **New side chat** when you
   right-click the topic in the sidebar, or click **New** under **Side chats**
@@ -129,6 +131,11 @@ What the side chat knows:
   topic** shortcut on the quote goes away then.
 - The chat starts with the topic's assistant [role](/features/skills-memory).
   You can change it like in any chat.
+- A new side chat is called **Side chat** until its first message, when it
+  [names itself](#chats-name-themselves).
+- If you open a side chat and leave without using it, it's deleted, so a
+  quick look leaves nothing behind. It's kept as soon as it has a message, a
+  title you chose, a reminder, a description, a pin or notes.
 
 Getting around:
 
@@ -145,6 +152,25 @@ Getting around:
   that list. Unarchiving one brings it back.
 - In the Chats list, a side chat has a small split icon. Hover it to see which
   topic the chat belongs to.
+
+### Sending the outcome back to the topic
+
+When a side chat has settled something, file it into its topic so the topic's
+history and [summary](/features/topic-summary) pick it up. Click **Send to
+topic** (the merge icon) in the chat's header, or run `/send-to-topic`. Any
+text after the command says what to focus on.
+
+The model writes a short note: what was explored, the conclusions and the
+follow-ups. You review and edit it, then **Send to topic** files it into the
+topic as a note, headed by a link back to the side chat. Nothing is sent until
+you confirm.
+
+### Archiving and deleting
+
+When you archive a topic that has open side chats, Precursor asks whether to
+archive them too. **Keep them open** archives only the topic. Restoring the
+topic brings back the side chats that were archived with it, but not ones you
+archived on their own.
 
 Deleting the topic keeps its side chats. They just stop being linked to it,
 and a chat started from a reply keeps its copy of that reply.

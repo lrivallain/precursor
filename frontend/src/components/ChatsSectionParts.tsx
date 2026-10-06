@@ -1,10 +1,17 @@
-import { ChevronRight, CornerLeftUp, Pin, PinOff, Settings as SettingsIcon } from "lucide-react";
+import {
+  ChevronRight,
+  CornerLeftUp,
+  Merge,
+  Pin,
+  PinOff,
+  Settings as SettingsIcon,
+} from "lucide-react";
 import { ChatList } from "./ChatList";
 import { ChatSessionPanel } from "./ChatSessionPanel";
 import { ChatSettingsPanel } from "./ChatSettingsPanel";
 import { InlineTitle } from "./InlineTitle";
 import { ChatStartHero } from "./StartHero";
-import { openTopic } from "../lib/sideChats";
+import { openTopic, requestTopicNote } from "../lib/sideChats";
 import type { Chat, Topic } from "../lib/types";
 import type { ChatsController } from "../lib/useChatsController";
 
@@ -43,6 +50,16 @@ export function ChatsHeader({ controller }: { controller: ChatsController }) {
         <span className="truncate font-medium min-w-0 flex-1">
           Select or create a chat
         </span>
+      )}
+      {activeChat?.parent_topic_id != null && (
+        <button
+          className="p-2 rounded hover:bg-surface shrink-0"
+          aria-label="Send to topic"
+          data-tooltip={"Send to topic\nSum up this chat and file it into its topic, after you review it"}
+          onClick={() => requestTopicNote(activeChat.id)}
+        >
+          <Merge size={18} />
+        </button>
       )}
       {activeChat && (
         <button
