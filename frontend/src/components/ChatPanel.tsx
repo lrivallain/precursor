@@ -30,6 +30,7 @@ import { TopicSummaryPanel } from "./TopicSummaryPanel";
 import type {
   AgentSession,
   Message,
+  SideChatItem,
   Topic,
 } from "../lib/types";
 import { RoleSelector } from "./RoleSelector";
@@ -144,6 +145,19 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
   const { streamKey, setPersisted, systemNote, visibleMessages, streaming, reminders } = conv;
 
   const sideChatItems = useSideChats(topic.id);
+  // Side chats grouped by the reply they were started from, linked under it.
+  const sideChatsByReply = useMemo(() => {
+    const map = new Map<number, SideChatItem[]>();
+    for (const item of sideChatItems) {
+      if (item.parent_message_id == null) continue;
+      const list = map.get(item.parent_message_id) ?? [];
+      list.push(item);
+      map.set(item.parent_message_id, list);
+    }
+    // Oldest first, so a reply's chats read in the order they were started.
+    for (const list of map.values()) list.reverse();
+    return map;
+  }, [sideChatItems]);
   const [startingSideChat, setStartingSideChat] = useState(false);
 
   // Start a side chat on the whole topic or on one reply, then leave for it.
@@ -628,6 +642,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
                 collapsible={m.role === "user" && topic.schedule != null}
                 hideAgentBadge={grouped}
                 onStartSideChat={streaming ? undefined : (msg) => void runSideChat(msg.id)}
+                sideChats={sideChatsByReply.get(m.id)}
               />
             );
 

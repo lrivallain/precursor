@@ -91,8 +91,8 @@ To explore a tangent without adding it to the topic's conversation, start a
 the **New side chat** button in the topic's header, **New side chat** when you
 right-click the topic in the sidebar, **Side chats** in the right panel, or
 `/side-chat`. The chat knows the
-topic's title, description and summary, and the topic's right panel lists its
-side chats.
+topic's title, description and summary. The topic's right panel lists its side
+chats, and a reply that side chats were started from links to them underneath.
 
 <Screenshot src="/screenshots/side-chats-panel.png" alt="A topic's right panel listing three side chats with unread, reminder and activity details" caption="The topic's side chats in its right panel: unread counts, reminders and last activity at a glance." />
 

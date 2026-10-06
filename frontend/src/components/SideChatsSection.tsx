@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlarmClock, MessageSquarePlus, MessagesSquare, Quote } from "lucide-react";
+import { AlarmClock, CornerDownRight, MessageSquarePlus, MessagesSquare, Quote } from "lucide-react";
 import { api } from "../lib/api";
 import { eventBus } from "../lib/events";
 import { openChatById } from "../lib/sideChats";
@@ -151,6 +151,57 @@ export function SideChatsSection({ items, onStart, starting }: SideChatsControls
           ))}
         </ul>
       )}
+    </div>
+  );
+}
+
+/**
+ * Links under a topic reply to the side chats started from it, so a tangent
+ * is one click away from the answer it branched off.
+ */
+export function SideChatLinks({ items }: { items: SideChatItem[] }) {
+  return (
+    <div
+      className="flex max-w-full flex-wrap items-center gap-1.5 px-1"
+      aria-label="Side chats started from this reply"
+    >
+      {items.map((item) => {
+        const fired = item.reminder?.status === "fired";
+        const tooltip = [
+          `Open side chat “${item.title}”`,
+          `${item.message_count} ${item.message_count === 1 ? "message" : "messages"} · ${lastActivity(item)}`,
+          item.unread_count > 0 ? `${item.unread_count} unread` : null,
+          item.reminder ? (fired ? "Reminder fired" : "Reminder set") : null,
+        ]
+          .filter(Boolean)
+          .join("\n");
+        return (
+          <button
+            key={item.id}
+            type="button"
+            onClick={() => void openChatById(item.id)}
+            className="inline-flex max-w-[18rem] items-center gap-1 rounded-full border border-accent/30 bg-accent/[0.06] px-2 py-0.5 text-[11px] text-accent hover:border-accent/60 hover:bg-accent/10"
+            data-tooltip={tooltip}
+          >
+            <CornerDownRight size={11} className="shrink-0" />
+            <span className={`truncate ${item.unread_count > 0 ? "font-semibold" : ""}`}>
+              {item.title}
+            </span>
+            {item.reminder && (
+              <AlarmClock
+                size={11}
+                className={`shrink-0 ${fired ? "text-amber-600 dark:text-amber-400" : ""}`}
+                aria-label={fired ? "Reminder fired" : "Reminder set"}
+              />
+            )}
+            {item.unread_count > 0 && (
+              <span className="shrink-0 rounded-full bg-accent px-1 text-[10px] font-semibold leading-4 text-white tabular-nums">
+                {item.unread_count}
+              </span>
+            )}
+          </button>
+        );
+      })}
     </div>
   );
 }

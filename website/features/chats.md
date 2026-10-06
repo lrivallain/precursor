@@ -136,6 +136,9 @@ Getting around:
   to the topic.
 - **Open in topic**, on the quoted reply, opens the topic and scrolls to that
   reply.
+- In the topic, a reply that side chats were started from shows a link chip
+  for each of them under it. A chip shows the chat's title, its unread count
+  and a bell when it has a reminder. Click it to open the chat.
 - The topic's right panel lists its side chats. Each row shows the chat's
   unread count, a bell when it has a [reminder](/features/scheduler), how many
   messages it has, and when it was last active. Archived side chats leave

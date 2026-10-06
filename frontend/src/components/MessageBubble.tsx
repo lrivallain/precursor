@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   AlertTriangle,
   ArrowUpRight,
@@ -66,6 +66,8 @@ interface Props {
   revealActions?: boolean;
   /** Assistant replies in a topic: start a side chat seeded with this reply. */
   onStartSideChat?: () => void;
+  /** Rendered under the bubble's meta row (e.g. links to side chats). */
+  footer?: ReactNode;
 }
 
 const roleLabel: Record<MessageRole, string> = {
@@ -90,7 +92,7 @@ function matchSkillInvocation(
   return { skill, argument: (m[2] ?? "").trim() };
 }
 
-export function MessageBubble({ role, content, reasoning, pending, attachments, onDelete, onStop, collapsible, agentSessionId, createdAt, model, elapsedMs, isError, onRetry, highlighted, onRewindHere, onEditResend, revealActions, onStartSideChat }: Props) {
+export function MessageBubble({ role, content, reasoning, pending, attachments, onDelete, onStop, collapsible, agentSessionId, createdAt, model, elapsedMs, isError, onRetry, highlighted, onRewindHere, onEditResend, revealActions, onStartSideChat, footer }: Props) {
   const isUser = role === "user";
   const skills = useSkills();
   const skillInvocation =
@@ -457,6 +459,7 @@ export function MessageBubble({ role, content, reasoning, pending, attachments, 
           align={isUser ? "end" : "start"}
         />
       )}
+      {footer}
     </div>
   );
 }
