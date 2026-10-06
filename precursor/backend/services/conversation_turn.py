@@ -13,7 +13,7 @@ the result to an SSE generator that outlives the request-scoped session, and the
 generator persists through fresh sessions of its own.
 
 The transcript endpoints both containers expose (list, clear, delete one, save a
-stopped reply) live here too, keyed on :data:`ContainerKind`, so the topic and
+stopped reply, the turn index and rewind) live here too, keyed on :data:`ContainerKind`, so the topic and
 chat routers stay one-liners over the same behaviour.
 """
 
@@ -23,14 +23,15 @@ import asyncio
 import json
 from collections.abc import AsyncIterator, Collection
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from fastapi import HTTPException, status
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute, selectinload
 
-from precursor.backend.models import Attachment, Message, MessageRole
+from precursor.backend.models import MESSAGE_KIND_COMPACTION, Attachment, Message, MessageRole
 from precursor.backend.schemas import ChatRequest
 from precursor.backend.services.app_settings import (
     resolve_llm_max_attachment_chars,
@@ -43,6 +44,7 @@ from precursor.backend.services.app_settings import (
 )
 from precursor.backend.services.attachment_extraction import warm_attachment_text_cache
 from precursor.backend.services.context_budget import elide_stale_tool_results
+from precursor.backend.services.events import is_streaming
 from precursor.backend.services.github_auth import resolve_github_token
 from precursor.backend.services.llm import get_llm_provider
 from precursor.backend.services.llm.base import ChatMessage, LLMProvider
@@ -330,6 +332,124 @@ async def delete_container_message(
     await session.delete(msg)
     await session.commit()
     await publish_container_changed(kind, container_id)
+
+
+# Characters kept from a turn's prompt / first reply for the timeline preview.
+TURN_EXCERPT_CHARS = 200
+
+
+@dataclass(frozen=True, slots=True)
+class TurnIndexEntry:
+    """One turn of a transcript: a user prompt and everything up to the next one."""
+
+    message_id: int
+    last_message_id: int
+    created_at: datetime
+    prompt: str
+    reply: str
+    has_compaction: bool
+    agent_session_id: int | None
+
+
+async def list_container_turns(
+    session: AsyncSession, kind: ContainerKind, container_id: int
+) -> list[TurnIndexEntry]:
+    """The turn index behind the transcript timeline, oldest first.
+
+    The transcript is loaded in windows, so the timeline can't derive turns from
+    what the client holds. Only short excerpts are read: tool results can be
+    huge and the rail never shows them.
+    """
+    rows = (
+        await session.execute(
+            select(
+                Message.id,
+                Message.role,
+                Message.kind,
+                Message.created_at,
+                Message.agent_session_id,
+                func.substr(Message.content, 1, TURN_EXCERPT_CHARS),
+            )
+            .where(_message_fk(kind) == container_id)
+            .order_by(Message.id)
+        )
+    ).all()
+    turns: list[TurnIndexEntry] = []
+    for mid, role, msg_kind, created_at, agent_id, excerpt in rows:
+        text = (excerpt or "").strip()
+        if role == MessageRole.USER and msg_kind is None:
+            turns.append(
+                TurnIndexEntry(
+                    message_id=mid,
+                    last_message_id=mid,
+                    created_at=created_at,
+                    prompt=text,
+                    reply="",
+                    has_compaction=False,
+                    agent_session_id=agent_id,
+                )
+            )
+            continue
+        if not turns:
+            # Rows ahead of the first prompt (e.g. a posted note) belong to no turn.
+            continue
+        cur = turns[-1]
+        turns[-1] = TurnIndexEntry(
+            message_id=cur.message_id,
+            last_message_id=mid,
+            created_at=cur.created_at,
+            prompt=cur.prompt,
+            reply=cur.reply or (text if role == MessageRole.ASSISTANT else ""),
+            has_compaction=cur.has_compaction or msg_kind == MESSAGE_KIND_COMPACTION,
+            agent_session_id=cur.agent_session_id,
+        )
+    return turns
+
+
+async def rewind_container(
+    session: AsyncSession,
+    kind: ContainerKind,
+    container_id: int,
+    from_message_id: int,
+    through_message_id: int | None = None,
+) -> int:
+    """Drop the turn starting at ``from_message_id`` and every later message.
+
+    The cut must land on a user prompt so no turn is left half-answered (an
+    assistant tool call without its results). ``through_message_id`` bounds it
+    to the rows the user saw when confirming, so anything that landed during the
+    undo grace (a posted note, a scheduled run) survives. Returns the number of
+    messages deleted. Raises 409 while a reply is generating: the stream would
+    persist its answer under a prompt that no longer exists.
+    """
+    if is_streaming(kind, container_id):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "A reply is still being generated; wait for it to finish."
+        )
+    fk = _message_fk(kind)
+    anchor = await session.get(Message, from_message_id)
+    owner = None if anchor is None else (anchor.topic_id if kind == "topic" else anchor.chat_id)
+    if anchor is None or owner != container_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Message not found")
+    if anchor.role != MessageRole.USER or anchor.kind is not None:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, "A rewind must start at a user prompt."
+        )
+    if through_message_id is not None and through_message_id < from_message_id:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, "through_message_id precedes from_message_id."
+        )
+    in_cut = [fk == container_id, Message.id >= from_message_id]
+    if through_message_id is not None:
+        in_cut.append(Message.id <= through_message_id)
+    # SQLite doesn't enforce the attachments' ON DELETE CASCADE.
+    await session.execute(
+        delete(Attachment).where(Attachment.message_id.in_(select(Message.id).where(*in_cut)))
+    )
+    result = await session.execute(delete(Message).where(*in_cut))
+    await session.commit()
+    await publish_container_changed(kind, container_id)
+    return int(getattr(result, "rowcount", 0) or 0)
 
 
 STOPPED_TOOL_RESULT = "Stopped by the user before the tool returned a result."

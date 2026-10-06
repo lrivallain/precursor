@@ -4,6 +4,8 @@ import { ChatStatsPanel } from "./ChatStatsPanel";
 import { ConversationNotes, NotesConfirmModal } from "./ConversationNotes";
 import { TranscriptMessage, TranscriptTail, UndoDeleteToasts } from "./ConversationTranscript";
 import { ResizeHandle } from "./ResizeHandle";
+import { RewindBar } from "./RewindBar";
+import { TimelineRail } from "./TimelineRail";
 import { api } from "../lib/api";
 import { useSettings } from "../lib/settingsStore";
 import { useResizableWidth } from "../lib/useResizableWidth";
@@ -51,6 +53,7 @@ export function ChatSessionPanel({
     onSetRole,
   });
   const { streamKey, systemNote, visibleMessages, streaming, reminders } = conv;
+  const rewindFrom = conv.rewind.preview?.fromId ?? null;
 
   const { width: chatWidth, onMouseDown: onChatResize } = useResizableWidth({
     storageKey: "precursor:chat:width",
@@ -123,7 +126,8 @@ export function ChatSessionPanel({
             onDone={() => void reminders.runReminderClear(true)}
           />
         )}
-        <div ref={conv.scrollRef} onScroll={conv.onScroll} className="flex-1 overflow-y-auto p-4">
+        <div className="relative flex min-h-0 flex-1">
+        <div ref={conv.scrollRef} onScroll={conv.onScroll} className="flex-1 overflow-y-auto p-4 pr-12 min-w-0">
           <div className="relative mx-auto space-y-3" style={{ maxWidth: chatWidth }}>
             <ResizeHandle onMouseDown={onChatResize} />
             {conv.loadingOlder && (
@@ -147,6 +151,8 @@ export function ChatSessionPanel({
                 compacted={
                   conv.compaction.markerId !== null && m.id > 0 && m.id < conv.compaction.markerId
                 }
+                doomed={rewindFrom !== null && m.id > 0 && m.id >= rewindFrom}
+                cutAbove={m.id === rewindFrom}
               />
             ))}
             <TranscriptTail
@@ -159,9 +165,17 @@ export function ChatSessionPanel({
             />
           </div>
         </div>
+          <TimelineRail timeline={conv.timeline} rewind={conv.rewind} streaming={streaming} />
+        </div>
 
         <div className="border-t border-border p-3 pb-safe">
           <div className="mx-auto space-y-2" style={{ maxWidth: chatWidth }}>
+            <RewindBar
+              timeline={conv.timeline}
+              rewind={conv.rewind}
+              streaming={streaming}
+              scrollRef={conv.scrollRef}
+            />
             <UndoDeleteToasts deletion={conv.deletion} />
             <ConversationNotes
               notes={conv.notes}

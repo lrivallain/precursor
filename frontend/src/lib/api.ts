@@ -1,6 +1,8 @@
 import type {
   AgentArtifact,
   ContextEstimate,
+  RewindResult,
+  TurnIndexItem,
   AgentArtifactCreate,
   AgentBlueprint,
   AgentBlueprintCreate,
@@ -280,6 +282,13 @@ export interface ContainerApi {
   compact: (instructions?: string) => Promise<Message>;
   /** Estimated history the next turn sends to the model. */
   contextEstimate: () => Promise<ContextEstimate>;
+  /** One entry per prompt, oldest first — the transcript timeline's index. */
+  listTurns: () => Promise<TurnIndexItem[]>;
+  /**
+   * Delete the turn opened by `fromMessageId` (a user prompt) and everything
+   * after it, up to `throughMessageId` when given.
+   */
+  rewind: (fromMessageId: number, throughMessageId?: number) => Promise<RewindResult>;
   uploadAttachment: (file: File) => Promise<Attachment>;
   notes: {
     getDraft: () => Promise<NotesDraft>;
@@ -290,6 +299,20 @@ export interface ContainerApi {
     uploadAttachment: (file: File) => Promise<NoteDraftAttachment>;
     deleteAttachment: (attachmentId: number) => Promise<void>;
   };
+}
+
+function rewindContainer(
+  base: string,
+  fromMessageId: number,
+  throughMessageId?: number,
+): Promise<RewindResult> {
+  return request<RewindResult>(`${base}/rewind`, {
+    method: "POST",
+    body: JSON.stringify({
+      from_message_id: fromMessageId,
+      through_message_id: throughMessageId ?? null,
+    }),
+  });
 }
 
 function compactContainer(base: string, instructions?: string): Promise<Message> {
@@ -888,6 +911,9 @@ export const api = {
           compact: (instructions) => compactContainer(`/api/topics/${id}/messages`, instructions),
           contextEstimate: () =>
             request<ContextEstimate>(`/api/topics/${id}/messages/context`),
+          listTurns: () => request<TurnIndexItem[]>(`/api/topics/${id}/messages/turns`),
+          rewind: (fromId, throughId) =>
+            rewindContainer(`/api/topics/${id}/messages`, fromId, throughId),
           uploadAttachment: (file) => api.attachments.uploadForTopic(id, file),
           notes: {
             getDraft: () => api.notes.getDraft(id),
@@ -907,6 +933,9 @@ export const api = {
           compact: (instructions) => compactContainer(`/api/chats/${id}/messages`, instructions),
           contextEstimate: () =>
             request<ContextEstimate>(`/api/chats/${id}/messages/context`),
+          listTurns: () => request<TurnIndexItem[]>(`/api/chats/${id}/messages/turns`),
+          rewind: (fromId, throughId) =>
+            rewindContainer(`/api/chats/${id}/messages`, fromId, throughId),
           uploadAttachment: (file) => api.attachments.uploadForChat(id, file),
           notes: {
             getDraft: () => api.chats.getNotesDraft(id),

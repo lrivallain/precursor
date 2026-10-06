@@ -122,6 +122,13 @@ counts too. Tool-less features that ask the model once (`/refine`, summaries,
 auto-naming, …) don't take this path; they use `complete_once()` — see
 **One-shot calls** under [LLM provider abstraction](#llm-provider-abstraction).
 
+While a turn is streaming, the transcript's tail is in flux. So
+[compaction](/features/context-compression) and [rewind](/features/rewind)
+(`POST …/messages/rewind`, which deletes a prompt and every later row in one
+transaction) both answer `409` until it ends. A rewind confirmed in the UI is
+committed only after its undo grace, or before the next prompt is sent, and is
+bounded to the rows the user saw, so rows created in the meantime survive.
+
 ## Request flow: editable topic summary
 
 `POST /api/topics/{id}/topic-summary/generate` snapshots the brief and assembles

@@ -109,6 +109,13 @@ features:
       can keep going.
     link: /features/context-compression
     linkText: About context compression
+  - icon: ⏪
+    title: Timeline & rewind
+    details: >-
+      A timeline of dashes on the right edge of every conversation. Jump to any
+      turn, or rewind there and continue, with a preview and an undo.
+    link: /features/rewind
+    linkText: About timeline & rewind
   - icon: ⏰
     title: Scheduler & reminders
     details: >-

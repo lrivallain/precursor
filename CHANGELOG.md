@@ -15,6 +15,17 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **Timeline and rewind for topics and chats.** A column of short dashes on the
+  right edge of the transcript shows one dash per turn. Dashes for turns on
+  screen are brighter, and the turn you're reading is blue. Hover or focus a dash
+  for a preview card, and click it to jump there, even to older turns not loaded
+  yet. **Rewind here** keeps that turn and deletes every later one. **Edit &
+  resend** also deletes that turn and puts its prompt back in the composer. You
+  can also rewind from the **Reading turn N of M** bar shown while you're
+  scrolled back. Every rewind is previewed first: a cut line marks it and the
+  turns to delete are greyed out. After you confirm, an 8-second undo bar counts
+  down. New endpoints: `GET …/messages/turns` and `POST …/messages/rewind`.
+
 - **See a conversation's pending reminder in the stats panel.** A scheduled
   reminder used to be invisible until it fired. The conversation stats panel
   now has a **Reminder** section with the time, how far away it is, and the

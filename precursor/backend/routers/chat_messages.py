@@ -32,8 +32,11 @@ from precursor.backend.schemas import (
     NotesDraftSaveRequest,
     NotesRephraseRequest,
     NotesRephraseResponse,
+    RewindRequest,
+    RewindResult,
     StoppedTurn,
     SuggestNameResponse,
+    TurnIndexRead,
 )
 from precursor.backend.services import notes as notes_service
 from precursor.backend.services import skills as skills_service
@@ -45,11 +48,14 @@ from precursor.backend.services.compaction import (
     estimate_context,
 )
 from precursor.backend.services.conversation_turn import (
+    TurnIndexEntry,
     clear_container_messages,
     delete_container_message,
     list_container_messages,
+    list_container_turns,
     persist_user_turn,
     resolve_turn_settings,
+    rewind_container,
     save_stopped_container_turn,
     snapshot_history,
     stream_turn,
@@ -100,6 +106,28 @@ async def delete_message(
 ) -> None:
     """Hard-delete a single message."""
     await delete_container_message(session, "chat", chat_id, message_id)
+
+
+@router.get("/turns", response_model=list[TurnIndexRead], dependencies=[Depends(get_chat_or_404)])
+async def list_turns(
+    chat_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> list[TurnIndexEntry]:
+    """The chat's turn index (one entry per prompt) for the transcript timeline."""
+    return await list_container_turns(session, "chat", chat_id)
+
+
+@router.post("/rewind", response_model=RewindResult, dependencies=[Depends(get_chat_or_404)])
+async def rewind_messages(
+    chat_id: int,
+    payload: RewindRequest,
+    session: AsyncSession = Depends(get_session),
+) -> RewindResult:
+    """Rewind the chat: delete the turn opened by ``from_message_id`` and everything after."""
+    deleted = await rewind_container(
+        session, "chat", chat_id, payload.from_message_id, payload.through_message_id
+    )
+    return RewindResult(deleted=deleted)
 
 
 @router.post(

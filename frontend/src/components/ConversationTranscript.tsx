@@ -7,6 +7,7 @@ import { ToolCallBubble } from "./ToolCallBubble";
 import { stripSuggestionBlock } from "../lib/suggestions";
 import { parseToolMeta } from "../lib/toolMeta";
 import type { MessageDeletion, PendingDelete } from "../lib/useMessageDeletion";
+import { TURN_ANCHOR_ATTR } from "../lib/useTurnTimeline";
 import type { Message } from "../lib/types";
 
 interface TranscriptMessageProps {
@@ -21,6 +22,10 @@ interface TranscriptMessageProps {
   hideAgentBadge?: boolean;
   /** Above the latest compaction marker: kept for the reader, hidden from the model. */
   compacted?: boolean;
+  /** A rewind being previewed would delete this row. */
+  doomed?: boolean;
+  /** First row a previewed rewind deletes: draw the cut line above it. */
+  cutAbove?: boolean;
 }
 
 /** One persisted-conversation row: a tool call, or a user/assistant/system bubble. */
@@ -33,12 +38,43 @@ export function TranscriptMessage({
   collapsible,
   hideAgentBadge,
   compacted,
+  doomed,
+  cutAbove,
 }: TranscriptMessageProps) {
   const row = renderRow(m, streaming, retryable, onRetry, onDelete, collapsible, hideAgentBadge);
-  if (!compacted || row === null) return row;
+  if (row === null) return null;
+  // A turn's prompt anchors the timeline rail (see useTurnTimeline).
+  const anchor = m.role === "user" && !m.kind && m.id > 0;
+  if (!anchor && !compacted && !doomed && !cutAbove) return row;
+  const dim = doomed
+    ? "opacity-35 grayscale transition-opacity"
+    : compacted
+      ? "opacity-55 transition-opacity hover:opacity-100"
+      : undefined;
   return (
-    <div className="opacity-55 transition-opacity hover:opacity-100" data-compacted>
-      {row}
+    <>
+      {cutAbove && <RewindCutLine />}
+      <div
+        className={dim}
+        data-compacted={compacted && !doomed ? "" : undefined}
+        {...(anchor ? { [TURN_ANCHOR_ATTR]: m.id } : {})}
+      >
+        {row}
+      </div>
+    </>
+  );
+}
+
+function RewindCutLine() {
+  return (
+    <div
+      className="flex items-center gap-3 text-[11px] font-semibold text-amber-700 dark:text-amber-300"
+      role="separator"
+      aria-label="The conversation restarts here"
+    >
+      <span className="flex-1 border-t-2 border-dashed border-amber-500/70" />
+      conversation restarts here
+      <span className="flex-1 border-t-2 border-dashed border-amber-500/70" />
     </div>
   );
 }
