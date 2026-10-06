@@ -7,7 +7,9 @@ import { ToolCallBubble } from "./ToolCallBubble";
 import { stripSuggestionBlock } from "../lib/suggestions";
 import { parseToolMeta } from "../lib/toolMeta";
 import type { MessageDeletion, PendingDelete } from "../lib/useMessageDeletion";
+import { TURN_ANCHOR_ATTR } from "../lib/useTurnTimeline";
 import type { Message } from "../lib/types";
+import type { PromptRewindActions } from "../lib/useConversation";
 
 interface TranscriptMessageProps {
   message: Message;
@@ -21,10 +23,60 @@ interface TranscriptMessageProps {
   hideAgentBadge?: boolean;
   /** Above the latest compaction marker: kept for the reader, hidden from the model. */
   compacted?: boolean;
+  /** A rewind being previewed would delete this row. */
+  doomed?: boolean;
+  /** First row a previewed rewind deletes: draw the cut line above it. */
+  cutAbove?: boolean;
+  /** Prompt of the turn the timeline marks as current. */
+  current?: boolean;
+  /** Rewind actions for a prompt that opens a turn (see useConversation.rewindActions). */
+  rewindActions?: PromptRewindActions;
+  /** Show the prompt's action toolbar without hovering. */
+  revealActions?: boolean;
 }
 
 /** One persisted-conversation row: a tool call, or a user/assistant/system bubble. */
-export function TranscriptMessage({
+export function TranscriptMessage(props: TranscriptMessageProps) {
+  const { message: m, compacted, doomed, cutAbove } = props;
+  const row = renderRow(props);
+  if (row === null) return null;
+  // A turn's prompt anchors the timeline rail (see useTurnTimeline).
+  const anchor = m.role === "user" && !m.kind && m.id > 0;
+  if (!anchor && !compacted && !doomed && !cutAbove) return row;
+  const dim = doomed
+    ? "opacity-35 grayscale transition-opacity"
+    : compacted
+      ? "opacity-55 transition-opacity hover:opacity-100"
+      : undefined;
+  return (
+    <>
+      {cutAbove && <RewindCutLine />}
+      <div
+        className={dim}
+        data-compacted={compacted && !doomed ? "" : undefined}
+        {...(anchor ? { [TURN_ANCHOR_ATTR]: m.id } : {})}
+      >
+        {row}
+      </div>
+    </>
+  );
+}
+
+function RewindCutLine() {
+  return (
+    <div
+      className="flex items-center gap-3 text-[11px] font-semibold text-amber-700 dark:text-amber-300"
+      role="separator"
+      aria-label="The conversation restarts here"
+    >
+      <span className="flex-1 border-t-2 border-dashed border-amber-500/70" />
+      conversation restarts here
+      <span className="flex-1 border-t-2 border-dashed border-amber-500/70" />
+    </div>
+  );
+}
+
+function renderRow({
   message: m,
   streaming,
   retryable,
@@ -32,26 +84,10 @@ export function TranscriptMessage({
   onDelete,
   collapsible,
   hideAgentBadge,
-  compacted,
+  current,
+  rewindActions,
+  revealActions,
 }: TranscriptMessageProps) {
-  const row = renderRow(m, streaming, retryable, onRetry, onDelete, collapsible, hideAgentBadge);
-  if (!compacted || row === null) return row;
-  return (
-    <div className="opacity-55 transition-opacity hover:opacity-100" data-compacted>
-      {row}
-    </div>
-  );
-}
-
-function renderRow(
-  m: Message,
-  streaming: boolean,
-  retryable: boolean,
-  onRetry: (message: Message) => void,
-  onDelete: (message: Message) => void,
-  collapsible?: boolean,
-  hideAgentBadge?: boolean,
-) {
   if (m.kind === "compaction") {
     return (
       <CompactionMarker
@@ -97,6 +133,10 @@ function renderRow(
       isError={m.is_error}
       onRetry={retryable ? () => onRetry(m) : undefined}
       onDelete={canDelete ? () => onDelete(m) : undefined}
+      highlighted={current}
+      onRewindHere={rewindActions?.here}
+      onEditResend={rewindActions?.edit}
+      revealActions={revealActions && Boolean(rewindActions)}
     />
   );
 }

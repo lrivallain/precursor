@@ -134,6 +134,7 @@ export default withMermaid(
             { text: "Command runner", link: "/features/command-runner" },
             { text: "Attachments", link: "/features/attachments" },
             { text: "Context compression", link: "/features/context-compression" },
+            { text: "Timeline & rewind", link: "/features/rewind" },
             { text: "Storage & retention", link: "/features/storage" },
             { text: "Phone & tablet layout", link: "/features/mobile" },
             { text: "Accessibility", link: "/features/accessibility" },

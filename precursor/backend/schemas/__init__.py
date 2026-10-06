@@ -80,8 +80,11 @@ from precursor.backend.schemas.message import (
     NotesDraftSaveRequest,
     NotesRephraseRequest,
     NotesRephraseResponse,
+    RewindRequest,
+    RewindResult,
     StoppedTurn,
     SuggestNameResponse,
+    TurnIndexRead,
 )
 from precursor.backend.schemas.role import (
     RoleCreate,
@@ -215,6 +218,8 @@ __all__ = [
     "NotesRephraseRequest",
     "NotesRephraseResponse",
     "ResolveRequest",
+    "RewindRequest",
+    "RewindResult",
     "RoleCreate",
     "RoleRead",
     "RoleUpdate",
@@ -247,6 +252,7 @@ __all__ = [
     "TopicUpdate",
     "TranslateRequest",
     "TranslateResult",
+    "TurnIndexRead",
     "UsageBucket",
     "UsageStats",
     "WorkspaceCreate",

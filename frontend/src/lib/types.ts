@@ -1293,6 +1293,27 @@ export interface StoppedTurn {
 }
 
 /**
+ * One turn of the transcript timeline: a user prompt and every row up to the
+ * next one. Mirrors `TurnIndexRead` in `schemas/message.py`.
+ */
+export interface TurnIndexItem {
+  message_id: number;
+  last_message_id: number;
+  created_at: string;
+  /** Excerpt (≤ 200 chars) of the prompt. */
+  prompt: string;
+  /** Excerpt of the turn's first assistant text; empty while unanswered. */
+  reply: string;
+  has_compaction: boolean;
+  agent_session_id: number | null;
+}
+
+/** Mirrors `RewindResult` in `schemas/message.py`. */
+export interface RewindResult {
+  deleted: number;
+}
+
+/**
  * The editable status brief shown above a topic's transcript. Mirrors
  * `schemas/topic_summary.py`. A topic has none until one is generated or an
  * item is added to it, so the API resolves to `null` rather than 404.

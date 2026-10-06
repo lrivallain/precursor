@@ -16,6 +16,8 @@ import { useResizableHeight } from "../lib/useResizableHeight";
 import { useComposerInput } from "../lib/useComposerInput";
 import { useConversation } from "../lib/useConversation";
 import { ResizeHandle } from "./ResizeHandle";
+import { RewindBar } from "./RewindBar";
+import { TimelineRail } from "./TimelineRail";
 import { ReminderModal } from "./ReminderModal";
 import { ReminderBanner } from "./ReminderBanner";
 import { useTopicSummary } from "../lib/useTopicSummary";
@@ -541,7 +543,8 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
           onToggleVisible={() => void summary.toggleVisible()}
           onDismissError={summary.clearError}
         />
-        <div ref={conv.scrollRef} onScroll={conv.onScroll} className="flex-1 overflow-y-auto p-4 min-w-0">
+        <div className="relative flex min-h-0 flex-1">
+        <div ref={conv.scrollRef} onScroll={conv.onScroll} className="flex-1 overflow-y-auto p-4 pr-12 min-w-0">
           <div
             className="relative mx-auto space-y-3"
             style={{ maxWidth: chatWidth }}
@@ -560,6 +563,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
           {(() => {
             // In a scheduled topic the user turn is the repeated automation
             // prompt — collapse it so generated content gets the room.
+            const rewindFrom = conv.rewind.preview?.fromId ?? null;
             const renderMessage = (m: (typeof visibleMessages)[number], grouped: boolean) => (
               <TranscriptMessage
                 key={m.id}
@@ -570,6 +574,15 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
                 onDelete={conv.deletion.requestDeleteMessage}
                 compacted={
                   conv.compaction.markerId !== null && m.id > 0 && m.id < conv.compaction.markerId
+                }
+                doomed={rewindFrom !== null && m.id > 0 && m.id >= rewindFrom}
+                cutAbove={m.id === rewindFrom}
+                current={m.id === conv.timeline.currentMessageId}
+                rewindActions={conv.rewindActions(m)}
+                revealActions={
+                  m.id === conv.timeline.currentMessageId &&
+                  !conv.timeline.view.atLatest &&
+                  !conv.rewind.preview
                 }
                 collapsible={m.role === "user" && topic.schedule != null}
                 hideAgentBadge={grouped}
@@ -634,9 +647,17 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
           />
         </div>
       </div>
+        <TimelineRail timeline={conv.timeline} rewind={conv.rewind} streaming={streaming} />
+      </div>
 
       <div className="border-t border-border p-3 pb-safe">
         <div className="mx-auto space-y-2" style={{ maxWidth: chatWidth }}>
+          <RewindBar
+            timeline={conv.timeline}
+            rewind={conv.rewind}
+            streaming={streaming}
+            scrollRef={conv.scrollRef}
+          />
           <UndoDeleteToasts deletion={conv.deletion} />
           <ConversationNotes
             notes={conv.notes}

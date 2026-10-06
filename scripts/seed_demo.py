@@ -706,6 +706,102 @@ async def _seed_compacted_topic(s: AsyncSession, collection_id: int) -> None:
         await s.flush()
 
 
+# A long chat for the transcript timeline and rewind shots: enough turns that the
+# rail shows a run of dashes and the transcript scrolls well past one screen.
+_TIMELINE_TURNS = [
+    (
+        "I want to automate watering for a 60 m² vegetable garden. Where do I start?",
+        "Start by zoning: group plants with similar water needs. For 60 m² that is "
+        "likely three zones — raised beds, berries and a lawn strip. Then measure the "
+        "tap's flow rate with a bucket and a stopwatch.",
+    ),
+    (
+        "Flow is about 14 L/min at the outdoor tap.",
+        "Enough for one drip zone at a time, but not drip and sprinklers together. "
+        "Plan the zones to run one after another.",
+    ),
+    (
+        "Drip or soaker hose for the raised beds?",
+        "Drip line with inline emitters every 30 cm. Soaker hoses are cheaper but water "
+        "unevenly over long runs and clog with hard water.",
+    ),
+    (
+        "What controller should I buy?",
+        "A 4-zone controller is plenty. For weather skips, pick one with a rain-sensor "
+        "input or a Wi-Fi model with a local API.",
+    ),
+    (
+        "Is Wi-Fi worth it?",
+        "Mostly for remote rain delays and run logs. Without Wi-Fi in the garden, a rain "
+        "sensor gets you most of the benefit.",
+    ),
+    (
+        "Let's go with Wi-Fi. How do I protect the valves in winter?",
+        "Fit a drain valve at the lowest point and blow the lines out before the first "
+        "frost. Keep the controller indoors or in an insulated box.",
+    ),
+    (
+        "Draft a shopping list for zone 1, the beds.",
+        '- 1 solenoid valve, 3/4"\n- 25 m of 16 mm drip line, 30 cm spacing\n'
+        "- Pressure reducer (1.5 bar) and a 120-mesh filter\n"
+        "- End caps, tees and 30 stakes\n- Backflow preventer",
+    ),
+    (
+        "And zone 2, the berries?",
+        "Point-source emitters (4 L/h) on a 16 mm header, two per bush, under a mulch "
+        "layer — berries don't like wet leaves.",
+    ),
+    (
+        "What about the lawn strip?",
+        "Two pop-up rotors on their own valve, early morning, 20 minutes twice a week in summer.",
+    ),
+    (
+        "Schedule for July?",
+        "Beds daily for 25 min at 06:00, berries every other day for 40 min, lawn on "
+        "Tuesday and Saturday for 20 min. Skip any run after more than 5 mm of rain.",
+    ),
+    (
+        "I travel in August, adjust for that.",
+        "Raise the beds to 30 min, add a mid-week deep run for the berries and turn on "
+        "valve-fault notifications.",
+    ),
+    (
+        "Total budget estimate?",
+        "Roughly €330: controller €120, valves €75, drip line and fittings €90, rotors "
+        "€40, the rest in small parts.",
+    ),
+    (
+        "Summarise everything in five bullets.",
+        "- Three zones: beds on drip, berries on emitters, lawn on rotors\n"
+        "- Wi-Fi 4-zone controller with weather skip\n"
+        "- July schedule plus an August travel profile\n"
+        "- Drain valve and blow-out before frost\n- Budget about €330",
+    ),
+]
+
+
+async def _seed_timeline_chat(s: AsyncSession) -> None:
+    chat = Chat(title="Garden irrigation plan", slug="garden-irrigation-plan")
+    s.add(chat)
+    await s.flush()
+    for i, (prompt, answer) in enumerate(_TIMELINE_TURNS):
+        hours = 30 - i * 2
+        for row in (
+            Message(role=MessageRole.USER, content=prompt, created_at=ago(hours=hours)),
+            Message(
+                role=MessageRole.ASSISTANT,
+                content=answer,
+                prompt_tokens=900 + 140 * i,
+                completion_tokens=120,
+                model="mock",
+                created_at=ago(hours=hours - 0.1),
+            ),
+        ):
+            row.chat_id = chat.id
+            s.add(row)
+            await s.flush()
+
+
 async def seed() -> None:
     await init_db()
 
@@ -962,6 +1058,7 @@ async def seed() -> None:
         # (dimmed) above the marker, one exchange follows it. Token counts are
         # sized against the mock model's 8k window so the stats bar reads true.
         await _seed_compacted_topic(s, platform.id)
+        await _seed_timeline_chat(s)
 
         # ---------------- chats ----------------
         c_regex = Chat(title="Regex for semver tags", slug="regex-for-semver-tags")

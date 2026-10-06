@@ -9,7 +9,9 @@ import {
   ChevronRight,
   Code2,
   Copy,
+  History,
   Paperclip,
+  Pencil,
   RotateCcw,
   StopCircle,
   Timer,
@@ -54,6 +56,13 @@ interface Props {
   // For USER turns: set when the turn this prompt started ended in an error —
   // renders a Retry control that replays this exact prompt.
   onRetry?: () => void;
+  /** The prompt of the turn the timeline marks as current. */
+  highlighted?: boolean;
+  /** Prompt actions: preview a rewind keeping this turn ("here") or re-editing it. */
+  onRewindHere?: () => void;
+  onEditResend?: () => void;
+  /** Keep the action toolbar visible without hovering (the selected prompt). */
+  revealActions?: boolean;
 }
 
 const roleLabel: Record<MessageRole, string> = {
@@ -78,7 +87,7 @@ function matchSkillInvocation(
   return { skill, argument: (m[2] ?? "").trim() };
 }
 
-export function MessageBubble({ role, content, reasoning, pending, attachments, onDelete, onStop, collapsible, agentSessionId, createdAt, model, elapsedMs, isError, onRetry }: Props) {
+export function MessageBubble({ role, content, reasoning, pending, attachments, onDelete, onStop, collapsible, agentSessionId, createdAt, model, elapsedMs, isError, onRetry, highlighted, onRewindHere, onEditResend, revealActions }: Props) {
   const isUser = role === "user";
   const skills = useSkills();
   const skillInvocation =
@@ -234,10 +243,17 @@ export function MessageBubble({ role, content, reasoning, pending, attachments, 
           onRetry ? "border-red-500/40" : "border-border"
         } ${isUser ? "bg-accent/10" : "bg-surface"} max-w-full`}
       >
+        {highlighted && (
+          // Ties the prompt to the timeline rail's blue (current) dash.
+          <span
+            aria-hidden
+            className="pointer-events-none absolute -right-2.5 top-1.5 bottom-1.5 w-[3px] rounded-full bg-accent"
+          />
+        )}
         {showActions && (
           <div
             style={{
-              opacity: hover ? 1 : 0,
+              opacity: hover || revealActions ? 1 : 0,
               transition: "opacity 120ms ease-out",
             }}
             className={`absolute -bottom-3 ${
@@ -273,6 +289,28 @@ export function MessageBubble({ role, content, reasoning, pending, attachments, 
                   )}
                 </button>
               </>
+            )}
+            {onRewindHere && (
+              <button
+                type="button"
+                onClick={onRewindHere}
+                className="p-1 rounded-full text-muted hover:text-amber-500"
+                aria-label="Rewind here"
+                data-tooltip={"Rewind here\nKeep this turn and drop the later ones"}
+              >
+                <History size={12} />
+              </button>
+            )}
+            {onEditResend && (
+              <button
+                type="button"
+                onClick={onEditResend}
+                className="p-1 rounded-full text-muted hover:text-accent"
+                aria-label="Edit and resend"
+                data-tooltip={"Edit & resend\nDrop this turn and the later ones, and edit this prompt"}
+              >
+                <Pencil size={12} />
+              </button>
             )}
             {onDelete && (
               <button

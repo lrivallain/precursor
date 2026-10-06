@@ -141,6 +141,10 @@ past it, a reply keeps its answer but loses its Thinking area — see
   window again. The older messages stay visible, and **Undo** on the marker
   restores them for the model. See
   [context compression](/features/context-compression).
+- **Rewind** to an earlier turn from the timeline on the right edge of the
+  transcript, or from a prompt's hover toolbar. It deletes every later turn after a preview and an undo
+  countdown. **Edit & resend** also puts that turn's prompt back in the
+  composer. See [timeline & rewind](/features/rewind).
 - **Stop** keeps what already streamed, marked _(stopped)_. A
   [tool call](/features/mcp) still running settles as **stopped** instead of
   spinning, and stays in the transcript after a reload — so the next turn knows
@@ -148,7 +152,7 @@ past it, a reply keeps its answer but loses its Thinking area — see
 
 Chats behave the same way, and so does the
 [workspace assistant](/features/workspaces#the-workspace-assistant) (which has no
-per-message delete, since nothing there is saved).
+per-message delete or rewind, since nothing there is saved).
 
 ## When a turn fails
 

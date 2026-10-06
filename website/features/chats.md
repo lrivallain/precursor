@@ -45,6 +45,9 @@ Chats share the same conversation experience as topics:
   [when a turn fails](/features/topics#when-a-turn-fails).
 - **`/compact`** summarises a long chat to free the model's context window —
   see [context compression](/features/context-compression).
+- **A timeline and rewind**: jump between turns from the rail on the right
+  edge, or rewind the chat to an earlier turn — see
+  [timeline & rewind](/features/rewind).
 - **Delete with undo, `/clear` and Stop** work exactly as in topics — see
   [deleting, clearing and stopping](/features/topics#deleting-clearing-and-stopping).
 

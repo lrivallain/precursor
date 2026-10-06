@@ -945,6 +945,47 @@ const scenes = {
     },
   },
 
+  // The transcript timeline: scrolled back to an earlier turn, a later dash
+  // hovered for its preview card, and the "Reading turn N" bar above the
+  // composer. Clipped right of the sidebar so its persona footer stays out.
+  "rewind-timeline": {
+    viewport: { width: 1440, height: 900 },
+    async go(page) {
+      await page.addInitScript(() => localStorage.setItem("precursor:chat-stats:collapsed", "1"));
+      await page.goto(`${BASE}/chats/garden-irrigation-plan`, { waitUntil: "networkidle" });
+      const ticks = page.locator('nav[aria-label="Conversation timeline"] [data-tick]');
+      await ticks.nth(4).click();
+      await page.getByText(/^Reading/).waitFor();
+      await sleep(1200);
+      await ticks.nth(6).hover();
+      await page.locator('nav[aria-label="Conversation timeline"]').getByRole("button", { name: "Rewind here" }).waitFor();
+      await sleep(300);
+      const main = await page.locator("main").first().boundingBox();
+      if (!main) throw new Error("Seed the garden-irrigation-plan chat first.");
+      return { x: Math.floor(main.x), y: 0, width: Math.ceil(main.width), height: page.viewportSize().height };
+    },
+  },
+
+  // A rewind being previewed: later turns dimmed under the cut line, their
+  // dashes red, and the confirmation above the composer. Never confirmed, so
+  // the scene can be retaken.
+  "rewind-preview": {
+    viewport: { width: 1440, height: 900 },
+    async go(page) {
+      await page.addInitScript(() => localStorage.setItem("precursor:chat-stats:collapsed", "1"));
+      await page.goto(`${BASE}/chats/garden-irrigation-plan`, { waitUntil: "networkidle" });
+      const ticks = page.locator('nav[aria-label="Conversation timeline"] [data-tick]');
+      await ticks.nth(5).hover();
+      await page.locator('nav[aria-label="Conversation timeline"]').getByRole("button", { name: "Rewind here" }).click();
+      await page.getByRole("button", { name: "Rewind", exact: true }).waitFor();
+      await page.mouse.move(0, 0);
+      await sleep(1200);
+      const main = await page.locator("main").first().boundingBox();
+      if (!main) throw new Error("Seed the garden-irrigation-plan chat first.");
+      return { x: Math.floor(main.x), y: 0, width: Math.ceil(main.width), height: page.viewportSize().height };
+    },
+  },
+
   // The same screen with the navigation drawer pulled out over it.
   "mobile-drawer": {
     viewport: { width: 390, height: 844 },

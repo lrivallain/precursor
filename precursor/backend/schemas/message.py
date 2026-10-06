@@ -57,6 +57,37 @@ class CompactRequest(BaseModel):
     instructions: str | None = Field(default=None, max_length=4000)
 
 
+class TurnIndexRead(BaseModel):
+    """One turn of the transcript timeline (see ``list_container_turns``)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    # The prompt opening the turn, and the last row before the next prompt.
+    message_id: int
+    last_message_id: int
+    created_at: datetime
+    prompt: str
+    # The first assistant text of the turn, empty while unanswered.
+    reply: str
+    has_compaction: bool
+    agent_session_id: int | None = None
+
+
+class RewindRequest(BaseModel):
+    """Drop the turn opened by ``from_message_id`` (a user prompt) and all later rows.
+
+    ``through_message_id``, when set, is the last row deleted: rows created after
+    the user confirmed the rewind are kept.
+    """
+
+    from_message_id: int
+    through_message_id: int | None = None
+
+
+class RewindResult(BaseModel):
+    deleted: int
+
+
 class ContextEstimateRead(BaseModel):
     """Estimated history the next turn sends (system prompt and tools excluded)."""
 

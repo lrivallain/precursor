@@ -73,6 +73,9 @@ These work across the sections above:
 - [**Context compression**](/features/context-compression): inline images
   and older tool results are trimmed automatically, and `/compact` summarises a
   long conversation so it can keep going.
+- [**Timeline & rewind**](/features/rewind) — jump between a conversation's
+  turns from a timeline rail, and rewind to an earlier turn (or edit and resend
+  its prompt) with a preview and an undo.
 - [**Import & export**](/features/transfer) — share an agent or a workflow as a
   plain YAML file, and choose what happens to anything that already exists on
   import.

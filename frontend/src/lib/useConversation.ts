@@ -37,6 +37,8 @@ import {
 } from "./useNotesDraft";
 import { usePendingAttachments } from "./usePendingAttachments";
 import { useReminders, type RemindersController } from "./useReminders";
+import { inCut, useRewind, type RewindController } from "./useRewind";
+import { useTurnTimeline, type TurnTimeline } from "./useTurnTimeline";
 import { useWindowedMessages } from "./useWindowedMessages";
 import type { ComposerAttachments } from "../components/Composer";
 import type { Message } from "./types";
@@ -52,6 +54,12 @@ export async function clearConversation(kind: ConvKind, id: number): Promise<voi
   streamStore.stop(key);
   await api.container(kind, id).clearMessages();
   streamStore.clear(key);
+}
+
+/** What a prompt's toolbar offers; `here` is absent on the latest turn (nothing to drop). */
+export interface PromptRewindActions {
+  here?: () => void;
+  edit: () => void;
 }
 
 export interface UseConversationOptions {
@@ -104,6 +112,12 @@ export interface Conversation {
   };
   notes: NotesDraftController;
   reminders: RemindersController;
+  /** The turn index and scroll position behind the transcript timeline rail. */
+  timeline: TurnTimeline;
+  /** Return the conversation to an earlier turn (preview → confirm → undo grace). */
+  rewind: RewindController;
+  /** Rewind actions for a prompt that opens a turn, or undefined when unavailable. */
+  rewindActions: (m: Message) => PromptRewindActions | undefined;
   /** Whether the composer's role picker is open (a bare `/role` opens it). */
   roleOpen: boolean;
   setRoleOpen: Dispatch<SetStateAction<boolean>>;
@@ -175,9 +189,24 @@ export function useConversation({
     () => (hasSession ? mergeConversation(persisted, buffered) : persisted),
     [persisted, buffered, hasSession],
   );
+  const rewind = useRewind({
+    resetKey: streamKey,
+    rewind: (fromId, throughId) => containerApi.rewind(fromId, throughId),
+    setPersisted,
+    persistedRef: win.persistedRef,
+    draft: composer.draft,
+    setDraft: composer.setDraft,
+    streaming,
+    onSettled: () => {
+      void win.reloadMessages();
+      onUpdated();
+    },
+    onError: (message) => systemNote(message),
+  });
+  const rewound = rewind.hidden;
   const visibleMessages = useMemo<Message[]>(
-    () => messages.filter((m) => !hiddenIds.has(m.id)),
-    [messages, hiddenIds],
+    () => messages.filter((m) => !hiddenIds.has(m.id) && !inCut(m.id, rewound)),
+    [messages, hiddenIds, rewound],
   );
   const compactionMarkerId = useMemo<number | null>(() => {
     for (let i = visibleMessages.length - 1; i >= 0; i--) {
@@ -202,6 +231,30 @@ export function useConversation({
   useEffect(() => {
     bindScroll({ captureTopAnchor, pinToBottom });
   }, [bindScroll, captureTopAnchor, pinToBottom]);
+
+  const timeline = useTurnTimeline({
+    resetKey: streamKey,
+    listTurns: containerApi.listTurns,
+    scrollRef,
+    messages: visibleMessages,
+    streaming,
+    ensureLoaded: win.ensureLoaded,
+    hidden: rewound,
+  });
+
+  const turnIndexById = useMemo(
+    () => new Map(timeline.turns.map((t, i) => [t.message_id, i])),
+    [timeline.turns],
+  );
+  function rewindActions(m: Message): PromptRewindActions | undefined {
+    const index = turnIndexById.get(m.id);
+    if (index === undefined || streaming || rewind.pending) return undefined;
+    const { turns } = timeline;
+    return {
+      here: index < turns.length - 1 ? () => rewind.start(turns, index, "rewind") : undefined,
+      edit: () => rewind.start(turns, index, "edit"),
+    };
+  }
 
   const reminders = useReminders({
     container: kind,
@@ -310,6 +363,9 @@ export function useConversation({
     const content = draft.trim();
     const hasAttachments = pendingAttachments.length > 0;
     if ((!content && !hasAttachments) || streaming) return;
+    // The new prompt must land after a pending rewind's cut; if the cut didn't
+    // happen, keep the draft rather than send it onto the old history.
+    if (!(await rewind.flush())) return;
     pinToBottom();
     if (speech.listening) speech.stop();
 
@@ -353,7 +409,9 @@ export function useConversation({
   function sendSuggestion(text: string): void {
     if (streaming || !text.trim()) return;
     pinToBottom();
-    void streamStore.start(streamKey, text.trim());
+    void rewind.flush().then((ok) => {
+      if (ok) void streamStore.start(streamKey, text.trim());
+    });
   }
 
   /**
@@ -369,7 +427,11 @@ export function useConversation({
     // Client-side notes carry negative ids and are left alone.
     setPersisted((prev) => prev.filter((p) => p.id < m.id));
     streamStore.clear(streamKey);
-    void streamStore.retry(streamKey, m.id, m.content, m.attachments);
+    void rewind
+      .flush()
+      .then((ok) => {
+        if (ok) void streamStore.retry(streamKey, m.id, m.content, m.attachments);
+      });
   }
 
   function stop(): void {
@@ -555,6 +617,9 @@ export function useConversation({
     compaction: { compacting, markerId: compactionMarkerId, run: runCompact },
     notes,
     reminders,
+    timeline,
+    rewind,
+    rewindActions,
     roleOpen,
     setRoleOpen,
     send,
