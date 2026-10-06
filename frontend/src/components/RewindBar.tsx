@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowDown, RotateCcw } from "lucide-react";
+import { ArrowDown, History } from "lucide-react";
 import type { RewindController } from "../lib/useRewind";
 import type { TurnTimeline } from "../lib/useTurnTimeline";
 
@@ -96,7 +96,7 @@ export function RewindBar({ timeline, rewind, streaming, scrollRef }: RewindBarP
           data-tooltip="Keep this turn and drop the later ones"
           className="inline-flex items-center gap-1 rounded-md border border-amber-500/60 bg-amber-500/15 px-2 py-1 text-amber-800 hover:bg-amber-500/25 dark:text-amber-200"
         >
-          <RotateCcw size={12} aria-hidden /> Rewind to here
+          <History size={12} aria-hidden /> Rewind to here
         </button>
         <button
           type="button"

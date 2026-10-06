@@ -958,7 +958,7 @@ const scenes = {
       await page.getByText(/^Reading/).waitFor();
       await sleep(1200);
       await ticks.nth(6).hover();
-      await page.getByRole("button", { name: "Rewind here" }).waitFor();
+      await page.locator('nav[aria-label="Conversation timeline"]').getByRole("button", { name: "Rewind here" }).waitFor();
       await sleep(300);
       const main = await page.locator("main").first().boundingBox();
       if (!main) throw new Error("Seed the garden-irrigation-plan chat first.");
@@ -976,7 +976,7 @@ const scenes = {
       await page.goto(`${BASE}/chats/garden-irrigation-plan`, { waitUntil: "networkidle" });
       const ticks = page.locator('nav[aria-label="Conversation timeline"] [data-tick]');
       await ticks.nth(5).hover();
-      await page.getByRole("button", { name: "Rewind here" }).click();
+      await page.locator('nav[aria-label="Conversation timeline"]').getByRole("button", { name: "Rewind here" }).click();
       await page.getByRole("button", { name: "Rewind", exact: true }).waitFor();
       await page.mouse.move(0, 0);
       await sleep(1200);

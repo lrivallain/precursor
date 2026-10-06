@@ -38,10 +38,14 @@ Looking at the timeline changes nothing. Only an explicit rewind does.
 Rewind is always a two-step action, so you see what will go before anything
 changes.
 
-1. **Pick the point.** On a dash's preview card, choose **Rewind here** or
-   **Edit & resend**. Or, while you're scrolled back through the conversation, use
-   **Rewind to here** in the **Reading turn N of M** bar above the composer. That
-   bar also has a **Latest** button that takes you back to the bottom.
+1. **Pick the point.** You can start a rewind from three places:
+   - A dash's preview card: **Rewind here** or **Edit & resend**.
+   - Any prompt's hover toolbar: the history icon for **Rewind here**, the
+     pencil for **Edit & resend**. While you're scrolled back, the toolbar of
+     the prompt with the blue bar stays visible without hovering.
+   - The **Reading turn N of M** bar above the composer, shown while you're
+     scrolled back: **Rewind to here**. That bar also has a **Latest** button
+     that takes you back to the bottom.
 2. **Check the preview.** A dashed *conversation restarts here* line marks the
    cut. The turns after it are greyed out and their dashes turn red. The bar
    above the composer says how many turns will be deleted. Choose **Rewind** to

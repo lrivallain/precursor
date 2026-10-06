@@ -142,7 +142,7 @@ past it, a reply keeps its answer but loses its Thinking area — see
   restores them for the model. See
   [context compression](/features/context-compression).
 - **Rewind** to an earlier turn from the timeline on the right edge of the
-  transcript. It deletes every later turn after a preview and an undo
+  transcript, or from a prompt's hover toolbar. It deletes every later turn after a preview and an undo
   countdown. **Edit & resend** also puts that turn's prompt back in the
   composer. See [timeline & rewind](/features/rewind).
 - **Stop** keeps what already streamed, marked _(stopped)_. A

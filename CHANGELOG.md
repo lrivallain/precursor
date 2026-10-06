@@ -22,8 +22,8 @@ are the per-version history; releasing does not rewrite this file.
   for a preview card, and click it to jump there, even to older turns not loaded
   yet. **Rewind here** keeps that turn and deletes every later one. **Edit &
   resend** also deletes that turn and puts its prompt back in the composer. You
-  can also rewind from the **Reading turn N of M** bar shown while you're
-  scrolled back. Every rewind is previewed first: a cut line marks it and the
+  can also rewind from any prompt's hover toolbar (history and pencil icons),
+  or from the **Reading turn N of M** bar shown while you're scrolled back. Every rewind is previewed first: a cut line marks it and the
   turns to delete are greyed out. After you confirm, an 8-second undo bar counts
   down. New endpoints: `GET …/messages/turns` and `POST …/messages/rewind`.
 

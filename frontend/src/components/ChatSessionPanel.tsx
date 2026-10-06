@@ -154,6 +154,12 @@ export function ChatSessionPanel({
                 doomed={rewindFrom !== null && m.id > 0 && m.id >= rewindFrom}
                 cutAbove={m.id === rewindFrom}
                 current={m.id === conv.timeline.currentMessageId}
+                rewindActions={conv.rewindActions(m)}
+                revealActions={
+                  m.id === conv.timeline.currentMessageId &&
+                  !conv.timeline.view.atLatest &&
+                  !conv.rewind.preview
+                }
               />
             ))}
             <TranscriptTail

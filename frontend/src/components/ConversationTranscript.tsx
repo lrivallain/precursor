@@ -9,6 +9,7 @@ import { parseToolMeta } from "../lib/toolMeta";
 import type { MessageDeletion, PendingDelete } from "../lib/useMessageDeletion";
 import { TURN_ANCHOR_ATTR } from "../lib/useTurnTimeline";
 import type { Message } from "../lib/types";
+import type { PromptRewindActions } from "../lib/useConversation";
 
 interface TranscriptMessageProps {
   message: Message;
@@ -28,32 +29,16 @@ interface TranscriptMessageProps {
   cutAbove?: boolean;
   /** Prompt of the turn the timeline marks as current. */
   current?: boolean;
+  /** Rewind actions for a prompt that opens a turn (see useConversation.rewindActions). */
+  rewindActions?: PromptRewindActions;
+  /** Show the prompt's action toolbar without hovering. */
+  revealActions?: boolean;
 }
 
 /** One persisted-conversation row: a tool call, or a user/assistant/system bubble. */
-export function TranscriptMessage({
-  message: m,
-  streaming,
-  retryable,
-  onRetry,
-  onDelete,
-  collapsible,
-  hideAgentBadge,
-  compacted,
-  doomed,
-  cutAbove,
-  current,
-}: TranscriptMessageProps) {
-  const row = renderRow(
-    m,
-    streaming,
-    retryable,
-    onRetry,
-    onDelete,
-    collapsible,
-    hideAgentBadge,
-    current,
-  );
+export function TranscriptMessage(props: TranscriptMessageProps) {
+  const { message: m, compacted, doomed, cutAbove } = props;
+  const row = renderRow(props);
   if (row === null) return null;
   // A turn's prompt anchors the timeline rail (see useTurnTimeline).
   const anchor = m.role === "user" && !m.kind && m.id > 0;
@@ -91,16 +76,18 @@ function RewindCutLine() {
   );
 }
 
-function renderRow(
-  m: Message,
-  streaming: boolean,
-  retryable: boolean,
-  onRetry: (message: Message) => void,
-  onDelete: (message: Message) => void,
-  collapsible?: boolean,
-  hideAgentBadge?: boolean,
-  current?: boolean,
-) {
+function renderRow({
+  message: m,
+  streaming,
+  retryable,
+  onRetry,
+  onDelete,
+  collapsible,
+  hideAgentBadge,
+  current,
+  rewindActions,
+  revealActions,
+}: TranscriptMessageProps) {
   if (m.kind === "compaction") {
     return (
       <CompactionMarker
@@ -147,6 +134,9 @@ function renderRow(
       onRetry={retryable ? () => onRetry(m) : undefined}
       onDelete={canDelete ? () => onDelete(m) : undefined}
       highlighted={current}
+      onRewindHere={rewindActions?.here}
+      onEditResend={rewindActions?.edit}
+      revealActions={revealActions && Boolean(rewindActions)}
     />
   );
 }

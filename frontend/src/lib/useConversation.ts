@@ -56,6 +56,12 @@ export async function clearConversation(kind: ConvKind, id: number): Promise<voi
   streamStore.clear(key);
 }
 
+/** What a prompt's toolbar offers; `here` is absent on the latest turn (nothing to drop). */
+export interface PromptRewindActions {
+  here?: () => void;
+  edit: () => void;
+}
+
 export interface UseConversationOptions {
   kind: ConvKind;
   id: number;
@@ -110,6 +116,8 @@ export interface Conversation {
   timeline: TurnTimeline;
   /** Return the conversation to an earlier turn (preview → confirm → undo grace). */
   rewind: RewindController;
+  /** Rewind actions for a prompt that opens a turn, or undefined when unavailable. */
+  rewindActions: (m: Message) => PromptRewindActions | undefined;
   /** Whether the composer's role picker is open (a bare `/role` opens it). */
   roleOpen: boolean;
   setRoleOpen: Dispatch<SetStateAction<boolean>>;
@@ -233,6 +241,20 @@ export function useConversation({
     ensureLoaded: win.ensureLoaded,
     hidden: rewound,
   });
+
+  const turnIndexById = useMemo(
+    () => new Map(timeline.turns.map((t, i) => [t.message_id, i])),
+    [timeline.turns],
+  );
+  function rewindActions(m: Message): PromptRewindActions | undefined {
+    const index = turnIndexById.get(m.id);
+    if (index === undefined || streaming || rewind.pending) return undefined;
+    const { turns } = timeline;
+    return {
+      here: index < turns.length - 1 ? () => rewind.start(turns, index, "rewind") : undefined,
+      edit: () => rewind.start(turns, index, "edit"),
+    };
+  }
 
   const reminders = useReminders({
     container: kind,
@@ -597,6 +619,7 @@ export function useConversation({
     reminders,
     timeline,
     rewind,
+    rewindActions,
     roleOpen,
     setRoleOpen,
     send,
