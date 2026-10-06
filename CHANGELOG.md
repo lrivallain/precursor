@@ -15,6 +15,10 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **Light or dark for diagrams only.** A sun/moon button in the header of an
+  open `.drawio` file switches the diagram editor between light and dark
+  without changing the app theme. The choice is remembered for every diagram;
+  switching back to match the app theme makes the editor follow the app again.
 - **Side chats.** Start a chat from a topic to explore a tangent without adding
   it to the topic's conversation.
   - **Starting one:** from an assistant reply's toolbar (**Start a chat from
@@ -205,6 +209,11 @@ are the per-version history; releasing does not rewrite this file.
   restarts the app, replays the login entry, self-updates, and uninstalls.
 
 ### Fixed
+
+- **The draw.io editor switches theme while a diagram is open.** It used to
+  stay in the theme it opened with until you reopened the file. Saving a new
+  theme in Settings now reloads it in light or dark, keeping your unsaved edits
+  (draw.io's own undo history starts over).
 
 - **A workflow gate can now recover from a FAIL.** Each loop-back re-ran the
   producing step as a new execution, and the gate was handed every attempt's

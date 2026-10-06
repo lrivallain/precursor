@@ -42,7 +42,7 @@ import type { DiffTarget } from "./GitChanges";
 import { HistoryPanel } from "./GitHistory";
 import { BranchPicker } from "./BranchPicker";
 import { ConflictPane } from "./GitConflict";
-import { DrawioEditor } from "./DrawioEditor";
+import { DrawioEditor, DrawioThemeToggle } from "./DrawioEditor";
 import {
   DefinitionFileIssues,
   isPlaced,
@@ -1129,6 +1129,7 @@ export function WorkspaceView({
                     <Check size={13} /> Mark resolved
                   </button>
                 )}
+                {showPreview && isDrawio(activePath) && <DrawioThemeToggle />}
                 {isGit && (
                   <button
                     className="p-1 rounded text-muted hover:text-text hover:bg-surface"

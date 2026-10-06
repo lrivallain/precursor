@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Download, Loader2, RefreshCw } from "lucide-react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { Download, Loader2, Moon, RefreshCw, Sun } from "lucide-react";
 import { api } from "../lib/api";
+import { useIsDark } from "../lib/theme";
 import type { DrawioStatus } from "../lib/types";
 
 // Embed flags: `embed=1&proto=json` turns on the postMessage protocol,
@@ -23,8 +24,50 @@ function editorUrl(dark: boolean): string {
   return `/drawio/index.html?${params.join("&")}`;
 }
 
-function isDark(): boolean {
-  return document.documentElement.classList.contains("dark");
+// A diagram-only theme override, shared by the header toggle and the editor.
+// Unset means "follow the app theme".
+const THEME_KEY = "precursor:drawio-theme";
+const themeListeners = new Set<() => void>();
+
+function readOverride(): "light" | "dark" | null {
+  const v = localStorage.getItem(THEME_KEY);
+  return v === "light" || v === "dark" ? v : null;
+}
+
+function subscribeOverride(listener: () => void): () => void {
+  themeListeners.add(listener);
+  return () => themeListeners.delete(listener);
+}
+
+/** The draw.io frame's effective theme, plus a toggle that flips only it. */
+export function useDrawioDark(): [boolean, () => void] {
+  const appDark = useIsDark();
+  const override = useSyncExternalStore(subscribeOverride, readOverride);
+  const dark = override ? override === "dark" : appDark;
+  const toggle = useCallback(() => {
+    const next = !dark;
+    // Landing back on the app theme clears the override, so later app theme
+    // changes are followed again.
+    if (next === appDark) localStorage.removeItem(THEME_KEY);
+    else localStorage.setItem(THEME_KEY, next ? "dark" : "light");
+    themeListeners.forEach((l) => l());
+  }, [dark, appDark]);
+  return [dark, toggle];
+}
+
+export function DrawioThemeToggle() {
+  const [dark, toggle] = useDrawioDark();
+  const label = dark ? "Light diagram editor" : "Dark diagram editor";
+  return (
+    <button
+      className="p-1 rounded text-muted hover:text-text hover:bg-surface"
+      aria-label={label}
+      data-tooltip={`${label}\nOnly changes the diagram, not the app theme`}
+      onClick={toggle}
+    >
+      {dark ? <Sun size={15} /> : <Moon size={15} />}
+    </button>
+  );
 }
 
 function formatMb(bytes: number): string {
@@ -53,7 +96,10 @@ export function DrawioEditor({
   const [status, setStatus] = useState<DrawioStatus | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [installing, setInstalling] = useState(false);
-  const dark = isDark();
+  // draw.io only takes its theme from the URL, so a theme flip remounts the
+  // frame (see `key` below). Nothing is lost: autosave has already streamed
+  // every edit into `xml`, and `init` reloads the latest copy.
+  const [dark] = useDrawioDark();
 
   // The editor is seeded once per file; later `xml` changes are echoes of the
   // editor's own edits and must not reload it (that would reset the viewport
@@ -197,7 +243,8 @@ export function DrawioEditor({
 
   return (
     <iframe
-      // Remount on file switch so the editor reloads with the new diagram.
+      // Remount on file switch or theme flip so the editor reloads with the
+      // new diagram or theme.
       key={`${path}:${dark}`}
       ref={frameRef}
       title={path}
