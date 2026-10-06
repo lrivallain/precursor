@@ -17,7 +17,8 @@ are the per-version history; releasing does not rewrite this file.
 
 - **Timeline and rewind for topics and chats.** A column of short dashes on the
   right edge of the transcript shows one dash per turn. Dashes for turns on
-  screen are brighter, and the turn you're reading is blue. Hover or focus a dash
+  screen are brighter, and the turn you're reading is blue, with a matching blue
+  bar beside its prompt in the transcript. Hover or focus a dash
   for a preview card, and click it to jump there, even to older turns not loaded
   yet. **Rewind here** keeps that turn and deletes every later one. **Edit &
   resend** also deletes that turn and puts its prompt back in the composer. You

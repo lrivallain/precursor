@@ -54,6 +54,8 @@ interface Props {
   // For USER turns: set when the turn this prompt started ended in an error —
   // renders a Retry control that replays this exact prompt.
   onRetry?: () => void;
+  /** The prompt of the turn the timeline marks as current. */
+  highlighted?: boolean;
 }
 
 const roleLabel: Record<MessageRole, string> = {
@@ -78,7 +80,7 @@ function matchSkillInvocation(
   return { skill, argument: (m[2] ?? "").trim() };
 }
 
-export function MessageBubble({ role, content, reasoning, pending, attachments, onDelete, onStop, collapsible, agentSessionId, createdAt, model, elapsedMs, isError, onRetry }: Props) {
+export function MessageBubble({ role, content, reasoning, pending, attachments, onDelete, onStop, collapsible, agentSessionId, createdAt, model, elapsedMs, isError, onRetry, highlighted }: Props) {
   const isUser = role === "user";
   const skills = useSkills();
   const skillInvocation =
@@ -234,6 +236,13 @@ export function MessageBubble({ role, content, reasoning, pending, attachments, 
           onRetry ? "border-red-500/40" : "border-border"
         } ${isUser ? "bg-accent/10" : "bg-surface"} max-w-full`}
       >
+        {highlighted && (
+          // Ties the prompt to the timeline rail's blue (current) dash.
+          <span
+            aria-hidden
+            className="pointer-events-none absolute -right-2.5 top-1.5 bottom-1.5 w-[3px] rounded-full bg-accent"
+          />
+        )}
         {showActions && (
           <div
             style={{

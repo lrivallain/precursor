@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { EMPTY_VIEW, measureView, sameView, type TimelineView } from "./timeline";
+import {
+  EMPTY_VIEW,
+  MIN_TIMELINE_TURNS,
+  measureView,
+  sameView,
+  type TimelineView,
+} from "./timeline";
 import { inCut } from "./useRewind";
 import type { Message, TurnIndexItem } from "./types";
 
@@ -20,6 +26,8 @@ export interface UseTurnTimelineOptions {
 export interface TurnTimeline {
   turns: TurnIndexItem[];
   view: TimelineView;
+  /** Prompt of the turn being read (the rail's blue dash), or null when there's no rail. */
+  currentMessageId: number | null;
   /** Scroll turn `index` into view, loading older pages first if needed. */
   jumpTo: (index: number) => Promise<void>;
 }
@@ -155,5 +163,8 @@ export function useTurnTimeline({
     [scrollRef, ensureLoaded],
   );
 
-  return { turns, view, jumpTo };
+  const currentMessageId =
+    turns.length >= MIN_TIMELINE_TURNS ? (turns[view.current]?.message_id ?? null) : null;
+
+  return { turns, view, currentMessageId, jumpTo };
 }

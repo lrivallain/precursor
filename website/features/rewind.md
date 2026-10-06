@@ -8,7 +8,7 @@ Long conversations get a **timeline** that you can skim. When a thread takes a
 wrong turn, you can **rewind** it to an earlier point and carry on from there.
 This works in both [topics](/features/topics) and [chats](/features/chats).
 
-<Screenshot src="/screenshots/rewind-timeline.png" alt="A chat scrolled back to an earlier turn, with a column of short dashes on the right edge of the transcript, a hover card for one dash showing its prompt, reply, and Jump, Rewind here and Edit & resend buttons, and a bar above the composer reading 'Reading turn 5 of 13'" caption="One dash per turn. Hover one to preview it, and jump to it or rewind there." />
+<Screenshot src="/screenshots/rewind-timeline.png" alt="A chat scrolled back to an earlier turn, its prompt marked with a short blue bar, with a column of short dashes on the right edge of the transcript, a hover card for one dash showing its prompt, reply, and Jump, Rewind here and Edit & resend buttons, and a bar above the composer reading 'Reading turn 5 of 13'" caption="One dash per turn. Hover one to preview it, and jump to it or rewind there." />
 
 ## The timeline rail
 
@@ -18,7 +18,8 @@ prompt: the reply, tool calls, and any compaction marker. Each turn gets one das
 
 - Dashes for turns **on screen** are brighter. The turn you're **reading** is
   blue: the last one whose prompt has scrolled past the top. At the bottom, it's
-  the latest turn.
+  the latest turn. The prompt of that turn gets a short blue bar on its right
+  edge, in the same blue, so you can see which message the dash stands for.
 - A turn that contains a [compaction marker](/features/context-compression) is
   amber.
 - **Hover** a dash, or move to it with the keyboard, for a preview card. It

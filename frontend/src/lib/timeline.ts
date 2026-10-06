@@ -1,5 +1,8 @@
 import type { TurnIndexItem } from "./types";
 
+/** Below this many turns there is nothing to navigate: no rail, no highlight. */
+export const MIN_TIMELINE_TURNS = 2;
+
 /** "rewind": keep the chosen turn and drop what follows. "edit": drop it too and re-edit its prompt. */
 export type RewindMode = "rewind" | "edit";
 

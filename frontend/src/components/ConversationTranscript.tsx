@@ -26,6 +26,8 @@ interface TranscriptMessageProps {
   doomed?: boolean;
   /** First row a previewed rewind deletes: draw the cut line above it. */
   cutAbove?: boolean;
+  /** Prompt of the turn the timeline marks as current. */
+  current?: boolean;
 }
 
 /** One persisted-conversation row: a tool call, or a user/assistant/system bubble. */
@@ -40,8 +42,18 @@ export function TranscriptMessage({
   compacted,
   doomed,
   cutAbove,
+  current,
 }: TranscriptMessageProps) {
-  const row = renderRow(m, streaming, retryable, onRetry, onDelete, collapsible, hideAgentBadge);
+  const row = renderRow(
+    m,
+    streaming,
+    retryable,
+    onRetry,
+    onDelete,
+    collapsible,
+    hideAgentBadge,
+    current,
+  );
   if (row === null) return null;
   // A turn's prompt anchors the timeline rail (see useTurnTimeline).
   const anchor = m.role === "user" && !m.kind && m.id > 0;
@@ -87,6 +99,7 @@ function renderRow(
   onDelete: (message: Message) => void,
   collapsible?: boolean,
   hideAgentBadge?: boolean,
+  current?: boolean,
 ) {
   if (m.kind === "compaction") {
     return (
@@ -133,6 +146,7 @@ function renderRow(
       isError={m.is_error}
       onRetry={retryable ? () => onRetry(m) : undefined}
       onDelete={canDelete ? () => onDelete(m) : undefined}
+      highlighted={current}
     />
   );
 }

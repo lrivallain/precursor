@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { CornerDownRight, Pencil, RotateCcw } from "lucide-react";
 import { formatTimestamp } from "./MessageMeta";
 import { Z_INDEX } from "../lib/constants";
+import { MIN_TIMELINE_TURNS } from "../lib/timeline";
 import type { RewindController } from "../lib/useRewind";
 import type { TurnTimeline } from "../lib/useTurnTimeline";
 
@@ -10,9 +11,6 @@ interface TimelineRailProps {
   rewind: RewindController;
   streaming: boolean;
 }
-
-// Below this many turns there is nothing to navigate.
-const MIN_TURNS = 2;
 
 /**
  * The transcript's turn timeline: one dash per turn (a prompt and its reply),
@@ -87,7 +85,7 @@ export function TimelineRail({ timeline, rewind, streaming }: TimelineRailProps)
   const tick = open !== null ? tickEl(open) : null;
   const cardTop = tick ? tick.offsetTop + tick.offsetHeight / 2 : 0;
 
-  if (turns.length < MIN_TURNS) return null;
+  if (turns.length < MIN_TIMELINE_TURNS) return null;
   return (
     <nav
       ref={navRef}
