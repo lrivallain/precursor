@@ -248,17 +248,29 @@ async def promote_chat_to_topic(
     Chats have no collection of their own, so the caller passes the one it is
     looking at; anything unresolvable falls back to the default. Leaving it null
     would strand the topic — no collection filter matches a null membership.
+
+    A side chat becomes a sub-topic of the topic it was started from, in that
+    topic's collection: a subtree never spans collections, so ``collection_id``
+    is ignored then.
     """
     chat = await session.get(Chat, chat_id)
     if not chat:
         raise HTTPException(status_code=404, detail="Chat not found")
 
-    resolved_collection_id = await resolve_collection_id(session, collection_id)
+    parent = (
+        await session.get(Topic, chat.parent_topic_id) if chat.parent_topic_id is not None else None
+    )
+    resolved_collection_id = (
+        parent.collection_id
+        if parent is not None and parent.collection_id is not None
+        else await resolve_collection_id(session, collection_id)
+    )
     topic = Topic(
         title=chat.title,
         slug=await allocate_unique_slug(session, slugify(chat.title) or "topic", Topic),
         description=chat.description,
         pinned=chat.pinned,
+        parent_id=parent.id if parent is not None else None,
         collection_id=resolved_collection_id,
         role_id=await resolve_collection_default_role_id(session, resolved_collection_id),
     )
@@ -270,7 +282,6 @@ async def promote_chat_to_topic(
     await session.execute(
         update(Message).where(Message.chat_id == chat_id).values(topic_id=topic.id, chat_id=None)
     )
-    # The new topic stands on its own: the side-chat link dies with the chat.
     parent_topic_id = chat.parent_topic_id
     await session.delete(chat)
     await session.commit()

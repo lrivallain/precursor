@@ -218,3 +218,31 @@ def test_mcp_chat_dict_exposes_the_parent_link() -> None:
     data = _run(_go)
     assert data["parent_topic_id"] == topic["id"]
     assert data["parent_message_id"] is None
+
+
+def test_promoting_a_side_chat_makes_a_sub_topic_of_its_parent() -> None:
+    with TestClient(create_app()) as client:
+        home = client.post("/api/collections", json={"name": "Side chat home"}).json()
+        other = client.post("/api/collections", json={"name": "Side chat elsewhere"}).json()
+        topic = _topic(client, "Promote parent", collection_id=home["id"])
+        chat = client.post(f"/api/topics/{topic['id']}/chats", json={}).json()
+
+        # The collection the caller is looking at loses to the parent's: a
+        # subtree never spans collections.
+        promoted = client.post(f"/api/chats/{chat['id']}/promote?collection_id={other['id']}")
+        assert promoted.status_code == 200, promoted.text
+        data = promoted.json()
+        assert data["parent_id"] == topic["id"]
+        assert data["collection_id"] == home["id"]
+        assert client.get(f"/api/chats/{chat['id']}").status_code == 404
+        assert client.get(f"/api/topics/{topic['id']}/chats").json() == []
+
+
+def test_promoting_a_detached_side_chat_makes_a_root_topic() -> None:
+    with TestClient(create_app()) as client:
+        topic = _topic(client, "Promote doomed parent")
+        chat = client.post(f"/api/topics/{topic['id']}/chats", json={}).json()
+        client.delete(f"/api/topics/{topic['id']}")
+
+        data = client.post(f"/api/chats/{chat['id']}/promote").json()
+        assert data["parent_id"] is None

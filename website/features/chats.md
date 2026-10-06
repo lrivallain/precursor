@@ -144,5 +144,9 @@ Getting around:
   topic the chat belongs to.
 
 Deleting the topic keeps its side chats. They just stop being linked to it,
-and a chat started from a reply keeps its copy of that reply. Promoting a side
-chat to a topic makes a new, separate topic.
+and a chat started from a reply keeps its copy of that reply.
+
+**Promoting** a side chat to a topic (from its settings) creates a
+**sub-topic of the topic it was started from**, in that topic's collection. A
+side chat whose topic was deleted becomes a top-level topic, like any other
+promoted chat.
