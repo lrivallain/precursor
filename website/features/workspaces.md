@@ -288,6 +288,14 @@ editor, with an **XML / Diagram** toggle to drop down to the raw mxGraph source.
 Edits stream back into the same buffer as any other file, so the usual dirty
 marker, **Save**, and `git diff` apply unchanged.
 
+The editor follows the app's light or dark theme. Change the theme in
+**Settings** and an open diagram reloads in the new one, keeping your unsaved
+edits (draw.io's own undo history starts over). To change only the diagram,
+use the sun/moon button in the file header: it switches the editor between
+light and dark and leaves the rest of the app alone. Your choice is remembered
+for every diagram. Switching back to match the app theme makes the editor
+follow the app again.
+
 The editor is **self-hosted**: Precursor serves its own copy of the draw.io
 webapp at `/drawio/`, and the frame runs with `offline=1&stealth=1`, so diagram
 content never reaches `diagrams.net` or any other external origin — and editing
