@@ -112,8 +112,10 @@ Start one from a topic in three ways:
 
 - **From a reply**: hover an assistant reply and click **Start a chat from this
   reply** in its toolbar. The chat quotes that reply at the top.
-- **From the whole topic**: click **New** under **Side chats** in the topic's
-  right panel.
+- **From the whole topic**: click the **New side chat** button (a speech bubble
+  with a plus) in the topic's header, choose **New side chat** when you
+  right-click the topic in the sidebar, or click **New** under **Side chats**
+  in the topic's right panel.
 - **With `/side-chat`** in the topic's composer. Any text after the command is
   sent as the chat's first message.
 

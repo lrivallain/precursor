@@ -17,8 +17,9 @@ are the per-version history; releasing does not rewrite this file.
 
 - **Side chats.** Start a chat from a topic to explore a tangent without adding
   it to the topic. Start one from an assistant reply's toolbar (**Start a chat
-  from this reply**), from **Side chats** in the topic's right panel, or with the
-  new `/side-chat` command. On every turn, the chat gets the topic's title,
+  from this reply**), from the **New side chat** button in the topic's header or
+  the topic's right-click menu in the sidebar, from **Side chats** in the
+  topic's right panel, or with the new `/side-chat` command. On every turn, the chat gets the topic's title,
   description and summary. A chat started from a reply also gets a copy of that
   reply, quoted at its top with an **Open in topic** link back to it. The topic's
   right panel lists its side chats with their unread counts, reminders, message

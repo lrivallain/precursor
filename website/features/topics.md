@@ -88,7 +88,9 @@ you have edited it yourself.
 
 To explore a tangent without adding it to the topic's conversation, start a
 [**side chat**](/features/chats#side-chats). Start one from a reply's toolbar,
-from **Side chats** in the right panel, or with `/side-chat`. The chat knows the
+the **New side chat** button in the topic's header, **New side chat** when you
+right-click the topic in the sidebar, **Side chats** in the right panel, or
+`/side-chat`. The chat knows the
 topic's title, description and summary, and the topic's right panel lists its
 side chats.
 
