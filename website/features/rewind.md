@@ -6,7 +6,8 @@ title: Timeline & rewind
 
 Long conversations get a **timeline** that you can skim. When a thread takes a
 wrong turn, you can **rewind** it to an earlier point and carry on from there.
-This works in both [topics](/features/topics) and [chats](/features/chats).
+This works in [topics](/features/topics) and [chats](/features/chats), and in
+[agent sessions](#in-agent-sessions) with a few differences.
 
 <Screenshot src="/screenshots/rewind-timeline.png" alt="A chat scrolled back to an earlier turn, its prompt marked with a short blue bar, with a column of short dashes on the right edge of the transcript, a hover card for one dash showing its prompt, reply, and Jump, Rewind here and Edit & resend buttons, and a bar above the composer reading 'Reading turn 5 of 13'" caption="One dash per turn. Hover one to preview it, and jump to it or rewind there." />
 
@@ -84,6 +85,47 @@ You can't rewind while a reply is being generated. The buttons are disabled, and
 the server refuses with `409` so the reply can't land after a cut. Stop the
 reply or wait for it to finish first.
 
+## In agent sessions
+
+An agent's **Activity** tab has the same rail, preview card, prompt toolbar and
+*Reading turn N of M* bar. A turn is one prompt you sent, plus everything the
+agent did up to your next prompt. The *continued autonomously* prompts that the
+[goal loop](/features/agents-mode/missions) sends stay inside the turn they
+continue: they don't get dashes of their own.
+
+<Screenshot src="/screenshots/rewind-agent.png" alt="An agent's Activity tab with a rewind previewed: a dashed 'conversation restarts here' line under the first answer, the later turns greyed out, red dashes on the timeline, and an amber bar above the composer reading 'Rewind to turn 1: 2 later turns will be deleted. This can't be undone.' with Cancel and Rewind buttons" caption="An agent rewind is previewed like a chat's, but it's final once you confirm." />
+
+The conversation an agent works from lives in its Copilot session, not in
+Precursor's transcript. So a rewind cuts **both**: the session's history first,
+so the model no longer sees the dropped turns, then the transcript. That changes
+a few things:
+
+- **No undo.** The Copilot session can't bring dropped turns back. The preview
+  says *This can't be undone*, and the turns are gone as soon as you confirm.
+- **Only when the agent is at rest.** Rewind is unavailable while a turn is
+  running or waiting for an approval. Stop the agent, or let it finish, first.
+- **Only the current run.** Each [run](/features/agents-mode/orchestration#an-agent-is-a-definition-each-start-is-a-run)
+  (for example after `/clear`) is a new Copilot session, so only the latest
+  run's turns can be rewound. Turns from earlier runs, and turns recorded before
+  rewind existed, stay on the rail for navigation only.
+- **Not past a compaction.** Once a [compaction](/features/context-compression#compacting-an-agent)
+  has folded turns into a summary, the session can't return to them. Precursor
+  says so instead of rewinding.
+- **The run is reset.** The agent rests as *idle*, with the last kept answer as
+  its summary. Progress, a raised question and the goal loop's step count are
+  cleared, and [artifacts](/features/agents-mode/artifacts-state) the run
+  published from the dropped turns on are deleted.
+- **Files aren't restored.** A rewind only cuts the conversation. Changes the
+  agent made to files stay as they are.
+
+An agent exchange mirrored into a topic or chat is a separate copy. Rewinding
+the agent doesn't touch it, and rewinding the topic or chat doesn't touch the
+agent.
+
+::: warning Experimental
+Agent rewind uses an experimental Copilot SDK API, which may change.
+:::
+
 ## Keyboard
 
 Press <kbd>Tab</kbd> to reach the rail. Then:
@@ -103,5 +145,6 @@ are announced as status updates.
 ## Over the API
 
 The rail and rewind use two endpoints, available on both topics and chats:
-`GET …/messages/turns` and `POST …/messages/rewind`. See the
-[API reference](/reference/api).
+`GET …/messages/turns` and `POST …/messages/rewind`. Agents use
+`POST /api/agents/{id}/rewind`, and build their turns from the transcript. See
+the [API reference](/reference/api).

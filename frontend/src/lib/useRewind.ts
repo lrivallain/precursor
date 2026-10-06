@@ -54,6 +54,23 @@ export interface RewindController {
    * false when it failed: a new prompt must not land on the un-rewound history.
    */
   flush: () => Promise<boolean>;
+  /** Whether `mode` can be offered on turn `index`; absent means every turn can. */
+  canRewind?: (index: number, mode: RewindMode) => boolean;
+  /** Confirming is final: no undo grace (agent sessions, where the SDK can't undo). */
+  irreversible?: boolean;
+  /** A confirmed rewind is being applied. */
+  busy?: boolean;
+}
+
+/** Whether `rewind` offers `mode` on turn `index` of `count`. */
+export function rewindOffered(
+  rewind: RewindController,
+  index: number,
+  count: number,
+  mode: RewindMode,
+): boolean {
+  if (mode === "rewind" && index >= count - 1) return false;
+  return rewind.canRewind ? rewind.canRewind(index, mode) : true;
 }
 
 /** Whether a persisted row falls inside a rewind's cut. */

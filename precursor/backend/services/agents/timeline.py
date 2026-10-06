@@ -42,9 +42,10 @@ class Timeline:
     async def timeline(self, agent_id: int, *, agent_run_id: int | None = None) -> TimelineView:
         """Split the transcript into its stable prefix and its volatile tail.
 
-        The archived history is append-only, which is what lets a live reader ask
-        for only what it hasn't seen (:meth:`get_events_page`). Unresolved
-        permission cards are *not* archived — they appear and vanish as approvals
+        The archived history only grows between rewinds (see :meth:`epoch`), which
+        is what lets a live reader ask for only what it hasn't seen
+        (:meth:`get_events_page`). Unresolved permission cards are *not*
+        archived — they appear and vanish as approvals
         are answered — so they are returned separately instead of being counted
         into a cursor they would immediately invalidate. The same goes for the
         thinking the model is streaming: its frames are never archived, and the
@@ -126,24 +127,45 @@ class Timeline:
         return [*view.stable, *view.pending]
 
     async def get_events_page(
-        self, agent_id: int, *, agent_run_id: int | None = None, after: int = 0
+        self,
+        agent_id: int,
+        *,
+        agent_run_id: int | None = None,
+        after: int = 0,
+        epoch: str | None = None,
     ) -> AgentEventPage:
         """The transcript from ``after`` onward, for an incremental live reader.
 
         A cursor past the end no longer addresses this transcript — it was
         cleared, pruned by retention, or was taken against a different run — so
         answer with the whole thing and flag it as a replacement rather than
-        silently skipping the events the caller is missing.
+        silently skipping the events the caller is missing. A rewind shrinks the
+        archive and may have grown it back past the cursor before the reader
+        returns, so a changed ``epoch`` resets too.
         """
         view = await self.timeline(agent_id, agent_run_id=agent_run_id)
-        reset = after < 0 or after > len(view.stable)
+        current = self.epoch(agent_id)
+        reset = after < 0 or after > len(view.stable) or (epoch is not None and epoch != current)
         return AgentEventPage(
             events=view.stable[0 if reset else after :],
             pending=view.pending,
             thinking=view.thinking,
             cursor=len(view.stable),
             reset=reset,
+            epoch=current,
         )
+
+    def epoch(self, agent_id: int) -> str:
+        """Identity of the agent's archive, changed whenever it is truncated.
+
+        Prefixed with a per-process nonce: the counters are in memory, so after
+        a restart a reader holding an old epoch must not match a fresh ``0``.
+        """
+        return f"{self._manager._epoch_nonce}.{self._manager._transcript_epochs.get(agent_id, 0)}"
+
+    def bump_epoch(self, agent_id: int) -> None:
+        epochs = self._manager._transcript_epochs
+        epochs[agent_id] = epochs.get(agent_id, 0) + 1
 
     async def ensure_loaded(self, agent_id: int) -> None:
         """Hydrate the in-memory timeline from the ``agent_events`` archive once.

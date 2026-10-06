@@ -3,7 +3,7 @@ import { CornerDownRight, History, Pencil } from "lucide-react";
 import { formatTimestamp } from "./MessageMeta";
 import { Z_INDEX } from "../lib/constants";
 import { MIN_TIMELINE_TURNS } from "../lib/timeline";
-import type { RewindController } from "../lib/useRewind";
+import { rewindOffered, type RewindController } from "../lib/useRewind";
 import type { TurnTimeline } from "../lib/useTurnTimeline";
 
 interface TimelineRailProps {
@@ -51,6 +51,8 @@ export function TimelineRail({ timeline, rewind, streaming }: TimelineRailProps)
     setOpen(null);
     fn();
   }
+  const offered = (i: number, mode: "rewind" | "edit") =>
+    !streaming && !rewind.busy && rewindOffered(rewind, i, turns.length, mode);
   function startRewind(i: number, mode: "rewind" | "edit"): void {
     act(() => {
       rewind.start(turns, i, mode);
@@ -72,10 +74,10 @@ export function TimelineRail({ timeline, rewind, streaming }: TimelineRailProps)
     else if (e.key === "Home") move(0);
     else if (e.key === "End") move(turns.length - 1);
     else if (e.key === "Escape") setOpen(null);
-    else if (!streaming && e.key.toLowerCase() === "r" && i < turns.length - 1) {
+    else if (e.key.toLowerCase() === "r" && offered(i, "rewind")) {
       e.preventDefault();
       startRewind(i, "rewind");
-    } else if (!streaming && e.key.toLowerCase() === "e") {
+    } else if (e.key.toLowerCase() === "e" && offered(i, "edit")) {
       e.preventDefault();
       startRewind(i, "edit");
     }
@@ -161,7 +163,7 @@ export function TimelineRail({ timeline, rewind, streaming }: TimelineRailProps)
               </button>
               <button
                 type="button"
-                disabled={streaming || open >= turns.length - 1}
+                disabled={!offered(open, "rewind")}
                 onClick={() => startRewind(open, "rewind")}
                 data-tooltip="Keep this turn and drop the later ones (R)"
                 className="inline-flex items-center gap-1 rounded-md border border-amber-500/60 bg-amber-500/15 px-2 py-1 text-amber-800 hover:bg-amber-500/25 disabled:cursor-not-allowed disabled:opacity-40 dark:text-amber-200"
@@ -170,7 +172,7 @@ export function TimelineRail({ timeline, rewind, streaming }: TimelineRailProps)
               </button>
               <button
                 type="button"
-                disabled={streaming}
+                disabled={!offered(open, "edit")}
                 onClick={() => startRewind(open, "edit")}
                 data-tooltip="Drop this turn and the later ones, and edit its prompt (E)"
                 className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 hover:bg-bg disabled:cursor-not-allowed disabled:opacity-40"
@@ -178,6 +180,12 @@ export function TimelineRail({ timeline, rewind, streaming }: TimelineRailProps)
                 <Pencil size={12} aria-hidden /> Edit &amp; resend
               </button>
             </div>
+            {rewind.canRewind && !rewind.canRewind(open, "edit") && (
+              <p className="mt-2 text-[11px] text-muted">
+                Navigation only: this turn belongs to an earlier run, or was recorded before
+                rewind was available.
+              </p>
+            )}
           </div>
         </div>
       )}

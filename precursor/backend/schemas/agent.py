@@ -322,6 +322,10 @@ class AgentEvent(BaseModel):
     # spans every run, so without this a reusable agent driven by two workflows
     # at once renders one interleaved conversation (issue #242).
     agent_run_id: int | None = None
+    # The SDK's id for a user prompt event: the boundary a rewind truncates
+    # from. Only prompts carry it, and only those archived since rewind
+    # shipped, so older turns stay navigation-only.
+    event_id: str | None = None
 
 
 class AgentLiveThinking(BaseModel):
@@ -353,8 +357,12 @@ class AgentEventPage(BaseModel):
     streaming right now, replaced on every read like ``pending``.
 
     ``reset`` means the cursor no longer addresses this transcript — it was
-    cleared, pruned by retention, or belongs to a different run — and ``events``
-    is therefore a complete replacement rather than a delta.
+    cleared, rewound, pruned by retention, or belongs to a different run — and
+    ``events`` is therefore a complete replacement rather than a delta.
+
+    ``epoch`` names the archive the cursor counts into. A rewind truncates the
+    archive, after which a position can point past or into a different tail;
+    a reader sends its last ``epoch`` back and gets a reset when it moved.
     """
 
     events: list[AgentEvent] = []
@@ -362,6 +370,26 @@ class AgentEventPage(BaseModel):
     thinking: AgentLiveThinking | None = None
     cursor: int = 0
     reset: bool = False
+    epoch: str = ""
+
+
+class AgentRewindRequest(BaseModel):
+    """Drop a prompt and everything after it from the agent's current run.
+
+    ``event_id`` is the SDK id of the first prompt to drop (``AgentEvent.event_id``).
+    Rewinding *to* a turn therefore sends the id of the prompt that follows it.
+    """
+
+    event_id: str = Field(min_length=1, max_length=64)
+
+
+class AgentRewindResult(BaseModel):
+    """What a rewind removed."""
+
+    # Transcript events dropped from Precursor's archive.
+    events_removed: int
+    # Events the SDK removed from its own session history, when it reports them.
+    sdk_events_removed: int | None = None
 
 
 class AgentModelInfo(BaseModel):

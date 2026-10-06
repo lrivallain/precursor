@@ -65,7 +65,6 @@ export function useTurnTimeline({
   hidden,
 }: UseTurnTimelineOptions): TurnTimeline {
   const [allTurns, setAllTurns] = useState<TurnIndexItem[]>([]);
-  const [view, setView] = useState<TimelineView>(EMPTY_VIEW);
   const listTurnsRef = useRef(listTurns);
   listTurnsRef.current = listTurns;
 
@@ -98,6 +97,34 @@ export function useTurnTimeline({
       allTurns.filter((t) => t.message_id <= tailId && !inCut(t.message_id, hidden)),
     [allTurns, tailId, hidden],
   );
+  return useTimelineView({ resetKey, turns, scrollRef, content: messages, ensureLoaded });
+}
+
+export interface UseTimelineViewOptions {
+  /** Identity of the conversation; re-attaches the scroll listener. */
+  resetKey: string;
+  turns: TurnIndexItem[];
+  scrollRef: React.RefObject<HTMLDivElement | null>;
+  /** The rendered transcript; re-measured whenever it changes. */
+  content: unknown;
+  /** Bring this turn's prompt into the rendered window. */
+  ensureLoaded: (messageId: number) => Promise<boolean>;
+}
+
+/**
+ * Where the reader is among `turns`, and a way to jump to one. The turns'
+ * prompts are found on screen by their `TURN_ANCHOR_ATTR`, which holds the
+ * turn's `message_id`. Topics and chats feed it the server's turn index; the
+ * agent cockpit builds its turns from the transcript.
+ */
+export function useTimelineView({
+  resetKey,
+  turns,
+  scrollRef,
+  content,
+  ensureLoaded,
+}: UseTimelineViewOptions): TurnTimeline {
+  const [view, setView] = useState<TimelineView>(EMPTY_VIEW);
   const turnsRef = useRef(turns);
   turnsRef.current = turns;
 
@@ -111,7 +138,7 @@ export function useTurnTimeline({
     setView((prev) => (sameView(prev, next) ? prev : next));
   }, [scrollRef]);
 
-  useLayoutEffect(measure, [measure, messages, turns]);
+  useLayoutEffect(measure, [measure, content, turns]);
 
   useEffect(() => {
     const box = scrollRef.current;

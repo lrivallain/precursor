@@ -112,7 +112,7 @@ features:
   - icon: ⏪
     title: Timeline & rewind
     details: >-
-      A timeline of dashes on the right edge of every conversation. Jump to any
+      A timeline of dashes on the right edge of every conversation and agent session. Jump to any
       turn, or rewind there and continue, with a preview and an undo.
     link: /features/rewind
     linkText: About timeline & rewind

@@ -69,7 +69,7 @@ from precursor.backend.models import (
     MessageRole,
     Topic,
 )
-from precursor.backend.schemas.agent import AgentEvent, AgentEventPage
+from precursor.backend.schemas.agent import AgentEvent, AgentEventPage, AgentRewindResult
 from precursor.backend.services.agents import (
     commands,
     fleet,
@@ -80,6 +80,7 @@ from precursor.backend.services.agents import (
     timeline,
     usage,
 )
+from precursor.backend.services.agents import rewind as rewind_mod
 from precursor.backend.services.agents.artifacts import ArtifactStore, clear_artifacts
 from precursor.backend.services.agents.directives import (
     _CONTINUE_NUDGE,
@@ -263,6 +264,11 @@ class AgentManager:
         # Agents whose DB archive has been hydrated into ``_events`` this process.
         self._loaded: set[int] = set()
         self._events_lock = asyncio.Lock()
+        # Per-agent count of archive truncations (rewinds, clears), and a nonce
+        # for this process, together naming the archive a reader's cursor counts
+        # into (see ``Timeline.epoch``).
+        self._transcript_epochs: dict[int, int] = {}
+        self._epoch_nonce = os.urandom(4).hex()
         # Per-agent locks serialising event handling so SDK events are processed
         # in arrival order — otherwise an idle handler can race ahead of the
         # assistant-message handler and post a stale answer back to the topic.
@@ -1212,11 +1218,16 @@ class AgentManager:
         return await self._transcript.get_events(agent_id, agent_run_id=agent_run_id)
 
     async def get_events_page(
-        self, agent_id: int, *, agent_run_id: int | None = None, after: int = 0
+        self,
+        agent_id: int,
+        *,
+        agent_run_id: int | None = None,
+        after: int = 0,
+        epoch: str | None = None,
     ) -> AgentEventPage:
         """The transcript from ``after`` onward, for an incremental live reader."""
         return await self._transcript.get_events_page(
-            agent_id, agent_run_id=agent_run_id, after=after
+            agent_id, agent_run_id=agent_run_id, after=after, epoch=epoch
         )
 
     async def _teardown_run(self, run_id: int, *, forget: bool = False) -> None:
@@ -1242,6 +1253,7 @@ class AgentManager:
         self._loaded.discard(agent_id)
         self._event_locks.pop(agent_id, None)
         self._auth_announced.pop(agent_id, None)
+        self._transcript.bump_epoch(agent_id)
         # SQLite doesn't enforce ON DELETE CASCADE unless the foreign_keys
         # pragma is on, so clear the archive explicitly (the codebase manages
         # such cleanups in the app layer — see roles/topics delete).
@@ -1284,6 +1296,7 @@ class AgentManager:
             self._event_locks.pop(agent_id, None)
             self._auth_announced.pop(agent_id, None)
             self._agent_runs.pop(agent_id, None)
+            self._transcript.bump_epoch(agent_id)
             async with SessionLocal() as session:
                 await session.execute(
                     delete(AgentEventRecord).where(AgentEventRecord.agent_session_id == agent_id)
@@ -1373,6 +1386,14 @@ class AgentManager:
         if not result.success:
             raise ValueError("Compaction failed; the conversation was left as it was.")
         await self._publish(agent_id, agent_run_id=run.id)
+
+    async def rewind(self, agent_id: int, event_id: str) -> AgentRewindResult:
+        """Drop a prompt of the current run and everything after it.
+
+        See :mod:`.rewind`. Raises :class:`~.rewind.RewindError` with a
+        user-facing reason and its HTTP status.
+        """
+        return await rewind_mod.rewind(self, agent_id, event_id)
 
     async def rerun_task(
         self, agent_id: int, *, extra: str | None = None, trigger: str = "manual"

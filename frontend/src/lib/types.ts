@@ -468,6 +468,9 @@ export interface AgentEvent {
   // Which execution produced this event, so a shared agent's concurrent runs can
   // be read one at a time instead of interleaved.
   agent_run_id: number | null;
+  // The SDK id of a user prompt: what a rewind truncates from. Absent on other
+  // events and on prompts archived before rewind existed.
+  event_id?: string | null;
 }
 
 // One incremental read of an agent's transcript (mirrors AgentEventPage).
@@ -492,9 +495,17 @@ export interface AgentEventPage {
   thinking?: AgentLiveThinking | null;
   // Send this back as `after` on the next read.
   cursor: number;
-  // The cursor no longer addresses this transcript (cleared, pruned, or taken
-  // against another run): replace what you hold instead of appending to it.
+  // The cursor no longer addresses this transcript (cleared, rewound, pruned, or
+  // taken against another run): replace what you hold instead of appending to it.
   reset: boolean;
+  // Names the archive the cursor counts into; send it back with `after`.
+  epoch?: string;
+}
+
+/** Mirrors `AgentRewindResult` in `schemas/agent.py`. */
+export interface AgentRewindResult {
+  events_removed: number;
+  sdk_events_removed: number | null;
 }
 
 export type AgentPermissionDecisionValue = "approve-once" | "approve-always" | "deny";

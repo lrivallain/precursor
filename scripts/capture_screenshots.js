@@ -986,6 +986,25 @@ const scenes = {
     },
   },
 
+  // A rewind previewed in an agent session: no undo, so the confirmation warns
+  // it's final. Never confirmed (the demo has no runtime to rewind anyway).
+  "rewind-agent": {
+    viewport: { width: 1440, height: 900 },
+    async go(page) {
+      await gotoRefinedAgent(page);
+      await page.getByRole("tab", { name: /Activity/ }).click();
+      const ticks = page.locator('nav[aria-label="Conversation timeline"] [data-tick]');
+      await ticks.nth(0).hover();
+      await page.locator('nav[aria-label="Conversation timeline"]').getByRole("button", { name: "Rewind here" }).click();
+      await page.getByRole("button", { name: "Rewind", exact: true }).waitFor();
+      await page.mouse.move(0, 0);
+      await sleep(1200);
+      const main = await page.locator("main").first().boundingBox();
+      if (!main) throw new Error("Seed the demo Onboarding guide writer first.");
+      return { x: Math.floor(main.x), y: 0, width: Math.ceil(main.width), height: page.viewportSize().height };
+    },
+  },
+
   // The same screen with the navigation drawer pulled out over it.
   "mobile-drawer": {
     viewport: { width: 390, height: 844 },

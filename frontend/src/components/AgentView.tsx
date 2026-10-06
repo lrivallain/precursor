@@ -30,6 +30,7 @@ import {
   Loader2,
   Package,
   PauseCircle,
+  Pencil,
   PlayCircle,
   Plus,
   Radar,
@@ -78,6 +79,11 @@ import { AgentsRuntimeCard } from "./AgentsRuntimeCard";
 import { AgentUsageSection } from "./AgentUsage";
 import { PermissionBody } from "./AgentPermissionBody";
 import { ReasoningDisclosure } from "./ReasoningDisclosure";
+import { RewindBar } from "./RewindBar";
+import { TimelineRail } from "./TimelineRail";
+import { RewindCutLine } from "./ConversationTranscript";
+import { TURN_ANCHOR_ATTR, useTimelineView } from "../lib/useTurnTimeline";
+import { useAgentRewind, type AgentTurn } from "../lib/useAgentRewind";
 import {
   AgentPaneTabs,
   AgentResultView,
@@ -905,6 +911,10 @@ function MessageNode({
   onReply,
   suggestionsDisabled,
   renderArtifact,
+  highlighted = false,
+  onRewindHere,
+  onEditResend,
+  revealActions = false,
 }: {
   event: AgentEvent;
   category: "user" | "system" | "assistant" | "reasoning" | "error";
@@ -928,6 +938,13 @@ function MessageNode({
    * trace) it folds inline, so the deliverable is never lost with the prose.
    */
   renderArtifact?: (artifact: AgentArtifactDirective, index: number) => ReactNode;
+  /** The prompt of the turn the timeline rail marks as current. */
+  highlighted?: boolean;
+  /** Prompt toolbar rewind actions (see useAgentRewind). */
+  onRewindHere?: () => void;
+  onEditResend?: () => void;
+  /** Show the prompt toolbar without hovering (the turn being read back). */
+  revealActions?: boolean;
 }) {
   const style = CATEGORY_STYLE[category];
   const box = isLastAnswer
@@ -997,6 +1014,13 @@ function MessageNode({
     <div
       className={`group/node relative w-full max-w-xl rounded-lg border p-2.5 transition hover:border-accent hover:ring-2 hover:ring-accent/40 ${box}`}
     >
+      {highlighted && (
+        // Ties the prompt to the timeline rail's blue (current) dash.
+        <span
+          aria-hidden
+          className="pointer-events-none absolute -right-2.5 top-1.5 bottom-1.5 w-[3px] rounded-full bg-accent"
+        />
+      )}
       <div className="flex items-center gap-2">
         {isUser && user?.avatarUrl ? (
           <img
@@ -1102,6 +1126,36 @@ function MessageNode({
               <Code2 size={12} />
             )}
           </button>
+        </div>
+      )}
+      {isUser && (onRewindHere || onEditResend) && (
+        <div
+          className={`absolute -bottom-3 left-2 z-10 flex items-center gap-1 rounded-full border border-border bg-surface px-1 py-0.5 shadow-sm transition-opacity group-hover/node:opacity-100 ${
+            revealActions ? "opacity-100" : "opacity-0"
+          }`}
+        >
+          {onRewindHere && (
+            <button
+              type="button"
+              onClick={onRewindHere}
+              className="rounded-full p-1 text-muted hover:text-amber-500"
+              aria-label="Rewind here"
+              data-tooltip={"Rewind here\nKeep this turn and drop the later ones"}
+            >
+              <History size={12} />
+            </button>
+          )}
+          {onEditResend && (
+            <button
+              type="button"
+              onClick={onEditResend}
+              className="rounded-full p-1 text-muted hover:text-accent"
+              aria-label="Edit and resend"
+              data-tooltip={"Edit & resend\nDrop this turn and the later ones, and edit this prompt"}
+            >
+              <Pencil size={12} />
+            </button>
+          )}
         </div>
       )}
       {suggestions.length > 0 && onPickSuggestion && (
@@ -1573,7 +1627,17 @@ interface CockpitTimeline {
   exchangeStart: Map<number, number>;
   /** Key of the newest answer, the only one that offers suggested replies. */
   latestAnswerKey: string | null;
+  /**
+   * One timeline-rail turn per human prompt. `event_id` is the prompt's raw SDK
+   * id here; the cockpit clears it on turns outside the current run.
+   */
+  turns: (AgentTurn & { agent_run_id: number | null })[];
 }
+
+const excerpt = (text: string | null | undefined, max = 200): string => {
+  const flat = (text ?? "").replace(/\s+/g, " ").trim();
+  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
+};
 
 function workStats(
   prompt: NodeRow,
@@ -1681,6 +1745,27 @@ function buildCockpitTimeline(
     return true;
   };
 
+  const turns: CockpitTimeline["turns"] = [];
+  for (const ex of exchanges) {
+    if (!ex.prompt) continue;
+    const ev = ex.prompt.ev;
+    turns.push({
+      message_id: ex.index,
+      last_message_id: ex.index,
+      created_at: ev.at ?? "",
+      prompt: excerpt(ev.text),
+      reply:
+        ex.answer?.type === "node" ? excerpt(stripAgentDirectives(stripSuggestionBlock(ex.answer.ev.text ?? ""))) : "",
+      has_compaction: ex.items.some(
+        (it) => it.row.type === "hook" && it.row.ev.kind === "compaction",
+      ),
+      agent_session_id: null,
+      event_id: ev.event_id ?? null,
+      text: ev.text ?? "",
+      agent_run_id: ev.agent_run_id,
+    });
+  }
+
   const entries: TimelineEntry[] = [];
   const anchors: ExchangeAnchor[] = [];
   let latestAnswerKey: string | null = null;
@@ -1747,7 +1832,7 @@ function buildCockpitTimeline(
     segments.push({ entry: e, hooks: pendingHooks });
     pendingHooks = [];
   }
-  return { segments, trailingHooks: pendingHooks, anchors, exchangeStart, latestAnswerKey };
+  return { segments, trailingHooks: pendingHooks, anchors, exchangeStart, latestAnswerKey, turns };
 }
 
 // How many timeline segments are mounted at once; older ones are kept
@@ -2092,6 +2177,8 @@ export function AgentView({
   // them without wanting to be re-subscribed when they move.
   const archivedRef = useRef<AgentEvent[]>([]);
   const cursorRef = useRef(0);
+  // The archive the cursor counts into; a rewind changes it (see AgentEventPage).
+  const epochRef = useRef<string | null>(null);
   // The round's thinking as it streams. Like parked approvals it sits outside
   // the cursor, and each read replaces it.
   const [liveThinking, setLiveThinking] = useState<AgentLiveThinking | null>(null);
@@ -2103,7 +2190,12 @@ export function AgentView({
       { fresh = false }: { fresh?: boolean } = {},
     ): Promise<void> => {
       try {
-        const page = await api.agents.getEvents(id, agentRunId, fresh ? 0 : cursorRef.current);
+        const page = await api.agents.getEvents(
+          id,
+          agentRunId,
+          fresh ? 0 : cursorRef.current,
+          epochRef.current,
+        );
         // `reset` means our cursor no longer addresses this transcript (cleared,
         // pruned, or taken against another run) and the payload is a whole
         // replacement. Otherwise append — and keep the same array identity when
@@ -2116,6 +2208,7 @@ export function AgentView({
               : archivedRef.current;
         archivedRef.current = archived;
         cursorRef.current = page.cursor;
+        epochRef.current = page.epoch ?? null;
         // Parked approval cards live outside the cursor and are replaced whole,
         // so they're re-appended on every read rather than accumulated.
         setEvents(page.pending.length > 0 ? [...archived, ...page.pending] : archived);
@@ -2126,6 +2219,7 @@ export function AgentView({
       } catch {
         archivedRef.current = [];
         cursorRef.current = 0;
+        epochRef.current = null;
         setEvents([]);
         setLiveThinking(null);
       }
@@ -2487,6 +2581,64 @@ export function AgentView({
     }
   }, []);
 
+  // The timeline rail and rewind. Turns come from the transcript itself (one
+  // per human prompt); only the current run's prompts can be rewound.
+  const currentRunId = selected?.current_run?.id ?? null;
+  const agentTurns = useMemo<AgentTurn[]>(
+    () =>
+      timeline.turns.map(({ agent_run_id, ...t }) => ({
+        ...t,
+        event_id: t.event_id && agent_run_id != null && agent_run_id === currentRunId ? t.event_id : null,
+      })),
+    [timeline.turns, currentRunId],
+  );
+  // Bring an exchange's prompt into the render window before jumping to it.
+  const ensureTurnMounted = useCallback(
+    async (exchange: number) => {
+      const at = timeline.exchangeStart.get(exchange);
+      if (at == null) return false;
+      if (at < windowStartRef.current) {
+        pinnedRef.current = false;
+        setWindowStart(at);
+      }
+      return true;
+    },
+    [timeline.exchangeStart],
+  );
+  const turnTimeline = useTimelineView({
+    // The scroll container mounts only once an agent is selected and loaded;
+    // the listener must re-attach when it does.
+    resetKey: `${agentId ?? ""}:${runFilter ?? "all"}:${pane}:${hasSelected}:${loading}`,
+    turns: agentTurns,
+    scrollRef,
+    content: timeline,
+    ensureLoaded: ensureTurnMounted,
+  });
+  const rewind = useAgentRewind({
+    resetKey: `${agentId ?? ""}:${runFilter ?? "all"}`,
+    turns: agentTurns,
+    streaming: turnActive,
+    rewind: (eventId) => api.agents.rewind(agentId as number, eventId),
+    setDraft: setFollowUp,
+    onSettled: () => {
+      if (agentId != null) void loadEvents(agentId, runFilter, { fresh: true });
+      onReload();
+    },
+    onError: setError,
+  });
+  const turnIndexByExchange = useMemo(
+    () => new Map(agentTurns.map((t, i) => [t.message_id, i])),
+    [agentTurns],
+  );
+  const promptRewindActions = (exchange: number) => {
+    const index = turnIndexByExchange.get(exchange);
+    if (index === undefined || turnActive || rewind.busy) return {};
+    const turns = turnTimeline.turns;
+    const offer = (mode: "rewind" | "edit") =>
+      rewind.canRewind?.(index, mode) ? () => rewind.start(turns, index, mode) : undefined;
+    return { onRewindHere: offer("rewind"), onEditResend: offer("edit") };
+  };
+
   async function startTask(): Promise<void> {
     if (busy || !task.trim()) return;
     const message = task.trim();
@@ -2521,7 +2673,7 @@ export function AgentView({
   }
 
   async function sendFollowUp(explicit?: string): Promise<void> {
-    if (!selected || busy) return;
+    if (!selected || busy || rewind.busy) return;
     const message = (explicit ?? followUp).trim();
     if (!message) return;
     // /clear erases the whole transcript on the backend — confirm first, mirroring
@@ -2976,14 +3128,15 @@ export function AgentView({
             />
           </div>
         ) : (
-        /* Scrollable workflow region. */
+        /* Scrollable workflow region, with the turn timeline rail beside it. */
+        <div className="relative flex min-h-0 flex-1 flex-col">
         <div
           ref={scrollRef}
           onScroll={onScroll}
           role={latestVersion ? "tabpanel" : undefined}
           id={latestVersion ? "agent-panel-activity" : undefined}
           aria-labelledby={latestVersion ? "agent-pane-activity" : undefined}
-          className="flex-1 overflow-y-auto px-5 py-3"
+          className="flex-1 overflow-y-auto py-3 pl-5 pr-12"
         >
           <div ref={innerRef}>
         {error && <p className="mb-2 text-[11px] text-red-500">{error}</p>}
@@ -3061,6 +3214,8 @@ export function AgentView({
           // the rows themselves, so appended steps never shift on-screen
           // history; scrolling up lowers it to reveal older boxes.
           const hiddenCount = Math.min(windowStart, segments.length);
+          // A previewed rewind dims the exchanges it would drop.
+          const rewindFrom = rewind.preview?.fromId ?? null;
           const shownSegments = hiddenCount > 0 ? segments.slice(hiddenCount) : segments;
 
           return (
@@ -3079,16 +3234,20 @@ export function AgentView({
                   ) : (
                     <StepConnector hooks={seg.hooks} />
                   );
+                const doomed = rewindFrom != null && entry.exchange >= rewindFrom;
+                const dim = `flex w-full flex-col items-center${
+                  doomed ? " opacity-35 grayscale transition-opacity" : ""
+                }`;
                 if (entry.kind === "fold") {
                   return (
-                    <Fragment key={entry.key}>
+                    <div key={entry.key} className={dim}>
                       {connector}
                       <WorkFold
                         stats={entry.stats}
                         open={entry.open}
                         onToggle={() => toggleFold(entry.exchange)}
                       />
-                    </Fragment>
+                    </div>
                   );
                 }
                 const { row } = entry;
@@ -3102,12 +3261,23 @@ export function AgentView({
                     : row.type === "node" && row.cat === "assistant"
                       ? "justify-start"
                       : "justify-center";
+                const opensTurn = entry.role === "prompt";
+                const current =
+                  opensTurn &&
+                  turnTimeline.currentMessageId != null &&
+                  entry.exchange === turnTimeline.currentMessageId;
                 return (
-                <Fragment key={entry.key}>
+                <div key={entry.key} className={dim}>
+                  {opensTurn && entry.exchange === rewindFrom && (
+                    <div className="mt-2 w-full max-w-xl">
+                      <RewindCutLine />
+                    </div>
+                  )}
                   {connector}
                   <div
                     className={`flex w-full scroll-mt-3 ${align}`}
-                    data-exchange={entry.role === "prompt" ? entry.exchange : undefined}
+                    data-exchange={opensTurn ? entry.exchange : undefined}
+                    {...(opensTurn ? { [TURN_ANCHOR_ATTR]: entry.exchange } : {})}
                   >
                     {row.type === "tool" ? (
                       <ToolBox
@@ -3139,6 +3309,11 @@ export function AgentView({
                         onReply={focusComposer}
                         suggestionsDisabled={!runtimeReady || turnActive}
                         renderArtifact={renderPublished(row.ev.at)}
+                        highlighted={current}
+                        revealActions={
+                          current && !turnTimeline.view.atLatest && !rewind.preview
+                        }
+                        {...(opensTurn ? promptRewindActions(entry.exchange) : {})}
                       />
                     ) : null}
                   </div>
@@ -3156,10 +3331,18 @@ export function AgentView({
                         <MissionMilestone progress={d.progress} at={row.ev.at} />
                       );
                     })()}
-                </Fragment>
+                </div>
                 );
               })}
-              {trailingHooks.length > 0 && <HookGutter hooks={trailingHooks} />}
+              {trailingHooks.length > 0 && (
+                <div
+                  className={`flex w-full flex-col items-center${
+                    rewindFrom != null ? " opacity-35 grayscale" : ""
+                  }`}
+                >
+                  <HookGutter hooks={trailingHooks} />
+                </div>
+              )}
               {liveThinking && showPrefs.thinking && (
                 <>
                   <StepConnector hooks={[]} />
@@ -3179,6 +3362,8 @@ export function AgentView({
         })()}
           </div>
       </div>
+        <TimelineRail timeline={turnTimeline} rewind={rewind} streaming={turnActive} />
+      </div>
         )}
 
       {/* Follow-up: always visible. While a turn is in flight the input is
@@ -3190,14 +3375,22 @@ export function AgentView({
         // but don't flash a Stop control until there's actually a turn to stop.
         const sending = busy && pending != null;
         return (
-          <div ref={composerWrapRef} className="shrink-0 border-t border-border px-5 py-3 pb-safe">
+          <div ref={composerWrapRef} className="shrink-0 space-y-2 border-t border-border px-5 py-3 pb-safe">
+            {pane === "activity" && (
+              <RewindBar
+                timeline={turnTimeline}
+                rewind={rewind}
+                streaming={turnActive}
+                scrollRef={scrollRef}
+              />
+            )}
             <Composer
               value={followUp}
               onChange={setFollowUp}
               onSend={() => void sendFollowUp()}
               onStop={() => void stopAgent()}
               streaming={turnActive}
-              disabled={!runtimeReady || turnActive || sending}
+              disabled={!runtimeReady || turnActive || sending || Boolean(rewind.busy)}
               suggestions={followUpSuggestions}
               userHistory={userHistory}
               speech={speech}

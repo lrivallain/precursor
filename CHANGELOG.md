@@ -27,6 +27,16 @@ are the per-version history; releasing does not rewrite this file.
   turns to delete are greyed out. After you confirm, an 8-second undo bar counts
   down. New endpoints: `GET …/messages/turns` and `POST …/messages/rewind`.
 
+- **Timeline and rewind for agent sessions** (experimental). The agent Activity
+  tab gets the same rail, prompt toolbar and *Reading turn N of M* bar. Rewind
+  cuts the agent's Copilot session history and its transcript together, so the
+  model stops seeing the dropped turns. It works only on the current run while
+  the agent is at rest, is previewed and then confirmed, and can't be undone.
+  It resets the run's progress, question and step count, and deletes artifacts
+  published by the dropped turns. Files the agent changed aren't restored. New
+  endpoint: `POST /api/agents/{id}/rewind`. Agent event pages carry an `epoch`
+  (sent back as `?epoch=`) so a live reader resets after a rewind.
+
 - **See a conversation's pending reminder in the stats panel.** A scheduled
   reminder used to be invisible until it fired. The conversation stats panel
   now has a **Reminder** section with the time, how far away it is, and the
