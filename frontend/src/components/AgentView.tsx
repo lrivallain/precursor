@@ -1629,7 +1629,7 @@ interface CockpitTimeline {
   latestAnswerKey: string | null;
   /**
    * One timeline-rail turn per human prompt. `event_id` is the prompt's raw SDK
-   * id here; the cockpit clears it on turns outside the current run.
+   * id here; the cockpit clears it on turns outside the current SDK session.
    */
   turns: (AgentTurn & { agent_run_id: number | null })[];
 }
@@ -2182,6 +2182,8 @@ export function AgentView({
   // The round's thinking as it streams. Like parked approvals it sits outside
   // the cursor, and each read replaces it.
   const [liveThinking, setLiveThinking] = useState<AgentLiveThinking | null>(null);
+  // Runs whose prompts can be rewound (the current SDK session's); see AgentEventPage.
+  const [rewindableRunIds, setRewindableRunIds] = useState<readonly number[]>([]);
 
   const loadEvents = useCallback(
     async (
@@ -2216,12 +2218,17 @@ export function AgentView({
         setLiveThinking((prev) =>
           prev?.text === thinking?.text && prev?.active === thinking?.active ? prev : thinking,
         );
+        const rewindable = page.rewindable_run_ids ?? [];
+        setRewindableRunIds((prev) =>
+          prev.length === rewindable.length && prev.every((v, i) => v === rewindable[i]) ? prev : rewindable,
+        );
       } catch {
         archivedRef.current = [];
         cursorRef.current = 0;
         epochRef.current = null;
         setEvents([]);
         setLiveThinking(null);
+        setRewindableRunIds([]);
       }
     },
     [],
@@ -2582,16 +2589,32 @@ export function AgentView({
   }, []);
 
   // The timeline rail and rewind. Turns come from the transcript itself (one
-  // per human prompt); only the current run's prompts can be rewound.
-  const currentRunId = selected?.current_run?.id ?? null;
+  // per human prompt); only the current SDK session's prompts can be rewound:
+  // the current run's, and an earlier run's that continued the same session.
   const agentTurns = useMemo<AgentTurn[]>(
     () =>
-      timeline.turns.map(({ agent_run_id, ...t }) => ({
+      timeline.turns.map((t) => ({
         ...t,
-        event_id: t.event_id && agent_run_id != null && agent_run_id === currentRunId ? t.event_id : null,
+        event_id:
+          t.event_id && t.agent_run_id != null && rewindableRunIds.includes(t.agent_run_id) ? t.event_id : null,
       })),
-    [timeline.turns, currentRunId],
+    [timeline.turns, rewindableRunIds],
   );
+  // With every run on screen, the rail sets each run's turns apart and names it.
+  const turnGroup = useMemo(() => {
+    const ids = new Set(agentTurns.map((t) => t.agent_run_id ?? null));
+    if (ids.size < 2) return undefined;
+    const byId = new Map(runs.map((r) => [r.id, r]));
+    return (index: number) => {
+      const id = agentTurns[index]?.agent_run_id ?? null;
+      if (id == null) return { key: "none", label: "Before runs were recorded" };
+      const run = byId.get(id);
+      const label = run
+        ? `Run #${id} · ${RUN_TRIGGER_LABEL[run.trigger]}${run.workflow_run_id ? ` · workflow run #${run.workflow_run_id}` : ""}`
+        : `Run #${id}`;
+      return { key: id, label: rewindableRunIds.includes(id) ? `${label} · current session` : label };
+    };
+  }, [agentTurns, runs, rewindableRunIds]);
   // Bring an exchange's prompt into the render window before jumping to it.
   const ensureTurnMounted = useCallback(
     async (exchange: number) => {
@@ -2618,7 +2641,8 @@ export function AgentView({
     resetKey: `${agentId ?? ""}:${runFilter ?? "all"}`,
     turns: agentTurns,
     streaming: turnActive,
-    rewind: (eventId) => api.agents.rewind(agentId as number, eventId),
+    rewind: (eventId, mode) => api.agents.rewind(agentId as number, eventId, mode),
+    previewRewind: (eventId) => api.agents.previewRewind(agentId as number, eventId),
     setDraft: setFollowUp,
     onSettled: () => {
       if (agentId != null) void loadEvents(agentId, runFilter, { fresh: true });
@@ -3362,7 +3386,7 @@ export function AgentView({
         })()}
           </div>
       </div>
-        <TimelineRail timeline={turnTimeline} rewind={rewind} streaming={turnActive} />
+        <TimelineRail timeline={turnTimeline} rewind={rewind} streaming={turnActive} group={turnGroup} />
       </div>
         )}
 

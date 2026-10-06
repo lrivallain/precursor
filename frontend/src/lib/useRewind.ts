@@ -60,6 +60,35 @@ export interface RewindController {
   irreversible?: boolean;
   /** A confirmed rewind is being applied. */
   busy?: boolean;
+  /** File restore offered with the previewed cut (agent sessions); absent elsewhere. */
+  files?: RewindFiles | null;
+  /** What the last rewind did, shown until dismissed or the next rewind. */
+  notice?: RewindNotice | null;
+  dismissNotice?: () => void;
+}
+
+export interface RewindFileChange {
+  path: string;
+  change_type: string;
+  lines_added: number;
+  lines_removed: number;
+}
+
+export interface RewindFiles {
+  /** The files the cut could restore are being looked up. */
+  loading: boolean;
+  /** Why file restore isn't offered for this cut, or null when it is (or still loading). */
+  unavailable: string | null;
+  files: RewindFileChange[];
+  /** Restore them along with the conversation. Opt-in for every rewind. */
+  restore: boolean;
+  setRestore: (on: boolean) => void;
+}
+
+export interface RewindNotice {
+  text: string;
+  /** Longer detail (e.g. the skipped files), shown as a tooltip. */
+  detail?: string;
 }
 
 /** Whether `rewind` offers `mode` on turn `index` of `count`. */

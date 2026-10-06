@@ -500,12 +500,50 @@ export interface AgentEventPage {
   reset: boolean;
   // Names the archive the cursor counts into; send it back with `after`.
   epoch?: string;
+  /**
+   * Runs whose prompts a rewind can cut: the current run and earlier runs of the
+   * same SDK session. Empty while a workflow step drives the current run.
+   */
+  rewindable_run_ids?: number[];
+}
+
+export type AgentRewindMode = "conversation" | "conversation-and-files";
+
+/** Mirrors `AgentRewindSkippedFile` in `schemas/agent.py`. */
+export interface AgentRewindSkippedFile {
+  path: string;
+  /** `user-modified` (changed since the agent edited it) or `skipped-capture`. */
+  reason: string;
 }
 
 /** Mirrors `AgentRewindResult` in `schemas/agent.py`. */
 export interface AgentRewindResult {
   events_removed: number;
   sdk_events_removed: number | null;
+  outcome?: string;
+  restored_files?: string[];
+  skipped_files?: AgentRewindSkippedFile[];
+}
+
+/** Mirrors `AgentRewindFile` in `schemas/agent.py`. */
+export interface AgentRewindFile {
+  path: string;
+  /** created | modified | deleted */
+  change_type: string;
+  lines_added: number;
+  lines_removed: number;
+}
+
+/** Mirrors `AgentRewindPreview` in `schemas/agent.py`. */
+export interface AgentRewindPreview {
+  event_id: string;
+  /** The SDK session captured file changes from its first turn. */
+  file_tracking: boolean;
+  /** Authoritative for offering file restore; see `unavailable_reason` when false. */
+  files_available: boolean;
+  unavailable_reason: string | null;
+  file_count: number;
+  files: AgentRewindFile[];
 }
 
 export type AgentPermissionDecisionValue = "approve-once" | "approve-always" | "deny";
@@ -1483,6 +1521,8 @@ export interface Settings {
   agents_default_model: string;
   agents_reasoning_effort: string;
   agents_context_tier: string;
+  /** New agent sessions capture file changes so a rewind can restore them. */
+  agents_file_change_tracking: boolean;
   agents_approval_policy: AgentApprovalPolicy;
   agents_system_prompt: string;
   agents_watchdog_timeout_seconds: number;
@@ -1555,6 +1595,7 @@ export interface SettingsUpdate {
   agents_default_model?: string;
   agents_reasoning_effort?: string;
   agents_context_tier?: string;
+  agents_file_change_tracking?: boolean;
   agents_approval_policy?: AgentApprovalPolicy;
   agents_system_prompt?: string;
   agents_watchdog_timeout_seconds?: number;

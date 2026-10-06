@@ -363,6 +363,11 @@ class AgentEventPage(BaseModel):
     ``epoch`` names the archive the cursor counts into. A rewind truncates the
     archive, after which a position can point past or into a different tail;
     a reader sends its last ``epoch`` back and gets a reset when it moved.
+
+    ``rewindable_run_ids`` are the runs whose prompts a rewind can cut: the
+    agent's current run and any earlier run continuing the same SDK session
+    (an edited task restarts on a new run but keeps the conversation). Empty
+    while the current run is driven by a workflow.
     """
 
     events: list[AgentEvent] = []
@@ -371,6 +376,10 @@ class AgentEventPage(BaseModel):
     cursor: int = 0
     reset: bool = False
     epoch: str = ""
+    rewindable_run_ids: list[int] = []
+
+
+AgentRewindMode = Literal["conversation", "conversation-and-files"]
 
 
 class AgentRewindRequest(BaseModel):
@@ -381,15 +390,60 @@ class AgentRewindRequest(BaseModel):
     """
 
     event_id: str = Field(min_length=1, max_length=64)
+    # ``conversation-and-files`` also puts back the files the dropped turns
+    # changed, from the SDK's file-change captures.
+    mode: AgentRewindMode = "conversation"
+
+
+class AgentRewindSkippedFile(BaseModel):
+    """A captured file a rewind deliberately left as it is."""
+
+    path: str
+    # ``user-modified``: changed since the agent edited it. ``skipped-capture``:
+    # the SDK never captured a restorable copy.
+    reason: str
 
 
 class AgentRewindResult(BaseModel):
-    """What a rewind removed."""
+    """What a rewind removed (and, in files mode, restored)."""
 
     # Transcript events dropped from Precursor's archive.
     events_removed: int
     # Events the SDK removed from its own session history, when it reports them.
     sdk_events_removed: int | None = None
+    # The SDK outcome: ``success``, a cleanup warning after the cut landed, or
+    # ``unconfirmed`` when the call failed but the session shows the cut landed
+    # (its file report was lost).
+    outcome: str = "success"
+    restored_files: list[str] = []
+    skipped_files: list[AgentRewindSkippedFile] = []
+
+
+class AgentRewindFile(BaseModel):
+    """A file a conversation-and-files rewind would put back."""
+
+    path: str
+    change_type: str  # created | modified | deleted
+    lines_added: int = 0
+    lines_removed: int = 0
+
+
+class AgentRewindPreview(BaseModel):
+    """What rewinding to ``event_id`` would do to the agent's files.
+
+    ``file_tracking`` says whether the SDK session captured file changes from
+    its first turn; without it only the conversation can be rewound.
+    ``files_available`` is authoritative for offering file restore, and
+    ``unavailable_reason`` explains a ``False`` (``file-change-tracking-disabled``,
+    ``unsupported-remote-session``).
+    """
+
+    event_id: str
+    file_tracking: bool = False
+    files_available: bool = False
+    unavailable_reason: str | None = None
+    file_count: int = 0
+    files: list[AgentRewindFile] = []
 
 
 class AgentModelInfo(BaseModel):

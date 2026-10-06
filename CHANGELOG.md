@@ -33,9 +33,17 @@ are the per-version history; releasing does not rewrite this file.
   model stops seeing the dropped turns. It works only on the current run while
   the agent is at rest, is previewed and then confirmed, and can't be undone.
   It resets the run's progress, question and step count, and deletes artifacts
-  published by the dropped turns. Files the agent changed aren't restored. New
-  endpoint: `POST /api/agents/{id}/rewind`. Agent event pages carry an `epoch`
-  (sent back as `?epoch=`) so a live reader resets after a rewind.
+  published by the dropped turns. The confirmation can also **restore the files**
+  the dropped turns changed (opt-in each time, with the list of files first);
+  files you edited since are left alone. New sessions track file changes for
+  this unless **Settings → Agents → Track file changes for rewind** is off.
+  Rewind covers the current Copilot session, so an earlier run that continued it
+  (an edited task) can be rewound too. It's refused while a workflow step drives
+  the run. With **All runs** shown, the rail separates and names each run. New
+  endpoints: `GET /api/agents/{id}/rewind/preview` and
+  `POST /api/agents/{id}/rewind` (`mode: conversation | conversation-and-files`).
+  Agent event pages carry an `epoch` (sent back as `?epoch=`) so a live reader
+  resets after a rewind, and `rewindable_run_ids`.
 
 - **See a conversation's pending reminder in the stats panel.** A scheduled
   reminder used to be invisible until it fired. The conversation stats panel

@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -50,6 +50,7 @@ from precursor.backend.schemas.agent import (
     AgentPermissionDecision,
     AgentPermissionGrant,
     AgentProvisionJob,
+    AgentRewindPreview,
     AgentRewindRequest,
     AgentRewindResult,
     AgentRunRead,
@@ -829,15 +830,36 @@ async def rewind_agent(
     payload: AgentRewindRequest,
     session: AsyncSession = Depends(get_session),
 ) -> AgentRewindResult:
-    """Drop a prompt of the agent's current run and everything after it.
+    """Drop a prompt of the agent's current session and everything after it.
 
-    Truncates the SDK session's history and Precursor's transcript together.
-    Conversation only and irreversible; refused while a turn is in flight.
+    Truncates the SDK session's history and Precursor's transcript together;
+    ``mode: conversation-and-files`` also restores the files the dropped turns
+    changed. Irreversible; refused while a turn is in flight and for runs a
+    workflow step drives.
     """
     await _require_runtime(session)
     agent = await _get_or_404(session, agent_id)
     try:
-        return await get_agent_manager().rewind(agent.id, payload.event_id)
+        return await get_agent_manager().rewind(agent.id, payload.event_id, payload.mode)
+    except RewindError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+
+
+@router.get("/{agent_id}/rewind/preview", response_model=AgentRewindPreview)
+async def preview_agent_rewind(
+    agent_id: str,
+    event_id: str = Query(min_length=1, max_length=64),
+    session: AsyncSession = Depends(get_session),
+) -> AgentRewindPreview:
+    """Check a rewind to ``event_id`` and list the files it could restore.
+
+    Applies the same checks as the rewind itself, and resumes the agent's SDK
+    session to ask it. Changes nothing.
+    """
+    await _require_runtime(session)
+    agent = await _get_or_404(session, agent_id)
+    try:
+        return await get_agent_manager().preview_rewind(agent.id, event_id)
     except RewindError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
 

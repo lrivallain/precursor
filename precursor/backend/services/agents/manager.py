@@ -47,6 +47,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import contextvars
+import inspect
 import json
 import logging
 import os
@@ -69,7 +70,13 @@ from precursor.backend.models import (
     MessageRole,
     Topic,
 )
-from precursor.backend.schemas.agent import AgentEvent, AgentEventPage, AgentRewindResult
+from precursor.backend.schemas.agent import (
+    AgentEvent,
+    AgentEventPage,
+    AgentRewindMode,
+    AgentRewindPreview,
+    AgentRewindResult,
+)
 from precursor.backend.services.agents import (
     commands,
     fleet,
@@ -113,6 +120,7 @@ from precursor.backend.services.app_settings import (
     resolve_agents_context_tier,
     resolve_agents_default_model,
     resolve_agents_enabled,
+    resolve_agents_file_change_tracking,
     resolve_agents_reasoning_effort,
     resolve_agents_watchdog_timeout,
 )
@@ -216,6 +224,15 @@ _STREAM_ACTIVITY_INTERVAL_SECONDS = 10.0
 # frontend coalesces refreshes anyway; this keeps a fast stream from costing a
 # bus message per token.
 _STREAM_PUBLISH_INTERVAL_SECONDS = 0.25
+
+
+def _accepts_kwarg(func: Any, name: str) -> bool:
+    """Whether ``func`` takes keyword ``name`` (an older SDK may not)."""
+    try:
+        params = inspect.signature(func).parameters
+    except (TypeError, ValueError):
+        return False
+    return name in params or any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
 
 
 def _runtime_env() -> dict[str, str]:
@@ -819,6 +836,7 @@ class AgentManager:
             default_model = await resolve_agents_default_model(s)
             effort = await resolve_agents_reasoning_effort(s)
             tier = await resolve_agents_context_tier(s)
+            track_files = await resolve_agents_file_change_tracking(s)
         model = run.model or default_model
         model = await self._sanitize_model(agent.id, model)
         if model:
@@ -829,6 +847,13 @@ class AgentManager:
             kwargs["context_tier"] = tier
         if run.copilot_session_id:
             kwargs["session_id"] = run.copilot_session_id
+        # Lets a rewind put back the files the dropped turns changed. Only a
+        # session tracked from its first turn can, so a resumed untracked one
+        # stays conversation-only (the SDK reports that).
+        if track_files and _accepts_kwarg(
+            self._client.create_session, "enable_file_change_tracking"
+        ):
+            kwargs["enable_file_change_tracking"] = True
         # An agent with MCP switched off gets no tool servers at all — not even
         # the first-party one. Whole catalogues of tool schemas are a large,
         # fixed context cost, so a step that only has to transform text pays
@@ -1387,13 +1412,19 @@ class AgentManager:
             raise ValueError("Compaction failed; the conversation was left as it was.")
         await self._publish(agent_id, agent_run_id=run.id)
 
-    async def rewind(self, agent_id: int, event_id: str) -> AgentRewindResult:
-        """Drop a prompt of the current run and everything after it.
+    async def rewind(
+        self, agent_id: int, event_id: str, mode: AgentRewindMode = "conversation"
+    ) -> AgentRewindResult:
+        """Drop a prompt of the current session and everything after it.
 
         See :mod:`.rewind`. Raises :class:`~.rewind.RewindError` with a
         user-facing reason and its HTTP status.
         """
-        return await rewind_mod.rewind(self, agent_id, event_id)
+        return await rewind_mod.rewind(self, agent_id, event_id, mode)
+
+    async def preview_rewind(self, agent_id: int, event_id: str) -> AgentRewindPreview:
+        """What rewinding to ``event_id`` would restore on disk (see :mod:`.rewind`)."""
+        return await rewind_mod.preview(self, agent_id, event_id)
 
     async def rerun_task(
         self, agent_id: int, *, extra: str | None = None, trigger: str = "manual"

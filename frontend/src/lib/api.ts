@@ -16,6 +16,8 @@ import type {
   AgentModelInfo,
   AgentPermissionDecisionValue,
   AgentPermissionGrant,
+  AgentRewindMode,
+  AgentRewindPreview,
   AgentRewindResult,
   AgentRun,
   AgentRuntimeStatus,
@@ -525,11 +527,17 @@ export const api = {
     },
     // Drop the prompt `eventId` (an `AgentEvent.event_id`) of the current run
     // and everything after it, in the SDK session and the transcript. Irreversible.
-    rewind: (id: number, eventId: string) =>
+    // `conversation-and-files` also restores the files the dropped turns changed.
+    rewind: (id: number, eventId: string, mode: AgentRewindMode = "conversation") =>
       request<AgentRewindResult>(`/api/agents/${id}/rewind`, {
         method: "POST",
-        body: JSON.stringify({ event_id: eventId }),
+        body: JSON.stringify({ event_id: eventId, mode }),
       }),
+    // Checks a rewind to `eventId` and lists the files it could restore. Changes nothing.
+    previewRewind: (id: number, eventId: string) =>
+      request<AgentRewindPreview>(
+        `/api/agents/${id}/rewind/preview?${new URLSearchParams({ event_id: eventId })}`,
+      ),
     listModels: () => request<AgentModelInfo[]>(`/api/agents/models`),
     // Runtime capability + provisioning. Unlike the rest of this namespace these
     // stay reachable when the runtime is down — they are how it gets fixed.

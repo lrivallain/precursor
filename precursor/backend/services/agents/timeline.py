@@ -16,6 +16,7 @@ from sqlalchemy import select
 from precursor.backend.db import SessionLocal
 from precursor.backend.models import AgentEventRecord
 from precursor.backend.schemas.agent import AgentEvent, AgentEventPage, AgentLiveThinking
+from precursor.backend.services.agents import rewind
 from precursor.backend.services.agents.event_normalizer import is_content_free, normalize_event
 
 if TYPE_CHECKING:
@@ -153,6 +154,7 @@ class Timeline:
             cursor=len(view.stable),
             reset=reset,
             epoch=current,
+            rewindable_run_ids=await rewind.rewindable_run_ids(agent_id),
         )
 
     def epoch(self, agent_id: int) -> str:

@@ -67,6 +67,9 @@ LIVE_ONLY_KINDS = frozenset(
         "AssistantStreamingDeltaData",
         "AssistantToolCallDeltaData",
         "AssistantMessageStartData",
+        # Emitted by the SDK while a rewind runs under the agent's event lock,
+        # so it would be archived just after the cut it reports, as a stray node.
+        "SessionSnapshotRewindData",
     }
 )
 
