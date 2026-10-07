@@ -286,19 +286,28 @@ const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 export function recurrenceRuleSummary(rule: RecurrenceRule): string {
   const parts: string[] = [];
-  const interval = rule.interval_seconds || 86400;
-  if (interval % 86400 === 0 && interval >= 86400) {
-    const days = interval / 86400;
-    parts.push(days === 1 ? "Daily" : `Every ${days}d`);
-  } else if (interval % 3600 === 0) {
-    parts.push(`Every ${interval / 3600}h`);
-  } else {
-    parts.push(`Every ${Math.round(interval / 60)}m`);
-  }
+  // `run_at_minute` *is* the mode switch, exactly as the backend reads it:
+  // `compute_next_run` returns the daily-at-time branch before it ever looks at
+  // `interval_seconds`, and the editor keys off the same field. So in that mode
+  // the stored interval is inert — and naming it here produced the contradiction
+  // "Every 1h at 12:00" for a schedule that runs once a day.
   if (rule.run_at_minute != null) {
     const h = Math.floor(rule.run_at_minute / 60);
     const m = rule.run_at_minute % 60;
-    parts.push(`at ${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`);
+    const at = `at ${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+    // "Daily" only when every day really is selected; with a subset the days
+    // are listed below, and "Daily … · Mon,Wed,Fri" would contradict itself.
+    parts.push(rule.days_of_week === 127 ? `Daily ${at}` : at.charAt(0).toUpperCase() + at.slice(1));
+  } else {
+    const interval = rule.interval_seconds || 86400;
+    if (interval % 86400 === 0 && interval >= 86400) {
+      const days = interval / 86400;
+      parts.push(days === 1 ? "Daily" : `Every ${days}d`);
+    } else if (interval % 3600 === 0) {
+      parts.push(`Every ${interval / 3600}h`);
+    } else {
+      parts.push(`Every ${Math.round(interval / 60)}m`);
+    }
   }
   if (rule.days_of_week !== 127) {
     const active = DAY_NAMES.filter((_, i) => (rule.days_of_week & (1 << i)) !== 0);
