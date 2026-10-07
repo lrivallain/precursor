@@ -519,3 +519,5 @@ the server preflights Docker availability against the effective jail setting.
 ## Plugin contract
 
 See [plugins.md](plugins.md).
+
+<!-- ci scope probe -->
