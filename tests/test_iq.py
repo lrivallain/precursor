@@ -330,6 +330,9 @@ def test_rest_endpoints_round_trip() -> None:
     app = create_app()
     with TestClient(app) as client:
         topic = client.post("/api/topics", json={"title": "Restful vorpal notes"}).json()
+        # Retrieval only drains what fits its time budget, oldest first; a slow
+        # runner with an earlier test's backlog may not reach this topic.
+        client.portal.call(_indexed)
         r = client.get("/api/iq/retrieve", params={"q": "vorpal", "sections": "topics,chats"})
         assert r.status_code == 200
         body = r.json()
