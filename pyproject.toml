@@ -113,6 +113,7 @@ dev = [
     "pytest>=9.1",
     "pytest-asyncio>=1.4",
     "pytest-cov>=7.1",
+    "pytest-xdist>=3.8",
     "httpx>=0.28",
     "types-PyYAML>=6.0",
 ]

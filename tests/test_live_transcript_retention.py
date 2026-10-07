@@ -18,7 +18,13 @@ from sqlalchemy import delete, func, select
 
 from precursor.backend.db import SessionLocal
 from precursor.backend.main import create_app
-from precursor.backend.models import AppSetting, MeetingSegment, MeetingSession
+from precursor.backend.models import (
+    AppSetting,
+    MeetingAttachment,
+    MeetingInsight,
+    MeetingSegment,
+    MeetingSession,
+)
 from precursor.backend.services.live_transcript_retention import prune_expired_live_transcripts
 
 
@@ -46,6 +52,9 @@ async def _seed() -> dict[str, int]:
     async with SessionLocal() as session:
         # Isolate from other tests sharing the session-wide temp DB.
         await session.execute(delete(MeetingSegment))
+        # SQLite doesn't cascade: a reused session id would inherit these.
+        await session.execute(delete(MeetingInsight))
+        await session.execute(delete(MeetingAttachment))
         await session.execute(delete(MeetingSession))
 
         old_ended = MeetingSession(title="Old", slug="old", status="ended", ended_at=old)

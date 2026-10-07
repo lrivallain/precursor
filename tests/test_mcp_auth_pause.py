@@ -218,7 +218,8 @@ async def test_wait_for_auth_times_out_and_cleans_up() -> None:
     await manager.wait_for_auth(timeout=0.1)
     elapsed = time.perf_counter() - start
 
-    assert elapsed >= 0.1
+    # asyncio may fire a timer up to its clock resolution early (~15.6 ms on Windows).
+    assert elapsed >= 0.08
     assert not manager._auth_waiters
 
 

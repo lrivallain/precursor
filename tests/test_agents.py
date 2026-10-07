@@ -17,9 +17,23 @@ from precursor.backend.config import get_settings
 from precursor.backend.main import create_app
 
 
+async def _delete_all_agents() -> None:
+    from sqlalchemy import delete
+
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentSession
+
+    async with SessionLocal() as session:
+        await session.execute(delete(AgentSession))
+        await session.commit()
+
+
 def test_agents_disabled_by_default() -> None:
     app = create_app()
     with TestClient(app) as client:
+        # The scratch DB is shared, so start from no agents rather than trusting
+        # every earlier test to have deleted the ones it seeded.
+        client.portal.call(_delete_all_agents)
         listed = client.get("/api/agents")
         assert listed.status_code == 200
         assert listed.json() == []
@@ -2018,14 +2032,14 @@ async def _seed_run_spend(agent_id: int, input_tokens: int, output_tokens: int) 
 
 async def test_metrics_rollup_counts_and_tokens() -> None:
     await _ensure_schema()
-    busy = await _make_agent(status="running", total_input_tokens=100, total_output_tokens=50)
-    done = await _make_agent(status="completed", total_input_tokens=10, total_output_tokens=5)
-    await _make_agent(status="failed")
-    await _make_agent(status="needs_approval")
-    await _seed_run_spend(busy, 100, 50)
-    await _seed_run_spend(done, 10, 5)
-
     with TestClient(create_app()) as client:
+        # Seeded after startup: boot marks any ``running`` run interrupted.
+        busy = await _make_agent(status="running", total_input_tokens=100, total_output_tokens=50)
+        done = await _make_agent(status="completed", total_input_tokens=10, total_output_tokens=5)
+        await _make_agent(status="failed")
+        await _make_agent(status="needs_approval")
+        await _seed_run_spend(busy, 100, 50)
+        await _seed_run_spend(done, 10, 5)
         metrics = _get(client, "/api/agents/metrics")
     assert metrics["total"] >= 4
     assert metrics["active"] >= 2  # running + needs_approval
@@ -6720,7 +6734,7 @@ async def _seed_shared_agent_workflows(
             task_prompt="do the thing",
             status="idle",
             use_mcp=False,
-            approval_policy="ask",
+            approval_policy="balanced",
         )
         session.add(shared)
         await session.commit()
@@ -6816,15 +6830,15 @@ async def test_step_overrides_land_on_the_run_not_the_shared_agent() -> None:
     wf_a_id, wf_b_id, agent_id = await _seed_shared_agent_workflows(
         a_use_mcp=True,
         b_use_mcp=False,
-        a_policy="auto",
-        b_policy="ask",
+        a_policy="autonomous",
+        b_policy="manual",
     )
     await _start_both(wf_a_id, wf_b_id)
 
     runs = await _runs_for_agent(agent_id)
     by_wf = {r.workflow_run_id: r for r in runs}
     snapshots = sorted((r.use_mcp, r.approval_policy) for r in by_wf.values())
-    assert snapshots == [(False, "ask"), (True, "auto")], (
+    assert snapshots == [(False, "manual"), (True, "autonomous")], (
         "each run must carry its own workflow's capability snapshot"
     )
 
@@ -6833,7 +6847,7 @@ async def test_step_overrides_land_on_the_run_not_the_shared_agent() -> None:
         agent = await session.get(AgentSession, agent_id)
         assert agent is not None
         assert agent.use_mcp is False
-        assert agent.approval_policy == "ask"
+        assert agent.approval_policy == "balanced"
 
 
 async def test_editing_the_agent_mid_run_does_not_change_an_in_flight_snapshot() -> None:

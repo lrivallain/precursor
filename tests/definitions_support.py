@@ -103,6 +103,7 @@ async def wipe_agents_and_workflows() -> None:
 
     from precursor.backend.db import SessionLocal
     from precursor.backend.models import (
+        AgentEventRecord,
         AgentRun,
         AgentSession,
         Workflow,
@@ -117,6 +118,8 @@ async def wipe_agents_and_workflows() -> None:
         await session.execute(delete(WorkflowStep))
         await session.execute(delete(Workflow))
         await session.execute(AgentSession.__table__.update().values(current_run_id=None))
+        # SQLite doesn't cascade: orphaned events would attach to a reused agent id.
+        await session.execute(delete(AgentEventRecord))
         await session.execute(delete(AgentRun))
         await session.execute(delete(AgentSession))
         await session.commit()

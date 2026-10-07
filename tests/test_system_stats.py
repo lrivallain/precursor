@@ -7,7 +7,7 @@ from sqlalchemy import delete
 
 from precursor.backend.db import SessionLocal
 from precursor.backend.main import create_app
-from precursor.backend.models import AgentSession, Chat, Topic, Workspace
+from precursor.backend.models import AgentEventRecord, AgentSession, Chat, Topic, Workspace
 from precursor.backend.services import system_stats as system_stats_module
 from precursor.backend.services.github_client import GitHubRepoNotAccessibleError
 from precursor.backend.services.system_stats import compute_system_stats
@@ -21,6 +21,7 @@ def _init_db() -> None:
 
 async def _reset_entities() -> None:
     async with SessionLocal() as session:
+        await session.execute(delete(AgentEventRecord))
         await session.execute(delete(AgentSession))
         await session.execute(delete(Workspace))
         await session.execute(delete(Chat))
