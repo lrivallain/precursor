@@ -207,7 +207,9 @@ to a repository as part of a conversation — while everything stays confined to
 workspace root.
 
 Markdown files get a rendered **Preview**, HTML files render in a sandboxed
-frame, and `.drawio` files open in a full diagram editor (below).
+frame, and `.drawio` files open in a full diagram editor (below). Images (PNG,
+JPEG, GIF, WebP, BMP, ICO, AVIF) are displayed scaled to fit, and PDFs open in
+the browser's built-in viewer; both are view-only.
 
 Hover a folder in the tree for its actions: **New file**, **New folder**, and
 **Delete folder**, which removes the folder with everything in it once you
