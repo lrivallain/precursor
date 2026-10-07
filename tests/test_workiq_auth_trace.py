@@ -380,6 +380,8 @@ async def test_interactive_signin_still_clears_outright(monkeypatch) -> None:
 def test_diagnostics_reports_settings_credentials_and_events() -> None:
     app = create_app()
     with TestClient(app) as client:
+        # Another test may have left a WorkIQ token in the shared scratch DB.
+        client.portal.call(lambda: wp.clear_workiq_oauth_tokens(reason="test setup"))
         # Preview mode on, so the WorkIQ preview credential is signable and shows up.
         client.post("/api/mcp/servers/workiq/preview", json={"enabled": True})
         auth_trace.record("workiq", "a traced step", reason="test")
@@ -407,7 +409,15 @@ def test_diagnostics_reports_settings_credentials_and_events() -> None:
     assert any(event["phase"] == "a traced step" for event in body["events"])
 
 
-def test_diagnostics_limit_caps_the_event_window() -> None:
+def test_diagnostics_limit_caps_the_event_window(monkeypatch) -> None:
+    from precursor.backend.services.mcp import workiq_keepalive
+
+    async def _quiet() -> None:
+        return None
+
+    # The keep-alive traces whenever its verdict changes, which depends on what
+    # earlier tests left stored; a line landing after the reset breaks the window.
+    monkeypatch.setattr(workiq_keepalive.WorkIQKeepAlive, "_tick_once", lambda _self: _quiet())
     app = create_app()
     with TestClient(app) as client:
         # Reset *after* startup: booting the app can itself trace (the keep-alive

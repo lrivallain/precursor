@@ -14,6 +14,7 @@ import atexit
 import contextlib
 import os
 import shutil
+import sqlite3
 import tempfile
 import uuid
 from collections.abc import Iterator
@@ -56,6 +57,8 @@ os.environ["PRECURSOR_MCP_WARMUP_ENABLED"] = "false"
 # KeepAlive can only restart a job that is still loaded. Running the test suite
 # killed the machine's real instance.
 _units_dir = tempfile.mkdtemp(prefix="precursor-test-units-")
+# launchd/systemd address jobs by name, so the names must be throwaway as well.
+_units_label = f"io.github.precursor-tests.{uuid.uuid4().hex[:12]}"
 # Windows keeps its login items in the registry rather than in files, so the
 # same isolation needs a throwaway key in place of the real `Run` key.
 _units_run_root = r"Software\Precursor-tests"
@@ -90,11 +93,24 @@ def _isolated_autostart_units(monkeypatch: pytest.MonkeyPatch) -> None:
     behind ``stop_unit`` and ``restart_unit``. ``_run_key`` is its Windows
     registry counterpart. Distinct paths per unit are preserved so tests can
     still tell the app and tray units apart.
+
+    The path alone isn't enough: ``launchctl bootout gui/<uid>/<label>`` and
+    ``systemctl --user stop <unit>`` address the job by *name*. A test that left
+    a plist in the throwaway dir made a later stop look "controllable", and the
+    real ``launchctl`` then booted out the developer's running instance. That
+    happened under ``pytest -n``, which reshuffles which test runs next. So the
+    names are throwaway too: an unstubbed call can only reach a job that doesn't exist.
     """
     from pathlib import Path
 
     from precursor.backend import autostart
 
+    # A plist left by an earlier install test would make every later stop or
+    # restart in this process think launchd owns the instance.
+    shutil.rmtree(_units_dir, ignore_errors=True)
+    os.makedirs(_units_dir, exist_ok=True)
+    monkeypatch.setattr(autostart, "LAUNCHD_LABEL", _units_label)
+    monkeypatch.setattr(autostart, "SYSTEMD_UNIT", f"{_units_label}.service")
     monkeypatch.setattr(
         autostart,
         "_target_path",
@@ -122,20 +138,60 @@ def _sse_shutdown_flag_is_per_test():
     AppStatus.should_exit = False
 
 
-@pytest.fixture(autouse=True)
-def _no_schedule_outlives_its_test() -> Iterator[None]:
-    """Disable every schedule a test leaves enabled in the shared scratch DB.
+def _apply_dangling_fk_actions(con: sqlite3.Connection) -> None:
+    """Do what the agent tables' ``ON DELETE`` clauses would have done.
 
-    Each ``TestClient(create_app())`` starts the real scheduler, and it runs any
-    due topic/agent schedule or workflow it finds — whichever test created it.
-    "Run now" leaves a row due and leased; once the lease lapses the next app's
-    scheduler reclaims it and drives a full turn through *that* test's patched
-    provider and MCP. Whether a later test is still running by then is timing:
-    on the slower Windows runner it was, and the workspace chat round-cap test
-    counted the leaked turn's rounds as its own.
+    SQLite only honours them with ``PRAGMA foreign_keys=ON``, which the app
+    doesn't set, so a test that deletes an agent leaves its events, artifacts
+    and runs behind. Without AUTOINCREMENT, SQLite then hands the freed id to
+    the next agent, which inherits them. Scoped to the agent tables on purpose:
+    messages, topics and attachments feed the IQ index through an ORM hook, and
+    deleting them behind its back would leave stale chunks for reused ids.
+    Repeats until stable so multi-level cascades settle.
     """
-    import sqlite3
+    parents = {"agent_sessions", "agent_runs"}
+    tables = [
+        r[0]
+        for r in con.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+        )
+    ]
+    for _ in range(5):
+        changed = 0
+        for table in tables:
+            for fk in con.execute(f'PRAGMA foreign_key_list("{table}")').fetchall():
+                parent, col, ref, on_delete = fk[2], fk[3], fk[4] or "rowid", fk[6]
+                if parent not in parents:
+                    continue
+                dangling = (
+                    f'"{col}" IS NOT NULL AND "{col}" NOT IN (SELECT "{ref}" FROM "{parent}")'
+                )
+                if on_delete == "CASCADE":
+                    cur = con.execute(f'DELETE FROM "{table}" WHERE {dangling}')
+                elif on_delete == "SET NULL":
+                    cur = con.execute(f'UPDATE "{table}" SET "{col}" = NULL WHERE {dangling}')
+                else:
+                    continue
+                changed += cur.rowcount
+        if not changed:
+            return
 
+
+@pytest.fixture(autouse=True)
+def _shared_db_stays_consistent() -> Iterator[None]:
+    """Leave the shared scratch DB as a well-behaved app would after each test.
+
+    Every test in a process shares one SQLite file, so whatever a test leaves
+    behind becomes the next test's surprise, and ``pytest -n`` reshuffles which
+    tests come next. Two leftovers bit for real:
+
+    * **Enabled schedules.** Each ``TestClient(create_app())`` starts the real
+      scheduler, which runs any due topic/agent schedule or workflow it finds.
+      "Run now" leaves a row due and leased; once the lease lapses, a later
+      app reclaims it and drives a full turn through *that* test's patched
+      provider (the workspace chat round-cap test counted the rounds as its own).
+    * **Orphaned children** of deleted rows (see :func:`_apply_dangling_fk_actions`).
+    """
     yield
     con = sqlite3.connect(_tmp.name, timeout=30)
     try:
@@ -146,6 +202,7 @@ def _no_schedule_outlives_its_test() -> Iterator[None]:
         ):
             with contextlib.suppress(sqlite3.OperationalError):  # table not migrated yet
                 con.execute(statement)
+        _apply_dangling_fk_actions(con)
         con.commit()
     finally:
         con.close()

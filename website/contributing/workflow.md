@@ -40,7 +40,9 @@ Every PR runs `.github/workflows/ci.yml`:
 - **Lockfiles** — every artifact must resolve to a public registry with a strong
   hash (see [Lockfiles](#lockfiles) below).
 - **Backend** — `uv sync --locked`, then ruff check, ruff format check, mypy
-  (strict), and pytest.
+  (strict), and pytest across one worker per core (`pytest-xdist`,
+  `-n auto --dist loadgroup`). Tests that share a fixed resource, such as a
+  hard-coded port, are pinned to one worker with `pytest.mark.xdist_group`.
 - **Fresh wheel install** — builds the wheel, installs it with the `kanban`
   extra into an empty environment *without* the lockfile (the way an end user's
   `uvx precursor-ai` resolves), then runs the release smoke gate and

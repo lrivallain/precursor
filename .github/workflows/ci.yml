@@ -55,8 +55,11 @@ jobs:
       - name: Mypy
         run: uv run mypy precursor
 
+      # One worker per core (4 on hosted runners). Each worker loads conftest in
+      # its own process, so it gets its own scratch DB and data dirs; tests that
+      # share a fixed resource are pinned together with `xdist_group`.
       - name: Pytest
-        run: uv run pytest -q
+        run: uv run pytest -q -n auto --dist loadgroup
 
   # Nobody on the team runs Windows day to day, so this job is how Windows users
   # get the same app: the suite exercises every platform branch it can reach
@@ -88,7 +91,7 @@ jobs:
         run: uv sync --locked --extra tray
 
       - name: Pytest
-        run: uv run pytest -q -p no:cacheprovider
+        run: uv run pytest -q -p no:cacheprovider -n auto --dist loadgroup
 
   # Deliberately *not* the lockfile. End users install the published wheel and
   # resolve every dependency fresh, which is how 2026.9.1 met an MCP major the

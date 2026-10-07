@@ -52,10 +52,9 @@ async def _drop_created_agents():
 
 @pytest.fixture(autouse=True)
 def _no_retry_delay(monkeypatch: Any) -> None:
-    async def _sleep(_seconds: float) -> None:
-        return None
-
-    monkeypatch.setattr(rewind_mod.asyncio, "sleep", _sleep)
+    # Not ``asyncio.sleep`` itself: that is the global module, and a non-yielding
+    # stub there turns every app background loop into a busy spin.
+    monkeypatch.setattr(rewind_mod, "_BUSY_RETRY_DELAY_SECONDS", 0)
 
 
 class _History:
