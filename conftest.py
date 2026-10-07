@@ -16,6 +16,7 @@ import os
 import shutil
 import tempfile
 import uuid
+from collections.abc import Iterator
 
 import pytest
 
@@ -119,6 +120,35 @@ def _sse_shutdown_flag_is_per_test():
     AppStatus.should_exit = False
     yield
     AppStatus.should_exit = False
+
+
+@pytest.fixture(autouse=True)
+def _no_schedule_outlives_its_test() -> Iterator[None]:
+    """Disable every schedule a test leaves enabled in the shared scratch DB.
+
+    Each ``TestClient(create_app())`` starts the real scheduler, and it runs any
+    due topic/agent schedule or workflow it finds — whichever test created it.
+    "Run now" leaves a row due and leased; once the lease lapses the next app's
+    scheduler reclaims it and drives a full turn through *that* test's patched
+    provider and MCP. Whether a later test is still running by then is timing:
+    on the slower Windows runner it was, and the workspace chat round-cap test
+    counted the leaked turn's rounds as its own.
+    """
+    import sqlite3
+
+    yield
+    con = sqlite3.connect(_tmp.name, timeout=30)
+    try:
+        for statement in (
+            "UPDATE topic_schedule SET enabled = 0 WHERE enabled = 1",
+            "UPDATE agent_schedule SET enabled = 0 WHERE enabled = 1",
+            "UPDATE workflows SET schedule_enabled = 0 WHERE schedule_enabled = 1",
+        ):
+            with contextlib.suppress(sqlite3.OperationalError):  # table not migrated yet
+                con.execute(statement)
+        con.commit()
+    finally:
+        con.close()
 
 
 @pytest.fixture(autouse=True)
