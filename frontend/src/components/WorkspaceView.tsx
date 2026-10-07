@@ -19,6 +19,7 @@ import {
   FolderPlus,
   GitMerge,
   History,
+  Image as ImageIcon,
   Loader2,
   Pencil,
   RefreshCw,
@@ -104,6 +105,18 @@ function isDrawio(name: string): boolean {
 
 function hasPreview(name: string): boolean {
   return isMarkdown(name) || isHtml(name) || isDrawio(name);
+}
+
+// SVG stays out: it's text, and editable as such.
+const IMAGE_EXTS = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".avif"];
+
+function isImage(name: string): boolean {
+  const lower = name.toLowerCase();
+  return IMAGE_EXTS.some((e) => lower.endsWith(e));
+}
+
+function isPdf(name: string): boolean {
+  return name.toLowerCase().endsWith(".pdf");
 }
 
 // Monaco is its own chunk, fetched the first time a file is edited.
@@ -228,6 +241,8 @@ export function WorkspaceView({
   // Bumped when the branch changes: the editor starts afresh, so no undo step
   // can bring the other branch's text back into the buffer.
   const [editorGeneration, setEditorGeneration] = useState(0);
+  // Busts the browser cache of an image/PDF preview after git rewrote it.
+  const [mediaVersion, setMediaVersion] = useState(0);
   // Inline create-in-tree state (VS Code style): an input row appears at the
   // target parent ("" = root) until the user confirms or cancels. No modal.
   const [pendingCreate, setPendingCreate] = useState<{
@@ -290,7 +305,9 @@ export function WorkspaceView({
   const showEditor = !narrow || detailOpen;
 
   const refreshFiles = useCallback(async () => {
-    setFiles(await api.workspaces.listFiles(area.id));
+    const list = await api.workspaces.listFiles(area.id);
+    setFiles(list);
+    return list;
   }, [area.id]);
 
   const refreshStatus = useCallback(async () => {
@@ -414,13 +431,16 @@ export function WorkspaceView({
     setLoadingFile(true);
     setError(null);
     try {
-      const f = await api.workspaces.readFile(area.id, path);
+      // Binaries (images, PDFs…) are shown from /raw, never read as text.
+      const text = isEditable(path)
+        ? (await api.workspaces.readFile(area.id, path)).content
+        : "";
       cursorRef.current = null;
       setDiff(null);
       setActivePath(path);
       onPathChange(path);
-      setContent(f.content);
-      setSavedContent(f.content);
+      setContent(text);
+      setSavedContent(text);
       // A file with conflict markers opens where they can be resolved.
       const inRepo = subdir ? `${subdir}/${path}` : path;
       const conflictedFile = !!status?.files.some((f) => f.path === inRepo && f.conflicted);
@@ -602,9 +622,16 @@ export function WorkspaceView({
   // Files may have changed under git's hands: reload the tree, the status and
   // the open file.
   async function afterGitChange(): Promise<void> {
-    await refreshFiles();
+    const tree = await refreshFiles();
     await refreshStatus();
-    if (activePath) {
+    if (activePath && !isEditable(activePath)) {
+      if (tree.some((f) => f.path === activePath)) {
+        setMediaVersion((v) => v + 1);
+      } else {
+        setActivePath(null);
+        onPathChange(null);
+      }
+    } else if (activePath) {
       try {
         const f = await api.workspaces.readFile(area.id, activePath);
         setContent(f.content);
@@ -1062,7 +1089,11 @@ export function WorkspaceView({
                     <ChevronLeft size={16} />
                   </button>
                 )}
-                <FileText size={15} className="text-muted shrink-0" />
+                {isImage(activePath) ? (
+                  <ImageIcon size={15} className="text-muted shrink-0" />
+                ) : (
+                  <FileText size={15} className="text-muted shrink-0" />
+                )}
                 <span className="text-sm truncate flex-1 min-w-0" title={activePath}>
                   {activePath}
                   {dirty && <span className="text-accent"> •</span>}
@@ -1103,18 +1134,20 @@ export function WorkspaceView({
                     </button>
                   </div>
                 )}
-                <button
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-accent text-white text-xs disabled:opacity-50"
-                  disabled={!dirty || saving}
-                  onClick={() => void save()}
-                >
-                  {saving ? (
-                    <Loader2 size={13} className="animate-spin" />
-                  ) : (
-                    <Save size={13} />
-                  )}
-                  Save
-                </button>
+                {isEditable(activePath) && (
+                  <button
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-accent text-white text-xs disabled:opacity-50"
+                    disabled={!dirty || saving}
+                    onClick={() => void save()}
+                  >
+                    {saving ? (
+                      <Loader2 size={13} className="animate-spin" />
+                    ) : (
+                      <Save size={13} />
+                    )}
+                    Save
+                  </button>
+                )}
                 {activeConflicted && repoPath && (
                   <button
                     className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded border border-border text-xs hover:bg-surface disabled:opacity-50"
@@ -1186,6 +1219,28 @@ export function WorkspaceView({
                   <div className="h-full flex items-center justify-center text-muted">
                     <Loader2 className="animate-spin" size={18} />
                   </div>
+                ) : isImage(activePath) ? (
+                  <div className="h-full flex items-center justify-center p-6">
+                    <img
+                      key={`${activePath}#${mediaVersion}`}
+                      src={`${workspaceRawUrl(area.slug, activePath)}?v=${mediaVersion}`}
+                      alt={activePath}
+                      className="max-w-full max-h-full object-contain rounded border border-border"
+                      style={{
+                        // A checkerboard, so transparent pixels read as such.
+                        backgroundImage:
+                          "repeating-conic-gradient(rgb(128 128 128 / 0.18) 0% 25%, transparent 0% 50%)",
+                        backgroundSize: "16px 16px",
+                      }}
+                    />
+                  </div>
+                ) : isPdf(activePath) ? (
+                  <iframe
+                    key={`${activePath}#${mediaVersion}`}
+                    title={activePath}
+                    src={`${workspaceRawUrl(area.slug, activePath)}?v=${mediaVersion}`}
+                    className="w-full h-full border-0"
+                  />
                 ) : !isEditable(activePath) ? (
                   <div className="p-6 text-muted text-sm">
                     This file type isn't editable here. Use the git CLI to manage it.

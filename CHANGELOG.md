@@ -210,6 +210,12 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Fixed
 
+- **Images and PDFs open in a workspace.** Opening a picture (PNG, JPEG, GIF,
+  WebP, BMP, ICO, AVIF) in the Files browser showed a "Not a text file" error;
+  it's now displayed, scaled to fit, on a checkerboard backdrop so transparency
+  shows. PDFs open in the browser's built-in viewer. Other binary files show
+  that they can't be edited here instead of an error.
+
 - **The draw.io editor switches theme while a diagram is open.** It used to
   stay in the theme it opened with until you reopened the file. Saving a new
   theme in Settings now reloads it in light or dark, keeping your unsaved edits
