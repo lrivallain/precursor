@@ -69,8 +69,8 @@ jobs:
 
       # Each worker loads conftest in its own process, so it gets its own scratch
       # DB and data dirs; tests that share a fixed resource are pinned together
-      # with `xdist_group`. Twice the 4 hosted vCPUs: much of the suite waits on
-      # app startup and sockets rather than the CPU.
+      # with `xdist_group`. Twice the 4 hosted vCPUs: measured a little faster
+      # than one worker per core here, and no slower on Windows.
       - name: Pytest
         if: steps.scope.outputs.backend == 'true'
         run: uv run pytest -q -n 8 --dist loadgroup
