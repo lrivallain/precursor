@@ -139,17 +139,15 @@ def _sse_shutdown_flag_is_per_test():
 
 
 def _apply_dangling_fk_actions(con: sqlite3.Connection) -> None:
-    """Do what the agent tables' ``ON DELETE`` clauses would have done.
+    """Do what the schema's ``ON DELETE`` clauses would have done.
 
     SQLite only honours them with ``PRAGMA foreign_keys=ON``, which the app
-    doesn't set, so a test that deletes an agent leaves its events, artifacts
-    and runs behind. Without AUTOINCREMENT, SQLite then hands the freed id to
-    the next agent, which inherits them. Scoped to the agent tables on purpose:
-    messages, topics and attachments feed the IQ index through an ORM hook, and
-    deleting them behind its back would leave stale chunks for reused ids.
-    Repeats until stable so multi-level cascades settle.
+    doesn't set, so a test that deletes a parent leaves its children behind.
+    Without AUTOINCREMENT, SQLite then hands the freed id to the next insert,
+    which inherits them: a new agent got a deleted one's events, a new topic a
+    deleted one's usage-ledger rows. Repeats until stable so multi-level
+    cascades settle.
     """
-    parents = {"agent_sessions", "agent_runs"}
     tables = [
         r[0]
         for r in con.execute(
@@ -161,8 +159,6 @@ def _apply_dangling_fk_actions(con: sqlite3.Connection) -> None:
         for table in tables:
             for fk in con.execute(f'PRAGMA foreign_key_list("{table}")').fetchall():
                 parent, col, ref, on_delete = fk[2], fk[3], fk[4] or "rowid", fk[6]
-                if parent not in parents:
-                    continue
                 dangling = (
                     f'"{col}" IS NOT NULL AND "{col}" NOT IN (SELECT "{ref}" FROM "{parent}")'
                 )

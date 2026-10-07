@@ -196,6 +196,14 @@ async def test_reconcile_catches_bulk_writes() -> None:
     assert any(h.entity_id == tid for h in (await retrieve("flibbertigibbet")).hits)
 
     async with SessionLocal() as session:
+        # By id, not container: SQLite reuses freed ids, so an earlier test's
+        # deleted topic can leave chunks under this topic's id that reconcile
+        # rightly keeps, because their message ids now belong to live rows.
+        gone = (
+            (await session.execute(select(Message.id).where(Message.topic_id == tid)))
+            .scalars()
+            .all()
+        )
         await session.execute(delete(Message).where(Message.topic_id == tid))
         await session.commit()
     await indexer.reconcile()
@@ -203,10 +211,11 @@ async def test_reconcile_catches_bulk_writes() -> None:
         left = (
             await session.execute(
                 select(IQChunk.id).where(
-                    IQChunk.source_kind == "message", IQChunk.container_id == tid
+                    IQChunk.source_kind == "message", IQChunk.source_id.in_(gone)
                 )
             )
         ).all()
+    assert gone
     assert left == []
 
 

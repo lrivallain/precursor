@@ -17,9 +17,23 @@ from precursor.backend.config import get_settings
 from precursor.backend.main import create_app
 
 
+async def _delete_all_agents() -> None:
+    from sqlalchemy import delete
+
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentSession
+
+    async with SessionLocal() as session:
+        await session.execute(delete(AgentSession))
+        await session.commit()
+
+
 def test_agents_disabled_by_default() -> None:
     app = create_app()
     with TestClient(app) as client:
+        # The scratch DB is shared, so start from no agents rather than trusting
+        # every earlier test to have deleted the ones it seeded.
+        client.portal.call(_delete_all_agents)
         listed = client.get("/api/agents")
         assert listed.status_code == 200
         assert listed.json() == []
