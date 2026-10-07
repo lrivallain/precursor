@@ -17,6 +17,7 @@ import shutil
 import sqlite3
 import tempfile
 import uuid
+import warnings
 from collections.abc import Iterator
 
 import pytest
@@ -189,17 +190,25 @@ def _shared_db_stays_consistent() -> Iterator[None]:
     * **Orphaned children** of deleted rows (see :func:`_apply_dangling_fk_actions`).
     """
     yield
-    con = sqlite3.connect(_tmp.name, timeout=30)
+    con = sqlite3.connect(_tmp.name, timeout=10)
     try:
         for statement in (
             "UPDATE topic_schedule SET enabled = 0 WHERE enabled = 1",
             "UPDATE agent_schedule SET enabled = 0 WHERE enabled = 1",
             "UPDATE workflows SET schedule_enabled = 0 WHERE schedule_enabled = 1",
         ):
-            with contextlib.suppress(sqlite3.OperationalError):  # table not migrated yet
+            try:
                 con.execute(statement)
+            except sqlite3.OperationalError as exc:
+                if "no such table" not in str(exc):  # not migrated yet is fine
+                    raise
         _apply_dangling_fk_actions(con)
         con.commit()
+    except sqlite3.OperationalError as exc:
+        # Housekeeping, not an assertion: a lock some app task left behind belongs
+        # to the test that caused it, not to this teardown.
+        con.rollback()
+        warnings.warn(f"shared-DB cleanup skipped: {exc}", stacklevel=1)
     finally:
         con.close()
 

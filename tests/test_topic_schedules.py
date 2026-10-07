@@ -7,9 +7,11 @@ row; there is no special topic kind. These cover the nested HTTP surface under
 
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 from precursor.backend.main import create_app
+from precursor.backend.services.scheduler import Scheduler
 
 
 def _make_topic(client: TestClient, title: str = "Inbox") -> int:
@@ -69,7 +71,14 @@ def test_topic_schedule_crud() -> None:
         assert client.get(f"/api/topics/{topic_id}").status_code == 200
 
 
-def test_topic_schedule_run_now_posts_notice() -> None:
+def test_topic_schedule_run_now_posts_notice(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Only the route is under test. The real run would start at once and be
+    # cancelled mid-write when the client exits, leaving the shared scratch DB
+    # locked for whichever test comes next.
+    async def _no_run(_self: Scheduler, _topic_id: int) -> None:
+        return None
+
+    monkeypatch.setattr(Scheduler, "_run_one", _no_run)
     app = create_app()
     with TestClient(app) as client:
         topic_id = _make_topic(client)
