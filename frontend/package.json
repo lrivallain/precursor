@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "dompurify": "3.4.15",
+    "dompurify": "3.4.16",
     "highlight.js": "^11.11.1",
     "lucide-react": "^1.21.0",
     "mermaid": "^11.16.0",
@@ -34,6 +34,8 @@
     "vite": "8.3.0"
   },
   "overrides": {
-    "uuid": "^14.0.0"
+    "uuid": "^14.0.0",
+    "dompurify": "$dompurify",
+    "katex": "^0.18.2"
   }
 }
