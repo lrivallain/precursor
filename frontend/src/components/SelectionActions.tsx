@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { NotebookPen, PenLine, Split } from "lucide-react";
 import { markdownSourceRange } from "../lib/markdownCaret";
@@ -40,6 +40,8 @@ export function SelectionActions({
   onNote?: (markdown: string) => void;
 }) {
   const [picked, setPicked] = useState<Picked | null>(null);
+  const [width, setWidth] = useState(0);
+  const barRef = useRef<HTMLDivElement>(null);
   // Read at selection time, so a new transcript doesn't re-bind the listeners.
   const sourceRef = useRef(sourceOf);
   sourceRef.current = sourceOf;
@@ -86,7 +88,14 @@ export function SelectionActions({
     };
   }, [scrollRef]);
 
+  // Centre on whole pixels: a translate(-50%) at a fractional offset blurs text.
+  useLayoutEffect(() => {
+    if (barRef.current) setWidth(barRef.current.offsetWidth);
+  }, [picked, onSideChat, onEdit, onNote]);
+
   if (!picked || (!onSideChat && !onEdit && !onNote)) return null;
+  const left = Math.max(8, Math.round(picked.x - width / 2));
+  const top = Math.max(8, Math.round(picked.y - 36));
   const run = (action: () => void) => {
     action();
     window.getSelection()?.removeAllRanges();
@@ -95,12 +104,13 @@ export function SelectionActions({
   // It floats over the transcript, so no state may use a translucent fill.
   return createPortal(
     <div
+      ref={barRef}
       role="toolbar"
       aria-label="Selection actions"
       // Keep the selection: a mousedown elsewhere would collapse it first.
       onMouseDown={(e) => e.preventDefault()}
-      className="fixed z-40 flex -translate-x-1/2 items-center divide-x divide-border overflow-hidden rounded-full border border-accent/40 bg-surface text-xs font-medium text-accent shadow-md"
-      style={{ left: picked.x, top: Math.max(8, picked.y - 36) }}
+      className="fixed z-40 flex items-center divide-x divide-border overflow-hidden rounded-full border border-accent/40 bg-surface text-xs font-medium text-accent shadow-md"
+      style={{ left, top, visibility: width ? undefined : "hidden" }}
     >
       {onSideChat && (
         <Action
