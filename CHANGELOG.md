@@ -15,6 +15,12 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **Edit a reply.** Fix an assistant reply in place from its toolbar (the pen)
+  in topics and chats. Later turns use the edited text. The model's original
+  answer is kept: an **Edited** chip under the reply shows it and restores it.
+- **Selection toolbar.** Selecting text in an assistant reply now offers
+  **Side chat** (topics), **Edit** (opens the editor on the selection) and
+  **Note**, which adds the selection's Markdown source to the `/notes` pad.
 - **Light or dark for diagrams only.** A sun/moon button in the header of an
   open `.drawio` file switches the diagram editor between light and dark
   without changing the app theme. The choice is remembered for every diagram;
@@ -22,7 +28,7 @@ are the per-version history; releasing does not rewrite this file.
 - **Side chats.** Start a chat from a topic to explore a tangent without adding
   it to the topic's conversation.
   - **Starting one:** from an assistant reply's toolbar (**Start a chat from
-    this reply**), from text selected in a reply (**Side chat from selection**),
+    this reply**), from text selected in a reply (**Side chat** in the selection toolbar),
     from the **New side chat** button in the topic's header or its right-click
     menu in the sidebar, from **Side chats** in the topic's right panel, or with
     the new `/side-chat` command.

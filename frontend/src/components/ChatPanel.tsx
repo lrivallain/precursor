@@ -9,7 +9,7 @@ import { ComposerModelControls } from "./ComposerModelControls";
 import { ChatStatsPanel } from "./ChatStatsPanel";
 import { useSideChats } from "./SideChatsSection";
 import { TopicSeedCard } from "./SideChatSeedCard";
-import { SelectionSideChat } from "./SelectionSideChat";
+import { SelectionActions } from "./SelectionActions";
 import { api } from "../lib/api";
 import { GITHUB_SLASH_COMMANDS } from "../lib/commands";
 import { detachedDraftStore } from "../lib/detachedDraftStore";
@@ -605,10 +605,16 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
           onDismissError={summary.clearError}
         />
         <div className="relative flex min-h-0 flex-1">
-        <SelectionSideChat
+        <SelectionActions
           scrollRef={conv.scrollRef}
-          disabled={streaming || startingSideChat}
-          onStart={(messageId, quote) => void runSideChat(messageId, "", quote)}
+          sourceOf={(id) => conv.messages.find((m) => m.id === id)?.content}
+          onSideChat={
+            streaming || startingSideChat
+              ? undefined
+              : (messageId, quote) => void runSideChat(messageId, "", quote)
+          }
+          onEdit={streaming ? undefined : conv.replyEdit.start}
+          onNote={(markdown) => void conv.notes.appendToPad(markdown)}
         />
         <div ref={conv.scrollRef} onScroll={conv.onScroll} className="flex-1 overflow-y-auto p-4 pr-12 min-w-0">
           <div
@@ -655,6 +661,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
                 hideAgentBadge={grouped}
                 onStartSideChat={streaming ? undefined : (msg) => void runSideChat(msg.id)}
                 sideChats={sideChatsByReply.get(m.id)}
+                replyEdit={conv.replyEdit}
               />
             );
 

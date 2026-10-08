@@ -50,6 +50,9 @@ Chats share the same conversation experience as topics:
   [timeline & rewind](/features/rewind).
 - **Delete with undo, `/clear` and Stop** work exactly as in topics — see
   [deleting, clearing and stopping](/features/topics#deleting-clearing-and-stopping).
+- **Editing replies and notes from a selection**: fix an assistant reply in
+  place, or lift part of it into `/notes` — see
+  [editing replies](/features/topics#editing-replies).
 
 ## Chats name themselves
 
@@ -113,7 +116,8 @@ Start one from a topic in four ways:
 - **From a reply**: hover an assistant reply and click **Start a chat from this
   reply** in its toolbar. The chat quotes that reply at the top.
 - **From part of a reply**: select some text in an assistant reply and click
-  **Side chat from selection**. The chat quotes only the selected text.
+  **Side chat** in the toolbar that appears over it. The chat quotes only the
+  selected text.
 - **From the whole topic**: click the **New side chat** button (a speech bubble
   with a plus) in the topic's header, choose **New side chat** when you
   right-click the topic in the sidebar, or click **New** under **Side chats**

@@ -16,6 +16,7 @@ from precursor.backend.schemas import (
     CompactRequest,
     ContextEstimateRead,
     MessageRead,
+    MessageUpdate,
     RewindRequest,
     RewindResult,
     StoppedTurn,
@@ -31,6 +32,7 @@ from precursor.backend.services.conversation_turn import (
     TurnIndexEntry,
     clear_container_messages,
     delete_container_message,
+    edit_container_message,
     list_container_messages,
     list_container_turns,
     persist_user_turn,
@@ -85,6 +87,17 @@ async def delete_message(
 ) -> None:
     """Hard-delete a single message. Attachments cascade with the row."""
     await delete_container_message(session, "topic", topic_id, message_id)
+
+
+@router.patch("/{message_id}", response_model=MessageRead)
+async def edit_message(
+    topic_id: int,
+    message_id: int,
+    payload: MessageUpdate,
+    session: AsyncSession = Depends(get_session),
+) -> Message:
+    """Edit an assistant reply in place; the model's original is kept to restore."""
+    return await edit_container_message(session, "topic", topic_id, message_id, payload.content)
 
 
 @router.get("/turns", response_model=list[TurnIndexRead], dependencies=[Depends(get_topic_or_404)])

@@ -29,6 +29,8 @@ interface MarkdownProps {
   onTaskChange?: (markdown: string) => void;
   tasksDisabled?: boolean;
   onTextDoubleClick?: (sourceOffset: number) => void;
+  /** Tag rendered text with its source offsets so a selection maps back to Markdown. */
+  sourceAnnotated?: boolean;
 }
 
 interface TaskListOptions {
@@ -236,7 +238,7 @@ function CodeBlock({ children, ...props }: { children?: ReactNode }) {
  * caused visible layout thrash / scrollbar flicker on content-heavy topics.
  */
 export const Markdown = memo(function Markdown({
-  children, className, onTaskChange, tasksDisabled = false, onTextDoubleClick,
+  children, className, onTaskChange, tasksDisabled = false, onTextDoubleClick, sourceAnnotated,
 }: MarkdownProps) {
   // A non-empty highlight term (set when a content-search hit is opened) adds a
   // rehype pass that wraps matches in <mark>. Kept off the plugin list entirely
@@ -250,7 +252,7 @@ export const Markdown = memo(function Markdown({
         makeHighlightRehype(highlight),
       ]
     : [[rehypeHighlight, { detect: true, ignoreMissing: true }]];
-  if (onTextDoubleClick) {
+  if (onTextDoubleClick || sourceAnnotated) {
     rehypePlugins.unshift(makeMarkdownCaretRehype((offset) => offset - insertions.reduce(
       (sum, insertion) => sum + Math.min(insertion.length, Math.max(0, offset - insertion.offset)), 0,
     )));

@@ -1317,6 +1317,10 @@ export interface Message {
   chat_id?: number | null;
   role: MessageRole;
   content: string;
+  /** Edited assistant replies: the model's answer before the edit (null when untouched). */
+  original_content?: string | null;
+  /** When the reply was last edited (null when untouched). */
+  edited_at?: string | null;
   /** Special-row marker; "compaction" = a context-compaction summary (system row). */
   kind?: string | null;
   /** Assistant turns: the model's thinking for this round, shown collapsed. */

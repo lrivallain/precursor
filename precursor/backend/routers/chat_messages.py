@@ -25,6 +25,7 @@ from precursor.backend.schemas import (
     CompactRequest,
     ContextEstimateRead,
     MessageRead,
+    MessageUpdate,
     NoteDraftAttachmentRead,
     NotesAppendRequest,
     NotesAppendResponse,
@@ -51,6 +52,7 @@ from precursor.backend.services.conversation_turn import (
     TurnIndexEntry,
     clear_container_messages,
     delete_container_message,
+    edit_container_message,
     list_container_messages,
     list_container_turns,
     persist_user_turn,
@@ -106,6 +108,17 @@ async def delete_message(
 ) -> None:
     """Hard-delete a single message."""
     await delete_container_message(session, "chat", chat_id, message_id)
+
+
+@router.patch("/{message_id}", response_model=MessageRead)
+async def edit_message(
+    chat_id: int,
+    message_id: int,
+    payload: MessageUpdate,
+    session: AsyncSession = Depends(get_session),
+) -> Message:
+    """Edit an assistant reply in place; the model's original is kept to restore."""
+    return await edit_container_message(session, "chat", chat_id, message_id, payload.content)
 
 
 @router.get("/turns", response_model=list[TurnIndexRead], dependencies=[Depends(get_chat_or_404)])

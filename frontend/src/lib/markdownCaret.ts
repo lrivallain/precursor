@@ -122,17 +122,84 @@ export function markdownCaretAtPoint(root: HTMLElement, event: MouseEvent, sourc
   if (!node || offset == null || !root.contains(node)) return null;
   const element = (node instanceof Element ? node : node.parentElement)?.closest<HTMLElement>(SOURCE_SELECTOR);
   if (!element || !root.contains(element)) return null;
+  return sourceOffsetIn(element, node, offset, source)?.offset ?? null;
+}
+
+interface SpanOffset {
+  offset: number;
+  /** The span's own source range, and whether the point sits at its text edges. */
+  start: number;
+  end: number;
+  atStart: boolean;
+  atEnd: boolean;
+  kind: string;
+}
+
+function sourceOffsetIn(element: HTMLElement, node: Node, offset: number, source: string): SpanOffset | null {
   const start = Number(element.dataset.mdSourceStart);
   const end = Number(element.dataset.mdSourceEnd);
   if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
-  const prefix = doc.createRange();
+  const prefix = element.ownerDocument.createRange();
   prefix.selectNodeContents(element);
   prefix.setEnd(node, offset);
-  const local = offsetInSource(
-    source.slice(start, end), element.textContent ?? "", prefix.toString().length,
-    element.dataset.mdSourceKind ?? "text",
-  );
-  return Math.max(start, Math.min(end, start + local));
+  const text = element.textContent ?? "";
+  const visible = prefix.toString().length;
+  const kind = element.dataset.mdSourceKind ?? "text";
+  const local = offsetInSource(source.slice(start, end), text, visible, kind);
+  return {
+    offset: Math.max(start, Math.min(end, start + local)),
+    start, end, kind,
+    atStart: visible === 0,
+    atEnd: visible >= text.replace(/\n$/, "").length,
+  };
+}
+
+// Block markers (and inline openers) that may precede a selection on its line.
+const LINE_PREFIX = /^[ \t]*(?:(?:[-+*]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]+)?|#{1,6}[ \t]+|>[ \t]?)*[*_~`[]*$/;
+// Inline closers (and a link target) that may follow a selection on its line.
+const LINE_SUFFIX = /^[*_~`]*(?:\]\([^)\n]*\))?[*_~`]*[ \t]*$/;
+
+/**
+ * The Markdown source behind a DOM selection inside a reply rendered with
+ * `sourceAnnotated` (see `Markdown`). A selection that covers whole lines grows
+ * to take their block markers (`- `, `## `, `> `, fences) along, so a pasted
+ * excerpt keeps its formatting; `wholeLines: false` keeps the exact range. Null
+ * when the selection can't be mapped.
+ */
+export function markdownSourceRange(
+  root: HTMLElement, range: Range, source: string, { wholeLines = true } = {},
+): { start: number; end: number } | null {
+  const spans = Array.from(root.querySelectorAll<HTMLElement>(SOURCE_SELECTOR))
+    .filter((el) => range.intersectsNode(el));
+  if (spans.length === 0) return null;
+  const first = spans[0];
+  const last = spans[spans.length - 1];
+  const head = first.contains(range.startContainer)
+    ? sourceOffsetIn(first, range.startContainer, range.startOffset, source)
+    : sourceOffsetIn(first, first, 0, source);
+  const tail = last.contains(range.endContainer)
+    ? sourceOffsetIn(last, range.endContainer, range.endOffset, source)
+    : sourceOffsetIn(last, last, last.childNodes.length, source);
+  if (!head || !tail || tail.offset <= head.offset) return null;
+  let start = head.offset;
+  let end = tail.offset;
+  if (!wholeLines) return { start, end };
+  // A fenced block taken from its first line (or to its last) keeps its fences.
+  const sameSpan = first === last;
+  if (head.kind === "block-code" && head.atStart && (!sameSpan || tail.atEnd)) start = head.start;
+  if (tail.kind === "block-code" && tail.atEnd && (!sameSpan || head.atStart)) end = tail.end;
+
+  const lineEnd = source.indexOf("\n", end);
+  const stop = lineEnd < 0 ? source.length : lineEnd;
+  const toLineEnd = LINE_SUFFIX.test(source.slice(end, stop));
+  const lineStart = source.lastIndexOf("\n", start - 1) + 1;
+  // Only whole lines grow: half a bold run must not pick up its closer alone.
+  if ((toLineEnd || source.slice(start, end).includes("\n"))
+    && LINE_PREFIX.test(source.slice(lineStart, start))) {
+    start = lineStart;
+    if (toLineEnd) end = stop;
+  }
+  return { start, end };
 }
 
 /** Reveal a Markdown source offset, including when a long paragraph wraps. */

@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { NotesPanel, type NotesAction } from "./NotesPanel";
 import { DetachedWindowPortal } from "./DetachedWindowPortal";
 import { api } from "../lib/api";
@@ -9,6 +9,7 @@ import {
 } from "../lib/attachments";
 import type { DetachedSession } from "../lib/detachedDraftStore";
 import { notifyNoteDraftChanged } from "../lib/detachedDraftStore";
+import { subscribeDetachedNotesAppend, type NoteAppendRequest } from "../lib/notesOpen";
 import type { NoteDraftAttachment } from "../lib/types";
 
 interface Props {
@@ -52,6 +53,15 @@ export function DetachedNotesController({ session, onDone }: Props) {
   const [acting, setActing] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [appendRequest, setAppendRequest] = useState<NoteAppendRequest | undefined>(undefined);
+
+  useEffect(
+    () =>
+      subscribeDetachedNotesAppend(session.container, session.containerId, (text) =>
+        setAppendRequest({ text, nonce: Date.now() }),
+      ),
+    [session.container, session.containerId],
+  );
 
   // The view owns the live text; mirror it here so a raw window close can still
   // persist the draft.
@@ -182,6 +192,7 @@ export function DetachedNotesController({ session, onDone }: Props) {
         uploadingAttachments={uploadingAttachments}
         attachmentsError={attachmentsError}
         rephrasedText={rephrasedText}
+        appendRequest={appendRequest}
         onTextChange={(t) => {
           latestText.current = t;
         }}

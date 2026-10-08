@@ -51,6 +51,12 @@ class MessageCreate(BaseModel):
     content: str = Field(min_length=1)
 
 
+class MessageUpdate(BaseModel):
+    """A user edit of an assistant reply (see ``edit_container_message``)."""
+
+    content: str = Field(min_length=1, max_length=200_000)
+
+
 class CompactRequest(BaseModel):
     """``/compact`` options: what the summary should focus on, if anything."""
 
@@ -127,6 +133,10 @@ class MessageRead(BaseModel):
     chat_id: int | None = None
     role: MessageRole
     content: str
+    # Edited assistant replies: the model's answer before the user's edit, and
+    # when it was edited. Both NULL for untouched messages.
+    original_content: str | None = None
+    edited_at: datetime | None = None
     # Special-row marker; "compaction" = a context-compaction summary.
     kind: str | None = None
     # The model's thinking for this assistant round, shown collapsed.
