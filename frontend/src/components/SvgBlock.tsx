@@ -93,7 +93,7 @@ export function SvgBlock({ code }: SvgBlockProps) {
   };
 
   return (
-    <div className="my-2 overflow-hidden rounded-md border border-border bg-surface">
+    <div className="my-2 overflow-hidden rounded-md border border-border bg-surface" data-copy-source={code}>
       <div className="flex items-center justify-between gap-2 border-b border-border px-2 py-1 text-xs text-muted">
         <span className="font-mono">SVG</span>
         <div className="flex items-center gap-1">

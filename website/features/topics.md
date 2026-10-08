@@ -171,6 +171,22 @@ the tool-result retention window (**Settings → System → Storage / retention*
 past it, a reply keeps its answer but loses its Thinking area — see
 [Storage & retention](/features/storage).
 
+## Copying a reply
+
+An assistant reply's hover toolbar has three copy buttons, in topics and chats:
+
+- **Copy message**: the text without the Markdown.
+- **Copy formatted** (the envelope): the reply as formatted HTML, ready to
+  paste into an email or a document. Every block carries its own spacing, so
+  paragraphs, lists, tables and code keep their layout after the email is sent.
+  Without this, Outlook on the web and the desktop app strip the spacing when
+  the message is sent. Diagrams are copied as their source, since mail clients
+  drop inline drawings.
+- **Copy raw markdown**: the Markdown source.
+
+The **Copy** button over summaries, notes and workflow outputs uses the same
+formatted copy.
+
 ## Deleting, clearing and stopping
 
 - **Delete** a message from its hover toolbar. It disappears at once, and an

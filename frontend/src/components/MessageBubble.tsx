@@ -10,6 +10,7 @@ import {
   Code2,
   Copy,
   History,
+  Mail,
   MessageSquarePlus,
   Paperclip,
   Pencil,
@@ -20,6 +21,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { api } from "../lib/api";
+import { copyFormatted } from "../lib/emailHtml";
 import { matchBuiltinCommand } from "../lib/commands";
 import { useSkills } from "../lib/skillsStore";
 import { errorNoticeBody, isErrorNotice } from "../lib/systemNotice";
@@ -114,7 +116,7 @@ export function MessageBubble({ role, content, reasoning, pending, attachments, 
   const fileAttachments = (attachments ?? []).filter((a) => !a.mime.startsWith("image/"));
   const [hover, setHover] = useState(false);
   const [expanded, setExpanded] = useState(false);
-  const [copied, setCopied] = useState<null | "text" | "md">(null);
+  const [copied, setCopied] = useState<null | "text" | "md" | "html">(null);
   const [showOriginal, setShowOriginal] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
   // Live elapsed time while this turn is in flight — runs through the whole
@@ -122,8 +124,13 @@ export function MessageBubble({ role, content, reasoning, pending, attachments, 
   // answer streams in, then is replaced by the persisted elapsed_ms.
   const liveElapsed = useStopwatch(Boolean(pending));
 
-  // Copy the rendered text (markdown stripped) or the raw markdown source.
-  // Output (assistant) bubbles expose both alongside delete.
+  // Copy the rendered text (markdown stripped), the raw markdown source, or
+  // (replies only) email-safe HTML. Output (assistant) bubbles expose these
+  // alongside delete.
+  const flashCopied = (kind: "text" | "md" | "html") => {
+    setCopied(kind);
+    window.setTimeout(() => setCopied(null), 1200);
+  };
   const copyTo = async (kind: "text" | "md") => {
     const value =
       kind === "md"
@@ -131,10 +138,14 @@ export function MessageBubble({ role, content, reasoning, pending, attachments, 
         : (contentRef.current?.textContent ?? content).trim();
     try {
       await navigator.clipboard.writeText(value);
-      setCopied(kind);
-      window.setTimeout(() => setCopied(null), 1200);
+      flashCopied(kind);
     } catch {
       // Clipboard may be unavailable (e.g. insecure context); fail silently.
+    }
+  };
+  const copyHtml = async () => {
+    if (contentRef.current && (await copyFormatted(contentRef.current, content))) {
+      flashCopied("html");
     }
   };
   const showActions =
@@ -290,6 +301,21 @@ export function MessageBubble({ role, content, reasoning, pending, attachments, 
                     <Copy size={12} />
                   )}
                 </button>
+                {role === "assistant" && (
+                  <button
+                    type="button"
+                    onClick={() => void copyHtml()}
+                    className="p-1 rounded-full text-muted hover:text-accent"
+                    aria-label="Copy formatted"
+                    data-tooltip={"Copy formatted\nKeeps its layout when pasted into an email or a document"}
+                  >
+                    {copied === "html" ? (
+                      <Check size={12} className="text-emerald-500" />
+                    ) : (
+                      <Mail size={12} />
+                    )}
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => copyTo("md")}
