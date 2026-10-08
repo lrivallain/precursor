@@ -15,6 +15,12 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **Copy a reply for email.** Assistant replies in topics and chats get a
+  **Copy formatted** button (the envelope) that copies them as email-ready
+  HTML. Each paragraph, list, table and code block carries its own spacing, so
+  the layout survives when the email is sent from Outlook (web or desktop)
+  instead of collapsing. The **Copy** button on summaries, notes and workflow
+  outputs now produces the same HTML.
 - **Edit a reply.** Fix an assistant reply in place from its toolbar (the pen)
   in topics and chats. Later turns use the edited text. The model's original
   answer is kept: an **Edited** chip under the reply shows it and restores it.

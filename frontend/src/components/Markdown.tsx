@@ -316,7 +316,7 @@ export const Markdown = memo(function Markdown({
             }
             const body = stripWarningMarker(quoteChildren);
             return (
-              <div className="my-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-amber-900 dark:text-amber-200">
+              <div data-callout="warning" className="my-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-amber-900 dark:text-amber-200">
                 <div className="flex items-start gap-2">
                   <AlertTriangle size={16} className="mt-0.5 shrink-0" />
                   <div className="min-w-0 [&>:last-child]:mb-0">{body}</div>

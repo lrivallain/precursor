@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { Check, Code2, Copy } from "lucide-react";
+import { copyFormatted } from "../lib/emailHtml";
 import { Markdown } from "./Markdown";
 
 interface Props {
@@ -9,8 +10,8 @@ interface Props {
 }
 
 /**
- * Rendered markdown with a hover toolbar to copy the content as rich HTML
- * (formatting preserved when pasted into docs/email) or as its markdown source
+ * Rendered markdown with a hover toolbar to copy the content as email-safe
+ * HTML (formatting preserved when pasted into docs/email) or as its markdown source
  * — mirroring the copy affordances on chat/topic assistant answers.
  */
 export function CopyableMarkdown({ children, className }: Props) {
@@ -24,27 +25,7 @@ export function CopyableMarkdown({ children, className }: Props) {
 
   async function copyHtml(): Promise<void> {
     const root = ref.current?.querySelector(".markdown");
-    if (!root) return;
-    // Clone and strip the code-block "Copy" buttons the renderer injects so
-    // they don't leak into the copied HTML/text.
-    const clone = root.cloneNode(true) as HTMLElement;
-    clone.querySelectorAll("button").forEach((b) => b.remove());
-    const html = clone.innerHTML;
-    try {
-      if (typeof ClipboardItem !== "undefined" && navigator.clipboard?.write) {
-        await navigator.clipboard.write([
-          new ClipboardItem({
-            "text/html": new Blob([html], { type: "text/html" }),
-            "text/plain": new Blob([children], { type: "text/plain" }),
-          }),
-        ]);
-      } else {
-        await navigator.clipboard.writeText(html);
-      }
-      flash("html");
-    } catch {
-      // Clipboard may be unavailable (e.g. insecure context); fail silently.
-    }
+    if (root && (await copyFormatted(root, children))) flash("html");
   }
 
   async function copySource(): Promise<void> {
