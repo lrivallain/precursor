@@ -7,6 +7,7 @@ import { ConversationNotes, NotesConfirmModal } from "./ConversationNotes";
 import { TranscriptMessage, TranscriptTail, UndoDeleteToasts } from "./ConversationTranscript";
 import { ResizeHandle } from "./ResizeHandle";
 import { RewindBar } from "./RewindBar";
+import { SelectionActions } from "./SelectionActions";
 import { TimelineRail } from "./TimelineRail";
 import { api } from "../lib/api";
 import { useSettings } from "../lib/settingsStore";
@@ -191,6 +192,12 @@ export function ChatSessionPanel({
           />
         )}
         <div className="relative flex min-h-0 flex-1">
+        <SelectionActions
+          scrollRef={conv.scrollRef}
+          sourceOf={(id) => conv.messages.find((m) => m.id === id)?.content}
+          onEdit={streaming ? undefined : conv.replyEdit.start}
+          onNote={(markdown) => void conv.notes.appendToPad(markdown)}
+        />
         <div ref={conv.scrollRef} onScroll={conv.onScroll} className="flex-1 overflow-y-auto p-4 pr-12 min-w-0">
           <div className="relative mx-auto space-y-3" style={{ maxWidth: chatWidth }}>
             <ResizeHandle onMouseDown={onChatResize} />
@@ -225,6 +232,7 @@ export function ChatSessionPanel({
                   !conv.timeline.view.atLatest &&
                   !conv.rewind.preview
                 }
+                replyEdit={conv.replyEdit}
               />
             ))}
             <TranscriptTail

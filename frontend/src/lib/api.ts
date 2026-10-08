@@ -273,6 +273,8 @@ function messageWindowQuery(opts?: MessageWindow): string {
 export interface ContainerApi {
   listMessages: (opts?: MessageWindow) => Promise<Message[]>;
   deleteMessage: (messageId: number) => Promise<void>;
+  /** Edit an assistant reply; sending its original text restores it. */
+  editMessage: (messageId: number, content: string) => Promise<Message>;
   /** Erase the whole transcript server-side. */
   clearMessages: () => Promise<void>;
   /**
@@ -461,6 +463,11 @@ export const api = {
       request<void>(`/api/chats/${chatId}/messages`, { method: "DELETE" }),
     deleteMessage: (chatId: number, messageId: number) =>
       request<void>(`/api/chats/${chatId}/messages/${messageId}`, { method: "DELETE" }),
+    editMessage: (chatId: number, messageId: number, content: string) =>
+      request<Message>(`/api/chats/${chatId}/messages/${messageId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ content }),
+      }),
     saveStoppedMessage: (chatId: number, turn: StoppedTurn) =>
       request<Message[]>(`/api/chats/${chatId}/messages/stopped`, {
         method: "POST",
@@ -942,6 +949,11 @@ export const api = {
       request<void>(`/api/topics/${topicId}/messages/${messageId}`, {
         method: "DELETE",
       }),
+    edit: (topicId: number, messageId: number, content: string) =>
+      request<Message>(`/api/topics/${topicId}/messages/${messageId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ content }),
+      }),
     // Persist a partial assistant reply when the user stops generation.
     saveStopped: (topicId: number, turn: StoppedTurn) =>
       request<Message[]>(`/api/topics/${topicId}/messages/stopped`, {
@@ -955,6 +967,7 @@ export const api = {
       ? {
           listMessages: (opts) => api.messages.list(id, opts),
           deleteMessage: (mid) => api.messages.remove(id, mid),
+          editMessage: (mid, content) => api.messages.edit(id, mid, content),
           clearMessages: () => api.messages.clear(id),
           saveStopped: (turn) => api.messages.saveStopped(id, turn),
           compact: (instructions) => compactContainer(`/api/topics/${id}/messages`, instructions),
@@ -977,6 +990,7 @@ export const api = {
       : {
           listMessages: (opts) => api.chats.listMessages(id, opts),
           deleteMessage: (mid) => api.chats.deleteMessage(id, mid),
+          editMessage: (mid, content) => api.chats.editMessage(id, mid, content),
           clearMessages: () => api.chats.clearMessages(id),
           saveStopped: (turn) => api.chats.saveStoppedMessage(id, turn),
           compact: (instructions) => compactContainer(`/api/chats/${id}/messages`, instructions),

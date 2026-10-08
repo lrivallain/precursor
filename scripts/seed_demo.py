@@ -812,6 +812,57 @@ async def _seed_timeline_chat(s: AsyncSession) -> None:
             await s.flush()
 
 
+_EMAIL_PROMPT = "Draft a short email telling the vendor we need the renewal quote by Friday."
+_EMAIL_ORIGINAL = (
+    "**Subject:** Renewal quote needed by Friday\n\n"
+    "Hi Dana,\n\n"
+    "I hope you're doing well. We're finalising next year's budget and need the "
+    "renewal quote for our support contract **by Friday**.\n\n"
+    "Could you include:\n\n"
+    "- the price for 50 seats,\n"
+    "- any multi-year discount.\n\n"
+    "Thanks,\nAlex"
+)
+# The user's in-place edit: a later deadline and one more line item.
+_EMAIL_EDITED = (
+    "**Subject:** Renewal quote needed by Monday\n\n"
+    "Hi Dana,\n\n"
+    "We're finalising next year's budget and need the renewal quote for our "
+    "support contract **by Monday noon**.\n\n"
+    "Could you include:\n\n"
+    "- the price for 50 seats,\n"
+    "- any multi-year discount,\n"
+    "- the premium SLA option.\n\n"
+    "Thanks,\nAlex"
+)
+
+
+async def _seed_edited_reply_chat(s: AsyncSession) -> None:
+    """A chat whose drafted email the user edited, for the reply-edit shot."""
+    chat = Chat(title="Vendor renewal email", slug="vendor-renewal-email")
+    s.add(chat)
+    await s.flush()
+    s.add(
+        Message(
+            chat_id=chat.id, role=MessageRole.USER, content=_EMAIL_PROMPT, created_at=ago(hours=3)
+        )
+    )
+    s.add(
+        Message(
+            chat_id=chat.id,
+            role=MessageRole.ASSISTANT,
+            content=_EMAIL_EDITED,
+            original_content=_EMAIL_ORIGINAL,
+            edited_at=ago(hours=2.5),
+            prompt_tokens=620,
+            completion_tokens=110,
+            model="mock",
+            created_at=ago(hours=2.9),
+        )
+    )
+    await s.flush()
+
+
 async def seed() -> None:
     await init_db()
 
@@ -1069,6 +1120,7 @@ async def seed() -> None:
         # sized against the mock model's 8k window so the stats bar reads true.
         await _seed_compacted_topic(s, platform.id)
         await _seed_timeline_chat(s)
+        await _seed_edited_reply_chat(s)
         # A topic with side chats started from it and from its replies.
         await seed_side_chats(s, platform.id)
 

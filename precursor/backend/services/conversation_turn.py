@@ -13,7 +13,7 @@ the result to an SSE generator that outlives the request-scoped session, and the
 generator persists through fresh sessions of its own.
 
 The transcript endpoints both containers expose (list, clear, delete one, save a
-stopped reply, the turn index and rewind) live here too, keyed on :data:`ContainerKind`, so the topic and
+stopped reply, edit a reply, the turn index and rewind) live here too, keyed on :data:`ContainerKind`, so the topic and
 chat routers stay one-liners over the same behaviour.
 """
 
@@ -23,7 +23,7 @@ import asyncio
 import json
 from collections.abc import AsyncIterator, Collection
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import HTTPException, status
@@ -339,6 +339,41 @@ async def delete_container_message(
     await session.delete(msg)
     await session.commit()
     await publish_container_changed(kind, container_id)
+
+
+async def edit_container_message(
+    session: AsyncSession, kind: ContainerKind, container_id: int, message_id: int, content: str
+) -> Message:
+    """Replace an assistant reply's text with the user's edit.
+
+    The first edit keeps the model's answer in ``original_content``; later
+    edits leave it alone. Saving text equal to that original is a restore and
+    drops the snapshot. Later turns read ``content``, so they see the edit.
+    """
+    msg = await session.get(Message, message_id)
+    owner = None if msg is None else (msg.topic_id if kind == "topic" else msg.chat_id)
+    if msg is None or owner != container_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Message not found")
+    if msg.role != MessageRole.ASSISTANT or msg.kind is not None:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, "Only assistant replies can be edited"
+        )
+    if not content.strip():
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "A reply can't be empty")
+    if content == msg.content:
+        return msg
+    if msg.original_content is None:
+        msg.original_content = msg.content
+    msg.content = content
+    if content == msg.original_content:
+        msg.original_content = None
+        msg.edited_at = None
+    else:
+        msg.edited_at = datetime.now(UTC)
+    await session.commit()
+    await session.refresh(msg, ["attachments", "agent_session"])
+    await publish_container_changed(kind, container_id)
+    return msg
 
 
 # Characters kept from a turn's prompt / first reply for the timeline preview.

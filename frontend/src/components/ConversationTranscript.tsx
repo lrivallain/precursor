@@ -3,6 +3,7 @@ import { CompactionMarker } from "./CompactContext";
 import { MessageBubble } from "./MessageBubble";
 import { SideChatLinks } from "./SideChatsSection";
 import { ReasoningDisclosure } from "./ReasoningDisclosure";
+import { ReplyEditor } from "./ReplyEditor";
 import { SuggestedReplies } from "./SuggestedReplies";
 import { ToolCallBubble } from "./ToolCallBubble";
 import { stripSuggestionBlock } from "../lib/suggestions";
@@ -11,6 +12,7 @@ import type { MessageDeletion, PendingDelete } from "../lib/useMessageDeletion";
 import { TURN_ANCHOR_ATTR } from "../lib/useTurnTimeline";
 import type { Message, SideChatItem } from "../lib/types";
 import type { PromptRewindActions } from "../lib/useConversation";
+import type { ReplyEditController } from "../lib/useReplyEdit";
 
 interface TranscriptMessageProps {
   message: Message;
@@ -38,6 +40,8 @@ interface TranscriptMessageProps {
   onStartSideChat?: (message: Message) => void;
   /** Side chats started from this reply, linked under it. */
   sideChats?: SideChatItem[];
+  /** In-place editing of assistant replies (also enables selection actions). */
+  replyEdit?: ReplyEditController;
 }
 
 /** One persisted-conversation row: a tool call, or a user/assistant/system bubble. */
@@ -94,6 +98,7 @@ function renderRow({
   revealActions,
   onStartSideChat,
   sideChats,
+  replyEdit,
 }: TranscriptMessageProps) {
   if (m.kind === "compaction") {
     return (
@@ -126,8 +131,10 @@ function renderRow({
   }
   const canDelete =
     !streaming && m.id > 0 && (m.role === "user" || m.role === "assistant");
-  const sideChatSource =
-    Boolean(onStartSideChat) && m.role === "assistant" && m.id > 0 && !m.kind && !m.is_error;
+  const reply = m.role === "assistant" && m.id > 0 && !m.kind && !m.is_error;
+  const sideChatSource = Boolean(onStartSideChat) && reply;
+  const editable = Boolean(replyEdit) && reply && !streaming;
+  const editing = replyEdit && replyEdit.editingId === m.id;
   return (
     <MessageBubble
       role={m.role}
@@ -147,7 +154,29 @@ function renderRow({
       onEditResend={rewindActions?.edit}
       revealActions={revealActions && Boolean(rewindActions)}
       onStartSideChat={sideChatSource ? () => onStartSideChat?.(m) : undefined}
-      quotableId={sideChatSource ? m.id : undefined}
+      quotableId={sideChatSource || (replyEdit && reply) ? m.id : undefined}
+      onEditReply={editable && !editing ? () => replyEdit?.start(m.id) : undefined}
+      editor={
+        editing ? (
+          <ReplyEditor
+            content={m.content}
+            selection={replyEdit.selection}
+            saving={replyEdit.saving}
+            error={replyEdit.error}
+            onSave={(content) => void replyEdit.save(content)}
+            onCancel={replyEdit.cancel}
+          />
+        ) : undefined
+      }
+      edited={
+        reply && m.original_content != null
+          ? {
+              at: m.edited_at,
+              original: m.original_content,
+              onRestore: editable ? () => void replyEdit?.restoreOriginal(m) : undefined,
+            }
+          : undefined
+      }
       footer={sideChats && sideChats.length > 0 ? <SideChatLinks items={sideChats} /> : undefined}
     />
   );

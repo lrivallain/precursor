@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { subscribeNoteDraftChanges } from "./detachedDraftStore";
-import { subscribeNotesOpen } from "./notesOpen";
+import { detachedDraftStore, subscribeNoteDraftChanges } from "./detachedDraftStore";
+import {
+  appendToDetachedNotes,
+  joinNote,
+  subscribeNotesOpen,
+  type NoteAppendRequest,
+} from "./notesOpen";
 import {
   splitSupportedAttachmentFiles,
   unsupportedAttachmentMessage,
@@ -24,6 +29,8 @@ export interface PendingNotes {
   acting: boolean;
   error: string | null;
   rephrasedText?: string;
+  /** Text to add to the open pad's live content (e.g. a reply excerpt). */
+  appendRequest?: NoteAppendRequest;
 }
 
 export interface NotesConfirmState {
@@ -72,6 +79,8 @@ export interface NotesDraftController {
   resolveNotesConfirm: (ok: boolean) => void;
   /** Open the notes pad and load any saved draft (the `/notes` command). */
   openNotesPad: () => Promise<void>;
+  /** Add Markdown to the notes pad, opening it (on top of any saved draft) if needed. */
+  appendToPad: (markdown: string) => Promise<void>;
   resumeSavedNotesDraft: () => Promise<void>;
   discardSavedNotesDraft: () => Promise<void>;
   uploadNoteAttachments: (files: Iterable<File>) => Promise<void>;
@@ -156,16 +165,17 @@ export function useNotesDraft({
 
   // Open the pad and hydrate it from the saved draft. `syncSaved` also refreshes
   // the saved-draft banner (used by the `/notes` command entry point).
-  async function beginPad(syncSaved: boolean): Promise<void> {
+  async function beginPad(syncSaved: boolean, append?: string): Promise<void> {
     setPendingNotes(EMPTY_PAD);
     try {
       const draftRes = await notesApi.getDraft();
       if (syncSaved) setSavedNotesDraft(toSavedDraft(draftRes));
+      const text = draftRes.text ?? "";
       setPendingNotes((p) =>
         p
           ? {
               ...p,
-              initialText: draftRes.text ?? "",
+              initialText: append ? joinNote(text, append) : text,
               attachments: draftRes.attachments,
               loadingDraft: false,
             }
@@ -179,6 +189,19 @@ export function useNotesDraft({
   }
 
   const openNotesPad = () => beginPad(true);
+
+  async function appendToPad(markdown: string): Promise<void> {
+    if (!markdown.trim()) return;
+    if (detachedDraftStore.has(container, id, "notes")) {
+      appendToDetachedNotes(container, id, markdown);
+      return;
+    }
+    if (pendingNotes && !pendingNotes.loadingDraft) {
+      setPendingNotes((p) => (p ? { ...p, appendRequest: { text: markdown, nonce: Date.now() } } : p));
+      return;
+    }
+    await beginPad(true, markdown);
+  }
   const resumeSavedNotesDraft = () => beginPad(false);
 
   useEffect(() => subscribeNotesOpen(container, id, () => void beginPad(true)), [container, id]);
@@ -337,6 +360,7 @@ export function useNotesDraft({
     notesConfirm,
     resolveNotesConfirm,
     openNotesPad,
+    appendToPad,
     resumeSavedNotesDraft,
     discardSavedNotesDraft,
     uploadNoteAttachments,

@@ -30,6 +30,7 @@ import { failedTurnUserMessageId } from "./systemNotice";
 import { useChatScroll, type ChatScroll } from "./useChatScroll";
 import type { ComposerInput } from "./useComposerInput";
 import { useMessageDeletion, type MessageDeletion } from "./useMessageDeletion";
+import { useReplyEdit, type ReplyEditController } from "./useReplyEdit";
 import {
   useNotesDraft,
   type NotesDraftController,
@@ -113,6 +114,8 @@ export interface Conversation {
     run: (instructions?: string) => Promise<void>;
   };
   notes: NotesDraftController;
+  /** In-place edits of assistant replies. */
+  replyEdit: ReplyEditController;
   reminders: RemindersController;
   /** The turn index and scroll position behind the transcript timeline rail. */
   timeline: TurnTimeline;
@@ -278,6 +281,15 @@ export function useConversation({
       void streamStore.start(streamKey, body, undefined, undefined, attachmentIds),
     onPostComment,
     systemNote,
+  });
+
+  const replyEdit = useReplyEdit({
+    resetKey: streamKey,
+    editMessage: containerApi.editMessage,
+    setPersisted,
+    confirm: (message) => confirmAction({ message, confirmLabel: "Restore original" }),
+    onSaved: onUpdated,
+    onError: (message) => systemNote(message),
   });
 
   const userHistory = useMemo(
@@ -619,6 +631,7 @@ export function useConversation({
     deletion: { pendingDeletes, requestDeleteMessage, undoDelete },
     compaction: { compacting, markerId: compactionMarkerId, run: runCompact },
     notes,
+    replyEdit,
     reminders,
     timeline,
     rewind,

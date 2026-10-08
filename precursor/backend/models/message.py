@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import enum
+from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import CheckConstraint, Enum, ForeignKey, Integer, String, Text
+from sqlalchemy import CheckConstraint, DateTime, Enum, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from precursor.backend.models.base import Base, TimestampMixin
@@ -49,6 +50,12 @@ class Message(Base, TimestampMixin):
         Enum(MessageRole, name="message_role"), nullable=False
     )
     content: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
+    # Set on the first user edit of an assistant reply: the answer as the model
+    # produced it, so the edit can be undone. ``content`` holds the edited text,
+    # which is what the model sees on later turns. Cleared on restore.
+    original_content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # For assistant turns: the model's thinking for this round, as the provider
     # streamed it (usually a summary). Display-only — history sent back to the

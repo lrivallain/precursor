@@ -98,6 +98,34 @@ to the topic as a note.
 
 <Screenshot src="/screenshots/side-chats-panel.png" alt="A topic's right panel listing three side chats with unread, reminder and activity details" caption="The topic's side chats in its right panel: unread counts, reminders and last activity at a glance." />
 
+## Editing replies
+
+When the model drafts something you want to tweak, such as an email, edit its
+reply in place rather than asking for another round. Click **Edit reply** (the
+pen) in an assistant reply's toolbar, change the Markdown, and **Save**
+(⌘/Ctrl+Enter). Esc cancels.
+
+Later turns use your version: the model sees the edited reply as its own
+answer. The original isn't lost. An **Edited** chip appears under the reply.
+Click it to show the original answer in a tinted block, and **Restore** it to
+drop your edit.
+
+<Screenshot src="/screenshots/reply-edit.png" alt="An edited email draft with its original reply shown below in an amber block, with Restore and Hide buttons" caption="An edited reply: the Edited chip opens the model's original underneath, ready to restore." />
+
+### Acting on a selection
+
+Select text inside an assistant reply and a small toolbar appears over it:
+
+- **Side chat** (topics): start a [side chat](#side-chats) quoting only the
+  selection.
+- **Edit**: open the reply editor with the selected text already selected.
+- **Note**: add the selection's **Markdown source** to the [`/notes`](#under-the-composer)
+  pad, opening it if needed. Lists, headings and code fences keep their
+  formatting. The excerpt goes below any notes already in the pad or saved draft,
+  including a popped-out notes window.
+
+Both work the same way in [chats](/features/chats).
+
 ## Scheduling & reminders
 
 Any topic can carry a **schedule** so a prompt runs on a cadence, or a one-shot

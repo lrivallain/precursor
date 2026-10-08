@@ -1037,6 +1037,32 @@ const scenes = {
     },
   },
 
+  // An edited reply with its original opened underneath. Clipped to the
+  // exchange so the sidebar persona stays out.
+  "reply-edit": {
+    viewport: { width: 1280, height: 1000 },
+    async go(page) {
+      await page.addInitScript(() => localStorage.setItem("precursor:chat-stats:collapsed", "1"));
+      await page.goto(`${BASE}/chats/vendor-renewal-email`, { waitUntil: "networkidle" });
+      await page.getByRole("button", { name: "Edited", exact: true }).click();
+      await page.getByText("Original reply", { exact: true }).waitFor();
+      await page.mouse.move(0, 0);
+      await sleep(400);
+      const top = await page.getByText("Draft a short email", { exact: false }).first().boundingBox();
+      const original = await page.getByText("Original reply", { exact: true })
+        .locator("xpath=ancestor::div[contains(@class,'border-dashed')][1]").boundingBox();
+      if (!top || !original) throw new Error("Seed the vendor-renewal-email chat first.");
+      const x = Math.max(0, Math.floor(original.x - 24));
+      const y = Math.max(0, Math.floor(top.y - 40));
+      return {
+        x,
+        y,
+        width: Math.ceil(original.width + 48),
+        height: Math.ceil(original.y + original.height + 24 - y),
+      };
+    },
+  },
+
   // A rewind being previewed: later turns dimmed under the cut line, their
   // dashes red, and the confirmation above the composer. Never confirmed, so
   // the scene can be retaken.

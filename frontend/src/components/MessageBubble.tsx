@@ -13,6 +13,7 @@ import {
   MessageSquarePlus,
   Paperclip,
   Pencil,
+  PenLine,
   RotateCcw,
   StopCircle,
   Timer,
@@ -24,7 +25,7 @@ import { useSkills } from "../lib/skillsStore";
 import { errorNoticeBody, isErrorNotice } from "../lib/systemNotice";
 import type { Attachment, MessageRole, Skill } from "../lib/types";
 import { Markdown } from "./Markdown";
-import { MessageMeta } from "./MessageMeta";
+import { MessageMeta, formatTimestamp } from "./MessageMeta";
 import { ReasoningDisclosure } from "./ReasoningDisclosure";
 
 interface Props {
@@ -68,8 +69,14 @@ interface Props {
   onStartSideChat?: () => void;
   /** Rendered under the bubble's meta row (e.g. links to side chats). */
   footer?: ReactNode;
-  /** Marks the content as a reply a side chat can quote (see SelectionSideChat). */
+  /** Marks the content as a reply selection actions can act on (see SelectionActions). */
   quotableId?: number;
+  /** Assistant replies: edit this reply in place. */
+  onEditReply?: () => void;
+  /** Replaces the rendered content while the reply is being edited. */
+  editor?: ReactNode;
+  /** Set when the user edited this reply: the model's original, restorable. */
+  edited?: { at?: string | null; original: string; onRestore?: () => void };
 }
 
 const roleLabel: Record<MessageRole, string> = {
@@ -94,7 +101,7 @@ function matchSkillInvocation(
   return { skill, argument: (m[2] ?? "").trim() };
 }
 
-export function MessageBubble({ role, content, reasoning, pending, attachments, onDelete, onStop, collapsible, agentSessionId, createdAt, model, elapsedMs, isError, onRetry, highlighted, onRewindHere, onEditResend, revealActions, onStartSideChat, footer, quotableId }: Props) {
+export function MessageBubble({ role, content, reasoning, pending, attachments, onDelete, onStop, collapsible, agentSessionId, createdAt, model, elapsedMs, isError, onRetry, highlighted, onRewindHere, onEditResend, revealActions, onStartSideChat, footer, quotableId, onEditReply, editor, edited }: Props) {
   const isUser = role === "user";
   const skills = useSkills();
   const skillInvocation =
@@ -108,6 +115,7 @@ export function MessageBubble({ role, content, reasoning, pending, attachments, 
   const [hover, setHover] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState<null | "text" | "md">(null);
+  const [showOriginal, setShowOriginal] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
   // Live elapsed time while this turn is in flight — runs through the whole
   // pending phase so it counts up during "Thinking…" and keeps ticking as the
@@ -130,7 +138,7 @@ export function MessageBubble({ role, content, reasoning, pending, attachments, 
     }
   };
   const showActions =
-    !pending && !!content && (role === "assistant" || isUser || onDelete);
+    !pending && !editor && !!content && (role === "assistant" || isUser || onDelete);
 
   // SYSTEM rows are out-of-band notices. An *acknowledgement* (e.g. "Run now
   // accepted") reads as a compact green confirmation; a *failure* (a provider
@@ -308,6 +316,17 @@ export function MessageBubble({ role, content, reasoning, pending, attachments, 
                 <MessageSquarePlus size={12} />
               </button>
             )}
+            {onEditReply && (
+              <button
+                type="button"
+                onClick={onEditReply}
+                className="p-1 rounded-full text-muted hover:text-accent"
+                aria-label="Edit reply"
+                data-tooltip={"Edit reply\nLater turns use your version; the original stays restorable"}
+              >
+                <PenLine size={12} />
+              </button>
+            )}
             {onRewindHere && (
               <button
                 type="button"
@@ -381,6 +400,8 @@ export function MessageBubble({ role, content, reasoning, pending, attachments, 
             name={builtinCommand.name}
             argument={builtinCommand.argument}
           />
+        ) : editor ? (
+          editor
         ) : (
           <>
             {imageAttachments.length > 0 && (
@@ -423,7 +444,7 @@ export function MessageBubble({ role, content, reasoning, pending, attachments, 
               </div>
             )}
             <div ref={contentRef} data-reply-id={quotableId}>
-              <Markdown className="text-sm leading-relaxed">
+              <Markdown className="text-sm leading-relaxed" sourceAnnotated={quotableId != null}>
                 {content || "\u200B"}
               </Markdown>
             </div>
@@ -454,14 +475,81 @@ export function MessageBubble({ role, content, reasoning, pending, attachments, 
         )}
       </div>
       {!pending && (role === "user" || role === "assistant") && (
-        <MessageMeta
-          createdAt={createdAt}
-          model={role === "assistant" ? model : null}
-          elapsedMs={role === "assistant" ? elapsedMs : null}
-          align={isUser ? "end" : "start"}
+        <div className="flex items-center gap-1.5">
+          <MessageMeta
+            createdAt={createdAt}
+            model={role === "assistant" ? model : null}
+            elapsedMs={role === "assistant" ? elapsedMs : null}
+            align={isUser ? "end" : "start"}
+          />
+          {edited && (
+            <button
+              type="button"
+              onClick={() => setShowOriginal((v) => !v)}
+              aria-expanded={showOriginal}
+              className="inline-flex items-center gap-1 rounded-full border border-border px-1.5 py-0.5 text-[10px] font-medium text-muted hover:border-accent hover:text-accent"
+              data-tooltip={`Edited${edited.at ? ` ${formatTimestamp(edited.at)}` : ""}\n${showOriginal ? "Hide" : "Show"} the original reply`}
+            >
+              <PenLine size={10} />
+              Edited
+            </button>
+          )}
+        </div>
+      )}
+      {edited && showOriginal && (
+        <OriginalReply
+          original={edited.original}
+          onRestore={edited.onRestore}
+          onHide={() => setShowOriginal(false)}
         />
       )}
       {footer}
+    </div>
+  );
+}
+
+/** The model's answer before the user edited it, with a way back to it. */
+function OriginalReply({
+  original,
+  onRestore,
+  onHide,
+}: {
+  original: string;
+  onRestore?: () => void;
+  onHide: () => void;
+}) {
+  return (
+    <div className="max-w-full rounded-lg border border-dashed border-amber-500/50 bg-amber-500/10 px-3 py-2">
+      <div className="mb-1.5 flex items-center gap-2 text-[11px] text-amber-800 dark:text-amber-300">
+        <PenLine size={11} className="shrink-0" />
+        <span className="font-semibold uppercase tracking-wide">Original reply</span>
+        <span className="text-amber-800/80 dark:text-amber-300/80">
+          before your edit, no longer sent to the model
+        </span>
+        <span className="ml-auto flex items-center gap-1">
+          {onRestore && (
+            <button
+              type="button"
+              onClick={onRestore}
+              className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-bg hover:text-accent"
+              data-tooltip="Put this version back and drop your edit"
+            >
+              <RotateCcw size={11} />
+              Restore
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onHide}
+            className="rounded px-1.5 py-0.5 hover:bg-bg hover:text-text"
+          >
+            Hide
+          </button>
+        </span>
+      </div>
+      <div className="text-text/70">
+        <Markdown className="text-sm leading-relaxed">{original}</Markdown>
+      </div>
     </div>
   );
 }
