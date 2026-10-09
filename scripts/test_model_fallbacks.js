@@ -355,8 +355,7 @@ async function main() {
     assert.ok(configuredMenuBox && configuredHeaderBox && configuredHeaderBox.y >= configuredMenuBox.y && configuredHeaderBox.y < configuredMenuBox.y + configuredMenuBox.height, "Configured Presets start at the top, not scrolled away to the catalogue model");
     assert.equal(await composerMenu.locator('[data-menu-category="Efficiency"]').count(), 1);
     assert.equal(await composerMenu.locator('[data-menu-category="Balanced"]').count(), 1);
-    assert.equal(await composerMenu.locator('[data-menu-category="Intelligence"]').count(), 1, "Empty categories stay discoverable");
-    assert.match(await composerMenu.getByRole("group", { name: "Presets - Intelligence", exact: true }).innerText(), /Not configured/);
+    assert.equal(await composerMenu.locator('[data-menu-category="Intelligence"]').count(), 0, "Unconfigured categories are hidden");
     await composerMenu.getByRole("textbox", { name: "Filter models…" }).fill("Balanced");
     const beforeChatPreset = writes.length;
     await composerMenu.getByRole("textbox", { name: "Filter models…" }).press("Enter");
@@ -384,7 +383,7 @@ async function main() {
     const agentMenu = page.getByRole("listbox", { name: "Agent model", exact: true });
     assert.equal(await agentMenu.locator('[data-menu-parent="Presets"]').count(), 1);
     assert.equal(await agentMenu.locator('[data-menu-category="Efficiency"]').count(), 1);
-    assert.equal(await agentMenu.getByRole("group", { name: "Presets - Balanced", exact: true }).getByRole("option").count(), 0, "Chat presets do not leak into SDK menus");
+    assert.equal(await agentMenu.locator('[data-menu-category="Balanced"]').count(), 0, "Chat presets do not leak into SDK menus");
     await agentMenu.getByRole("textbox", { name: "Filter models…" }).fill("Presets");
     assert.equal(await agentMenu.getByRole("option").count(), 1, "The parent group can be searched");
     const beforeAgentPreset = writes.length;
@@ -396,8 +395,14 @@ async function main() {
     }, "An SDK preset applies model, effort and context tier atomically");
     assert.equal(state.llm_model, "model-a", "An agent preset does not change chat configuration");
     assert.deepEqual(state.model_fallbacks, saved, "Selecting presets never changes the preset definitions");
+    const beforeManage = writes.length;
+    await agentModel.click();
+    await agentMenu.getByRole("button", { name: "Manage presets in Settings...", exact: true }).click();
+    await page.getByRole("heading", { name: "Model alternatives", exact: true }).waitFor();
+    assert.equal(writes.length, beforeManage, "Managing existing presets only opens Settings");
+    await page.getByRole("button", { name: "Close", exact: true }).click();
     state.model_fallbacks = {};
-    const beforeEmptySetup = writes.length;
+    const beforeEmptyMenus = writes.length;
     for (const [route, label] of [
       [`/chats/regex-for-semver-tags`, "Model"],
       [`/topics/onboarding-checklist`, "Model"],
@@ -407,22 +412,14 @@ async function main() {
       await page.reload({ waitUntil: "networkidle" });
       await page.getByRole("button", { name: label, exact: true }).click();
       const menu = page.getByRole("listbox", { name: label, exact: true });
-      const menuBox = await menu.boundingBox();
-      const headerBox = await menu.locator('[data-menu-parent="Presets"]').boundingBox();
-      assert.ok(menuBox && headerBox && headerBox.y >= menuBox.y && headerBox.y < menuBox.y + menuBox.height, "Presets is visible without scrolling even with no saved profiles");
-      for (const category of ["Efficiency", "Balanced", "Intelligence"]) {
-        const group = menu.getByRole("group", { name: `Presets - ${category}`, exact: true });
-        assert.match(await group.innerText(), /Not configured/);
-        assert.equal(await group.getByRole("option").count(), 0);
-      }
-      await menu.getByRole("button", { name: "Manage presets in Settings...", exact: true }).click();
-      await page.getByRole("heading", { name: "Model alternatives", exact: true }).waitFor();
-      assert.match(await chatScope.innerText(), /Not configured/);
-      assert.match(await agentScope.innerText(), /Not configured/);
-      assert.equal(writes.length, beforeEmptySetup, "Opening preset setup never creates or saves a configuration automatically");
-      await page.getByRole("button", { name: "Close", exact: true }).click();
+      assert.equal(await menu.locator('[data-menu-parent="Presets"]').count(), 0, "Presets group is absent without configured profiles");
+      assert.equal(await menu.locator("[data-menu-category]").count(), 0);
+      assert.equal(await menu.getByRole("button", { name: "Manage presets in Settings...", exact: true }).count(), 0);
+      assert.ok(await menu.getByRole("option").count() > 0, "Ordinary catalogue models remain available");
+      assert.equal(writes.length, beforeEmptyMenus);
+      await page.keyboard.press("Escape");
     }
-    console.log("Model alternatives UI: preset selection and empty-category discovery in chat/topics/agents, Settings setup link, modal drafts, keyboard, health and persistence passed.");
+    console.log("Model alternatives UI: configured-only presets in chat/topics/agents, atomic selection, management link, modal drafts, keyboard, health and persistence passed.");
   } finally {
     await browser.close();
   }

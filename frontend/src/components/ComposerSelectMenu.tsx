@@ -14,7 +14,6 @@ export interface MenuOption {
 export interface MenuGroup {
   label?: string;
   parentLabel?: string;
-  emptyHint?: string;
   options: MenuOption[];
 }
 
@@ -158,10 +157,9 @@ export function ComposerSelectMenu({
                   o.label.toLowerCase().includes(q) || o.value.toLowerCase().includes(q) || o.searchText?.toLowerCase().includes(q),
               ),
         }))
-        .filter((g) => g.options.length > 0 || (g.emptyHint && (g.label?.toLowerCase().includes(q) || g.parentLabel?.toLowerCase().includes(q))))
+        .filter((g) => g.options.length > 0)
     : groups;
   const hasOptions = visibleGroups.some((g) => g.options.length > 0);
-  const hasHints = visibleGroups.some((g) => Boolean(g.emptyHint));
   const customValue = query.trim();
   const canUseCustomValue = Boolean(
     onCustomValue && customValue && !groups.some((g) => g.options.some((o) => o.value === customValue)),
@@ -227,25 +225,22 @@ export function ComposerSelectMenu({
             </div>
           )}
           <div ref={optionsRef} className="max-h-72 min-h-0 overflow-y-auto">
-            {!hasOptions && !hasHints && !canUseCustomValue && (
+            {!hasOptions && !canUseCustomValue && (
               <div className="px-2 py-1.5 text-xs text-muted">
                 {q ? "No match" : (emptyHint ?? "No options")}
               </div>
             )}
             {visibleGroups.map((group, gi) => (
               <div key={`${group.parentLabel ?? ""}:${group.label ?? gi}`} role={group.label ? "group" : undefined} aria-label={group.label ? `${group.parentLabel ? `${group.parentLabel} - ` : ""}${group.label}` : undefined}>
-                {group.parentLabel && (group.options.length > 0 || group.emptyHint) && visibleGroups[gi - 1]?.parentLabel !== group.parentLabel && (
+                {group.parentLabel && group.options.length > 0 && visibleGroups[gi - 1]?.parentLabel !== group.parentLabel && (
                   <div className="px-2 pb-1 pt-1.5 text-[10px] font-medium uppercase tracking-wide text-muted" data-menu-parent={group.parentLabel}>
                     {group.parentLabel}
                   </div>
                 )}
-                {group.label && (group.options.length > 0 || group.emptyHint) && (
+                {group.label && group.options.length > 0 && (
                   <div className={group.parentLabel ? "px-3 pb-1 pt-1 text-[11px] font-medium text-text" : "px-2 pb-1 pt-1.5 text-[10px] font-medium uppercase tracking-wide text-muted"} data-menu-category={group.parentLabel ? group.label : undefined}>
                     {group.label}
                   </div>
-                )}
-                {group.emptyHint && group.options.length === 0 && (
-                  <div className="px-3 pb-2 text-[11px] text-muted">{group.emptyHint}</div>
                 )}
                 {group.options.map((opt) => {
                   const selected = opt.value === value;

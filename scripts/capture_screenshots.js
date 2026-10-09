@@ -914,26 +914,6 @@ const scenes = {
     },
   },
 
-  "model-presets-empty": {
-    viewport: { width: 1440, height: 1000 },
-    async go(page) {
-      await scenes["model-alternatives"].go(page);
-      await page.getByRole("button", { name: "Close", exact: true }).click();
-      await page.route("**/api/settings", async (route) => {
-        if (route.request().method() !== "GET") return route.fallback();
-        const response = await route.fetch();
-        const settings = await response.json();
-        await route.fulfill({ response, json: { ...settings, model_fallbacks: {}, llm_model: "claude-haiku-4.5" } });
-      });
-      await page.goto(`${BASE}/chats/regex-for-semver-tags`, { waitUntil: "networkidle" });
-      await page.getByRole("button", { name: "Model", exact: true }).click();
-      await page.getByRole("listbox", { name: "Model", exact: true }).waitFor();
-      await page.mouse.move(0, 0);
-      await sleep(200);
-      return clipOf(page, '[role="listbox"][aria-label="Model"]', 12);
-    },
-  },
-
   // Settings → Model: the OpenAI-compatible endpoint, switched on. The Guest
   // demo has no provider to relay to, so the switch, key and catalogue are
   // fixtures — never a real key.

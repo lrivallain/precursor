@@ -30,8 +30,8 @@ are the per-version history; releasing does not rewrite this file.
   Prompt model dropdowns also expose **Presets** with Efficiency, Balanced and
   Intelligence subcategories; choosing a profile applies its model, effort and
   context together within the correct chat/provider or SDK scope.
-  Empty categories remain visible as **Not configured**, with a **Manage presets
-  in Settings...** shortcut instead of hiding the Presets group on fresh installs.
+  Unconfigured categories are hidden; without saved presets for the current
+  provider/runtime, the Presets group is omitted.
   Category and configuration badges check provider/SDK catalogues, with per-preset
   warnings for unlisted models, incomplete/duplicate profiles and advertised
   effort/window mismatches. Missing credentials or unavailable catalogues remain
