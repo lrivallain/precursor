@@ -82,8 +82,14 @@ Alternatives never switch provider or credentials.
 
 The prompt's model dropdown includes a **Presets** group, with **Efficiency**,
 **Balanced** and **Intelligence** subcategories for the presets you configured.
-Empty categories are omitted. Chat/topic composers use the selected provider's
-presets; agent composers use the independent Copilot SDK presets.
+The group is visible even on a fresh install: empty categories say **Not
+configured**, rather than disappearing. Chat/topic composers use the selected
+provider's presets; agent composers use the independent Copilot SDK presets.
+
+If the categories are empty, choose **Manage presets in Settings...** in the
+dropdown to open **Settings -> Model**, then **Manage presets**. Add the profiles,
+**Apply to settings**, and **Save** in Settings. Applying only the modal draft
+does not persist it. The setup shortcut never creates or saves presets itself.
 
 Select a preset to apply its **model, effort and context together** in one
 settings update. Chat presets set the input-token budget; SDK presets set the
@@ -97,6 +103,8 @@ their category can still recover using its listed alternatives. Selecting a
 profile never modifies its definition or crosses providers/runtimes.
 
 <Screenshot src="/screenshots/model-presets.png" alt="Prompt model dropdown with a Presets group and Efficiency, Balanced and Intelligence subcategories" caption="Choose a configured model, effort and context as one profile directly from the prompt." />
+
+<Screenshot src="/screenshots/model-presets-empty.png" alt="Preset categories visible as Not configured, with a setup shortcut" caption="Presets remain discoverable before configuration. The shortcut opens Settings; nothing is populated automatically." />
 
 #### Editing preset definitions
 

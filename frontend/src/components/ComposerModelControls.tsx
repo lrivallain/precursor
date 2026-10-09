@@ -4,6 +4,7 @@ import { modelsStore, useCurrentModel, useModelsVersion } from "../lib/modelsSto
 import { settingsStore, useSettings } from "../lib/settingsStore";
 import type { AgentModelInfo, LLMModel } from "../lib/types";
 import { matchingModelPreset, modelPresetMenuEntries, MODEL_PRESET_CATEGORIES, type ModelPresetMenuEntry } from "../lib/modelPresetMenus";
+import { openModelPresetSettings } from "../lib/modelPresetSettingsOpen";
 import { ComposerSelectMenu, type MenuGroup, type MenuOption } from "./ComposerSelectMenu";
 
 const EFFORT_LABELS: Record<string, string> = {
@@ -46,6 +47,7 @@ function presetModelGroups(entries: ModelPresetMenuEntry[], models: { id: string
   return MODEL_PRESET_CATEGORIES.map((category) => ({
     parentLabel: "Presets",
     label: category.label,
+    emptyHint: "Not configured",
     options: entries.filter((entry) => entry.category === category.id).map(({ value, preset }) => {
       const model = models.find((model) => model.id === preset.model);
       const context = agents
@@ -58,7 +60,7 @@ function presetModelGroups(entries: ModelPresetMenuEntry[], models: { id: string
         searchText: preset.model,
       };
     }),
-  })).filter((group) => group.options.length > 0);
+  }));
 }
 
 // Ascending list of the (up to three) context-budget values offered for a model
@@ -209,6 +211,8 @@ function LlmModelControls() {
         emptyHint="No model catalog — set one in Settings."
         disabled={saving}
         filterPlaceholder="Filter models…"
+        scrollToSelected={false}
+        footerAction={{ label: "Manage presets in Settings...", onSelect: openModelPresetSettings }}
         onOpen={() => void modelsStore.ensureLoaded()}
         onSelect={onModelChange}
       />
@@ -344,6 +348,8 @@ function AgentModelControls() {
         menuMinWidthClass="min-w-[18rem]"
         disabled={saving}
         filterPlaceholder="Filter models…"
+        scrollToSelected={false}
+        footerAction={{ label: "Manage presets in Settings...", onSelect: openModelPresetSettings }}
         onSelect={onModelChange}
       />
       {supportedEfforts.length > 0 && (
