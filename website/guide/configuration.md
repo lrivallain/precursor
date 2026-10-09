@@ -52,18 +52,27 @@ or credentials.
 three categories: **Efficiency** (fast, economical tasks), **Balanced** (everyday
 work), and **Intelligence** (complex reasoning). Nothing is configured by default.
 
-<Screenshot src="/screenshots/model-alternatives.png" alt="Separate Chat and live and Agents and workflows configuration cards, with their own preset counts" caption="Two independent configurations: set up both to cover chat and agent tasks. Each card shows its own status; the selected card's presets are edited below." />
+<Screenshot src="/screenshots/model-alternatives.png" alt="Compact model alternative summary with configuration counts and an overall catalogue check" caption="Settings keeps just configuration presence and the overall check. Manage presets opens the focused editor; Review configuration goes directly to a problem." />
 
-Two configuration cards are always visible: **Chat & live** (the selected
-provider) and **Agents & workflows** (Copilot SDK). Each shows its own preset
-count, or **Not configured** when empty. Click a card to edit its presets below;
-the other card stays visible so you can see whether it also needs configuring.
-The cards sit side by side in wide panes and stack in narrow ones. On small
-screens, Settings uses a labelled, icon-only navigation rail to leave room for
-the configuration editor.
+Settings shows a compact summary: **Chat & live** and **Agents & workflows**
+each have a preset/category count, or **Not configured** when empty. Below them
+is the overall **Check models** result. **Review configuration** appears when a
+preset or provider setup needs attention and opens the affected category directly.
+
+**Manage presets** opens a dedicated modal with all six configurations visible
+at once: Efficiency/Balanced/Intelligence are rows, and Chat & live / Agents &
+workflows are columns. Each cell shows its preset count and catalogue health.
+Click a cell to edit only that list below the overview. Model, effort and context
+are compact columns in wide panes and stacked fields on narrow screens. Both
+runtime columns remain visible in the overview.
+
+<Screenshot src="/screenshots/model-alternatives-editor.png" alt="Dedicated preset editor with a category by runtime overview and a single compact preset list" caption="See coverage across both runtimes, then edit one short list. Apply to settings transfers your changes to the Settings draft; Cancel discards modal edits." />
 
 They are independent scopes: configure both to cover both chat and agent tasks,
-or just the surface you use. **Save** applies both configurations together.
+or just the surface you use. Presets remain independent even when both use the
+same Copilot subscription. **Apply to settings** updates the Settings draft
+without saving it; **Save** in Settings persists both configurations together.
+**Cancel**, the modal's close button and Escape discard only the modal's edits.
 Topics/chats, live analysis and summaries use the provider scope;
 agents and workflow steps use the SDK scope, even when both use the same
 GitHub Copilot subscription. Each has its own categories and context controls.
@@ -77,9 +86,12 @@ remain selectable under **Saved model ids**. To enter a deployment or retired
 id manually, type it in the dropdown search and choose **Use model id** (or
 press Enter when no catalogue entry matches).
 Set each preset's effort and context, move it up or down to control priority,
-then **Save**. Remove every preset to restore existing behaviour.
+then **Apply to settings** and **Save** in Settings. Remove every preset to
+restore existing behaviour. The shared dropdowns stay above the editor, and
+Escape closes an open dropdown before it closes the modal.
 
-Each category and configuration card now shows a catalogue-check status:
+Each category/runtime cell in the modal shows a catalogue-check status;
+Settings shows an aggregate of the configured runtimes:
 
 | Status | Meaning |
 | --- | --- |
@@ -91,7 +103,8 @@ Each category and configuration card now shows a catalogue-check status:
 
 **Check models** rereads both catalogues without sending inference requests or
 saving settings. Checks also run when the settings load, and unsaved edits
-update the warnings immediately. Category badges include listed counts when
+update the modal warnings immediately. Settings continues to show the applied
+draft until you Apply the modal's changes. Category badges include listed counts when
 some presets need review; if no listed alternative remains, the category warns
 you explicitly. Switching providers discards the previous catalogue's result.
 Unavailable catalogues never turn all saved models into "missing" models.

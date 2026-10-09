@@ -81,8 +81,8 @@ the cut stay in the agent's context.
 
 Optional [model alternatives](/guide/configuration#optional-model-alternatives)
 under **Settings -> Model** give agents and workflow steps ordered
-Efficiency/Balanced/Intelligence presets. Select the **Agents & workflows**
-configuration card (Copilot SDK): **Chat & live** presets do not apply to these runs, even
+Efficiency/Balanced/Intelligence presets. Open **Manage presets** and select the
+category under **Agents & workflows** (Copilot SDK): **Chat & live** presets do not apply to these runs, even
 when both use your Copilot subscription.
 
 A missing model or rejected effort/context can switch to a same-category preset

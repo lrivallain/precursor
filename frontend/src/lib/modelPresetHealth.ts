@@ -101,3 +101,19 @@ export function summarizePresets(checks: PresetHealth[], catalog: CatalogCheck):
   if (catalog.state !== "ready") return { ...base, state: "unverified", label: "Not checked", detail: catalog.detail };
   return { ...base, state: "valid", label: `${listed}/${total} listed`, detail: "All preset model ids are listed. Catalogue membership does not guarantee a successful inference request." };
 }
+
+export function summarizePresetConfigurations(configurations: { label: string; checks: PresetHealth[]; catalog: CatalogCheck }[]): PresetSummary {
+  const active = configurations.filter((configuration) => configuration.checks.length > 0);
+  const total = active.reduce((sum, configuration) => sum + configuration.checks.length, 0);
+  const listed = active.reduce((sum, configuration) => sum + configuration.checks.filter((check) => check.listed).length, 0);
+  const review = active.reduce((sum, configuration) => sum + configuration.checks.filter((check) => check.issues.length).length, 0);
+  const summaries = active.map((configuration) => summarizePresets(configuration.checks, configuration.catalog));
+  const detail = active.map((configuration, index) => `${configuration.label}: ${summaries[index].detail}`).join("\n");
+  const base = { total, listed, detail };
+  if (!total) return { ...base, state: "empty", label: "Not configured", detail: "No model alternatives are configured. Both runtimes are optional." };
+  if (review) return { ...base, state: "review", label: `${review} ${review === 1 ? "preset needs" : "presets need"} review` };
+  if (summaries.some((summary) => summary.state === "checking")) return { ...base, state: "checking", label: "Checking..." };
+  if (summaries.some((summary) => summary.state === "setup")) return { ...base, state: "setup", label: "Setup required" };
+  if (summaries.some((summary) => summary.state === "unverified")) return { ...base, state: "unverified", label: "Checks incomplete" };
+  return { ...base, state: "valid", label: `${listed}/${total} model ids listed` };
+}

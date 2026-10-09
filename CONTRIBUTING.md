@@ -116,6 +116,8 @@ node --experimental-strip-types --test scripts/test_model_preset_health.js # Nod
 The browser suite mocks catalogue/credential metadata and never provisions the
 SDK, sends inference or writes real settings. It covers provider/SDK isolation,
 valid/review/unverified states, search, keyboard, mobile layout and persistence.
+It also covers the focused modal's Apply/Cancel draft isolation, aggregate
+checks, direct review navigation, nested Escape and keyboard-focus containment.
 
 The suite is hermetic: the root `conftest.py` points the app at a throwaway
 database, skills and data directory, and keeps the LLM provider on the offline

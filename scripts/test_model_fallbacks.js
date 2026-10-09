@@ -63,17 +63,33 @@ async function main() {
         : { json: catalog });
     });
     await page.goto(`${BASE}/`, { waitUntil: "networkidle" });
+    const summary = page.locator("[data-model-fallback-settings]");
+    const editor = page.getByRole("dialog", { name: "Manage model alternatives", exact: true });
+    const cell = (runtime, category) => page.getByRole("button", { name: `Edit ${runtime} ${category}`, exact: true });
+    const selectCell = async (runtime, category) => cell(runtime, category).click();
+    const openEditor = async (review = false) => {
+      await page.getByRole("button", { name: review ? "Review configuration" : "Manage presets", exact: true }).click();
+      await editor.waitFor();
+      assert.equal(await page.locator('[aria-labelledby="settings-panel-title"]').getAttribute("inert"), "", "Parent Settings is inert while the editor is open");
+    };
+    const closeEditor = async (apply = false) => {
+      await editor.getByRole("button", { name: apply ? "Apply to settings" : "Cancel", exact: true }).click();
+      await editor.waitFor({ state: "hidden" });
+      assert.equal(await page.locator('[aria-labelledby="settings-panel-title"]').getAttribute("inert"), null);
+    };
     const open = async () => {
       await page.locator('[data-tooltip="Settings"]').first().click();
       await page.getByRole("button", { name: "Model", exact: true }).click();
       await page.getByRole("heading", { name: "Model alternatives", exact: true }).waitFor();
+      await openEditor();
     };
-    const category = (label) => page.locator("[data-model-fallback-category]")
-      .filter({ has: page.getByRole("heading", { name: label, exact: true }) });
-    const chatScope = page.getByRole("button", { name: "Configure chat and live model alternatives" });
-    const agentScope = page.getByRole("button", { name: "Configure agent and workflow model alternatives" });
+    const category = (label) => editor.locator(`[data-model-fallback-category="${label.toLowerCase()}"]`);
+    const chatScope = page.locator('[data-model-fallback-summary="provider"]');
+    const agentScope = page.locator('[data-model-fallback-summary="agents"]');
     const scope = async (label) => {
-      await page.getByRole("button", { name: label, exact: true }).click();
+      const active = await editor.locator("[data-model-fallback-category]").getAttribute("data-model-fallback-category");
+      const category = active.charAt(0).toUpperCase() + active.slice(1);
+      await selectCell(label.includes("agent and") ? "Agents & workflows" : "Chat & live", category);
     };
     const modelPicker = (label) => page.getByRole("button", { name: label, exact: true });
     const chooseModel = async (label, id, custom = false) => {
@@ -87,21 +103,33 @@ async function main() {
     await open();
     await category("Efficiency").locator('[data-preset-health="valid"]').first().waitFor();
     assert.equal(await category("Efficiency").getAttribute("data-category-health"), "valid");
-    assert.match(await category("Efficiency").innerText(), /2\/2 listed/);
-    assert.equal(await category("Balanced").getAttribute("data-category-health"), "empty");
+    assert.match(await cell("Chat & live", "Efficiency").innerText(), /2\/2 listed/);
+    assert.equal(await cell("Chat & live", "Balanced").getAttribute("data-category-health"), "empty");
     assert.equal(await chatScope.count(), 1);
     assert.equal(await agentScope.count(), 1);
     assert.match(await chatScope.innerText(), /2 presets/);
     assert.match(await agentScope.innerText(), /Not configured/);
-    assert.equal(await chatScope.getAttribute("aria-pressed"), "true");
-    assert.equal(await agentScope.getAttribute("aria-pressed"), "false");
-    assert.equal(await page.getByRole("heading", { name: "Chat & live presets", exact: true }).count(), 1);
+    assert.equal(await cell("Chat & live", "Efficiency").getAttribute("aria-pressed"), "true");
+    assert.equal(await cell("Agents & workflows", "Efficiency").getAttribute("aria-pressed"), "false");
+    assert.equal(await editor.locator("[data-model-fallback-cell]").count(), 6);
+    assert.equal(await page.getByRole("heading", { name: "Efficiency / Chat & live", exact: true }).count(), 1);
     // Native button keyboard activation edits the independent SDK configuration.
-    await agentScope.focus();
+    await cell("Agents & workflows", "Efficiency").focus();
     await page.keyboard.press("Enter");
-    assert.equal(await agentScope.getAttribute("aria-pressed"), "true");
-    assert.equal(await page.getByRole("heading", { name: "Agent & workflow presets", exact: true }).count(), 1);
-    await chatScope.click();
+    assert.equal(await cell("Agents & workflows", "Efficiency").getAttribute("aria-pressed"), "true");
+    assert.equal(await page.getByRole("heading", { name: "Efficiency / Agents & workflows", exact: true }).count(), 1);
+    await selectCell("Chat & live", "Efficiency");
+    // Cancel and Escape discard only the child draft and restore parent focus.
+    await category("Efficiency").getByRole("button", { name: "Add preset", exact: true }).click();
+    await closeEditor();
+    assert.match(await chatScope.innerText(), /2 presets/);
+    await openEditor();
+    assert.equal(await category("Efficiency").locator("[data-preset-health]").count(), 2);
+    await page.keyboard.press("Escape");
+    await editor.waitFor({ state: "hidden" });
+    assert.equal(await page.getByRole("dialog", { name: "Settings", exact: true }).count(), 1);
+    assert.equal(await page.getByRole("button", { name: "Manage presets", exact: true }).evaluate((element) => element === document.activeElement), true);
+    await openEditor();
     await modelPicker("Efficiency model 1").click();
     const firstMenu = page.getByRole("listbox", { name: "Efficiency model 1", exact: true });
     await firstMenu.getByRole("textbox", { name: "Filter models…" }).fill("Anthropic");
@@ -109,7 +137,7 @@ async function main() {
     assert.equal(await firstMenu.getByRole("option", { name: "Model B", exact: true }).count(), 0);
     await firstMenu.getByRole("textbox", { name: "Filter models…" }).press("Escape");
     await firstMenu.waitFor({ state: "hidden" });
-    assert.equal(await page.getByRole("dialog").count(), 1, "Escape closes only the model menu, not Settings");
+    assert.equal(await editor.count(), 1, "Escape closes only the model menu, not the preset editor");
     assert.equal(await modelPicker("Efficiency model 1").evaluate((el) => el === document.activeElement), true);
     await chooseModel("Efficiency model 1", "retired-id", true);
     assert.equal(await category("Efficiency").getAttribute("data-category-health"), "review");
@@ -122,6 +150,7 @@ async function main() {
     assert.equal(await modelPicker("Efficiency model 2").innerText(), "Model C");
     await chooseModel("Efficiency model 2", "replacement-id", true);
     await page.getByLabel("Efficiency context 2", { exact: true }).fill("64000");
+    await selectCell("Chat & live", "Balanced");
     await category("Balanced").getByRole("button", { name: "Add current selection" }).click();
     assert.equal(await modelPicker("Balanced model 1").innerText(), "Model A");
     assert.equal(await category("Balanced").getAttribute("data-category-health"), "valid");
@@ -131,18 +160,34 @@ async function main() {
     assert.match(await category("Balanced").innerText(), /between 1,000 and 5,000,000/);
     await page.getByLabel("Balanced context 1", { exact: true }).fill("128000");
     assert.equal(await category("Balanced").getAttribute("data-category-health"), "valid");
-    await scope("Configure agent and workflow model alternatives");
+    await selectCell("Agents & workflows", "Efficiency");
     await category("Efficiency").getByRole("button", { name: "Add current selection" }).click();
     assert.equal(await modelPicker("Efficiency model 1").innerText(), "Model B");
     await chooseModel("Efficiency model 1", "model-c");
     assert.equal(await modelPicker("Efficiency model 1").innerText(), "Model C");
     await chooseModel("Efficiency model 1", "model-b");
     assert.equal(await page.getByRole("button", { name: "Efficiency context 1" }).innerText(), "Long context");
+    for (const label of ["Efficiency effort 1", "Efficiency context 1"]) {
+      await page.getByRole("button", { name: label, exact: true }).click();
+      const menu = page.getByRole("listbox", { name: label, exact: true });
+      assert.equal(await menu.getByRole("option", { selected: true }).evaluate((element) => element === document.activeElement), true);
+      await page.keyboard.press("Escape");
+      await menu.waitFor({ state: "hidden" });
+      assert.equal(await editor.count(), 1, "Escape dismisses compact effort/context menus before the modal");
+    }
     assert.equal(await category("Efficiency").getAttribute("data-category-health"), "valid");
-    assert.match(await agentScope.innerText(), /1 preset/);
-    assert.match(await chatScope.innerText(), /3 presets/);
+    assert.match(await cell("Agents & workflows", "Efficiency").innerText(), /1 preset/);
+    assert.match(await chatScope.innerText(), /2 presets/, "Child draft does not update the parent before Apply");
     await scope("Configure chat and live model alternatives");
     assert.equal(await modelPicker("Efficiency model 1").innerText(), "retired-id");
+    await closeEditor(true);
+    assert.match(await chatScope.innerText(), /3 presets/);
+    assert.match(await agentScope.innerText(), /1 preset/);
+    assert.equal(writes.length, 0, "Applying the child draft does not persist settings");
+    assert.equal(await summary.locator("[data-model-fallback-category]").count(), 0, "Settings keeps only the compact summary");
+    await openEditor(true);
+    assert.equal(await cell("Chat & live", "Efficiency").getAttribute("aria-pressed"), "true", "Review opens the affected configuration directly");
+    await closeEditor();
     await page.getByRole("button", { name: "Save", exact: true }).click();
     await page.getByRole("dialog").waitFor({ state: "hidden" });
     assert.equal(writes.length, 1);
@@ -160,15 +205,20 @@ async function main() {
     await savedMenu.getByRole("textbox", { name: "Filter models…" }).fill("replacement-id");
     assert.equal(await savedMenu.getByRole("option", { name: /replacement-id/ }).getAttribute("aria-selected"), "true");
     await savedMenu.getByRole("option", { name: /replacement-id/ }).click();
+    await closeEditor();
     await page.getByRole("button", { name: "Apply & refresh models", exact: true }).click();
     await page.getByRole("button", { name: "Apply & refresh models", exact: true }).waitFor();
     assert.equal(state.llm_model, "retired-id");
     assert.equal(writes.length, 2);
     assert.equal("llm_model" in writes[1], false);
     const checkModels = async () => {
+      const reopen = await editor.isVisible();
+      if (reopen) await closeEditor();
       await page.getByRole("button", { name: "Check models", exact: true }).click();
       await page.getByRole("button", { name: "Check models", exact: true }).waitFor();
+      if (reopen) await openEditor();
     };
+    await openEditor();
     const beforeChecks = writes.length;
     const previousProviderChecks = providerChecks;
     const previousAgentChecks = agentChecks;
@@ -184,7 +234,7 @@ async function main() {
     assert.equal(writes.length, beforeChecks, "Catalogue checks make no settings writes or inference calls");
     wrongCatalogSource = true;
     await checkModels();
-    assert.equal(await category("Balanced").getAttribute("data-category-health"), "setup");
+    assert.equal(await cell("Chat & live", "Balanced").getAttribute("data-category-health"), "setup");
     await page.getByRole("status").filter({ hasText: "different catalogue source" }).waitFor();
     wrongCatalogSource = false;
     await checkModels();
@@ -198,52 +248,72 @@ async function main() {
     assert.equal(await category("Efficiency").getAttribute("data-category-health"), "valid");
     await scope("Configure chat and live model alternatives");
     state.github_token_source = "none";
+    await closeEditor();
     await page.getByRole("button", { name: "Apply & refresh models", exact: true }).click();
+    await openEditor();
     await page.getByRole("status").filter({ hasText: "Connect GitHub" }).waitFor();
-    assert.equal(await category("Balanced").getAttribute("data-category-health"), "setup");
+    assert.equal(await cell("Chat & live", "Balanced").getAttribute("data-category-health"), "setup");
+    assert.equal(await cell("Chat & live", "Efficiency").getAttribute("data-category-health"), "setup");
     state.github_token_source = "settings";
+    await closeEditor();
     await page.getByRole("button", { name: "Apply & refresh models", exact: true }).click();
+    await openEditor();
+    await selectCell("Chat & live", "Balanced");
     await category("Balanced").locator('[data-preset-health="valid"]').waitFor();
+    await closeEditor();
     await page.getByRole("button", { name: "LLM provider", exact: true }).click();
     await page.getByRole("option", { name: "Azure AI Foundry", exact: true }).click();
     await page.getByRole("button", { name: "Check models", exact: true }).waitFor();
+    await openEditor();
+    await selectCell("Chat & live", "Efficiency");
     await category("Efficiency").getByRole("button", { name: "Add current selection" }).click();
     assert.equal(await category("Efficiency").getAttribute("data-category-health"), "unverified");
     await page.getByRole("status").filter({ hasText: "does not publish a model catalogue" }).waitFor();
+    await closeEditor(true);
     await page.getByRole("button", { name: "LLM provider", exact: true }).click();
     await page.getByRole("option", { name: "GitHub Copilot", exact: true }).click();
+    await openEditor();
+    await selectCell("Chat & live", "Balanced");
     await category("Balanced").locator('[data-preset-health="valid"]').waitFor();
+    await closeEditor();
     const writesBeforeFailedSave = writes.length;
     rejectSave = true;
     await page.getByRole("button", { name: "Save", exact: true }).click();
     await page.getByRole("alert").filter({ hasText: "Duplicate effective preset" }).waitFor();
     assert.equal(await page.getByRole("dialog").count(), 1);
     assert.equal(writes.length, writesBeforeFailedSave);
-    await scope("Configure agent and workflow model alternatives");
+    await openEditor();
+    await selectCell("Agents & workflows", "Efficiency");
     await page.getByRole("button", { name: "Remove Efficiency preset 1" }).click();
+    assert.equal(await cell("Agents & workflows", "Efficiency").getAttribute("data-category-health"), "empty");
+    assert.match(await agentScope.innerText(), /1 preset/, "Removal is isolated in the child draft until Apply");
+    await closeEditor(true);
     assert.match(await agentScope.innerText(), /Not configured/);
     assert.match(await chatScope.innerText(), /3 presets/);
-    const configurations = page.getByRole("group", { name: "Independent model alternative configurations" });
+    await openEditor();
+    await selectCell("Chat & live", "Efficiency");
+    const configurations = editor.getByRole("group", { name: "Categories and runtimes" });
     const artifactDir = process.env.MODEL_FALLBACK_UI_ARTIFACTS;
     if (artifactDir) require("node:fs").mkdirSync(artifactDir, { recursive: true });
     for (const width of [1200, 600, 390]) {
       await page.setViewportSize({ width, height: 900 });
       await configurations.scrollIntoViewIfNeeded();
-      const chatBox = await chatScope.boundingBox();
-      const agentBox = await agentScope.boundingBox();
+      const chatBox = await cell("Chat & live", "Efficiency").boundingBox();
+      const agentBox = await cell("Agents & workflows", "Efficiency").boundingBox();
       assert.ok(chatBox && agentBox);
-      const paneWidth = await page.locator("[data-model-fallback-settings]").evaluate((el) => el.clientWidth);
-      if (paneWidth >= 384) assert.equal(Math.round(chatBox.y), Math.round(agentBox.y));
-      else assert.ok(agentBox.y > chatBox.y, "Narrow panes stack the independent configurations");
-      if (width === 390) {
-        assert.ok(chatBox.width >= 240, "The mobile settings rail leaves useful space for configuration cards");
-        assert.equal(await page.getByRole("button", { name: "Model", exact: true }).getAttribute("aria-label"), "Model");
-      }
-      assert.ok(await configurations.evaluate((el) => el.scrollWidth <= el.clientWidth + 1), "Scope cards fit the settings pane");
-      assert.ok(await page.locator("[data-model-fallback-settings]").evaluate((el) => el.scrollWidth <= el.clientWidth + 1), "Preset editor fits the settings pane");
-      await chatScope.focus();
+      assert.equal(Math.round(chatBox.y), Math.round(agentBox.y), "Both runtimes stay visible beside each category");
+      assert.ok(await configurations.evaluate((el) => el.scrollWidth <= el.clientWidth + 1), "Overview fits the dedicated modal");
+      assert.ok(await editor.evaluate((el) => el.scrollWidth <= el.clientWidth + 1), "Preset editor fits the dedicated modal");
+      await cell("Chat & live", "Efficiency").focus();
       await page.keyboard.press("Enter");
-      assert.equal(await chatScope.getAttribute("aria-pressed"), "true");
+      assert.equal(await cell("Chat & live", "Efficiency").getAttribute("aria-pressed"), "true");
+      const apply = editor.getByRole("button", { name: "Apply to settings", exact: true });
+      const close = editor.getByRole("button", { name: "Close preset editor", exact: true });
+      await apply.focus();
+      await page.keyboard.press("Tab");
+      assert.equal(await close.evaluate((element) => element === document.activeElement), true, "Tab wraps inside the dedicated modal");
+      await page.keyboard.press("Shift+Tab");
+      assert.equal(await apply.evaluate((element) => element === document.activeElement), true, "Shift+Tab wraps inside the dedicated modal");
       await modelPicker("Efficiency model 1").click();
       const popup = page.getByRole("listbox", { name: "Efficiency model 1", exact: true });
       assert.equal(await popup.evaluate((el) => getComputedStyle(el).position), "fixed");
@@ -252,12 +322,18 @@ async function main() {
       if (artifactDir) {
         await page.screenshot({ path: require("node:path").join(artifactDir, `model-alternatives-menu-${width}.png`) });
       }
+      await popup.getByRole("textbox", { name: "Filter models…" }).focus();
+      await page.keyboard.press("Shift+Tab");
+      assert.equal(await popup.getByRole("option").last().evaluate((element) => element === document.activeElement), true, "Portaled menu traps keyboard focus");
+      await page.keyboard.press("Tab");
+      assert.equal(await popup.getByRole("textbox", { name: "Filter models…" }).evaluate((element) => element === document.activeElement), true);
       await popup.getByRole("textbox", { name: "Filter models…" }).press("Escape");
-      assert.equal(await page.getByRole("dialog").count(), 1);
+      assert.equal(await editor.count(), 1);
       if (artifactDir) {
         await page.screenshot({ path: require("node:path").join(artifactDir, `model-alternatives-${width}.png`) });
       }
     }
+    await closeEditor();
     rejectSave = false;
     await page.getByRole("button", { name: "Close", exact: true }).click();
     await page.setViewportSize({ width: 1200, height: 900 });
@@ -272,7 +348,7 @@ async function main() {
     await composerModel.filter({ hasText: "Model C" }).waitFor();
     assert.equal(await composerModel.innerText(), "Model C");
     assert.equal(state.llm_model, "model-c");
-    console.log("Model alternatives UI: shared prompt dropdowns, search, custom/retired ids, viewport-safe menus, scope isolation, keyboard, persistence and save errors passed.");
+    console.log("Model alternatives UI: compact summary, category-by-runtime modal, Apply/Cancel drafts, review navigation, nested dropdowns/Escape, focus traps, health, mobile layout and persistence passed.");
   } finally {
     await browser.close();
   }

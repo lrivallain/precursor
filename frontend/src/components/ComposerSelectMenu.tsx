@@ -124,14 +124,15 @@ export function ComposerSelectMenu({
     }
     document.addEventListener("pointerdown", onDocPointerDown);
     document.addEventListener("keydown", onKeyDown);
-    searchRef.current?.focus();
+    if (searchRef.current) searchRef.current.focus();
+    else if (portal) (selectedRef.current ?? menuRef.current?.querySelector<HTMLButtonElement>('[role="option"]'))?.focus();
     // Bring the active row into view when the menu opens.
     selectedRef.current?.scrollIntoView({ block: "nearest" });
     return () => {
       document.removeEventListener("pointerdown", onDocPointerDown);
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, [open, onOpenChange, positioned]);
+  }, [open, onOpenChange, positioned, portal]);
 
   // A matching group label keeps its whole group, so typing a vendor name
   // ("microsoft") lists every model it publishes.
@@ -171,10 +172,23 @@ export function ComposerSelectMenu({
           aria-label={ariaLabel}
           style={portal ? menuPosition ?? undefined : undefined}
           onKeyDown={portal ? (event) => {
-            if (event.key !== "Escape") return;
-            event.stopPropagation();
-            setOpen(false);
-            triggerRef.current?.focus();
+            if (event.key === "Escape") {
+              event.stopPropagation();
+              setOpen(false);
+              triggerRef.current?.focus();
+            } else if (event.key === "Tab") {
+              event.stopPropagation();
+              const controls = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('input,button:not([disabled])'));
+              const first = controls[0];
+              const last = controls[controls.length - 1];
+              if (event.shiftKey && document.activeElement === first) {
+                event.preventDefault();
+                last?.focus();
+              } else if (!event.shiftKey && document.activeElement === last) {
+                event.preventDefault();
+                first?.focus();
+              }
+            }
           } : undefined}
           className={`${portal ? "fixed z-[60] flex flex-col" : "absolute bottom-full left-0 z-30 mb-2"} max-w-[20rem] rounded-xl border border-border bg-surface p-1 shadow-xl ${menuMinWidthClass}`}
         >
@@ -192,7 +206,7 @@ export function ComposerSelectMenu({
                   if (e.key === "Enter") {
                     e.preventDefault();
                     selectFirstMatch();
-                  } else if (e.key !== "Escape") {
+                  } else if (e.key !== "Escape" && !(portal && e.key === "Tab")) {
                     // Keep typing away from the composer's global hotkeys.
                     e.stopPropagation();
                   }

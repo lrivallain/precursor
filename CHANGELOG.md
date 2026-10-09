@@ -21,9 +21,10 @@ are the per-version history; releasing does not rewrite this file.
   When a model disappears or rejects its effort/context configuration, Precursor
   tries the category's ordered presets without overwriting the saved selection.
   Recovery is bounded and never replays streamed output or agent actions.
-  The settings show separate **Chat & live** and **Agents & workflows** cards
-  with independent preset counts, making it clear that both must be configured
-  to cover both kinds of tasks.
+  Settings keeps a compact configuration summary and overall check. **Manage
+  presets** opens a dedicated category-by-runtime overview and one focused
+  editor; **Review configuration** opens a problem directly. Modal edits apply
+  to the Settings draft or can be cancelled without changing it.
   Preset models reuse the prompt composer's searchable model dropdown, retaining
   saved/retired ids and allowing explicit ids through the search.
   Category and configuration badges check provider/SDK catalogues, with per-preset

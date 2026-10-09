@@ -842,7 +842,7 @@ const scenes = {
   },
 
   "model-alternatives": {
-    viewport: { width: 1440, height: 1600 },
+    viewport: { width: 1440, height: 1000 },
     async go(page) {
       await page.route("**/api/settings", async (route) => {
         if (route.request().method() !== "GET") return route.fallback();
@@ -880,11 +880,22 @@ const scenes = {
       await page.route("**/api/agents/models", (route) => route.fulfill({ json: catalogue }));
       await page.goto(`${BASE}/`, { waitUntil: "networkidle" });
       await openSettings(page, "Model");
-      await page.getByRole("dialog").evaluate((el) => { el.style.height = "90vh"; });
       const card = page.locator("[data-model-fallback-settings]");
       await card.scrollIntoViewIfNeeded();
       await sleep(200);
       return clipOf(page, "[data-model-fallback-settings]", 12);
+    },
+  },
+
+  "model-alternatives-editor": {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await scenes["model-alternatives"].go(page);
+      await page.getByRole("button", { name: "Manage presets", exact: true }).click();
+      await page.getByRole("dialog", { name: "Manage model alternatives", exact: true }).waitFor();
+      await page.mouse.move(0, 0);
+      await sleep(350);
+      return clipOf(page, '[role="dialog"]:has([data-model-fallback-dialog])', 0);
     },
   },
 

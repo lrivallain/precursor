@@ -99,3 +99,40 @@ test("provider credentials are checked from presence metadata, never secret valu
   settings.llm_providers_present.openai.key = false;
   assert.match(health.providerSetupIssue(settings, openai), /API key/);
 });
+
+test("overall check aggregates both independent runtimes but ignores empty optional scopes", () => {
+  const ready = catalog();
+  const setup = catalog("setup");
+  const good = health.checkPresets(categories([preset()]), ready, false).efficiency;
+  const aggregate = health.summarizePresetConfigurations([
+    { label: "Chat", checks: good, catalog: ready },
+    { label: "Agents", checks: [], catalog: setup },
+  ]);
+  assert.equal(aggregate.state, "valid");
+  assert.equal(aggregate.label, "1/1 model ids listed");
+  assert.equal(health.summarizePresetConfigurations([]).state, "empty");
+  const unchecked = health.checkPresets(categories([preset()]), setup, true).efficiency;
+  assert.equal(health.summarizePresetConfigurations([
+    { label: "Chat", checks: good, catalog: ready },
+    { label: "Agents", checks: unchecked, catalog: setup },
+  ]).state, "setup");
+});
+
+test("overall incomplete and review checks cannot become a success-shaped result", () => {
+  const missing = health.checkPresets(categories([preset("retired")]), catalog(), false).efficiency;
+  const unverified = health.checkPresets(categories([preset()]), catalog("unavailable"), true).efficiency;
+  const aggregate = health.summarizePresetConfigurations([
+    { label: "Chat", checks: missing, catalog: catalog() },
+    { label: "Agents", checks: unverified, catalog: catalog("unavailable") },
+  ]);
+  assert.equal(aggregate.state, "review");
+  assert.match(aggregate.detail, /Agents/);
+  assert.equal(aggregate.total, 2);
+  assert.equal(aggregate.listed, 0);
+  assert.equal(health.summarizePresetConfigurations([
+    { label: "Agents", checks: unverified, catalog: catalog("unavailable") },
+  ]).state, "unverified");
+  assert.equal(health.summarizePresetConfigurations([
+    { label: "Agents", checks: unverified, catalog: catalog("checking") },
+  ]).state, "checking");
+});
