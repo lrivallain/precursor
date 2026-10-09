@@ -231,7 +231,7 @@ export function ComposerSelectMenu({
               </div>
             )}
             {visibleGroups.map((group, gi) => (
-              <div key={`${group.parentLabel ?? ""}:${group.label ?? gi}`} role={group.label ? "group" : undefined} aria-label={group.label ? `${group.parentLabel ? `${group.parentLabel} - ` : ""}${group.label}` : undefined}>
+              <div key={`${group.parentLabel ?? ""}:${group.label ?? gi}`} role={group.label || group.parentLabel ? "group" : undefined} aria-label={group.label ? `${group.parentLabel ? `${group.parentLabel} - ` : ""}${group.label}` : group.parentLabel}>
                 {group.parentLabel && group.options.length > 0 && visibleGroups[gi - 1]?.parentLabel !== group.parentLabel && (
                   <div className="px-2 pb-1 pt-1.5 text-[10px] font-medium uppercase tracking-wide text-muted" data-menu-parent={group.parentLabel}>
                     {group.parentLabel}

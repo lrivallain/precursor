@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+
+class ModelCategory(StrEnum):
+    EFFICIENCY = "efficiency"
+    BALANCED = "balanced"
+    INTELLIGENCE = "intelligence"
 
 
 class ModelPreset(BaseModel):

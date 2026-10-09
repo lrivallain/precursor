@@ -310,6 +310,17 @@ checks flag missing/duplicate model configurations and advertised effort/window
 mismatches; failed, empty and non-discoverable catalogues leave ids unverified.
 Fetch generations discard obsolete provider responses without rewriting drafts.
 
+Selected category intent lives in `llm_model_category` / `agents_model_category`
+independently of manual model, effort and context defaults. Default conversation
+and inherited one-shot/live calls pass it to the provider wrapper; SDK sessions
+resolve it only when no explicit agent/run model is pinned. Ordered presets are
+resolved at execution with their own configuration; the manual model is never
+an initial category candidate. The tool loop keeps history for all candidate
+budgets, and the wrapper trims each invocation. SDK live signatures track both
+the requested category and actual applied model. Missing categories fail clearly,
+and inference failures cannot turn a credential-less provider into mock success.
+`llm_category_preset` is a read-only catalogue preview, not a persisted model pin.
+
 ## MCP
 
 Precursor is *both* an MCP client and an MCP server, with working transports.

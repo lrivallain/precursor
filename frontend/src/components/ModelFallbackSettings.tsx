@@ -194,6 +194,7 @@ export function ModelFallbackSettings({
   }
 
   const currentModel = agents ? effectiveSettings?.agents_default_model : effectiveSettings?.llm_model;
+  const currentCategory = agents ? effectiveSettings?.agents_model_category : effectiveSettings?.llm_model_category;
   const providerLabel = providers.find((p) => p.id === provider)?.label ?? provider;
   const configurations = [
     { id: "provider" as const, label: "Chat & live", runtime: providerLabel, key: provider, check: chatCheck, health: chatHealth, editorHealth: editorChatHealth },
@@ -405,7 +406,7 @@ export function ModelFallbackSettings({
               ))}
               <div className="mt-3 flex flex-wrap items-center gap-3">
                 <button type="button" onClick={() => add(category)} disabled={categories[category].length >= 12} className="flex items-center gap-1 text-xs text-accent disabled:opacity-40"><Plus size={13} />Add preset</button>
-                <button type="button" onClick={() => add(category, true)} disabled={!currentModel || currentModel === "auto" || categories[category].length >= 12} className="text-xs text-accent disabled:opacity-40">Add current selection</button>
+                <button type="button" onClick={() => add(category, true)} disabled={Boolean(currentCategory) || !currentModel || currentModel === "auto" || categories[category].length >= 12} data-tooltip={currentCategory ? "Select a direct model to capture a fixed model/effort/context profile" : "Capture the current direct model selection"} className="text-xs text-accent disabled:opacity-40">Add current selection</button>
               </div>
               <details className="mt-4 border-t border-border pt-3 text-[11px] text-muted">
                 <summary className="cursor-pointer">How alternatives and checks work</summary>

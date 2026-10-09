@@ -9,29 +9,22 @@ export const MODEL_PRESET_CATEGORIES: { id: ModelCategory; label: string; hint: 
 export interface ModelPresetMenuEntry {
   value: string;
   category: ModelCategory;
-  preset: ModelPreset;
+  presets: ModelPreset[];
 }
 
 export function modelPresetMenuEntries(categories: ModelCategories | undefined, agents: boolean, modelIds: string[] = []): ModelPresetMenuEntry[] {
   const configuredModels = MODEL_PRESET_CATEGORIES.flatMap((category) => categories?.[category.id] ?? []).map((preset) => preset.model);
   const taken = new Set([...modelIds, ...configuredModels]);
-  return MODEL_PRESET_CATEGORIES.flatMap((category) => (categories?.[category.id] ?? []).map((preset, index) => {
-    let value = `preset:${agents ? "agents" : "llm"}:${category.id}:${index}`;
+  return MODEL_PRESET_CATEGORIES.flatMap((category) => {
+    const presets = categories?.[category.id] ?? [];
+    if (!presets.length) return [];
+    let value = `preset:${agents ? "agents" : "llm"}:${category.id}`;
     while (taken.has(value)) value = `:${value}`;
     taken.add(value);
-    return { value, category: category.id, preset };
-  }));
+    return [{ value, category: category.id, presets }];
+  });
 }
 
-export function matchingModelPreset(entries: ModelPresetMenuEntry[], selection: {
-  model: string;
-  reasoning_effort: string;
-  context_tokens?: number;
-  context_tier?: string;
-}, agents: boolean): ModelPresetMenuEntry | undefined {
-  return entries.find(({ preset }) =>
-    preset.model === selection.model
-    && preset.reasoning_effort === selection.reasoning_effort
-    && (agents ? preset.context_tier === selection.context_tier : preset.context_tokens === selection.context_tokens),
-  );
+export function selectedModelCategoryEntry(entries: ModelPresetMenuEntry[], category: ModelCategory | null | undefined): ModelPresetMenuEntry | undefined {
+  return entries.find((entry) => entry.category === category);
 }

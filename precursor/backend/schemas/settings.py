@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-from precursor.backend.schemas.model_fallback import ModelCategories
+from precursor.backend.schemas.model_fallback import ModelCategories, ModelCategory, ModelPreset
 
 Theme = Literal["light", "dark", "system"]
 # Reading font applied app-wide, incl. dyslexia/low-vision-friendly options —
@@ -21,6 +21,7 @@ class SettingsPayload(BaseModel):
     theme: Theme | None = None
     font_family: FontFamily | None = None
     llm_model: str | None = None
+    llm_model_category: ModelCategory | None = None
     # Reasoning effort hint for reasoning-capable models: "" (auto/off — the
     # param is omitted), "low", "medium", or "high".
     llm_reasoning_effort: str | None = None
@@ -114,6 +115,7 @@ class SettingsPayload(BaseModel):
     # Agents mode (Copilot SDK). Opt-in; download/runtime gated by availability.
     agents_enabled: bool | None = None
     agents_default_model: str | None = None
+    agents_model_category: ModelCategory | None = None
     agents_reasoning_effort: str | None = None
     agents_context_tier: str | None = None
     agents_file_change_tracking: bool | None = None
@@ -161,6 +163,8 @@ class SettingsRead(BaseModel):
     # "" until resolved against the provider catalogue — no id is pinned here
     # because a literal is only correct until the provider retires it.
     llm_model: str = ""
+    llm_model_category: ModelCategory | None = None
+    llm_category_preset: ModelPreset | None = None
     # "" => auto/off (no reasoning_effort sent); otherwise low|medium|high.
     llm_reasoning_effort: str = ""
     github_repo: str = ""
@@ -259,6 +263,7 @@ class SettingsRead(BaseModel):
     # "auto" lets the agent runtime pick a current model, matching
     # DEFAULT_AGENTS_MODEL — a pinned id would fail once the SDK rotates it out.
     agents_default_model: str = "auto"
+    agents_model_category: ModelCategory | None = None
     # Reasoning effort + context tier applied to new agent sessions. "" effort
     # and "default" tier leave the SDK defaults unchanged.
     agents_reasoning_effort: str = ""

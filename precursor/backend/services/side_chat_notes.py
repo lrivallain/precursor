@@ -13,11 +13,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from precursor.backend.db import SessionLocal
 from precursor.backend.models import Chat, Message, MessageRole, Topic
 from precursor.backend.schemas.message import MessageRead
-from precursor.backend.services.app_settings import resolve_llm_max_input_tokens
 from precursor.backend.services.compaction import chunk_blocks, render_transcript
 from precursor.backend.services.conversation_turn import load_model_history
 from precursor.backend.services.events import is_streaming, publish_message_changed
 from precursor.backend.services.llm.one_shot import complete_once
+from precursor.backend.services.model_fallbacks import resolve_llm_preparation_budget
 
 USAGE_SOURCE = "/send-to-topic"
 _CHARS_PER_TOKEN = 3
@@ -60,7 +60,7 @@ async def draft_topic_note(
     if not any(m.role in ("user", "assistant") for m in history):
         raise HTTPException(status.HTTP_409_CONFLICT, "Nothing to send yet.")
 
-    budget_tokens = await resolve_llm_max_input_tokens(session)
+    budget_tokens = await resolve_llm_preparation_budget(session)
     chunk_chars = int(budget_tokens * _CHUNK_BUDGET_RATIO) * _CHARS_PER_TOKEN
     focus = (instructions or "").strip()
     head = f"Main topic: {topic.title}"

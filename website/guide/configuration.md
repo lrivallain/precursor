@@ -80,8 +80,8 @@ Alternatives never switch provider or credentials.
 
 #### Selecting a preset from a prompt
 
-The prompt's model dropdown includes a **Presets** group, with **Efficiency**,
-**Balanced** and **Intelligence** subcategories for the presets you configured.
+The prompt's model dropdown includes a **Presets** group with selectable
+**Efficiency**, **Balanced** and **Intelligence** categories.
 Unconfigured categories are hidden. When the current runtime/provider has no
 saved presets, the entire group and its management shortcut are absent.
 Chat/topic composers use the selected provider's presets; agent composers use
@@ -92,18 +92,29 @@ to settings** and **Save** in Settings. Applying only the modal draft does not
 persist it. Once presets exist, **Manage presets in Settings...** in the model
 dropdown provides a shortcut to edit them. The shortcut never saves anything.
 
-Select a preset to apply its **model, effort and context together** in one
-settings update. Chat presets set the input-token budget; SDK presets set the
-context tier. The matching complete profile is checked in the menu. Changing
-effort/context separately clears that profile's check when it no longer matches.
-Catalogue model choices remain available and keep their existing switching rules.
+Select a **category**, not an individual model. Precursor saves that category
+as your intent; the engine chooses the first currently listed preset in its
+configured order, with that preset's own **model, effort and context**. If its
+request is rejected before output/actions, the engine tries the remaining
+presets in the same category. It never falls back to another category or the
+last direct model.
 
-Search by category, model name/id, or **Presets** to see just your profiles.
-Retired ids remain selectable and show **Not listed** when a catalogue is known:
-their category can still recover using its listed alternatives. Selecting a
-profile never modifies its definition or crosses providers/runtimes.
+The prompt shows the selected category and **Engine selects model**; individual
+effort/context controls are hidden because those belong to the presets. Your
+last direct-model defaults remain stored. Choosing an ordinary catalogue model
+exits category mode and restores the direct selection controls.
 
-<Screenshot src="/screenshots/model-presets.png" alt="Prompt model dropdown with a Presets group and Efficiency, Balanced and Intelligence subcategories" caption="Choose a configured model, effort and context as one profile directly from the prompt." />
+Chat, topic, workspace and scheduled turns honour the default category, as do
+default-model summaries/refinement/naming/live calls. Explicit per-turn or
+feature model overrides and agent/workflow model pins take precedence. SDK
+categories apply to unpinned agent defaults. If a selected category is later
+emptied, requests fail clearly until you configure it or select a direct model.
+
+Search by category, an underlying model name/id, or **Presets**. Model ids remain
+editable in the dedicated preset editor, including retired ids for matching.
+Selecting a category never modifies its definitions or crosses providers/runtimes.
+
+<Screenshot src="/screenshots/model-presets.png" alt="Prompt model dropdown with selectable Efficiency, Balanced and Intelligence categories" caption="Choose a category. The engine resolves its ordered models and their configurations at execution time." />
 
 #### Editing preset definitions
 

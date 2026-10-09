@@ -17,6 +17,7 @@ async function main() {
       ...base, llm_model: "model-a", llm_reasoning_effort: "high",
       llm_max_input_tokens: 128000, agents_default_model: "model-b",
       agents_reasoning_effort: "low", agents_context_tier: "long_context",
+      llm_model_category: null, llm_category_preset: null, agents_model_category: null,
       github_token_source: "settings", agents_enabled: true, agents_available: true, agents_runtime_started: true,
       llm_providers: { ...base.llm_providers, azure_foundry: { endpoint: "https://example.test", deployment: "demo-deployment" } },
       llm_providers_present: { ...base.llm_providers_present, azure_foundry: { key: true } },
@@ -41,6 +42,12 @@ async function main() {
         const update = route.request().postDataJSON();
         writes.push(update);
         Object.assign(state, update);
+        if ("llm_model" in update && !("llm_model_category" in update)) state.llm_model_category = null;
+        if ("agents_default_model" in update && !("agents_model_category" in update)) state.agents_model_category = null;
+        const selected = state.model_fallbacks[state.llm_provider]?.[state.llm_model_category] ?? [];
+        state.llm_category_preset = state.llm_model_category
+          ? selected.find((preset) => catalog.some((model) => model.id === preset.model)) ?? selected[0] ?? null
+          : null;
       }
       await route.fulfill({ json: state });
     });
@@ -353,24 +360,31 @@ async function main() {
     const configuredMenuBox = await composerMenu.boundingBox();
     const configuredHeaderBox = await composerMenu.locator('[data-menu-parent="Presets"]').boundingBox();
     assert.ok(configuredMenuBox && configuredHeaderBox && configuredHeaderBox.y >= configuredMenuBox.y && configuredHeaderBox.y < configuredMenuBox.y + configuredMenuBox.height, "Configured Presets start at the top, not scrolled away to the catalogue model");
-    assert.equal(await composerMenu.locator('[data-menu-category="Efficiency"]').count(), 1);
-    assert.equal(await composerMenu.locator('[data-menu-category="Balanced"]').count(), 1);
-    assert.equal(await composerMenu.locator('[data-menu-category="Intelligence"]').count(), 0, "Unconfigured categories are hidden");
+    const chatCategories = composerMenu.getByRole("group", { name: "Presets", exact: true });
+    assert.equal(await chatCategories.getByRole("option", { name: /^Efficiency/ }).count(), 1);
+    assert.equal(await chatCategories.getByRole("option", { name: /^Balanced/ }).count(), 1);
+    assert.equal(await chatCategories.getByRole("option", { name: /^Intelligence/ }).count(), 0, "Unconfigured categories are hidden");
     await composerMenu.getByRole("textbox", { name: "Filter models…" }).fill("Balanced");
     const beforeChatPreset = writes.length;
+    const chatDefaults = [state.llm_model, state.llm_reasoning_effort, state.llm_max_input_tokens];
     await composerMenu.getByRole("textbox", { name: "Filter models…" }).press("Enter");
     await composerMenu.waitFor({ state: "hidden" });
-    await composerModel.filter({ hasText: "Model A" }).waitFor();
-    assert.deepEqual(writes[beforeChatPreset], {
-      llm_model: "model-a", llm_reasoning_effort: "high", llm_max_input_tokens: 128000,
-    }, "A chat preset applies model, effort and token budget in one settings update");
+    await composerModel.filter({ hasText: "Balanced" }).waitFor();
+    assert.deepEqual(writes[beforeChatPreset], { llm_model_category: "balanced" }, "A category selection stores intent, not a fixed model/configuration");
+    assert.deepEqual([state.llm_model, state.llm_reasoning_effort, state.llm_max_input_tokens], chatDefaults);
+    assert.equal(await page.getByRole("button", { name: "Reasoning effort", exact: true }).count(), 0);
+    assert.equal(await page.getByRole("button", { name: "Context size", exact: true }).count(), 0);
     await composerModel.click();
     await composerMenu.getByRole("textbox", { name: "Filter models…" }).fill("Balanced");
     assert.equal(await composerMenu.getByRole("option", { selected: true }).count(), 1, "The selected profile is checked");
     await composerMenu.getByRole("textbox", { name: "Filter models…" }).fill("retired-id");
     assert.equal(await composerMenu.getByRole("option").count(), 1, "Preset search matches the underlying model id");
-    assert.match(await composerMenu.getByRole("option").innerText(), /Not listed/);
-    await page.keyboard.press("Escape");
+    assert.match(await composerMenu.getByRole("option").innerText(), /Efficiency/);
+    assert.match(await composerMenu.getByRole("option").innerText(), /Engine chooses/);
+    await composerMenu.getByRole("textbox", { name: "Filter models…" }).fill("model-c");
+    await composerMenu.getByRole("textbox", { name: "Filter models…" }).press("Enter");
+    await composerModel.filter({ hasText: "Model C" }).waitFor();
+    assert.equal(state.llm_model_category, null, "Selecting a direct model exits category mode");
     state.agents_default_model = "model-c";
     state.agents_reasoning_effort = "high";
     state.agents_context_tier = "default";
@@ -382,18 +396,20 @@ async function main() {
     await agentModel.click();
     const agentMenu = page.getByRole("listbox", { name: "Agent model", exact: true });
     assert.equal(await agentMenu.locator('[data-menu-parent="Presets"]').count(), 1);
-    assert.equal(await agentMenu.locator('[data-menu-category="Efficiency"]').count(), 1);
-    assert.equal(await agentMenu.locator('[data-menu-category="Balanced"]').count(), 0, "Chat presets do not leak into SDK menus");
+    const agentCategories = agentMenu.getByRole("group", { name: "Presets", exact: true });
+    assert.equal(await agentCategories.getByRole("option", { name: /^Efficiency/ }).count(), 1);
+    assert.equal(await agentCategories.getByRole("option", { name: /^Balanced/ }).count(), 0, "Chat presets do not leak into SDK menus");
     await agentMenu.getByRole("textbox", { name: "Filter models…" }).fill("Presets");
     assert.equal(await agentMenu.getByRole("option").count(), 1, "The parent group can be searched");
     const beforeAgentPreset = writes.length;
+    const agentDefaults = [state.agents_default_model, state.agents_reasoning_effort, state.agents_context_tier];
     await agentMenu.getByRole("option").first().click();
     await agentMenu.waitFor({ state: "hidden" });
-    await agentModel.filter({ hasText: "Model B" }).waitFor();
-    assert.deepEqual(writes[beforeAgentPreset], {
-      agents_default_model: "model-b", agents_reasoning_effort: "low", agents_context_tier: "long_context",
-    }, "An SDK preset applies model, effort and context tier atomically");
-    assert.equal(state.llm_model, "model-a", "An agent preset does not change chat configuration");
+    await agentModel.filter({ hasText: "Efficiency" }).waitFor();
+    assert.deepEqual(writes[beforeAgentPreset], { agents_model_category: "efficiency" }, "SDK category intent is independent from manual model/configuration");
+    assert.deepEqual([state.agents_default_model, state.agents_reasoning_effort, state.agents_context_tier], agentDefaults);
+    assert.equal(state.llm_model, "model-c", "An agent category does not change chat configuration");
+    assert.equal(await page.getByRole("button", { name: "Context tier", exact: true }).count(), 0);
     assert.deepEqual(state.model_fallbacks, saved, "Selecting presets never changes the preset definitions");
     const beforeManage = writes.length;
     await agentModel.click();
@@ -401,6 +417,11 @@ async function main() {
     await page.getByRole("heading", { name: "Model alternatives", exact: true }).waitFor();
     assert.equal(writes.length, beforeManage, "Managing existing presets only opens Settings");
     await page.getByRole("button", { name: "Close", exact: true }).click();
+    await agentModel.click();
+    await agentMenu.getByRole("textbox", { name: "Filter models…" }).fill("model-c");
+    await agentMenu.getByRole("textbox", { name: "Filter models…" }).press("Enter");
+    await agentModel.filter({ hasText: "Model C" }).waitFor();
+    assert.equal(state.agents_model_category, null);
     state.model_fallbacks = {};
     const beforeEmptyMenus = writes.length;
     for (const [route, label] of [

@@ -86,9 +86,11 @@ category under **Agents & workflows** (Copilot SDK): **Chat & live** presets do 
 when both use your Copilot subscription.
 
 The agent prompt's **Agent model** dropdown also offers **Presets**, grouped into
-Efficiency, Balanced and Intelligence. Selecting one applies its model, reasoning
-effort and context tier together. Only Copilot SDK presets appear here; chat
-presets use the provider scope instead.
+Efficiency, Balanced and Intelligence. Select a category and the engine resolves
+its ordered models, reasoning efforts and context tiers for unpinned runs.
+The category remains selected even when a model is substituted. Explicit agent
+and workflow model pins win over the default category. Only Copilot SDK categories
+appear here; chat presets use the provider scope instead.
 
 A missing model or rejected effort/context can switch to a same-category preset
 with its own effort and context tier, keeping the SDK conversation and saved

@@ -82,6 +82,7 @@ class _LiveSession:
     # next turn can cheaply reconcile to the current selection.
     model_signature: tuple[str, str | None, str] | None = None
     requested_model_signature: tuple[str, str | None, str] | None = None
+    requested_model_category: str | None = None
     model_candidates: list[tuple[str, str | None, str]] = field(default_factory=list)
     model_attempts: set[tuple[str, str | None, str]] = field(default_factory=set)
     dispatched_prompt: str | None = None

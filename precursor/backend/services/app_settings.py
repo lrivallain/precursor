@@ -282,7 +282,7 @@ async def resolve_chat_autoname_enabled(session: AsyncSession) -> bool:
     )
 
 
-async def resolve_chat_autoname_model(session: AsyncSession) -> str:
+async def resolve_chat_autoname_model(session: AsyncSession, *, use_default: bool = True) -> str:
     """Return the model used to name conversations.
 
     Naming is a throwaway one-liner, so it's worth pointing at something cheap
@@ -291,10 +291,10 @@ async def resolve_chat_autoname_model(session: AsyncSession) -> str:
     db_value = await _get_db_value(session, "chat_autoname_model")
     if isinstance(db_value, str) and db_value.strip():
         return db_value.strip()
-    return await resolve_llm_model(session)
+    return await resolve_llm_model(session) if use_default else ""
 
 
-async def resolve_live_fast_model(session: AsyncSession) -> str:
+async def resolve_live_fast_model(session: AsyncSession, *, use_default: bool = True) -> str:
     """Return the model used for live meeting analysis + Q&A.
 
     A dedicated "fast" model keeps live insights snappy without changing the
@@ -303,7 +303,7 @@ async def resolve_live_fast_model(session: AsyncSession) -> str:
     db_value = await _get_db_value(session, "live_fast_model")
     if isinstance(db_value, str) and db_value.strip():
         return db_value.strip()
-    return await resolve_llm_model(session)
+    return await resolve_llm_model(session) if use_default else ""
 
 
 async def resolve_live_reasoning_effort(session: AsyncSession) -> str:

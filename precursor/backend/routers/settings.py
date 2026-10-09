@@ -6,7 +6,7 @@ import json
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -59,6 +59,12 @@ from precursor.backend.services.mcp.precursor_server import (
     is_loopback_host,
 )
 from precursor.backend.services.model_catalog import invalidate_model_catalog
+from precursor.backend.services.model_fallbacks import (
+    preview_llm_category_preset,
+    resolve_model_category,
+    resolve_model_fallbacks,
+    selected_category_presets,
+)
 from precursor.backend.services.openai_proxy import (
     ensure_proxy_key,
     proxy_availability,
@@ -189,6 +195,8 @@ async def _llm_block(session: AsyncSession, data: dict[str, Any]) -> dict[str, A
     return {
         "github_token_source": await github_token_source(session),
         "llm_provider": await resolve_llm_provider(session),
+        "llm_model_category": await resolve_model_category(session),
+        "llm_category_preset": await preview_llm_category_preset(session),
         "llm_providers": public,
         "llm_providers_present": present,
     }
@@ -207,6 +215,7 @@ async def _agents_block(session: AsyncSession) -> dict[str, Any]:
         "agents_runtime_started": get_agent_manager().ready,
         "agents_unavailable_reason": None if ok else detail,
         "agents_default_model": await resolve_agents_default_model(session),
+        "agents_model_category": await resolve_model_category(session, agents=True),
         "agents_reasoning_effort": await resolve_agents_reasoning_effort(session),
         "agents_context_tier": await resolve_agents_context_tier(session),
         "agents_file_change_tracking": await resolve_agents_file_change_tracking(session),
@@ -244,6 +253,32 @@ async def update_settings(
     session: AsyncSession = Depends(get_session),
 ) -> SettingsRead:
     data = payload.model_dump(exclude_unset=True)
+
+    for model_key, category_key in (
+        ("llm_model", "llm_model_category"),
+        ("agents_default_model", "agents_model_category"),
+    ):
+        if model_key in data and category_key not in data:
+            data[category_key] = None
+    for category_key, scope in (
+        ("llm_model_category", data.get("llm_provider") or await resolve_llm_provider(session)),
+        ("agents_model_category", "agents"),
+    ):
+        selected = data.get(category_key)
+        if selected is None:
+            continue
+        from precursor.backend.schemas.model_fallback import ModelCategories
+
+        categories = (
+            ModelCategories.model_validate((data["model_fallbacks"] or {}).get(scope, {}))
+            if "model_fallbacks" in data
+            else await resolve_model_fallbacks(session, scope)
+        )
+        if not selected_category_presets(categories, selected):
+            raise HTTPException(
+                status_code=422,
+                detail=f"No presets are configured for {scope}/{selected.value}.",
+            )
 
     # Merge api_keys instead of replacing — clients may PATCH a single key.
     if "api_keys" in data:
@@ -310,6 +345,7 @@ async def update_settings(
             "agents_default_model",
             "agents_reasoning_effort",
             "agents_context_tier",
+            "agents_model_category",
             "model_fallbacks",
         )
     ):

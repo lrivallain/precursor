@@ -50,8 +50,9 @@ Chats share the same conversation experience as topics:
   category. Configure them in [Settings -> Model](/guide/configuration#optional-model-alternatives);
   nothing changes until configured, and retries never replay already-streamed output.
 - **Preset profiles in the model dropdown**: pick **Presets -> Efficiency,
-  Balanced or Intelligence** to apply a configured model, effort and context
-  together. Ordinary model choices are still available.
+  Balanced or Intelligence** to let the engine choose from that category's
+  ordered model/configuration presets. The category stays selected across
+  model substitutions. Ordinary model choices exit category mode.
 - **A timeline and rewind**: jump between turns from the rail on the right
   edge, or rewind the chat to an earlier turn — see
   [timeline & rewind](/features/rewind).

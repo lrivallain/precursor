@@ -108,6 +108,16 @@ presets; duplicate effective presets, unknown scopes and `auto` are rejected.
 See [Model alternatives](/guide/configuration#optional-model-alternatives)
 for matching and retry rules. There is no environment variable or DB migration.
 
+`llm_model_category` and `agents_model_category` are runtime-only selected intents,
+default `null` (direct model selection). Values are `efficiency`, `balanced` or
+`intelligence`; the chosen category must have configured presets in the relevant
+scope. Selecting a category leaves manual model/effort/context defaults stored
+and lets the engine resolve an available preset. Setting a direct model clears
+the corresponding category unless a category was explicitly supplied alongside
+it. `llm_category_preset` is a read-only catalogue preview of the category's first
+candidate, not a promise that inference will succeed or use that model. An
+emptied/unavailable category remains selected and fails clearly at execution.
+
 | Variable | Default | Description |
 | --- | --- | --- |
 | `PRECURSOR_GITHUB_CLI_USER` | *(empty)* | Which `gh` login supplies the token (`gh auth token --user …`). Set it when several accounts are signed in, so the resolved token doesn't depend on the CLI's active account — see [GitHub authentication](/guide/configuration#several-accounts-signed-in-to-gh). |

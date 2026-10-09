@@ -1477,6 +1477,8 @@ export interface Settings {
   theme: "light" | "dark" | "system";
   font_family: "system" | "opendyslexic" | "atkinson-hyperlegible" | "lexend";
   llm_model: string;
+  llm_model_category: ModelCategory | null;
+  llm_category_preset: ModelPreset | null;
   // "" => auto/off; otherwise "low" | "medium" | "high".
   llm_reasoning_effort: string;
   github_repo: string;
@@ -1565,6 +1567,7 @@ export interface Settings {
   agents_runtime_started: boolean;
   agents_unavailable_reason: string | null;
   agents_default_model: string;
+  agents_model_category: ModelCategory | null;
   agents_reasoning_effort: string;
   agents_context_tier: string;
   /** New agent sessions capture file changes so a rewind can restore them. */
@@ -1592,6 +1595,7 @@ export interface SettingsUpdate {
   theme?: Settings["theme"];
   font_family?: Settings["font_family"];
   llm_model?: string;
+  llm_model_category?: ModelCategory | null;
   llm_reasoning_effort?: string;
   github_repo?: string;
   issue_context_ttl_minutes?: number;
@@ -1640,6 +1644,7 @@ export interface SettingsUpdate {
   cmd_runner_cpus?: string;
   agents_enabled?: boolean;
   agents_default_model?: string;
+  agents_model_category?: ModelCategory | null;
   agents_reasoning_effort?: string;
   agents_context_tier?: string;
   agents_file_change_tracking?: boolean;

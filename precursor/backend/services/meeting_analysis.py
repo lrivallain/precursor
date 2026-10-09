@@ -450,7 +450,7 @@ async def analyze_session(
     if notes_ctx:
         user_parts.append(f"\nPinned context notes:\n{notes_ctx}")
 
-    model = await resolve_live_fast_model(session)
+    model = await resolve_live_fast_model(session, use_default=False)
     effort = await resolve_live_reasoning_effort(session)
     try:
         result = await complete_once(
@@ -459,7 +459,7 @@ async def analyze_session(
             user="\n".join(user_parts),
             usage_source="/live-analysis",
             topic_id=ms.topic_id,
-            model=model,
+            model=model or None,
             reasoning_effort=effort,
         )
     except Exception as exc:
@@ -541,7 +541,7 @@ async def translate_transcript(
         user=source,
         usage_source="/live-translate",
         topic_id=ms.topic_id,
-        model=await resolve_live_fast_model(session),
+        model=await resolve_live_fast_model(session, use_default=False) or None,
         reasoning_effort=await resolve_live_reasoning_effort(session),
     )
     translated, model = result.text, result.model
@@ -581,7 +581,7 @@ async def translate_lines(
         user=numbered,
         usage_source="/live-translate",
         topic_id=ms.topic_id,
-        model=await resolve_live_fast_model(session),
+        model=await resolve_live_fast_model(session, use_default=False) or None,
         reasoning_effort=await resolve_live_reasoning_effort(session),
     )
     out, model = completion.text, completion.model

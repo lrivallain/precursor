@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from precursor.backend.schemas.model_fallback import ModelCategories, ModelPreset
+from precursor.backend.schemas.model_fallback import ModelCategories, ModelCategory, ModelPreset
 
 logger = logging.getLogger(__name__)
 CATEGORY_NAMES = ("efficiency", "balanced", "intelligence")
@@ -34,6 +34,59 @@ async def resolve_model_fallbacks(session: AsyncSession, scope: str) -> ModelCat
     except ValidationError:
         logger.exception("Invalid saved model fallback configuration for %s", scope)
         return ModelCategories()
+
+
+async def resolve_model_category(
+    session: AsyncSession, *, agents: bool = False
+) -> ModelCategory | None:
+    from precursor.backend.services.app_settings import _get_db_value
+
+    key = "agents_model_category" if agents else "llm_model_category"
+    raw = await _get_db_value(session, key)
+    if raw is None:
+        return None
+    try:
+        return ModelCategory(raw)
+    except ValueError:
+        logger.warning("Invalid selected model category for %s: %r", key, raw)
+        return None
+
+
+def selected_category_presets(
+    categories: ModelCategories, category: ModelCategory
+) -> list[ModelPreset]:
+    return {
+        ModelCategory.EFFICIENCY: categories.efficiency,
+        ModelCategory.BALANCED: categories.balanced,
+        ModelCategory.INTELLIGENCE: categories.intelligence,
+    }[category]
+
+
+async def preview_llm_category_preset(session: AsyncSession) -> ModelPreset | None:
+    from precursor.backend.services.app_settings import resolve_llm_provider
+    from precursor.backend.services.model_catalog import offered_model_ids
+
+    category = await resolve_model_category(session)
+    if category is None:
+        return None
+    categories = await resolve_model_fallbacks(session, await resolve_llm_provider(session))
+    presets = selected_category_presets(categories, category)
+    if not presets:
+        return None
+    offered = await offered_model_ids(session)
+    # A preview must never block Settings when all configured models disappear.
+    return next(
+        (preset for preset in presets if not offered or preset.model in offered), presets[0]
+    )
+
+
+async def resolve_llm_preparation_budget(session: AsyncSession) -> int:
+    from precursor.backend.services.app_settings import resolve_llm_max_input_tokens
+
+    preset = await preview_llm_category_preset(session)
+    return (
+        preset.context_tokens if preset is not None else await resolve_llm_max_input_tokens(session)
+    )
 
 
 def category_presets(

@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { modelsStore, useCurrentModel, useModelsVersion } from "../lib/modelsStore";
 import { settingsStore, useSettings } from "../lib/settingsStore";
-import type { AgentModelInfo, LLMModel } from "../lib/types";
-import { matchingModelPreset, modelPresetMenuEntries, MODEL_PRESET_CATEGORIES, type ModelPresetMenuEntry } from "../lib/modelPresetMenus";
+import type { AgentModelInfo, LLMModel, ModelCategory } from "../lib/types";
+import { selectedModelCategoryEntry, modelPresetMenuEntries, MODEL_PRESET_CATEGORIES, type ModelPresetMenuEntry } from "../lib/modelPresetMenus";
 import { openModelPresetSettings } from "../lib/modelPresetSettingsOpen";
 import { ComposerSelectMenu, type MenuGroup, type MenuOption } from "./ComposerSelectMenu";
 
@@ -43,23 +43,19 @@ export function groupModelsByPublisher(models: LLMModel[]): MenuGroup[] {
   }));
 }
 
-function presetModelGroups(entries: ModelPresetMenuEntry[], models: { id: string; name: string }[], agents: boolean, catalogKnown: boolean): MenuGroup[] {
-  return MODEL_PRESET_CATEGORIES.map((category) => ({
+function presetModelGroups(entries: ModelPresetMenuEntry[], models: { id: string; name: string }[]): MenuGroup[] {
+  if (!entries.length) return [];
+  return [{
     parentLabel: "Presets",
-    label: category.label,
-    options: entries.filter((entry) => entry.category === category.id).map(({ value, preset }) => {
-      const model = models.find((model) => model.id === preset.model);
-      const context = agents
-        ? (preset.context_tier === "long_context" ? "Long context" : "Default context")
-        : `${formatTokens(preset.context_tokens)} context`;
+    options: entries.map(({ value, category, presets }) => {
       return {
         value,
-        label: model?.name ?? preset.model,
-        description: `${preset.reasoning_effort ? effortLabel(preset.reasoning_effort) : "Auto"} effort · ${context}${!model && catalogKnown ? " · Not listed" : ""}`,
-        searchText: preset.model,
+        label: MODEL_PRESET_CATEGORIES.find((entry) => entry.id === category)?.label ?? category,
+        description: `Engine chooses from ${presets.length} ordered ${presets.length === 1 ? "preset" : "presets"}`,
+        searchText: presets.map((preset) => `${preset.model} ${models.find((model) => model.id === preset.model)?.name ?? ""}`).join(" "),
       };
     }),
-  })).filter((group) => group.options.length > 0);
+  }];
 }
 
 // Ascending list of the (up to three) context-budget values offered for a model
@@ -126,11 +122,13 @@ function LlmModelControls() {
 
   const models = modelsStore.all();
   const effort = settings?.llm_reasoning_effort ?? "";
+  const category = settings?.llm_model_category ?? null;
   const modelId = currentModel?.id ?? settings?.llm_model ?? "";
   const selectedModel = currentModel ?? models.find((m) => m.id === modelId) ?? null;
 
   async function save(patch: {
     llm_model?: string;
+    llm_model_category?: ModelCategory | null;
     llm_reasoning_effort?: string;
     llm_max_input_tokens?: number;
   }): Promise<void> {
@@ -147,13 +145,12 @@ function LlmModelControls() {
   }
 
   const presets = modelPresetMenuEntries(settings?.model_fallbacks?.[settings.llm_provider], false, [...models.map((model) => model.id), modelId]);
-  const activePreset = matchingModelPreset(presets, {
-    model: modelId, reasoning_effort: effort, context_tokens: settings?.llm_max_input_tokens,
-  }, false);
-  const catalogKnown = models.length > 0 && models.every((model) => !model.catalog_provider || model.catalog_provider === settings?.llm_provider);
-  const modelGroups = [...presetModelGroups(presets, models, false, catalogKnown), ...groupModelsByPublisher(models)];
+  const activePreset = selectedModelCategoryEntry(presets, category);
+  const modelGroups = [...presetModelGroups(presets, models), ...groupModelsByPublisher(models)];
   const inCatalog = models.some((m) => m.id === modelId);
-  const modelLabel = currentModel?.name ?? modelId ?? "Model";
+  const modelLabel = category
+    ? MODEL_PRESET_CATEGORIES.find((entry) => entry.id === category)?.label ?? category
+    : currentModel?.name ?? modelId ?? "Model";
 
   // Reasoning efforts advertised by the selected model (plus Auto). When the
   // model isn't reasoning-capable the picker is hidden entirely.
@@ -174,21 +171,18 @@ function LlmModelControls() {
   // they're still valid for the new model, otherwise they're reset/snapped so
   // we never send an unsupported value (e.g. a 936K budget to a 128K model).
   function onModelChange(nextId: string): void {
-    const preset = presets.find((entry) => entry.value === nextId)?.preset;
+    const preset = presets.find((entry) => entry.value === nextId);
     if (preset) {
-      void save({
-        llm_model: preset.model,
-        llm_reasoning_effort: preset.reasoning_effort,
-        llm_max_input_tokens: preset.context_tokens,
-      });
+      void save({ llm_model_category: preset.category });
       return;
     }
     const next = models.find((m) => m.id === nextId) ?? null;
     const patch: {
       llm_model: string;
+      llm_model_category: null;
       llm_reasoning_effort?: string;
       llm_max_input_tokens?: number;
-    } = { llm_model: nextId };
+    } = { llm_model: nextId, llm_model_category: null };
     const nextEfforts = next?.supported_reasoning_efforts ?? [];
     if (effort && !nextEfforts.includes(effort)) patch.llm_reasoning_effort = "";
     if (ctxValue > 0) {
@@ -215,7 +209,8 @@ function LlmModelControls() {
         onOpen={() => void modelsStore.ensureLoaded()}
         onSelect={onModelChange}
       />
-      {supportedEfforts.length > 0 && (
+      {category && <span className={`text-[11px] ${activePreset ? "text-muted" : "text-amber-700 dark:text-amber-400"}`} data-tooltip={activePreset ? "The engine chooses an available model and its effort/context from the selected category" : "This category has no configured presets. Choose a direct model or configure it in Settings."}>{activePreset ? "Engine selects model" : "Category needs presets"}</span>}
+      {!category && supportedEfforts.length > 0 && (
         <ComposerSelectMenu
           ariaLabel="Reasoning effort"
           tooltip="Reasoning effort (supported by this model)"
@@ -226,7 +221,7 @@ function LlmModelControls() {
           onSelect={(v) => void save({ llm_reasoning_effort: v })}
         />
       )}
-      {ctxValue > 0 && (
+      {!category && ctxValue > 0 && (
         <ComposerSelectMenu
           ariaLabel="Context size"
           tooltip="Context size — max input tokens kept per turn"
@@ -262,11 +257,13 @@ function AgentModelControls() {
 
   const defaultModel = settings?.agents_default_model ?? "";
   const effort = settings?.agents_reasoning_effort ?? "";
+  const category = settings?.agents_model_category ?? null;
   const tier = settings?.agents_context_tier ?? "default";
   const selectedModel = models.find((m) => m.id === defaultModel) ?? null;
 
   async function save(patch: {
     agents_default_model?: string;
+    agents_model_category?: ModelCategory | null;
     agents_reasoning_effort?: string;
     agents_context_tier?: string;
   }): Promise<void> {
@@ -289,14 +286,14 @@ function AgentModelControls() {
       : []),
     ...models.map((m) => ({ value: m.id, label: m.name })),
   ];
-  const label = defaultModel
+  const label = category
+    ? MODEL_PRESET_CATEGORIES.find((entry) => entry.id === category)?.label ?? category
+    : defaultModel
     ? (models.find((m) => m.id === defaultModel)?.name ?? defaultModel)
     : "Runtime default";
   const presets = modelPresetMenuEntries(settings?.model_fallbacks?.agents, true, [...models.map((model) => model.id), defaultModel]);
-  const activePreset = matchingModelPreset(presets, {
-    model: defaultModel, reasoning_effort: effort, context_tier: tier,
-  }, true);
-  const modelGroups = [...presetModelGroups(presets, models, true, models.length > 0), { options }];
+  const activePreset = selectedModelCategoryEntry(presets, category);
+  const modelGroups = [...presetModelGroups(presets, models), { options }];
 
   // Reasoning efforts advertised by the selected agent model (plus Auto). The
   // "Runtime default" model has no catalog entry, so the picker stays hidden
@@ -318,18 +315,15 @@ function AgentModelControls() {
 
   // Switching model drops a reasoning effort the new model doesn't support.
   function onModelChange(nextId: string): void {
-    const preset = presets.find((entry) => entry.value === nextId)?.preset;
+    const preset = presets.find((entry) => entry.value === nextId);
     if (preset) {
-      void save({
-        agents_default_model: preset.model,
-        agents_reasoning_effort: preset.reasoning_effort,
-        agents_context_tier: preset.context_tier,
-      });
+      void save({ agents_model_category: preset.category });
       return;
     }
     const next = models.find((m) => m.id === nextId) ?? null;
-    const patch: { agents_default_model: string; agents_reasoning_effort?: string } = {
+    const patch: { agents_default_model: string; agents_model_category: null; agents_reasoning_effort?: string } = {
       agents_default_model: nextId,
+      agents_model_category: null,
     };
     const nextEfforts = next?.supported_reasoning_efforts ?? [];
     if (effort && !nextEfforts.includes(effort)) patch.agents_reasoning_effort = "";
@@ -351,7 +345,8 @@ function AgentModelControls() {
         footerAction={presets.length ? { label: "Manage presets in Settings...", onSelect: openModelPresetSettings } : undefined}
         onSelect={onModelChange}
       />
-      {supportedEfforts.length > 0 && (
+      {category && <span className={`text-[11px] ${activePreset ? "text-muted" : "text-amber-700 dark:text-amber-400"}`} data-tooltip={activePreset ? "The engine chooses model, effort and context for unpinned agent runs from this category" : "This category has no configured presets. Choose a direct model or configure it in Settings."}>{activePreset ? "Engine selects model" : "Category needs presets"}</span>}
+      {!category && supportedEfforts.length > 0 && (
         <ComposerSelectMenu
           ariaLabel="Reasoning effort"
           tooltip="Reasoning effort (supported by this model)"
@@ -362,7 +357,7 @@ function AgentModelControls() {
           onSelect={(v) => void save({ agents_reasoning_effort: v })}
         />
       )}
-      <ComposerSelectMenu
+      {!category && <ComposerSelectMenu
         ariaLabel="Context tier"
         tooltip="Context window tier for new agent sessions"
         triggerLabel={tierLabelText}
@@ -370,7 +365,7 @@ function AgentModelControls() {
         groups={[{ options: tierOptions }]}
         disabled={saving}
         onSelect={(v) => void save({ agents_context_tier: v })}
-      />
+      />}
     </div>
   );
 }

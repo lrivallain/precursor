@@ -182,6 +182,18 @@ into settings, agent definitions or workflow model pins. Chat `done.model`,
 persisted assistant-message models and usage report the model actually used.
 SDK rejection recovery is archived as a `model_fallback` agent timeline event.
 
+Settings also expose `llm_model_category` / `agents_model_category`
+(`null` or `efficiency|balanced|intelligence`). A partial update of only one of
+these fields selects a category without changing stored manual model, effort or
+context defaults. Selecting an unconfigured or unknown category returns `422`.
+Sending `llm_model` / `agents_default_model` clears the corresponding category
+unless the payload explicitly supplies that category too. `llm_category_preset`
+is a read-only first-candidate catalogue preview; request-time resolution and
+recovery still use the complete ordered category. Explicit per-turn/feature
+model overrides and agent/workflow pins bypass the default category.
+SDK category selection is archived as `model_selected`; subsequent rejection
+recovery remains `model_fallback`.
+
 `GET /api/llm/models` also returns `catalog_provider` on each model: the **actual**
 catalogue source, which may be `mock` when the requested provider's configuration
 is unusable. This prevents preset-health indicators from treating the offline

@@ -16,6 +16,7 @@ from sqlalchemy import select
 from precursor.backend.db import SessionLocal
 from precursor.backend.models import AgentRun, AgentSession
 from precursor.backend.schemas.agent import AgentEvent
+from precursor.backend.schemas.model_fallback import ModelCategory
 from precursor.backend.services.app_settings import (
     resolve_agents_context_tier,
     resolve_agents_default_model,
@@ -26,7 +27,9 @@ from precursor.backend.services.model_fallbacks import (
     ModelSelection,
     category_presets,
     is_model_rejection,
+    resolve_model_category,
     resolve_model_fallbacks,
+    selected_category_presets,
 )
 
 if TYPE_CHECKING:
@@ -109,30 +112,46 @@ class ModelSelector:
         return model
 
     async def choices(
-        self, agent_id: int, model: str, effort: str, tier: str
+        self,
+        agent_id: int,
+        model: str,
+        effort: str,
+        tier: str,
+        *,
+        category: ModelCategory | None = None,
     ) -> list[tuple[str, str | None, str]]:
         initial = (model, effort or None, tier or "default")
-        if not model or model == "auto":
+        if category is None and (not model or model == "auto"):
             return [initial]
         async with SessionLocal() as session:
             categories = await resolve_model_fallbacks(session, "agents")
         selection = ModelSelection(model=model, reasoning_effort=effort, context_tier=tier)
-        presets = category_presets(categories, selection, agents=True)
+        presets = (
+            selected_category_presets(categories, category)
+            if category is not None
+            else category_presets(categories, selection, agents=True)
+        )
+        if category is not None and not presets:
+            raise LLMError(
+                f"No presets are configured for the selected category {category.value!r}. "
+                "Update Settings > Model > Manage presets."
+            )
         if not presets:
             return [(await self.sanitize(agent_id, model), effort or None, tier or "default")]
         available = await self.available_model_ids()
         choices = list(
             dict.fromkeys(
                 [
-                    initial,
+                    *([initial] if category is None else []),
                     *((p.model, p.reasoning_effort or None, p.context_tier) for p in presets),
                 ]
             )
         )
         choices = [c for c in choices if not available or c[0] in available]
         if not choices:
+            target = category.value if category is not None else model
             raise LLMError(
-                f"No available model remains in the category for {model!r}. "
+                f"No available model remains in the category for {target!r}. "
                 "Update Settings > Model > Model alternatives."
             )
         return choices
@@ -145,12 +164,15 @@ class ModelSelector:
         default_model: str,
         effort: str,
         tier: str,
+        category: ModelCategory | None,
     ) -> None:
         model = run.model or agent.model or default_model
+        category = category if not (run.model or agent.model) else None
         requested = (model, effort or None, tier or "default")
-        choices = await self.choices(agent.id, model, effort, tier)
+        choices = await self.choices(agent.id, model, effort, tier, category=category)
         if (
             live.requested_model_signature == requested
+            and live.requested_model_category == category
             and live.model_candidates == choices
             and live.model_signature in choices
         ):
@@ -162,8 +184,9 @@ class ModelSelector:
             try:
                 await self._set_model(live, choice)
                 live.requested_model_signature = requested
+                live.requested_model_category = category
                 if choice != requested:
-                    await self.announce(run.id, choice)
+                    await self.announce(run.id, choice, category=category)
                 return
             except Exception as exc:
                 if not is_model_rejection(exc):
@@ -216,13 +239,19 @@ class ModelSelector:
             return True
         return False
 
-    async def announce(self, run_id: int, choice: tuple[str, str | None, str]) -> None:
+    async def announce(
+        self,
+        run_id: int,
+        choice: tuple[str, str | None, str],
+        *,
+        category: ModelCategory | None = None,
+    ) -> None:
         loaded = await self._manager._load_run(run_id)
         if loaded is not None:
             await self._manager._emit_synthetic(
                 loaded[1].id,
                 AgentEvent(
-                    kind="model_fallback",
+                    kind="model_selected" if category is not None else "model_fallback",
                     text=(
                         f"Using model {choice[0]} "
                         f"(effort: {choice[1] or 'auto'}, context: {choice[2]}). "
@@ -292,7 +321,8 @@ class ModelSelector:
             default_model = await resolve_agents_default_model(s)
             effort = await resolve_agents_reasoning_effort(s)
             tier = await resolve_agents_context_tier(s)
-        await self._apply(agent, run, live, default_model, effort, tier)
+            category = await resolve_model_category(s, agents=True)
+        await self._apply(agent, run, live, default_model, effort, tier, category)
 
     async def apply_session_overrides(self) -> None:
         """Apply the current global model / reasoning-effort / context-tier prefs
@@ -313,6 +343,7 @@ class ModelSelector:
             default_model = await resolve_agents_default_model(s)
             effort = await resolve_agents_reasoning_effort(s)
             tier = await resolve_agents_context_tier(s)
+            category = await resolve_model_category(s, agents=True)
             runs = (
                 (await s.execute(select(AgentRun).where(AgentRun.id.in_(run_ids)))).scalars().all()
             )
@@ -334,4 +365,4 @@ class ModelSelector:
                 continue
             if run.status in {"running", "needs_approval", "pending"}:
                 continue
-            await self._apply(agent, run, live, default_model, effort, tier)
+            await self._apply(agent, run, live, default_model, effort, tier, category)

@@ -15,7 +15,7 @@ from pydantic import ValidationError
 from precursor.backend.db import SessionLocal
 from precursor.backend.main import create_app
 from precursor.backend.models import AgentRun, AgentSession, AppSetting
-from precursor.backend.schemas.model_fallback import ModelCategories, ModelPreset
+from precursor.backend.schemas.model_fallback import ModelCategories, ModelCategory, ModelPreset
 from precursor.backend.schemas.settings import SettingsPayload
 from precursor.backend.services.agents.live_session import _LiveSession
 from precursor.backend.services.agents.manager import AgentManager
@@ -280,7 +280,11 @@ async def stored_settings():
     keys = (
         "model_fallbacks",
         "llm_model",
+        "llm_model_category",
+        "llm_reasoning_effort",
+        "llm_max_input_tokens",
         "agents_default_model",
+        "agents_model_category",
         "agents_reasoning_effort",
         "agents_context_tier",
     )
@@ -765,3 +769,280 @@ async def test_catalog_api_reports_actual_source_not_requested_provider(
         assert response.status_code == 200
         assert response.json()
         assert all(model["catalog_provider"] == "mock" for model in response.json())
+
+
+async def test_selected_category_ignores_manual_model_and_uses_ordered_presets() -> None:
+    provider = _Provider(["manual", "first", "second", "outside"])
+    provider.failures[("first", "high")] = "invalid_reasoning_effort"
+    wrapper = CategoryFallbackProvider(
+        provider,
+        ModelCategories(
+            efficiency=[_preset("retired"), _preset("first", "high"), _preset("second", "low")],
+            intelligence=[_preset("outside", "high")],
+        ),
+        600_000,
+        selected_category=ModelCategory.EFFICIENCY,
+    )
+    await _call(wrapper, "manual", "")
+    assert [(call["model"], call["reasoning_effort"]) for call in provider.calls] == [
+        ("first", "high"),
+        ("second", "low"),
+    ]
+    assert wrapper.effective_model == "second"
+    await _call(wrapper, "manual", "")
+    assert provider.calls[-1]["model"] == "second"
+    assert len(provider.calls) == 3
+
+
+async def test_selected_empty_or_unavailable_category_never_uses_manual_or_other_category() -> None:
+    provider = _Provider(["manual", "outside"])
+    for categories in (
+        ModelCategories(intelligence=[_preset("outside")]),
+        ModelCategories(efficiency=[_preset("retired")], intelligence=[_preset("outside")]),
+    ):
+        wrapper = CategoryFallbackProvider(
+            provider,
+            categories,
+            128_000,
+            selected_category=ModelCategory.EFFICIENCY,
+        )
+        with pytest.raises(LLMError, match=r"No presets|No working"):
+            await _call(wrapper, "manual", "")
+    assert provider.calls == []
+
+
+async def test_category_turn_retains_fallback_history_and_uses_candidate_budgets(
+    stored_settings,
+    monkeypatch,
+) -> None:
+    from precursor.backend.services import conversation_turn
+    from precursor.backend.services.turn_engine import run_tool_loop
+
+    await _store("llm_model_category", "efficiency")
+    await _store("llm_max_input_tokens", 1000)
+    categories = ModelCategories(
+        efficiency=[
+            _preset("first", "high", 32_000),
+            _preset("second", "low", 128_000),
+        ]
+    )
+    await _store("model_fallbacks", {"github_copilot": categories.model_dump()})
+    provider = _Provider(["first", "second"])
+    provider.list_models = AsyncMock(
+        return_value=[
+            LLMModel(id="first", name="first", context_window=32_000),
+            LLMModel(id="second", name="second", context_window=128_000),
+        ]
+    )
+    provider.failures[("first", "high")] = "invalid_reasoning_effort"
+    wrapper = CategoryFallbackProvider(
+        provider,
+        categories,
+        1000,
+        selected_category=ModelCategory.EFFICIENCY,
+    )
+    build = AsyncMock(return_value=wrapper)
+    monkeypatch.setattr(conversation_turn, "get_llm_provider", build)
+    async with SessionLocal() as session:
+        resolved = await conversation_turn.resolve_turn_settings(session)
+    assert resolved.max_input_tokens == 128_000
+    build.assert_awaited_once()
+    assert build.call_args.kwargs["model_category"] == ModelCategory.EFFICIENCY
+    old = ChatMessage(role="user", content="history " * 25_000)
+    async for _ in run_tool_loop(
+        active=SimpleNamespace(tools=[], tool_to_server={}),
+        provider=resolved.provider,
+        model=resolved.model,
+        reasoning_effort=resolved.reasoning_effort,
+        system_prompt="system",
+        history=[old, ChatMessage(role="user", content="finish this")],
+        max_tool_rounds=2,
+        max_input_tokens=resolved.max_input_tokens,
+        max_tool_result_tokens=20_000,
+    ):
+        pass
+    assert old not in provider.calls[0]["messages"]
+    assert old in provider.calls[1]["messages"]
+    build.reset_mock()
+    async with SessionLocal() as session:
+        explicit = await conversation_turn.resolve_turn_settings(session, model_override="manual")
+    assert explicit.model == "manual"
+    assert explicit.max_input_tokens == 1000
+    assert "model_category" not in build.call_args.kwargs
+
+
+async def test_category_selection_api_preserves_manual_defaults_and_direct_model_clears_it(
+    stored_settings,
+    monkeypatch,
+) -> None:
+    from precursor.backend.services import model_catalog
+    from precursor.backend.services.model_fallbacks import resolve_llm_preparation_budget
+
+    monkeypatch.setattr(model_catalog, "offered_model_ids", AsyncMock(return_value=("available",)))
+    with TestClient(create_app()) as client:
+        assert (
+            client.put("/api/settings", json={"llm_model_category": "efficiency"}).status_code
+            == 422
+        )
+        assert (
+            client.put("/api/settings", json={"llm_model_category": "unknown"}).status_code == 422
+        )
+        initial = client.put(
+            "/api/settings",
+            json={
+                "llm_model": "available",
+                "llm_reasoning_effort": "high",
+                "llm_max_input_tokens": 600_000,
+                "model_fallbacks": {
+                    "github_copilot": {
+                        "efficiency": [
+                            {"model": "retired"},
+                            {
+                                "model": "available",
+                                "reasoning_effort": "low",
+                                "context_tokens": 32_000,
+                            },
+                        ]
+                    },
+                    "agents": {"balanced": [{"model": "available", "reasoning_effort": "medium"}]},
+                },
+            },
+        )
+        assert initial.status_code == 200
+        selected = client.put("/api/settings", json={"llm_model_category": "efficiency"})
+        assert selected.status_code == 200
+        result = selected.json()
+        assert result["llm_model_category"] == "efficiency"
+        assert result["llm_reasoning_effort"] == "high"
+        assert result["llm_max_input_tokens"] == 600_000
+        assert result["llm_category_preset"]["model"] == "available"
+        assert result["llm_category_preset"]["reasoning_effort"] == "low"
+        assert result["llm_category_preset"]["context_tokens"] == 32_000
+        assert client.get("/api/settings").json()["llm_model_category"] == "efficiency"
+
+        async def preparation_budget():
+            async with SessionLocal() as session:
+                return await resolve_llm_preparation_budget(session)
+
+        assert client.portal.call(preparation_budget) == 32_000
+        direct = client.put("/api/settings", json={"llm_model": "available"})
+        assert direct.json()["llm_model_category"] is None
+        assert direct.json()["llm_category_preset"] is None
+        assert (
+            client.put("/api/settings", json={"agents_model_category": "balanced"}).status_code
+            == 200
+        )
+        assert (
+            client.put("/api/settings", json={"agents_default_model": "auto"}).json()[
+                "agents_model_category"
+            ]
+            is None
+        )
+
+
+async def test_sdk_category_selection_chooses_models_without_pinning_them(stored_settings) -> None:
+    manager = AgentManager()
+    await _store("agents_default_model", "auto")
+    await _store("agents_reasoning_effort", "high")
+    await _store("agents_context_tier", "long_context")
+    await _store("agents_model_category", "efficiency")
+    await _store(
+        "model_fallbacks",
+        {
+            "agents": {
+                "efficiency": [
+                    {"model": "retired"},
+                    {"model": "available", "reasoning_effort": "low"},
+                ],
+                "balanced": [
+                    {
+                        "model": "strong",
+                        "reasoning_effort": "medium",
+                        "context_tier": "long_context",
+                    }
+                ],
+            }
+        },
+    )
+    manager.list_models = AsyncMock(
+        return_value=[{"id": "available"}, {"id": "strong"}, {"id": "haiku"}]
+    )
+    sdk = SimpleNamespace(on=lambda callback: None, set_model=AsyncMock())
+    create = AsyncMock(return_value=sdk)
+    manager._client = SimpleNamespace(create_session=create)
+    agent, run = await _agent(manager)
+    async with SessionLocal() as session:
+        stored_agent = await session.get(AgentSession, agent.id)
+        stored_run = await session.get(AgentRun, run.id)
+        stored_agent.model = None
+        stored_run.model = None
+        await session.commit()
+    agent.model = run.model = None
+    live = await manager._ensure_live_locked(agent, run)
+    assert create.call_args.kwargs["model"] == "available"
+    assert create.call_args.kwargs["reasoning_effort"] == "low"
+    assert "context_tier" not in create.call_args.kwargs
+    assert live.requested_model_category == "efficiency"
+    await manager._model_selection.sync_selected_model(agent, run)
+    sdk.set_model.assert_not_awaited()
+    await _store("agents_model_category", "balanced")
+    await manager._model_selection.sync_selected_model(agent, run)
+    sdk.set_model.assert_awaited_once_with(
+        "strong", reasoning_effort="medium", context_tier="long_context"
+    )
+    assert run.model is None
+    async with SessionLocal() as session:
+        assert (await session.get(AppSetting, "agents_default_model")).value == '"auto"'
+    run.model = "haiku"
+    await manager._model_selection.sync_selected_model(agent, run)
+    assert sdk.set_model.call_args.args == ("haiku",), (
+        "An explicit workflow/run pin wins over the default category"
+    )
+
+
+async def test_default_one_shot_uses_category_but_explicit_model_does_not(
+    stored_settings, monkeypatch
+) -> None:
+    from precursor.backend.services.llm import one_shot
+
+    await _store("llm_model_category", "efficiency")
+    provider = _Provider(["manual", "available"])
+    categories = ModelCategories(efficiency=[_preset("available", "low")])
+    builds: list[dict[str, Any]] = []
+
+    async def build(session, **kwargs):
+        builds.append(kwargs)
+        return CategoryFallbackProvider(
+            provider, categories, 128_000, selected_category=kwargs.get("model_category")
+        )
+
+    monkeypatch.setattr(one_shot, "get_llm_provider", build)
+    async with SessionLocal() as session:
+        result = await one_shot.complete_once(
+            session, system="s", user="u", usage_source="category-test"
+        )
+    assert result.model == "available"
+    assert builds[0]["model_category"] == "efficiency"
+    assert provider.calls[0]["reasoning_effort"] == "low"
+    async with SessionLocal() as session:
+        result = await one_shot.complete_once(
+            session, system="s", user="u", usage_source="category-test", model="manual"
+        )
+    assert result.model == "manual"
+    assert builds[1] == {}
+
+
+async def test_category_does_not_turn_missing_credentials_into_mock_success(
+    stored_settings, monkeypatch
+) -> None:
+    from precursor.backend.services import llm
+
+    await _store("model_fallbacks", {"github_copilot": {"efficiency": [{"model": "available"}]}})
+    monkeypatch.setattr(llm, "resolve_github_token", AsyncMock(return_value=None))
+    async with SessionLocal() as session:
+        provider = await llm.get_llm_provider(
+            session, override_provider="github_copilot", model_category=ModelCategory.EFFICIENCY
+        )
+    with pytest.raises(LLMError, match="not configured"):
+        async for _ in provider.stream_chat_with_tools(model="manual", messages=[], tools=[]):
+            pass

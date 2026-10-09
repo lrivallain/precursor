@@ -20,6 +20,7 @@ from precursor.backend.db import SessionLocal
 from precursor.backend.services.app_settings import resolve_llm_model
 from precursor.backend.services.llm import complete_text_with_usage, get_llm_provider
 from precursor.backend.services.llm.base import ChatMessage, UsageEvent
+from precursor.backend.services.model_fallbacks import resolve_model_category
 from precursor.backend.services.usage_stats import record_usage
 
 __all__ = ["LLMCallFailed", "OneShotResult", "complete_once"]
@@ -77,7 +78,12 @@ async def complete_once(
     """
     resolved_model = model or await resolve_llm_model(session)
     try:
-        provider = await get_llm_provider(session)
+        category = await resolve_model_category(session) if not model else None
+        provider = (
+            await get_llm_provider(session, model_category=category)
+            if category is not None
+            else await get_llm_provider(session)
+        )
     except Exception as exc:
         raise LLMCallFailed(usage_source, exc) from exc
     if release_connection:

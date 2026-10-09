@@ -82,6 +82,7 @@ from precursor.backend.services.app_settings import (
     resolve_live_reasoning_effort,
     resolve_live_summary_language,
     resolve_live_summary_template,
+    resolve_llm_model,
 )
 from precursor.backend.services.blob_store import blob_path, write_blob
 from precursor.backend.services.collections import resolve_topic_github_repo
@@ -748,15 +749,23 @@ async def ask(
     if notes_ctx:
         user_parts.append(f"\nPinned context notes:\n{notes_ctx}")
 
-    provider = await get_llm_provider(session)
-    model = await resolve_live_fast_model(session)
+    from precursor.backend.services.model_fallbacks import resolve_model_category
+
+    model = await resolve_live_fast_model(session, use_default=False)
+    category = await resolve_model_category(session) if not model else None
+    provider = (
+        await get_llm_provider(session, model_category=category)
+        if category is not None
+        else await get_llm_provider(session)
+    )
+    model = model or await resolve_llm_model(session)
     effort = await resolve_live_reasoning_effort(session)
     topic_id = ms.topic_id
 
     async def event_stream() -> AsyncIterator[dict[str, str]]:
         try:
             async for event in provider.stream_chat_with_tools(
-                model=model,
+                model=getattr(provider, "effective_model", None) or model,
                 messages=[
                     ChatMessage(role="system", content=system),
                     ChatMessage(role="user", content="\n".join(user_parts)),

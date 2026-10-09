@@ -132,7 +132,7 @@ from precursor.backend.services.events import (
     publish_message_changed_chat,
     set_current_client_id,
 )
-from precursor.backend.services.model_fallbacks import is_model_rejection
+from precursor.backend.services.model_fallbacks import is_model_rejection, resolve_model_category
 from precursor.backend.services.suggestions import split_suggestions
 
 # The pure helpers and the live-session record moved to their own modules;
@@ -838,9 +838,13 @@ class AgentManager:
             effort = await resolve_agents_reasoning_effort(s)
             tier = await resolve_agents_context_tier(s)
             track_files = await resolve_agents_file_change_tracking(s)
+            category = await resolve_model_category(s, agents=True)
+        category = category if not (run.model or agent.model) else None
         model = run.model or default_model
         requested_model = (model, effort or None, tier or "default")
-        model_choices = await self._model_selection.choices(agent.id, model, effort, tier)
+        model_choices = await self._model_selection.choices(
+            agent.id, model, effort, tier, category=category
+        )
         if run.copilot_session_id:
             kwargs["session_id"] = run.copilot_session_id
         # Lets a rewind put back the files the dropped turns changed. Only a
@@ -911,6 +915,7 @@ class AgentManager:
             mcp_auth_skipped=await self._auth_skipped_stamps(auth_required),
             model_signature=choice if model else None,
             requested_model_signature=requested_model,
+            requested_model_category=category,
             model_candidates=model_choices,
             model_attempts=attempted_models,
         )
@@ -924,7 +929,7 @@ class AgentManager:
         agent_id, run_id = agent.id, run.id
         sdk_session.on(lambda event: self._dispatch_sdk_event(agent_id, run_id, event))
         if choice != requested_model:
-            await self._model_selection.announce(run.id, choice)
+            await self._model_selection.announce(run.id, choice, category=category)
 
         # The resume handle is *not* readable off ``CopilotSession`` — it exposes
         # no ``id``/``session_id`` attribute — so it is captured from the

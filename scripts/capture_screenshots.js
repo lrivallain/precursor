@@ -854,6 +854,8 @@ const scenes = {
           github_token_source: "settings",
           agents_enabled: true, agents_available: true, agents_runtime_started: true,
           llm_model: "claude-sonnet-5", llm_reasoning_effort: "medium", llm_max_input_tokens: 128000,
+          llm_model_category: "balanced",
+          llm_category_preset: { model: "claude-sonnet-5", reasoning_effort: "medium", context_tokens: 128000, context_tier: "default" },
           model_fallbacks: { github_copilot: {
             efficiency: [
               { model: "claude-haiku-4.5", reasoning_effort: "", context_tokens: 128000, context_tier: "default" },
