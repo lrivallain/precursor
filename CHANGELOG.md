@@ -27,6 +27,9 @@ are the per-version history; releasing does not rewrite this file.
   to the Settings draft or can be cancelled without changing it.
   Preset models reuse the prompt composer's searchable model dropdown, retaining
   saved/retired ids and allowing explicit ids through the search.
+  Prompt model dropdowns also expose **Presets** with Efficiency, Balanced and
+  Intelligence subcategories; choosing a profile applies its model, effort and
+  context together within the correct chat/provider or SDK scope.
   Category and configuration badges check provider/SDK catalogues, with per-preset
   warnings for unlisted models, incomplete/duplicate profiles and advertised
   effort/window mismatches. Missing credentials or unavailable catalogues remain

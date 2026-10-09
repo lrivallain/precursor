@@ -348,6 +348,50 @@ async function main() {
     await composerModel.filter({ hasText: "Model C" }).waitFor();
     assert.equal(await composerModel.innerText(), "Model C");
     assert.equal(state.llm_model, "model-c");
+    await composerModel.click();
+    assert.equal(await composerMenu.locator('[data-menu-parent="Presets"]').count(), 1);
+    assert.equal(await composerMenu.locator('[data-menu-category="Efficiency"]').count(), 1);
+    assert.equal(await composerMenu.locator('[data-menu-category="Balanced"]').count(), 1);
+    assert.equal(await composerMenu.locator('[data-menu-category="Intelligence"]').count(), 0, "Empty categories are omitted");
+    await composerMenu.getByRole("textbox", { name: "Filter models…" }).fill("Balanced");
+    const beforeChatPreset = writes.length;
+    await composerMenu.getByRole("textbox", { name: "Filter models…" }).press("Enter");
+    await composerMenu.waitFor({ state: "hidden" });
+    await composerModel.filter({ hasText: "Model A" }).waitFor();
+    assert.deepEqual(writes[beforeChatPreset], {
+      llm_model: "model-a", llm_reasoning_effort: "high", llm_max_input_tokens: 128000,
+    }, "A chat preset applies model, effort and token budget in one settings update");
+    await composerModel.click();
+    await composerMenu.getByRole("textbox", { name: "Filter models…" }).fill("Balanced");
+    assert.equal(await composerMenu.getByRole("option", { selected: true }).count(), 1, "The selected profile is checked");
+    await composerMenu.getByRole("textbox", { name: "Filter models…" }).fill("retired-id");
+    assert.equal(await composerMenu.getByRole("option").count(), 1, "Preset search matches the underlying model id");
+    assert.match(await composerMenu.getByRole("option").innerText(), /Not listed/);
+    await page.keyboard.press("Escape");
+    state.agents_default_model = "model-c";
+    state.agents_reasoning_effort = "high";
+    state.agents_context_tier = "default";
+    const agents = await (await page.request.get(`${BASE}/api/agents`)).json();
+    assert.ok(agents.length > 0, "The anonymous demo provides a seeded agent");
+    await page.goto(`${BASE}/agents/${agents[0].public_id}`, { waitUntil: "networkidle" });
+    await page.reload({ waitUntil: "networkidle" });
+    const agentModel = page.getByRole("button", { name: "Agent model", exact: true });
+    await agentModel.click();
+    const agentMenu = page.getByRole("listbox", { name: "Agent model", exact: true });
+    assert.equal(await agentMenu.locator('[data-menu-parent="Presets"]').count(), 1);
+    assert.equal(await agentMenu.locator('[data-menu-category="Efficiency"]').count(), 1);
+    assert.equal(await agentMenu.locator('[data-menu-category="Balanced"]').count(), 0, "Chat presets do not leak into SDK menus");
+    await agentMenu.getByRole("textbox", { name: "Filter models…" }).fill("Presets");
+    assert.equal(await agentMenu.getByRole("option").count(), 1, "The parent group can be searched");
+    const beforeAgentPreset = writes.length;
+    await agentMenu.getByRole("option").first().click();
+    await agentMenu.waitFor({ state: "hidden" });
+    await agentModel.filter({ hasText: "Model B" }).waitFor();
+    assert.deepEqual(writes[beforeAgentPreset], {
+      agents_default_model: "model-b", agents_reasoning_effort: "low", agents_context_tier: "long_context",
+    }, "An SDK preset applies model, effort and context tier atomically");
+    assert.equal(state.llm_model, "model-a", "An agent preset does not change chat configuration");
+    assert.deepEqual(state.model_fallbacks, saved, "Selecting presets never changes the preset definitions");
     console.log("Model alternatives UI: compact summary, category-by-runtime modal, Apply/Cancel drafts, review navigation, nested dropdowns/Escape, focus traps, health, mobile layout and persistence passed.");
   } finally {
     await browser.close();

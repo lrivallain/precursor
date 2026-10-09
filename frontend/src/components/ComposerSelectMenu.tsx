@@ -7,10 +7,13 @@ export interface MenuOption {
   label: string;
   /** Optional muted second line (e.g. a role's system prompt). */
   description?: string;
+  /** Additional filter text when the option's value is an opaque action id. */
+  searchText?: string;
 }
 
 export interface MenuGroup {
   label?: string;
+  parentLabel?: string;
   options: MenuOption[];
 }
 
@@ -141,11 +144,11 @@ export function ComposerSelectMenu({
     ? groups
         .map((g) => ({
           ...g,
-          options: g.label?.toLowerCase().includes(q)
+          options: g.label?.toLowerCase().includes(q) || g.parentLabel?.toLowerCase().includes(q)
             ? g.options
             : g.options.filter(
                 (o) =>
-                  o.label.toLowerCase().includes(q) || o.value.toLowerCase().includes(q),
+                  o.label.toLowerCase().includes(q) || o.value.toLowerCase().includes(q) || o.searchText?.toLowerCase().includes(q),
               ),
         }))
         .filter((g) => g.options.length > 0)
@@ -222,9 +225,14 @@ export function ComposerSelectMenu({
               </div>
             )}
             {visibleGroups.map((group, gi) => (
-              <div key={group.label ?? gi}>
+              <div key={`${group.parentLabel ?? ""}:${group.label ?? gi}`} role={group.label ? "group" : undefined} aria-label={group.label ? `${group.parentLabel ? `${group.parentLabel} - ` : ""}${group.label}` : undefined}>
+                {group.parentLabel && group.options.length > 0 && visibleGroups[gi - 1]?.parentLabel !== group.parentLabel && (
+                  <div className="px-2 pb-1 pt-1.5 text-[10px] font-medium uppercase tracking-wide text-muted" data-menu-parent={group.parentLabel}>
+                    {group.parentLabel}
+                  </div>
+                )}
                 {group.label && group.options.length > 0 && (
-                  <div className="px-2 pb-1 pt-1.5 text-[10px] font-medium uppercase tracking-wide text-muted">
+                  <div className={group.parentLabel ? "px-3 pb-1 pt-1 text-[11px] font-medium text-text" : "px-2 pb-1 pt-1.5 text-[10px] font-medium uppercase tracking-wide text-muted"} data-menu-category={group.parentLabel ? group.label : undefined}>
                     {group.label}
                   </div>
                 )}

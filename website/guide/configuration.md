@@ -78,6 +78,28 @@ agents and workflow steps use the SDK scope, even when both use the same
 GitHub Copilot subscription. Each has its own categories and context controls.
 Alternatives never switch provider or credentials.
 
+#### Selecting a preset from a prompt
+
+The prompt's model dropdown includes a **Presets** group, with **Efficiency**,
+**Balanced** and **Intelligence** subcategories for the presets you configured.
+Empty categories are omitted. Chat/topic composers use the selected provider's
+presets; agent composers use the independent Copilot SDK presets.
+
+Select a preset to apply its **model, effort and context together** in one
+settings update. Chat presets set the input-token budget; SDK presets set the
+context tier. The matching complete profile is checked in the menu. Changing
+effort/context separately clears that profile's check when it no longer matches.
+Catalogue model choices remain available and keep their existing switching rules.
+
+Search by category, model name/id, or **Presets** to see just your profiles.
+Retired ids remain selectable and show **Not listed** when a catalogue is known:
+their category can still recover using its listed alternatives. Selecting a
+profile never modifies its definition or crosses providers/runtimes.
+
+<Screenshot src="/screenshots/model-presets.png" alt="Prompt model dropdown with a Presets group and Efficiency, Balanced and Intelligence subcategories" caption="Choose a configured model, effort and context as one profile directly from the prompt." />
+
+#### Editing preset definitions
+
 **Add current selection** captures the model, effort and context currently
 selected in the composer; **Add preset** adds an alternative. Each model uses
 the same searchable dropdown as the prompt composer: filter by name or id,

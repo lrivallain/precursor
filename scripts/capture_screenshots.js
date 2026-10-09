@@ -853,6 +853,7 @@ const scenes = {
           // Presence/catalogue fixtures only; the real demo remains Guest with no token.
           github_token_source: "settings",
           agents_enabled: true, agents_available: true, agents_runtime_started: true,
+          llm_model: "claude-sonnet-5", llm_reasoning_effort: "medium", llm_max_input_tokens: 128000,
           model_fallbacks: { github_copilot: {
             efficiency: [
               { model: "claude-haiku-4.5", reasoning_effort: "", context_tokens: 128000, context_tier: "default" },
@@ -896,6 +897,20 @@ const scenes = {
       await page.mouse.move(0, 0);
       await sleep(350);
       return clipOf(page, '[role="dialog"]:has([data-model-fallback-dialog])', 0);
+    },
+  },
+
+  "model-presets": {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await scenes["model-alternatives"].go(page);
+      await page.getByRole("button", { name: "Close", exact: true }).click();
+      await page.goto(`${BASE}/chats/regex-for-semver-tags`, { waitUntil: "networkidle" });
+      await page.getByRole("button", { name: "Model", exact: true }).click();
+      await page.getByRole("listbox", { name: "Model", exact: true }).waitFor();
+      await page.mouse.move(0, 0);
+      await sleep(200);
+      return clipOf(page, '[role="listbox"][aria-label="Model"]', 12);
     },
   },
 

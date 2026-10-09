@@ -7,13 +7,9 @@ import { Modal } from "./Modal";
 import { ComposerSelectMenu, type MenuGroup } from "./ComposerSelectMenu";
 import { groupModelsByPublisher } from "./ComposerModelControls";
 import { useSettings } from "../lib/settingsStore";
+import { MODEL_PRESET_CATEGORIES as CATEGORIES } from "../lib/modelPresetMenus";
 import { checkPresets, providerSetupIssue, summarizePresetConfigurations, summarizePresets, type CatalogCheck, type PresetSummary } from "../lib/modelPresetHealth";
 
-const CATEGORIES: { id: ModelCategory; label: string; hint: string }[] = [
-  { id: "efficiency", label: "Efficiency", hint: "Fast, economical tasks" },
-  { id: "balanced", label: "Balanced", hint: "Everyday work" },
-  { id: "intelligence", label: "Intelligence", hint: "Complex reasoning" },
-];
 const EMPTY: ModelCategories = { efficiency: [], balanced: [], intelligence: [] };
 const EFFORTS: ModelPreset["reasoning_effort"][] = ["", "minimal", "low", "medium", "high", "xhigh", "max"];
 const INPUT_CLASS = "w-full min-w-0 bg-bg border border-border rounded px-2 py-1.5 text-xs outline-none focus:border-accent";

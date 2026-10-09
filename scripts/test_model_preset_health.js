@@ -2,7 +2,11 @@
 const assert = require("node:assert/strict");
 const { before, test } = require("node:test");
 let health;
-before(async () => { health = await import("../frontend/src/lib/modelPresetHealth.ts"); });
+let menus;
+before(async () => {
+  health = await import("../frontend/src/lib/modelPresetHealth.ts");
+  menus = await import("../frontend/src/lib/modelPresetMenus.ts");
+});
 const preset = (model = "available", patch = {}) => ({
   model, reasoning_effort: "", context_tokens: 128000, context_tier: "default", ...patch,
 });
@@ -135,4 +139,35 @@ test("overall incomplete and review checks cannot become a success-shaped result
   assert.equal(health.summarizePresetConfigurations([
     { label: "Agents", checks: unverified, catalog: catalog("checking") },
   ]).state, "checking");
+});
+
+test("preset menu entries preserve category order and separate action ids from model ids", () => {
+  const entries = menus.modelPresetMenuEntries(categories(
+    [preset("retired"), preset("available")], [], [preset("intelligent")],
+  ), false);
+  assert.deepEqual(entries.map((entry) => entry.category), ["efficiency", "efficiency", "intelligence"]);
+  assert.equal(entries[0].preset.model, "retired");
+  assert.equal(new Set(entries.map((entry) => entry.value)).size, 3);
+  assert.equal(menus.modelPresetMenuEntries(undefined, false).length, 0);
+  assert.notEqual(entries[0].value, menus.modelPresetMenuEntries(categories([preset("retired")]), true)[0].value);
+});
+
+test("prompt selection matches a complete profile, not just its model id", () => {
+  const profiles = categories(
+    [preset("available", { reasoning_effort: "low", context_tokens: 32000 })],
+    [preset("available", { reasoning_effort: "high", context_tokens: 128000, context_tier: "long_context" })],
+  );
+  const chat = menus.modelPresetMenuEntries(profiles, false);
+  assert.equal(menus.matchingModelPreset(chat, { model: "available", reasoning_effort: "high", context_tokens: 128000 }, false).category, "balanced");
+  assert.equal(menus.matchingModelPreset(chat, { model: "available", reasoning_effort: "high", context_tokens: 32000 }, false), undefined);
+  const agents = menus.modelPresetMenuEntries(profiles, true);
+  assert.equal(menus.matchingModelPreset(agents, { model: "available", reasoning_effort: "high", context_tier: "long_context" }, true).category, "balanced");
+  assert.equal(menus.matchingModelPreset(agents, { model: "available", reasoning_effort: "high", context_tier: "default" }, true), undefined);
+});
+
+test("opaque preset actions cannot collide with literal model ids", () => {
+  const profiles = categories([preset("preset:llm:efficiency:0")]);
+  const entries = menus.modelPresetMenuEntries(profiles, false, [":preset:llm:efficiency:0"]);
+  assert.notEqual(entries[0].value, profiles.efficiency[0].model);
+  assert.notEqual(entries[0].value, ":preset:llm:efficiency:0");
 });

@@ -85,6 +85,11 @@ Efficiency/Balanced/Intelligence presets. Open **Manage presets** and select the
 category under **Agents & workflows** (Copilot SDK): **Chat & live** presets do not apply to these runs, even
 when both use your Copilot subscription.
 
+The agent prompt's **Agent model** dropdown also offers **Presets**, grouped into
+Efficiency, Balanced and Intelligence. Selecting one applies its model, reasoning
+effort and context tier together. Only Copilot SDK presets appear here; chat
+presets use the provider scope instead.
+
 A missing model or rejected effort/context can switch to a same-category preset
 with its own effort and context tier, keeping the SDK conversation and saved
 model pin. Recovery is shown in the timeline. It stops after the configured

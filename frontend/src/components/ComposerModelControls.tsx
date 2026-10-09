@@ -3,6 +3,7 @@ import { api } from "../lib/api";
 import { modelsStore, useCurrentModel, useModelsVersion } from "../lib/modelsStore";
 import { settingsStore, useSettings } from "../lib/settingsStore";
 import type { AgentModelInfo, LLMModel } from "../lib/types";
+import { matchingModelPreset, modelPresetMenuEntries, MODEL_PRESET_CATEGORIES, type ModelPresetMenuEntry } from "../lib/modelPresetMenus";
 import { ComposerSelectMenu, type MenuGroup, type MenuOption } from "./ComposerSelectMenu";
 
 const EFFORT_LABELS: Record<string, string> = {
@@ -39,6 +40,25 @@ export function groupModelsByPublisher(models: LLMModel[]): MenuGroup[] {
     label,
     options: list.map((model) => ({ value: model.id, label: model.name })),
   }));
+}
+
+function presetModelGroups(entries: ModelPresetMenuEntry[], models: { id: string; name: string }[], agents: boolean, catalogKnown: boolean): MenuGroup[] {
+  return MODEL_PRESET_CATEGORIES.map((category) => ({
+    parentLabel: "Presets",
+    label: category.label,
+    options: entries.filter((entry) => entry.category === category.id).map(({ value, preset }) => {
+      const model = models.find((model) => model.id === preset.model);
+      const context = agents
+        ? (preset.context_tier === "long_context" ? "Long context" : "Default context")
+        : `${formatTokens(preset.context_tokens)} context`;
+      return {
+        value,
+        label: model?.name ?? preset.model,
+        description: `${preset.reasoning_effort ? effortLabel(preset.reasoning_effort) : "Auto"} effort · ${context}${!model && catalogKnown ? " · Not listed" : ""}`,
+        searchText: preset.model,
+      };
+    }),
+  })).filter((group) => group.options.length > 0);
 }
 
 // Ascending list of the (up to three) context-budget values offered for a model
@@ -125,7 +145,12 @@ function LlmModelControls() {
     }
   }
 
-  const modelGroups = groupModelsByPublisher(models);
+  const presets = modelPresetMenuEntries(settings?.model_fallbacks?.[settings.llm_provider], false, [...models.map((model) => model.id), modelId]);
+  const activePreset = matchingModelPreset(presets, {
+    model: modelId, reasoning_effort: effort, context_tokens: settings?.llm_max_input_tokens,
+  }, false);
+  const catalogKnown = models.length > 0 && models.every((model) => !model.catalog_provider || model.catalog_provider === settings?.llm_provider);
+  const modelGroups = [...presetModelGroups(presets, models, false, catalogKnown), ...groupModelsByPublisher(models)];
   const inCatalog = models.some((m) => m.id === modelId);
   const modelLabel = currentModel?.name ?? modelId ?? "Model";
 
@@ -148,6 +173,15 @@ function LlmModelControls() {
   // they're still valid for the new model, otherwise they're reset/snapped so
   // we never send an unsupported value (e.g. a 936K budget to a 128K model).
   function onModelChange(nextId: string): void {
+    const preset = presets.find((entry) => entry.value === nextId)?.preset;
+    if (preset) {
+      void save({
+        llm_model: preset.model,
+        llm_reasoning_effort: preset.reasoning_effort,
+        llm_max_input_tokens: preset.context_tokens,
+      });
+      return;
+    }
     const next = models.find((m) => m.id === nextId) ?? null;
     const patch: {
       llm_model: string;
@@ -169,7 +203,7 @@ function LlmModelControls() {
         ariaLabel="Model"
         tooltip="Model (applies to every conversation)"
         triggerLabel={modelLabel || "Select a model\u2026"}
-        value={inCatalog ? modelId : ""}
+        value={activePreset?.value ?? (inCatalog ? modelId : "")}
         groups={modelGroups}
         menuMinWidthClass="min-w-[18rem]"
         emptyHint="No model catalog — set one in Settings."
@@ -255,6 +289,11 @@ function AgentModelControls() {
   const label = defaultModel
     ? (models.find((m) => m.id === defaultModel)?.name ?? defaultModel)
     : "Runtime default";
+  const presets = modelPresetMenuEntries(settings?.model_fallbacks?.agents, true, [...models.map((model) => model.id), defaultModel]);
+  const activePreset = matchingModelPreset(presets, {
+    model: defaultModel, reasoning_effort: effort, context_tier: tier,
+  }, true);
+  const modelGroups = [...presetModelGroups(presets, models, true, models.length > 0), { options }];
 
   // Reasoning efforts advertised by the selected agent model (plus Auto). The
   // "Runtime default" model has no catalog entry, so the picker stays hidden
@@ -276,6 +315,15 @@ function AgentModelControls() {
 
   // Switching model drops a reasoning effort the new model doesn't support.
   function onModelChange(nextId: string): void {
+    const preset = presets.find((entry) => entry.value === nextId)?.preset;
+    if (preset) {
+      void save({
+        agents_default_model: preset.model,
+        agents_reasoning_effort: preset.reasoning_effort,
+        agents_context_tier: preset.context_tier,
+      });
+      return;
+    }
     const next = models.find((m) => m.id === nextId) ?? null;
     const patch: { agents_default_model: string; agents_reasoning_effort?: string } = {
       agents_default_model: nextId,
@@ -291,8 +339,8 @@ function AgentModelControls() {
         ariaLabel="Agent model"
         tooltip="Default model for new agent sessions"
         triggerLabel={label}
-        value={defaultModel}
-        groups={[{ options }]}
+        value={activePreset?.value ?? defaultModel}
+        groups={modelGroups}
         menuMinWidthClass="min-w-[18rem]"
         disabled={saving}
         filterPlaceholder="Filter models…"
