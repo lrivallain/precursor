@@ -132,6 +132,7 @@ from precursor.backend.services.events import (
     publish_message_changed_chat,
     set_current_client_id,
 )
+from precursor.backend.services.model_fallbacks import is_model_rejection, resolve_model_category
 from precursor.backend.services.suggestions import split_suggestions
 
 # The pure helpers and the live-session record moved to their own modules;
@@ -837,14 +838,13 @@ class AgentManager:
             effort = await resolve_agents_reasoning_effort(s)
             tier = await resolve_agents_context_tier(s)
             track_files = await resolve_agents_file_change_tracking(s)
+            category = await resolve_model_category(s, agents=True)
+        category = category if not (run.model or agent.model) else None
         model = run.model or default_model
-        model = await self._sanitize_model(agent.id, model)
-        if model:
-            kwargs["model"] = model
-        if effort:
-            kwargs["reasoning_effort"] = effort
-        if tier and tier != "default":
-            kwargs["context_tier"] = tier
+        requested_model = (model, effort or None, tier or "default")
+        model_choices = await self._model_selection.choices(
+            agent.id, model, effort, tier, category=category
+        )
         if run.copilot_session_id:
             kwargs["session_id"] = run.copilot_session_id
         # Lets a rewind put back the files the dropped turns changed. Only a
@@ -889,13 +889,35 @@ class AgentManager:
             # but also gets the operator's custom guidance and any topic binding.
             kwargs["system_message"] = {"mode": "append", "content": preamble}
 
-        sdk_session = await self._client.create_session(**kwargs)
+        attempted_models: set[tuple[str, str | None, str]] = set()
+        for choice in model_choices:
+            model, selected_effort, tier = choice
+            attempted_models.add(choice)
+            kwargs.pop("reasoning_effort", None)
+            kwargs.pop("context_tier", None)
+            if model:
+                kwargs["model"] = model
+            if selected_effort:
+                kwargs["reasoning_effort"] = selected_effort
+            if tier != "default":
+                kwargs["context_tier"] = tier
+            try:
+                sdk_session = await self._client.create_session(**kwargs)
+                break
+            except Exception as exc:
+                if not is_model_rejection(exc) or choice == model_choices[-1]:
+                    raise
+                logger.warning("agent %s: model configuration rejected: %s", agent.id, exc)
         live = _LiveSession(
             sdk_session=sdk_session,
             oauth_expires_at=oauth_expires_at,
             mcp_fingerprint=mcp_fingerprint,
             mcp_auth_skipped=await self._auth_skipped_stamps(auth_required),
-            model_signature=(model, effort or None, tier or "default") if model else None,
+            model_signature=choice if model else None,
+            requested_model_signature=requested_model,
+            requested_model_category=category,
+            model_candidates=model_choices,
+            model_attempts=attempted_models,
         )
         self._live[run.id] = live
         # Synchronous index so ``live_activity`` (no ``await`` available) can find
@@ -906,6 +928,8 @@ class AgentManager:
         # order; the async work (DB + bus) is queued to run in that same order.
         agent_id, run_id = agent.id, run.id
         sdk_session.on(lambda event: self._dispatch_sdk_event(agent_id, run_id, event))
+        if choice != requested_model:
+            await self._model_selection.announce(run.id, choice, category=category)
 
         # The resume handle is *not* readable off ``CopilotSession`` — it exposes
         # no ``id``/``session_id`` attribute — so it is captured from the
@@ -1047,7 +1071,7 @@ class AgentManager:
             sent = agent.task_prompt
             if extra_context:
                 sent = f"{extra_context}\n\n---\n\n{agent.task_prompt}"
-            await live.sdk_session.send(sent)
+            await self._model_selection.send(run.id, live, sent)
         except Exception as exc:
             if run is not None:
                 await self._fail_turn(run.id, exc)
@@ -1104,7 +1128,7 @@ class AgentManager:
                 chat_id=agent.chat_id,
                 agent_run_id=run.id,
             )
-            await live.sdk_session.send(text)
+            await self._model_selection.send(run.id, live, text)
         except Exception as exc:
             if run is not None:
                 await self._fail_turn(run.id, exc)
@@ -1138,7 +1162,7 @@ class AgentManager:
                 chat_id=agent.chat_id,
                 agent_run_id=run.id,
             )
-            await live.sdk_session.send(prompt)
+            await self._model_selection.send(run.id, live, prompt)
         except Exception as exc:
             await self._fail_turn(run.id, exc)
 
@@ -1568,6 +1592,22 @@ class AgentManager:
         with an empty or stale step output while the real answer arrived a
         moment later.
         """
+        live = self._live.get(run_id)
+        name = type(getattr(event, "data", event)).__name__
+        if live is not None and (
+            name
+            in {
+                "AssistantMessageData",
+                "AssistantMessageDeltaData",
+                "AssistantReasoningData",
+                "AssistantReasoningDeltaData",
+                "AssistantUsageData",
+            }
+            or ("Tool" in name and name != "SessionToolsUpdatedData")
+        ):
+            # Mark at receipt, before an awaited send can fail while this event
+            # is still queued. Recovery must never replay already emitted work.
+            live.model_output_started = True
         queue = self._event_queues.setdefault(agent_id, deque())
         queue.append((run_id, event))
         if agent_id not in self._event_drainers:
@@ -1629,6 +1669,25 @@ class AgentManager:
         # Stamp the producing run so the timeline can be split per execution.
         normalised.agent_run_id = run_id
         live = self._live.get(run_id)
+        if live is not None:
+            if normalised.kind == "turn_start":
+                live.model_recovering = False
+            if (
+                normalised.kind
+                in {
+                    "assistant_delta",
+                    "reasoning_delta",
+                    "assistant_message",
+                    "reasoning",
+                    "tool_call",
+                    "tool_result",
+                    "usage",
+                }
+                or ("Tool" in normalised.kind and normalised.kind != "SessionToolsUpdatedData")
+                or "Permission" in normalised.kind
+            ):
+                live.model_output_started = True
+                live.model_recovering = False
         update = live.stream.observe(normalised) if live is not None else None
         if update is not None and update.flush is not None:
             await self._record(agent_id, update.flush)
@@ -1679,6 +1738,8 @@ class AgentManager:
         elif name == "AssistantUsageData":
             await self._record_usage(run_id, data)
         elif name in ("SessionIdleData", "SystemNotificationAgentIdle"):
+            if live is not None and live.model_recovering:
+                return
             fresh = await self._run(run_id)
             # Don't let a trailing idle event mask a turn that just errored, was
             # paused/cancelled, or already reached a terminal/blocked resting
@@ -1699,6 +1760,28 @@ class AgentManager:
             patch["status"] = "cancelled"
             patch["finished_at"] = datetime.now(UTC)
         elif name in ("ErrorData", "SessionErrorData"):
+            message = str(getattr(data, "message", name))
+            rejection = f"{message} {getattr(data, 'error_code', '')}"
+            if live is not None and live.model_retry_scheduled and is_model_rejection(rejection):
+                # SDKs can report the same refused attempt through both error
+                # event names. A queued recovery already owns that attempt.
+                return
+            if (
+                live is not None
+                and not live.model_output_started
+                and not live.model_retry_scheduled
+                and live.dispatched_prompt
+                and is_model_rejection(rejection)
+                and any(c not in live.model_attempts for c in live.model_candidates)
+            ):
+                live.model_recovering = True
+                live.model_retry_scheduled = True
+                self.enqueue(
+                    self._model_selection.recover(
+                        run_id, live, rejection, turn_id=live.model_turn_id
+                    )
+                )
+                return
             patch["status"] = "failed"
             patch["error"] = str(getattr(data, "message", name))[:2000]
             patch["finished_at"] = datetime.now(UTC)
@@ -1945,7 +2028,7 @@ class AgentManager:
             # Reset the per-turn answer buffer so the next directive parse reads
             # only the upcoming step's message.
             live.pending_answer = None
-            await live.sdk_session.send(_CONTINUE_NUDGE)
+            await self._model_selection.send(run_id, live, _CONTINUE_NUDGE)
         except Exception as exc:
             if agent_id is not None:
                 await self._fail_turn(run_id, exc)

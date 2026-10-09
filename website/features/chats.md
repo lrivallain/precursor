@@ -45,6 +45,14 @@ Chats share the same conversation experience as topics:
   [when a turn fails](/features/topics#when-a-turn-fails).
 - **`/compact`** summarises a long chat to free the model's context window —
   see [context compression](/features/context-compression).
+- **Optional model alternatives** recover missing-model or rejected-effort/context
+  requests using ordered presets in the same Efficiency, Balanced or Intelligence
+  category. Configure them in [Settings -> Model](/guide/configuration#optional-model-alternatives);
+  nothing changes until configured, and retries never replay already-streamed output.
+- **Preset profiles in the model dropdown**: pick **Presets -> Efficiency,
+  Balanced or Intelligence** to let the engine choose from that category's
+  ordered model/configuration presets. The category stays selected across
+  model substitutions. Ordinary model choices exit category mode.
 - **A timeline and rewind**: jump between turns from the rail on the right
   edge, or rewind the chat to an earlier turn — see
   [timeline & rewind](/features/rewind).

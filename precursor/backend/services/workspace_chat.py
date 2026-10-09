@@ -164,7 +164,9 @@ async def run_workspace_stream(
                     yield _event("delta", {"content": ev.content})
 
                 elif isinstance(ev, AssistantToolCallsTurn):
-                    await record_round_usage(ev.usage, model=settings.model, source=USAGE_SOURCE)
+                    await record_round_usage(
+                        ev.usage, model=ev.model or settings.model, source=USAGE_SOURCE
+                    )
                     yield _event(
                         "tool_calls",
                         {
@@ -195,7 +197,9 @@ async def run_workspace_stream(
                     )
 
                 elif isinstance(ev, AssistantFinalTurn):
-                    await record_round_usage(ev.usage, model=settings.model, source=USAGE_SOURCE)
+                    await record_round_usage(
+                        ev.usage, model=ev.model or settings.model, source=USAGE_SOURCE
+                    )
                     clean, suggestions = split_suggestions(ev.text)
                     yield _event("done", {"content": clean})
                     if suggestions:

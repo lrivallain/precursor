@@ -56,4 +56,4 @@ async def list_models(
     except Exception as exc:  # network / auth failures shouldn't 500 the UI
         logger.warning("Failed to fetch model catalog from %s: %s", llm.name, exc)
         raise HTTPException(status_code=502, detail=f"catalog fetch failed: {exc}") from exc
-    return [LLMModelRead(**asdict(m)) for m in models]
+    return [LLMModelRead(**asdict(m), catalog_provider=llm.name) for m in models]

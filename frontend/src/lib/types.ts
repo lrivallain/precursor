@@ -1463,10 +1463,22 @@ export interface NoteDraftAttachment {
 //  - "autonomous": auto-approve everything
 export type AgentApprovalPolicy = "manual" | "balanced" | "autonomous";
 
+export interface ModelPreset {
+  model: string;
+  reasoning_effort: "" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+  context_tokens: number;
+  context_tier: "default" | "long_context";
+}
+
+export type ModelCategory = "efficiency" | "balanced" | "intelligence";
+export type ModelCategories = Record<ModelCategory, ModelPreset[]>;
+
 export interface Settings {
   theme: "light" | "dark" | "system";
   font_family: "system" | "opendyslexic" | "atkinson-hyperlegible" | "lexend";
   llm_model: string;
+  llm_model_category: ModelCategory | null;
+  llm_category_preset: ModelPreset | null;
   // "" => auto/off; otherwise "low" | "medium" | "high".
   llm_reasoning_effort: string;
   github_repo: string;
@@ -1482,6 +1494,7 @@ export interface Settings {
   // Active LLM provider id + per-provider public config (secrets redacted) and
   // a per-provider secret-presence map.
   llm_provider: string;
+  model_fallbacks: Record<string, ModelCategories>;
   llm_providers: Record<string, Record<string, string>>;
   llm_providers_present: Record<string, Record<string, boolean>>;
   // Azure AI Speech: configured endpoint + language + readiness (key never echoed).
@@ -1554,6 +1567,7 @@ export interface Settings {
   agents_runtime_started: boolean;
   agents_unavailable_reason: string | null;
   agents_default_model: string;
+  agents_model_category: ModelCategory | null;
   agents_reasoning_effort: string;
   agents_context_tier: string;
   /** New agent sessions capture file changes so a rewind can restore them. */
@@ -1581,6 +1595,7 @@ export interface SettingsUpdate {
   theme?: Settings["theme"];
   font_family?: Settings["font_family"];
   llm_model?: string;
+  llm_model_category?: ModelCategory | null;
   llm_reasoning_effort?: string;
   github_repo?: string;
   issue_context_ttl_minutes?: number;
@@ -1592,6 +1607,7 @@ export interface SettingsUpdate {
   api_keys?: Record<string, string>;
   issue_associations_enabled?: boolean;
   llm_provider?: string;
+  model_fallbacks?: Record<string, ModelCategories>;
   llm_providers?: Record<string, Record<string, string>>;
   azure_speech_endpoint?: string;
   azure_speech_language?: string;
@@ -1628,6 +1644,7 @@ export interface SettingsUpdate {
   cmd_runner_cpus?: string;
   agents_enabled?: boolean;
   agents_default_model?: string;
+  agents_model_category?: ModelCategory | null;
   agents_reasoning_effort?: string;
   agents_context_tier?: string;
   agents_file_change_tracking?: boolean;
@@ -1783,6 +1800,8 @@ export interface LLMModel {
   max_output_tokens?: number | null;
   /** Whether the model accepts image input. */
   vision?: boolean;
+  /** Actual catalogue source; may be "mock" if provider config is unusable. */
+  catalog_provider?: string | null;
 }
 
 export interface LLMProviderField {

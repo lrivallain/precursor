@@ -106,6 +106,19 @@ This covers Agents/Workflows overviews, item selection, history, deep links,
 search, shared progress, empty/error states and the mobile drawer. It requires
 the anonymous demo on port 8899; it does not execute agents or pipelines.
 
+For model-alternative settings and catalogue health, use the same anonymous demo:
+
+```bash
+NODE_PATH=.demo/node_modules node scripts/test_model_fallbacks.js
+node --experimental-strip-types --test scripts/test_model_preset_health.js # Node 22.18+
+```
+
+The browser suite mocks catalogue/credential metadata and never provisions the
+SDK, sends inference or writes real settings. It covers provider/SDK isolation,
+valid/review/unverified states, search, keyboard, mobile layout and persistence.
+It also covers the focused modal's Apply/Cancel draft isolation, aggregate
+checks, direct review navigation, nested Escape and keyboard-focus containment.
+
 The suite is hermetic: the root `conftest.py` points the app at a throwaway
 database, skills and data directory, and keeps the LLM provider on the offline
 `MockProvider` by hiding any GitHub token from it. So `make check` behaves the

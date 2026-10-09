@@ -169,6 +169,39 @@ A `reasoning` event (`{content}`) carries a chunk of the model's
 assistant message it produced — the `tool_calls` round or the final answer — and
 returned as `reasoning` (`null` when the model surfaced none).
 
+`GET /api/settings` and `PUT /api/settings` expose the optional
+`model_fallbacks` map (default `{}`). Keys are provider ids or `agents`; values
+contain `efficiency`, `balanced`, and `intelligence` ordered preset lists.
+Preset fields are `model`, `reasoning_effort`, `context_tokens`, and
+`context_tier`; omitted configuration fields receive their documented
+[defaults](/reference/configuration#llm-provider). An unknown scope, category,
+effort/tier, duplicate effective preset, blank/`auto` model or out-of-range budget
+answers `422`. This map is replaced as a whole on update; `{}` clears it,
+and omitting it preserves it. A category fallback never writes the replacement
+into settings, agent definitions or workflow model pins. Chat `done.model`,
+persisted assistant-message models and usage report the model actually used.
+SDK rejection recovery is archived as a `model_fallback` agent timeline event.
+
+Settings also expose `llm_model_category` / `agents_model_category`
+(`null` or `efficiency|balanced|intelligence`). A partial update of only one of
+these fields selects a category without changing stored manual model, effort or
+context defaults. Selecting an unconfigured or unknown category returns `422`.
+Sending `llm_model` / `agents_default_model` clears the corresponding category
+unless the payload explicitly supplies that category too. `llm_category_preset`
+is a read-only first-candidate catalogue preview; request-time resolution and
+recovery still use the complete ordered category. Explicit per-turn/feature
+model overrides and agent/workflow pins bypass the default category.
+SDK category selection is archived as `model_selected`; subsequent rejection
+recovery remains `model_fallback`.
+
+`GET /api/llm/models` also returns `catalog_provider` on each model: the **actual**
+catalogue source, which may be `mock` when the requested provider's configuration
+is unusable. This prevents preset-health indicators from treating the offline
+mock as proof that a model is listed by the selected provider. The existing
+catalogue endpoints are used for read-only preset checks; no inference call or
+settings write is made. A failed/empty/non-discoverable catalogue leaves ids
+unverified rather than declaring them absent.
+
 A `tool_result` event carries the call id, name, arguments, result text and
 error flag — plus `link` (`{slug, path}`) when the tool read or wrote a
 [workspace](/features/workspaces) file, which the UI turns into an **Open** chip.

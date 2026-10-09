@@ -77,6 +77,29 @@ To drop only the last few turns instead of the whole context, [rewind](/features
 from the timeline rail or a prompt's toolbar. Unlike `/clear`, the turns before
 the cut stay in the agent's context.
 
+## When a model disappears or rejects its configuration
+
+Optional [model alternatives](/guide/configuration#optional-model-alternatives)
+under **Settings -> Model** give agents and workflow steps ordered
+Efficiency/Balanced/Intelligence presets. Open **Manage presets** and select the
+category under **Agents & workflows** (Copilot SDK): **Chat & live** presets do not apply to these runs, even
+when both use your Copilot subscription.
+
+The agent prompt's **Agent model** dropdown also offers **Presets**, grouped into
+Efficiency, Balanced and Intelligence. Select a category and the engine resolves
+its ordered models, reasoning efforts and context tiers for unpinned runs.
+The category remains selected even when a model is substituted. Explicit agent
+and workflow model pins win over the default category. Only Copilot SDK categories
+appear here; chat presets use the provider scope instead.
+
+A missing model or rejected effort/context can switch to a same-category preset
+with its own effort and context tier, keeping the SDK conversation and saved
+model pin. Recovery is shown in the timeline. It stops after the configured
+alternatives, never changes category, and never replays a turn once output or
+tool/permission activity begins. Credentials/quota/network failures still fail
+normally. Without configured presets, the existing SDK `auto` fallback for
+retired model ids remains.
+
 ## Approval policy (per agent)
 
 Every agent action is gated by an **approval policy**. There's a global default

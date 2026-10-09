@@ -224,6 +224,22 @@ async def resolve_llm_model(session: AsyncSession) -> str:
     if stored and stored in offered:
         return stored
     if stored:
+        from precursor.backend.services.model_fallbacks import (
+            ModelSelection,
+            category_presets,
+            resolve_model_fallbacks,
+        )
+
+        categories = await resolve_model_fallbacks(session, await resolve_llm_provider(session))
+        selection = ModelSelection(
+            model=stored,
+            reasoning_effort=await resolve_llm_reasoning_effort(session),
+            context_tokens=await resolve_llm_max_input_tokens(session),
+        )
+        if category_presets(categories, selection):
+            # Keep the desired pin; the request wrapper chooses its replacement
+            # together with the replacement's own effort and context budget.
+            return stored
         logger.warning(
             "Chat model %r is no longer offered by the provider — falling back to %r",
             stored,
@@ -266,7 +282,7 @@ async def resolve_chat_autoname_enabled(session: AsyncSession) -> bool:
     )
 
 
-async def resolve_chat_autoname_model(session: AsyncSession) -> str:
+async def resolve_chat_autoname_model(session: AsyncSession, *, use_default: bool = True) -> str:
     """Return the model used to name conversations.
 
     Naming is a throwaway one-liner, so it's worth pointing at something cheap
@@ -275,10 +291,10 @@ async def resolve_chat_autoname_model(session: AsyncSession) -> str:
     db_value = await _get_db_value(session, "chat_autoname_model")
     if isinstance(db_value, str) and db_value.strip():
         return db_value.strip()
-    return await resolve_llm_model(session)
+    return await resolve_llm_model(session) if use_default else ""
 
 
-async def resolve_live_fast_model(session: AsyncSession) -> str:
+async def resolve_live_fast_model(session: AsyncSession, *, use_default: bool = True) -> str:
     """Return the model used for live meeting analysis + Q&A.
 
     A dedicated "fast" model keeps live insights snappy without changing the
@@ -287,7 +303,7 @@ async def resolve_live_fast_model(session: AsyncSession) -> str:
     db_value = await _get_db_value(session, "live_fast_model")
     if isinstance(db_value, str) and db_value.strip():
         return db_value.strip()
-    return await resolve_llm_model(session)
+    return await resolve_llm_model(session) if use_default else ""
 
 
 async def resolve_live_reasoning_effort(session: AsyncSession) -> str:

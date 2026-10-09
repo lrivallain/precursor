@@ -26,7 +26,6 @@ from sqlalchemy.orm import selectinload
 from precursor.backend.db import SessionLocal
 from precursor.backend.models import MESSAGE_KIND_COMPACTION, Message, MessageRole
 from precursor.backend.services.app_settings import (
-    resolve_llm_max_input_tokens,
     resolve_llm_max_tool_result_tokens,
     resolve_llm_tool_result_keep_turns,
 )
@@ -39,6 +38,7 @@ from precursor.backend.services.conversation_turn import load_container_rows, lo
 from precursor.backend.services.events import is_streaming
 from precursor.backend.services.llm.base import ChatMessage
 from precursor.backend.services.llm.one_shot import complete_once
+from precursor.backend.services.model_fallbacks import resolve_llm_preparation_budget
 from precursor.backend.services.turn_engine import (
     ContainerKind,
     container_message_kwargs,
@@ -161,7 +161,7 @@ async def compact_container(
     if not any(m.role in ("user", "assistant") for m in history):
         raise CompactionError("Nothing to compact yet.")
 
-    budget_tokens = await resolve_llm_max_input_tokens(session)
+    budget_tokens = await resolve_llm_preparation_budget(session)
     chunk_chars = int(budget_tokens * _CHUNK_BUDGET_RATIO) * _CHARS_PER_TOKEN
     chunks = chunk_blocks(render_transcript(history), chunk_chars)
     focus = (instructions or "").strip()

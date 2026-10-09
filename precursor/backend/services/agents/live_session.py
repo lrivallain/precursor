@@ -81,6 +81,15 @@ class _LiveSession:
     # skip a redundant model switch when the selection hasn't drifted, so every
     # next turn can cheaply reconcile to the current selection.
     model_signature: tuple[str, str | None, str] | None = None
+    requested_model_signature: tuple[str, str | None, str] | None = None
+    requested_model_category: str | None = None
+    model_candidates: list[tuple[str, str | None, str]] = field(default_factory=list)
+    model_attempts: set[tuple[str, str | None, str]] = field(default_factory=set)
+    dispatched_prompt: str | None = None
+    model_output_started: bool = False
+    model_recovering: bool = False
+    model_retry_scheduled: bool = False
+    model_turn_id: int = 0
     # --- Autonomy goal-loop state (in-memory, per live session) --------------
     # The last directive block parsed from an assistant message (complete /
     # blocked / progress). Retained for debugging and to avoid double-handling.

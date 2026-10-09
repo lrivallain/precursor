@@ -54,7 +54,7 @@ class ModelsStore {
   }
 
   applySettings(settings: Settings | null | undefined): void {
-    this.setCurrent(settings?.llm_model ?? null);
+    this.setCurrent((settings?.llm_model_category ? settings.llm_category_preset?.model : null) ?? settings?.llm_model ?? null);
   }
 
   /** Seed the catalog from a list a caller already fetched. */

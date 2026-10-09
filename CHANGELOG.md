@@ -15,6 +15,29 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **Same-category model alternatives.** Settings -> Model optionally groups
+  model/context/effort presets into **Efficiency**, **Balanced**, and
+  **Intelligence**, separately for each provider and for Agents/Workflows.
+  When a model disappears or rejects its effort/context configuration, Precursor
+  tries the category's ordered presets without overwriting the saved selection.
+  Recovery is bounded and never replays streamed output or agent actions.
+  Settings keeps a compact configuration summary and overall check. **Manage
+  presets** opens a dedicated category-by-runtime overview and one focused
+  editor; **Review configuration** opens a problem directly. Modal edits apply
+  to the Settings draft or can be cancelled without changing it.
+  Preset models reuse the prompt composer's searchable model dropdown, retaining
+  saved/retired ids and allowing explicit ids through the search.
+  Prompt model dropdowns also expose **Presets** with Efficiency, Balanced and
+  Intelligence categories. Users select a category, and the engine resolves its
+  ordered models with their own effort/context at execution. Category intent
+  remains selected across substitutions; explicit models/pins win, and selecting
+  a direct model exits category mode without losing stored manual defaults.
+  Unconfigured categories are hidden; without saved presets for the current
+  provider/runtime, the Presets group is omitted.
+  Category and configuration badges check provider/SDK catalogues, with per-preset
+  warnings for unlisted models, incomplete/duplicate profiles and advertised
+  effort/window mismatches. Missing credentials or unavailable catalogues remain
+  distinct from missing models; **Check models** refreshes without inference.
 - **Copy a reply for email.** Assistant replies in topics and chats get a
   **Copy formatted** button (the envelope) that copies them as email-ready
   HTML. Each paragraph, list, table and code block carries its own spacing, so

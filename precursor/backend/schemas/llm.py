@@ -13,6 +13,8 @@ class LLMModelRead(BaseModel):
     supported_reasoning_efforts: list[str] = []
     max_output_tokens: int | None = None
     vision: bool = False
+    # The actual provider, including the offline mock when config is unusable.
+    catalog_provider: str | None = None
 
 
 class ProviderFieldRead(BaseModel):

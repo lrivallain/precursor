@@ -1380,7 +1380,7 @@ def test_translate(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     async def _prov(_session, **_kwargs):  # type: ignore[no-untyped-def]
         return _TextProvider()
 
-    async def _model(_session):  # type: ignore[no-untyped-def]
+    async def _model(_session, *, use_default=True):  # type: ignore[no-untyped-def]
         return "fake"
 
     async def _effort(_session):  # type: ignore[no-untyped-def]

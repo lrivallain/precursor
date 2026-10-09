@@ -513,6 +513,7 @@ async def open_completion(
     except Exception as exc:
         logger.warning("OpenAI endpoint: %s refused %s: %s", provider.name, request.model, exc)
         raise upstream_error(exc) from exc
+    request.model = getattr(provider, "effective_model", None) or request.model
     return _chain(first, events)
 
 

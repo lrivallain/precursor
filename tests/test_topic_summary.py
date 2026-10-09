@@ -474,6 +474,7 @@ async def test_refresh_prompt_prefers_no_change_for_every_existing_brief(
     monkeypatch.setattr(svc, "build_context", AsyncMock(return_value="user: QA signed off."))
     monkeypatch.setattr(one_shot, "get_llm_provider", AsyncMock())
     monkeypatch.setattr(one_shot, "resolve_llm_model", AsyncMock(return_value="test"))
+    monkeypatch.setattr(one_shot, "resolve_model_category", AsyncMock(return_value=None))
     monkeypatch.setattr(one_shot, "complete_text_with_usage", complete)
 
     text, _ = await svc.generate_summary(
@@ -506,6 +507,7 @@ async def test_an_identical_refresh_preserves_a_user_authored_code_fence(
     monkeypatch.setattr(svc, "build_context", AsyncMock(return_value="No new facts."))
     monkeypatch.setattr(one_shot, "get_llm_provider", AsyncMock())
     monkeypatch.setattr(one_shot, "resolve_llm_model", AsyncMock(return_value="test"))
+    monkeypatch.setattr(one_shot, "resolve_model_category", AsyncMock(return_value=None))
     monkeypatch.setattr(
         one_shot, "complete_text_with_usage", AsyncMock(return_value=(existing.strip(), None))
     )
@@ -523,6 +525,7 @@ async def test_first_generation_still_uses_the_standard_brief_template(
     monkeypatch.setattr(svc, "build_context", AsyncMock(return_value="user: Start a pilot."))
     monkeypatch.setattr(one_shot, "get_llm_provider", AsyncMock())
     monkeypatch.setattr(one_shot, "resolve_llm_model", AsyncMock(return_value="test"))
+    monkeypatch.setattr(one_shot, "resolve_model_category", AsyncMock(return_value=None))
     monkeypatch.setattr(one_shot, "complete_text_with_usage", complete)
 
     await svc.generate_summary(

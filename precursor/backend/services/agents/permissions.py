@@ -124,6 +124,8 @@ class PermissionBroker:
             req_name = type(request).__name__
             try:
                 live = self._manager._live.get(run_id)
+                if live is not None:
+                    live.model_output_started = True
                 policy = (live.approval_policy if live else None) or DEFAULT_AGENTS_APPROVAL_POLICY
                 logger.info(
                     "run %s: permission handler hit — request=%s policy=%s live=%s",

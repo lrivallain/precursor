@@ -155,7 +155,7 @@ async def _generate(
             usage_source=USAGE_SOURCE,
             topic_id=topic_id,
             chat_id=chat_id,
-            model=await resolve_chat_autoname_model(session),
+            model=await resolve_chat_autoname_model(session, use_default=False) or None,
         )
     except Exception as exc:
         # Naming is a nicety riding along with a real turn — never surface this.

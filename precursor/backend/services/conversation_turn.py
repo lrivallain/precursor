@@ -50,6 +50,11 @@ from precursor.backend.services.github_auth import resolve_github_token
 from precursor.backend.services.llm import get_llm_provider
 from precursor.backend.services.llm.base import ChatMessage, LLMProvider
 from precursor.backend.services.message_paging import list_message_window
+from precursor.backend.services.model_fallbacks import (
+    resolve_model_category,
+    resolve_model_fallbacks,
+    selected_category_presets,
+)
 from precursor.backend.services.note_drafts import consume_note_draft_attachments_to_message
 from precursor.backend.services.turn_engine import (
     ContainerKind,
@@ -101,13 +106,29 @@ async def resolve_turn_settings(
     from the enabled set for this turn only.
     """
     enabled = [s for s in await load_enabled_mcp_servers(session) if s not in exclude_servers]
+    category = await resolve_model_category(session) if not model_override else None
+    provider = (
+        await get_llm_provider(session, model_category=category)
+        if category is not None
+        else await get_llm_provider(session)
+    )
+    max_input_tokens = await resolve_llm_max_input_tokens(session)
+    if category is not None:
+        from precursor.backend.services.app_settings import resolve_llm_provider
+
+        categories = await resolve_model_fallbacks(session, await resolve_llm_provider(session))
+        presets = selected_category_presets(categories, category)
+        if presets:
+            # Retain enough history for any candidate; the wrapper applies the
+            # chosen preset's own budget on each invocation.
+            max_input_tokens = max(preset.context_tokens for preset in presets)
     return TurnSettings(
         model=model_override or await resolve_llm_model(session),
         reasoning_effort=await resolve_llm_reasoning_effort(session),
         max_tool_rounds=await resolve_max_tool_rounds(session),
-        max_input_tokens=await resolve_llm_max_input_tokens(session),
+        max_input_tokens=max_input_tokens,
         max_tool_result_tokens=await resolve_llm_max_tool_result_tokens(session),
-        provider=await get_llm_provider(session),
+        provider=provider,
         github_token=await resolve_github_token(session),
         enabled_servers=enabled,
     )

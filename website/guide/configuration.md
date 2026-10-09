@@ -46,6 +46,143 @@ network is no reason to second-guess you.
 The catalogue is cached briefly, and re-read immediately when you change provider
 or credentials.
 
+### Optional model alternatives
+
+**Settings -> Model -> Model alternatives** lets you organise models into
+three categories: **Efficiency** (fast, economical tasks), **Balanced** (everyday
+work), and **Intelligence** (complex reasoning). Nothing is configured by default.
+
+<Screenshot src="/screenshots/model-alternatives.png" alt="Compact model alternative summary with configuration counts and an overall catalogue check" caption="Settings keeps just configuration presence and the overall check. Manage presets opens the focused editor; Review configuration goes directly to a problem." />
+
+Settings shows a compact summary: **Chat & live** and **Agents & workflows**
+each have a preset/category count, or **Not configured** when empty. Below them
+is the overall **Check models** result. **Review configuration** appears when a
+preset or provider setup needs attention and opens the affected category directly.
+
+**Manage presets** opens a dedicated modal with all six configurations visible
+at once: Efficiency/Balanced/Intelligence are rows, and Chat & live / Agents &
+workflows are columns. Each cell shows its preset count and catalogue health.
+Click a cell to edit only that list below the overview. Model, effort and context
+are compact columns in wide panes and stacked fields on narrow screens. Both
+runtime columns remain visible in the overview.
+
+<Screenshot src="/screenshots/model-alternatives-editor.png" alt="Dedicated preset editor with a category by runtime overview and a single compact preset list" caption="See coverage across both runtimes, then edit one short list. Apply to settings transfers your changes to the Settings draft; Cancel discards modal edits." />
+
+They are independent scopes: configure both to cover both chat and agent tasks,
+or just the surface you use. Presets remain independent even when both use the
+same Copilot subscription. **Apply to settings** updates the Settings draft
+without saving it; **Save** in Settings persists both configurations together.
+**Cancel**, the modal's close button and Escape discard only the modal's edits.
+Topics/chats, live analysis and summaries use the provider scope;
+agents and workflow steps use the SDK scope, even when both use the same
+GitHub Copilot subscription. Each has its own categories and context controls.
+Alternatives never switch provider or credentials.
+
+#### Selecting a preset from a prompt
+
+The prompt's model dropdown includes a **Presets** group with selectable
+**Efficiency**, **Balanced** and **Intelligence** categories.
+Unconfigured categories are hidden. When the current runtime/provider has no
+saved presets, the entire group and its management shortcut are absent.
+Chat/topic composers use the selected provider's presets; agent composers use
+the independent Copilot SDK presets.
+
+Configure profiles through **Settings -> Model -> Manage presets**, then **Apply
+to settings** and **Save** in Settings. Applying only the modal draft does not
+persist it. Once presets exist, **Manage presets in Settings...** in the model
+dropdown provides a shortcut to edit them. The shortcut never saves anything.
+
+Select a **category**, not an individual model. Precursor saves that category
+as your intent; the engine chooses the first currently listed preset in its
+configured order, with that preset's own **model, effort and context**. If its
+request is rejected before output/actions, the engine tries the remaining
+presets in the same category. It never falls back to another category or the
+last direct model.
+
+The prompt shows the selected category and **Engine selects model**; individual
+effort/context controls are hidden because those belong to the presets. Your
+last direct-model defaults remain stored. Choosing an ordinary catalogue model
+exits category mode and restores the direct selection controls.
+
+Chat, topic, workspace and scheduled turns honour the default category, as do
+default-model summaries/refinement/naming/live calls. Explicit per-turn or
+feature model overrides and agent/workflow model pins take precedence. SDK
+categories apply to unpinned agent defaults. If a selected category is later
+emptied, requests fail clearly until you configure it or select a direct model.
+
+Search by category, an underlying model name/id, or **Presets**. Model ids remain
+editable in the dedicated preset editor, including retired ids for matching.
+Selecting a category never modifies its definitions or crosses providers/runtimes.
+
+<Screenshot src="/screenshots/model-presets.png" alt="Prompt model dropdown with selectable Efficiency, Balanced and Intelligence categories" caption="Choose a category. The engine resolves its ordered models and their configurations at execution time." />
+
+#### Editing preset definitions
+
+**Add current selection** captures the model, effort and context currently
+selected in the composer; **Add preset** adds an alternative. Each model uses
+the same searchable dropdown as the prompt composer: filter by name or id,
+or by publisher for chat models. Saved ids missing from the current catalogue
+remain selectable under **Saved model ids**. To enter a deployment or retired
+id manually, type it in the dropdown search and choose **Use model id** (or
+press Enter when no catalogue entry matches).
+Set each preset's effort and context, move it up or down to control priority,
+then **Apply to settings** and **Save** in Settings. Remove every preset to
+restore existing behaviour. The shared dropdowns stay above the editor, and
+Escape closes an open dropdown before it closes the modal.
+
+Each category/runtime cell in the modal shows a catalogue-check status;
+Settings shows an aggregate of the configured runtimes:
+
+| Status | Meaning |
+| --- | --- |
+| Green **`N/N listed`** | Every preset id is in that provider/runtime's catalogue, with no warnings from the advertised effort/window metadata. |
+| Amber **needs review** | A model is no longer listed, a preset is incomplete/duplicated, or its effort/budget needs attention. Each affected preset explains why. |
+| Amber **Setup required** | Provider credentials/configuration are missing, the provider resolved to the offline mock, or the Copilot SDK runtime is not enabled/started. |
+| Amber **Not checked** | The catalogue failed, returned no models, or cannot be discovered (for example Azure AI Foundry deployment ids). This does **not** mean the model is missing. |
+| **Not configured** | No presets in this optional category. |
+
+**Check models** rereads both catalogues without sending inference requests or
+saving settings. Checks also run when the settings load, and unsaved edits
+update the modal warnings immediately. Settings continues to show the applied
+draft until you Apply the modal's changes. Category badges include listed counts when
+some presets need review; if no listed alternative remains, the category warns
+you explicitly. Switching providers discards the previous catalogue's result.
+Unavailable catalogues never turn all saved models into "missing" models.
+
+These are catalogue and advertised-configuration checks, **not test prompts**:
+credentials/quota, temporary inference outages and unadvertised effort or
+context-tier support can still cause a request to fail. Keep retired ids for
+category matching, but add a currently listed alternative before relying on
+the category for recovery.
+
+The requested model/configuration is tried first. If it disappears from a known
+catalogue, or the provider rejects its model, effort or context configuration,
+Precursor tries the category's presets from top to bottom. Each alternative
+uses its **own** effort (Auto omits it), plus a chat context-token budget or an
+agent context tier. A same-model preset with Auto effort can fix a stale `high`
+effort setting without changing models. Chat history is trimmed to a replacement's
+budget, capped by its advertised window when available.
+
+Keep the original/retired model in the category so Precursor can identify it.
+If a model is assigned to several categories, the selected effort and context
+must match one category exactly; otherwise no category is guessed. An
+uncategorised selection keeps the existing generic missing-model fallback.
+`auto` is managed by the SDK and cannot be categorised.
+
+Saved selections and workflow model pins stay unchanged. A working alternative
+is reused for later tool rounds and, for agents, the live session until the
+selection/categories change or the session is rebuilt. Later new sessions
+try the preferred selection again, so temporary outages do not become permanent
+configuration changes. Replies/usage record the model actually used; agent
+request recovery appears in the timeline.
+
+Retries are bounded (at most twelve presets per category). They only recover
+recognised model/configuration rejections **before any output or agent action**.
+Credentials, quota/rate limits, network failures, and errors after output begins
+remain visible errors. If every preset is unavailable/rejected, the task fails
+clearly rather than moving to a different category. The setting improves
+resilience; it cannot guarantee provider availability.
+
 ::: tip Use these models from other clients
 **Settings → Model** can also serve the active provider's models to VS Code or
 any OpenAI-compatible client, behind an API key — see the

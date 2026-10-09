@@ -239,6 +239,42 @@ topic or chat it belongs to. Failures raise `LLMCallFailed`; if a router doesn't
 catch it, `create_app` maps it to a `502`. Prompts, output clean-up and
 fallbacks stay with each feature.
 
+**Optional category recovery.** The `model_fallbacks` runtime setting maps
+provider ids and the independent `agents` scope to ordered Efficiency,
+Balanced and Intelligence presets. Shared category matching and rejection
+classification live in `services/model_fallbacks.py`. Configured providers
+are decorated by `services/llm/fallback.py`, which retries recognised
+model/effort/context rejections before any event is yielded and re-budgets
+history for the replacement. Final/tool turns and one-shot results carry
+the actual model into persistence and usage accounting. SDK `ModelSelector`
+uses the same matching at creation/switch and recovers pre-output error
+events with a bounded attempt set; trailing idle cannot complete a workflow
+while recovery is pending. Output/tool/permission activity closes the replay
+window. Saved selections and workflow pins are never rewritten. Provider and
+SDK scopes have different context controls and are configured independently.
+See [Model alternatives](/guide/configuration#optional-model-alternatives).
+
+Preset-health checks use the provider/SDK catalogue endpoints, not inference.
+The provider read models carry the actual `catalog_provider`, so a factory
+fallback to the offline mock is surfaced as configuration needing setup, not a
+valid selected-provider catalogue. `lib/modelPresetHealth.ts` checks membership
+and advertised effort/window limits, local completeness and duplicate profiles.
+UI fetch generations discard stale responses after provider switches/unmounts;
+unavailable catalogues never imply that every stored model is missing.
+
+**Category intent, not a model pin.** The runtime-only
+`llm_model_category` / `agents_model_category` fields select a category separately
+from manual defaults. Default turns and inherited one-shot/live calls pass the
+selected category to the provider wrapper, which resolves ordered presets with
+their own configuration and never starts from the stored manual model. The tool
+loop keeps enough history for all candidates; each invocation is trimmed to the
+chosen preset's budget. SDK sessions resolve category defaults only when no
+agent/run model is pinned. Live session signatures retain category intent while
+actual model/configuration signatures drive execution. Explicit model overrides
+win; missing/emptied categories fail instead of escaping to another category.
+`llm_category_preset` previews the first catalogue candidate for display without
+changing the saved manual defaults.
+
 **Two endpoints, one provider.** Copilot splits its catalogue across
 `/chat/completions` and the newer Responses API, and a model served by one is
 rejected by the other. `github_copilot.py` reads the `supported_endpoints` each
