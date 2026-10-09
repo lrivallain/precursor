@@ -517,6 +517,7 @@ class AssistantFinalTurn:
     text: str
     usage: UsageEvent | None
     reasoning: str = ""
+    model: str | None = None
 
 
 @dataclass(slots=True)
@@ -528,6 +529,7 @@ class AssistantToolCallsTurn:
     openai_tool_calls: list[dict[str, Any]]
     usage: UsageEvent | None
     reasoning: str = ""
+    model: str | None = None
 
 
 @dataclass(slots=True)
@@ -742,7 +744,12 @@ async def run_tool_loop(
         reasoning = "".join(reasoning_chunks).strip()
 
         if not tool_calls:
-            yield AssistantFinalTurn(assistant_text, round_usage, reasoning)
+            yield AssistantFinalTurn(
+                assistant_text,
+                round_usage,
+                reasoning,
+                getattr(provider, "effective_model", None) or model,
+            )
             return
 
         openai_tool_calls = [
@@ -754,7 +761,12 @@ async def run_tool_loop(
             for c in tool_calls
         ]
         yield AssistantToolCallsTurn(
-            assistant_text, tool_calls, openai_tool_calls, round_usage, reasoning
+            assistant_text,
+            tool_calls,
+            openai_tool_calls,
+            round_usage,
+            reasoning,
+            getattr(provider, "effective_model", None) or model,
         )
 
         messages.append(
@@ -1055,8 +1067,9 @@ async def run_message_stream(
                     # Final assistant turn — split off any suggested follow-ups,
                     # persist the clean text, and surface the chips separately.
                     elapsed_ms = int((time.monotonic() - turn_started) * 1000)
+                    actual_model = ev.model or model
                     answer = await persist_final_turn(
-                        kind, container_id, ev, model=model, elapsed_ms=elapsed_ms
+                        kind, container_id, ev, model=actual_model, elapsed_ms=elapsed_ms
                     )
                     if ev.usage is not None:
                         yield usage_event(answer.message_id, ev.usage)
@@ -1066,7 +1079,7 @@ async def run_message_stream(
                             {
                                 "id": answer.message_id,
                                 "content": answer.text,
-                                "model": model,
+                                "model": actual_model,
                                 "elapsed_ms": elapsed_ms,
                             }
                         ),
@@ -1082,7 +1095,7 @@ async def run_message_stream(
 
                 elif isinstance(ev, AssistantToolCallsTurn):
                     assistant_id = await persist_tool_calls_turn(
-                        kind, container_id, ev, model=model
+                        kind, container_id, ev, model=ev.model or model
                     )
                     if ev.usage is not None:
                         yield usage_event(assistant_id, ev.usage)

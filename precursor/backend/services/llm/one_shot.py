@@ -95,6 +95,7 @@ async def complete_once(
     except Exception as exc:
         raise LLMCallFailed(usage_source, exc) from exc
 
+    resolved_model = getattr(provider, "effective_model", None) or resolved_model
     if usage is not None:
         async with SessionLocal() as usage_session:
             await record_usage(

@@ -841,6 +841,53 @@ const scenes = {
     },
   },
 
+  "model-alternatives": {
+    viewport: { width: 1440, height: 1600 },
+    async go(page) {
+      await page.route("**/api/settings", async (route) => {
+        if (route.request().method() !== "GET") return route.fallback();
+        const response = await route.fetch();
+        const settings = await response.json();
+        await route.fulfill({ response, json: {
+          ...settings,
+          // Presence/catalogue fixtures only; the real demo remains Guest with no token.
+          github_token_source: "settings",
+          agents_enabled: true, agents_available: true, agents_runtime_started: true,
+          model_fallbacks: { github_copilot: {
+            efficiency: [
+              { model: "claude-haiku-4.5", reasoning_effort: "", context_tokens: 128000, context_tier: "default" },
+              { model: "gpt-5-mini", reasoning_effort: "low", context_tokens: 128000, context_tier: "default" },
+            ],
+            balanced: [
+              { model: "claude-sonnet-5", reasoning_effort: "medium", context_tokens: 128000, context_tier: "default" },
+            ],
+            intelligence: [
+              { model: "gpt-5.5", reasoning_effort: "high", context_tokens: 256000, context_tier: "default" },
+            ],
+          }, agents: {
+            efficiency: [{ model: "claude-haiku-4.5", reasoning_effort: "", context_tokens: 128000, context_tier: "default" }],
+            balanced: [{ model: "claude-sonnet-5", reasoning_effort: "medium", context_tokens: 128000, context_tier: "default" }],
+            intelligence: [{ model: "gpt-5.5", reasoning_effort: "high", context_tokens: 256000, context_tier: "long_context" }],
+          } },
+        } });
+      });
+      const catalogue = ["claude-haiku-4.5", "gpt-5-mini", "claude-sonnet-5", "gpt-5.5"].map((id) => ({
+        id, name: id, publisher: id.startsWith("claude") ? "Anthropic" : "OpenAI",
+        context_window: 512000, supported_reasoning_efforts: ["low", "medium", "high", "max"],
+        catalog_provider: "github_copilot",
+      }));
+      await page.route("**/api/llm/models*", (route) => route.fulfill({ json: catalogue }));
+      await page.route("**/api/agents/models", (route) => route.fulfill({ json: catalogue }));
+      await page.goto(`${BASE}/`, { waitUntil: "networkidle" });
+      await openSettings(page, "Model");
+      await page.getByRole("dialog").evaluate((el) => { el.style.height = "90vh"; });
+      const card = page.locator("[data-model-fallback-settings]");
+      await card.scrollIntoViewIfNeeded();
+      await sleep(200);
+      return clipOf(page, "[data-model-fallback-settings]", 12);
+    },
+  },
+
   // Settings → Model: the OpenAI-compatible endpoint, switched on. The Guest
   // demo has no provider to relay to, so the switch, key and catalogue are
   // fixtures — never a real key.

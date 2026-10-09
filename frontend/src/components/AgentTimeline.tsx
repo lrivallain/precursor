@@ -89,6 +89,7 @@ export function classify(event: AgentEvent): StepCategory {
   // Surfaced as the global sign-in banner, not as a timeline node.
   if (kind === "mcp_auth_required") return "skip";
   if (kind === "permission_request") return "permission";
+  if (kind === "model_fallback") return "system";
   if (event.tool_name || kind.startsWith("tool")) return "tool";
   if (kind.includes("reason") || kind.includes("think")) return "reasoning";
   if (kind.includes("error")) return "error";

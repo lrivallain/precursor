@@ -97,6 +97,17 @@ Model** — not via the environment. The GitHub providers fall back to your
 `gh auth login` session when no token is saved. See
 [Configuration → Connecting a model](/guide/configuration#connecting-a-model).
 
+`model_fallbacks` is an optional runtime-only setting (default `{}`), edited in
+**Settings -> Model -> Model alternatives**. It maps provider ids and the
+separate `agents` scope to `efficiency`, `balanced`, and `intelligence` lists.
+Each ordered preset has `model`, `reasoning_effort` (default `""`),
+`context_tokens` (default `128000`, range 1,000-5,000,000) and `context_tier`
+(`default` or `long_context`, default `default`). Chat uses the token budget;
+Agents/Workflows use the context tier. Each category accepts at most twelve
+presets; duplicate effective presets, unknown scopes and `auto` are rejected.
+See [Model alternatives](/guide/configuration#optional-model-alternatives)
+for matching and retry rules. There is no environment variable or DB migration.
+
 | Variable | Default | Description |
 | --- | --- | --- |
 | `PRECURSOR_GITHUB_CLI_USER` | *(empty)* | Which `gh` login supplies the token (`gh auth token --user …`). Set it when several accounts are signed in, so the resolved token doesn't depend on the CLI's active account — see [GitHub authentication](/guide/configuration#several-accounts-signed-in-to-gh). |

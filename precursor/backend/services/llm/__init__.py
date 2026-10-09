@@ -31,9 +31,12 @@ async def get_llm_provider(
     has selected but not yet saved, using that provider's already-saved config.
     """
     from precursor.backend.services.app_settings import (
+        resolve_llm_max_input_tokens,
         resolve_llm_provider,
         resolve_llm_provider_config,
     )
+    from precursor.backend.services.llm.fallback import CategoryFallbackProvider
+    from precursor.backend.services.model_fallbacks import resolve_model_fallbacks
 
     provider_id = (
         override_provider
@@ -47,16 +50,22 @@ async def get_llm_provider(
         token = await resolve_github_token(session)
         if not token:
             return MockProvider()
-        return spec.build({}, token)
-    config = await resolve_llm_provider_config(session, provider_id)
-    # A required field missing => the provider can't authenticate; surface the
-    # mock so the app stays usable instead of erroring mid-stream.
-    if any(f.required and not config.get(f.name) for f in spec.fields):
-        return MockProvider()
-    try:
-        return spec.build(config, "")
-    except Exception:  # defensive: a malformed config shouldn't 500 a chat turn
-        return MockProvider()
+        provider = spec.build({}, token)
+    else:
+        config = await resolve_llm_provider_config(session, provider_id)
+        # A required field missing => the provider can't authenticate.
+        if any(f.required and not config.get(f.name) for f in spec.fields):
+            return MockProvider()
+        try:
+            provider = spec.build(config, "")
+        except Exception:  # defensive: a malformed config shouldn't 500 a chat turn
+            return MockProvider()
+    categories = await resolve_model_fallbacks(session, provider_id)
+    if any((categories.efficiency, categories.balanced, categories.intelligence)):
+        return CategoryFallbackProvider(
+            provider, categories, await resolve_llm_max_input_tokens(session)
+        )
+    return provider
 
 
 __all__ = ["complete_text_with_usage", "get_llm_provider"]

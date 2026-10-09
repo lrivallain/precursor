@@ -48,6 +48,8 @@ class UsageMeter:
         if loaded is None:
             return
         run, agent = loaded
+        live = self._manager._live.get(run_id)
+        applied_model = live.model_signature[0] if live and live.model_signature else None
         try:
             async with SessionLocal() as session:
                 await record_usage(
@@ -55,7 +57,7 @@ class UsageMeter:
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
                     source="agent",
-                    model=str(model) if model else (run.model or agent.model),
+                    model=str(model) if model else (applied_model or run.model or agent.model),
                     topic_id=agent.topic_id,
                     chat_id=agent.chat_id,
                 )

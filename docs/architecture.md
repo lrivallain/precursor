@@ -287,6 +287,29 @@ topic or chat it belongs to. Failures raise `LLMCallFailed`; if a router doesn't
 catch it, `create_app` maps it to a `502`. Prompts, output clean-up and
 fallbacks stay with each feature.
 
+**Optional model alternatives.** `model_fallbacks` is an `AppSetting` map of
+provider scopes plus `agents`, each containing ordered Efficiency/Balanced/
+Intelligence presets. `services/model_fallbacks.py` matches the selected model,
+effort and context to a category without guessing ambiguous assignments.
+`get_llm_provider` decorates configured providers with
+`services/llm/fallback.CategoryFallbackProvider`: missing catalogue ids or
+recognised model/configuration rejections try same-category presets before
+any event is yielded. Replacement history is re-budgeted and actual models
+flow through final/tool turns and usage accounting. The SDK `ModelSelector`
+applies the same policy at creation/model switch and on pre-output rejection
+events; it keeps a per-live-session attempt set and suppresses a rejected
+attempt's trailing idle while recovery is pending. Receipt of model output
+or a permission/tool request closes the replay window. Saved pins stay intact.
+The provider and SDK scopes deliberately do not share presets: chat uses a
+token budget while SDK sessions use `default`/`long_context` tiers.
+
+Preset-health indicators reread settings/readiness and provider/SDK catalogues,
+never inference. Model API reads include the actual `catalog_provider`, so an
+offline-mock fallback cannot validate the selected provider's presets. Local
+checks flag missing/duplicate model configurations and advertised effort/window
+mismatches; failed, empty and non-discoverable catalogues leave ids unverified.
+Fetch generations discard obsolete provider responses without rewriting drafts.
+
 ## MCP
 
 Precursor is *both* an MCP client and an MCP server, with working transports.

@@ -15,6 +15,21 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **Same-category model alternatives.** Settings -> Model optionally groups
+  model/context/effort presets into **Efficiency**, **Balanced**, and
+  **Intelligence**, separately for each provider and for Agents/Workflows.
+  When a model disappears or rejects its effort/context configuration, Precursor
+  tries the category's ordered presets without overwriting the saved selection.
+  Recovery is bounded and never replays streamed output or agent actions.
+  The settings show separate **Chat & live** and **Agents & workflows** cards
+  with independent preset counts, making it clear that both must be configured
+  to cover both kinds of tasks.
+  Preset models reuse the prompt composer's searchable model dropdown, retaining
+  saved/retired ids and allowing explicit ids through the search.
+  Category and configuration badges check provider/SDK catalogues, with per-preset
+  warnings for unlisted models, incomplete/duplicate profiles and advertised
+  effort/window mismatches. Missing credentials or unavailable catalogues remain
+  distinct from missing models; **Check models** refreshes without inference.
 - **Copy a reply for email.** Assistant replies in topics and chats get a
   **Copy formatted** button (the envelope) that copies them as email-ready
   HTML. Each paragraph, list, table and code block carries its own spacing, so

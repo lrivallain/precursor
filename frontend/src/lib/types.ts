@@ -1463,6 +1463,16 @@ export interface NoteDraftAttachment {
 //  - "autonomous": auto-approve everything
 export type AgentApprovalPolicy = "manual" | "balanced" | "autonomous";
 
+export interface ModelPreset {
+  model: string;
+  reasoning_effort: "" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+  context_tokens: number;
+  context_tier: "default" | "long_context";
+}
+
+export type ModelCategory = "efficiency" | "balanced" | "intelligence";
+export type ModelCategories = Record<ModelCategory, ModelPreset[]>;
+
 export interface Settings {
   theme: "light" | "dark" | "system";
   font_family: "system" | "opendyslexic" | "atkinson-hyperlegible" | "lexend";
@@ -1482,6 +1492,7 @@ export interface Settings {
   // Active LLM provider id + per-provider public config (secrets redacted) and
   // a per-provider secret-presence map.
   llm_provider: string;
+  model_fallbacks: Record<string, ModelCategories>;
   llm_providers: Record<string, Record<string, string>>;
   llm_providers_present: Record<string, Record<string, boolean>>;
   // Azure AI Speech: configured endpoint + language + readiness (key never echoed).
@@ -1592,6 +1603,7 @@ export interface SettingsUpdate {
   api_keys?: Record<string, string>;
   issue_associations_enabled?: boolean;
   llm_provider?: string;
+  model_fallbacks?: Record<string, ModelCategories>;
   llm_providers?: Record<string, Record<string, string>>;
   azure_speech_endpoint?: string;
   azure_speech_language?: string;
@@ -1783,6 +1795,8 @@ export interface LLMModel {
   max_output_tokens?: number | null;
   /** Whether the model accepts image input. */
   vision?: boolean;
+  /** Actual catalogue source; may be "mock" if provider config is unusable. */
+  catalog_provider?: string | null;
 }
 
 export interface LLMProviderField {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   X,
   ChevronDown,
@@ -64,6 +64,7 @@ import { usePluginDescriptors } from "../lib/pluginStore";
 import { WorkflowsSettings } from "./WorkflowsSettings";
 import { OpenAIProxySettings } from "./OpenAIProxySettings";
 import { IQSettings } from "./IQSettings";
+import { ModelFallbackSettings } from "./ModelFallbackSettings";
 import { DefinitionsMigrationWizard } from "./DefinitionsMigrationWizard";
 
 interface Props {
@@ -250,8 +251,12 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
   const [models, setModels] = useState<LLMModel[]>([]);
   const [modelsError, setModelsError] = useState<string | null>(null);
   const [modelsLoading, setModelsLoading] = useState(false);
+  const [modelsProvider, setModelsProvider] = useState<string | null>(null);
+  const modelsRequest = useRef(0);
+  useEffect(() => () => { modelsRequest.current++; }, []);
   const [provider, setProvider] = useState("");
   const [providers, setProviders] = useState<LLMProviderSpec[]>([]);
+  const [modelFallbacks, setModelFallbacks] = useState<Settings["model_fallbacks"]>({});
   const [providerConfig, setProviderConfig] = useState<
     Record<string, Record<string, string>>
   >({});
@@ -294,6 +299,7 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
   // Browser channel the built-in Playwright MCP server drives (MCP tab).
   const [playwrightBrowser, setPlaywrightBrowser] = useState("msedge");
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [mcpEditing, setMcpEditing] = useState<MCPServerStatus | "new" | null>(null);
   const [me, setMe] = useState<Me | null>(null);
   const [appVersion, setAppVersion] = useState<string | null>(null);
@@ -350,22 +356,49 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
   // `share` seeds the shared store used by the composer picker — only safe when
   // the fetched list reflects the *saved* provider, not an unsaved preview.
   async function loadModels(
-    providerOverride?: string,
+    providerOverride: string,
     { share = false }: { share?: boolean } = {},
   ): Promise<LLMModel[]> {
+    const request = ++modelsRequest.current;
     setModelsLoading(true);
     setModelsError(null);
+    setModelsProvider(providerOverride);
+    setModels([]);
     try {
       const list = await api.llm.listModels(providerOverride);
+      if (request !== modelsRequest.current) return list;
       setModels(list);
       if (share) modelsStore.adopt(list);
       return list;
     } catch (e) {
-      setModels([]);
-      setModelsError(e instanceof Error ? e.message : String(e));
+      if (request === modelsRequest.current) {
+        setModels([]);
+        setModelsError(e instanceof Error ? e.message : String(e));
+      }
       return [];
     } finally {
-      setModelsLoading(false);
+      if (request === modelsRequest.current) setModelsLoading(false);
+    }
+  }
+
+  async function checkModelCatalogs(): Promise<LLMModel[]> {
+    const request = ++modelsRequest.current;
+    setModelsLoading(true);
+    setModelsError(null);
+    setModelsProvider(provider);
+    setModels([]);
+    try {
+      const refreshed = await api.settings.get();
+      if (request !== modelsRequest.current) return [];
+      setSettings(refreshed);
+      settingsStore.set(refreshed);
+      return await loadModels(provider, { share: provider === refreshed.llm_provider });
+    } catch (error) {
+      if (request === modelsRequest.current) {
+        setModelsError(`Settings/catalogue refresh failed: ${error instanceof Error ? error.message : String(error)}`);
+        setModelsLoading(false);
+      }
+      return [];
     }
   }
 
@@ -384,6 +417,7 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
       const s = await api.settings.get();
       setSettings(s);
       setProvider(s.llm_provider);
+      setModelFallbacks(s.model_fallbacks ?? {});
       setProviderConfig(s.llm_providers ?? {});
       setRepo(s.github_repo);
       setTtlMinutes(s.issue_context_ttl_minutes);
@@ -417,7 +451,7 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
       } catch {
         setProviders([]);
       }
-      await loadModels(undefined, { share: true });
+      await loadModels(s.llm_provider, { share: true });
       try {
         setMe(await api.me.get());
       } catch {
@@ -453,10 +487,8 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
   }
 
   // Persist the provider + its config, then refresh the catalog — without
-  // closing the panel (so the user can verify discovery). Model and reasoning
-  // effort are chosen in the composer now, not here; but if the previously
-  // selected global model isn't in the new provider's catalog we snap it to a
-  // valid one so the composer never points at a stale id.
+  // closing the panel. The server resolves retired pins; don't overwrite a
+  // categorised pin merely because it is absent from the refreshed catalogue.
   async function applyProviderSettings(): Promise<void> {
     setModelsLoading(true);
     try {
@@ -467,15 +499,8 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
       setSettings(updated);
       setProviderConfig(updated.llm_providers ?? {});
       settingsStore.set(updated);
-      const list = await loadModels(provider, { share: true });
-      if (list.length > 0 && !list.some((m) => m.id === updated.llm_model)) {
-        const snapped = await api.settings.update({ llm_model: list[0].id });
-        setSettings(snapped);
-        settingsStore.set(snapped);
-        modelsStore.applySettings(snapped);
-      } else {
-        modelsStore.applySettings(updated);
-      }
+      await loadModels(provider, { share: true });
+      modelsStore.applySettings(updated);
     } catch (e) {
       setModelsError(e instanceof Error ? e.message : String(e));
       setModelsLoading(false);
@@ -484,12 +509,14 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
 
   async function save(): Promise<void> {
     setSaving(true);
+    setSaveError(null);
     try {
       const payload: Parameters<typeof api.settings.update>[0] = {
         theme,
         font_family: font,
         llm_provider: provider,
         github_repo: repo,
+        model_fallbacks: modelFallbacks,
         issue_context_ttl_minutes: ttlMinutes,
         show_chat_stats: showChatStats,
         notifications_enabled: notificationsEnabled,
@@ -534,6 +561,8 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
       setTheme(theme);
       setFont(font);
       onClose();
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : String(error));
     } finally {
       setSaving(false);
     }
@@ -730,6 +759,7 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
 
         <div className="flex flex-1 min-h-0">
           <SidebarTabs
+            className="w-12 sm:w-52 shrink-0 border-r border-border overflow-y-auto py-2 [&>div>div]:hidden sm:[&>div>div]:block [&_button]:justify-center sm:[&_button]:justify-start [&_button]:min-h-10 sm:[&_button]:min-h-0 [&_button>span]:hidden sm:[&_button>span]:inline"
             groups={SETTINGS_GROUPS}
             tabs={allCategories}
             active={category}
@@ -1014,6 +1044,18 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
                   Pick the model, reasoning effort and context size from the
                   composer toolbar — they apply to every conversation.
                 </p>
+                <ModelFallbackSettings
+                  value={modelFallbacks}
+                  onChange={setModelFallbacks}
+                  settings={settings}
+                  provider={provider}
+                  providers={providers}
+                  models={models}
+                  modelsProvider={modelsProvider}
+                  modelsLoading={modelsLoading}
+                  modelsError={modelsError}
+                  onCheckModels={checkModelCatalogs}
+                />
 
                 {sys && (
                   <div className="mt-6 space-y-3">
@@ -1540,6 +1582,7 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
           </div>
         </div>
 
+        {saveError && <p role="alert" className="border-t border-border px-3 py-2 text-xs text-danger">{saveError}</p>}
         <footer className="border-t border-border p-3 flex items-center justify-end gap-2 shrink-0">
           <span
             className="mr-auto text-[11px] text-muted"

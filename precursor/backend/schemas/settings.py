@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from precursor.backend.schemas.model_fallback import ModelCategories
 
 Theme = Literal["light", "dark", "system"]
 # Reading font applied app-wide, incl. dyslexia/low-vision-friendly options —
@@ -24,6 +26,7 @@ class SettingsPayload(BaseModel):
     llm_reasoning_effort: str | None = None
     # Active LLM provider id (see services/llm/registry.py).
     llm_provider: str | None = None
+    model_fallbacks: dict[str, ModelCategories] | None = None
     # Per-provider config maps, e.g. {"azure_foundry": {"endpoint": ..., "key": ...}}.
     # Merged into the stored config; secret fields are accepted here but never
     # echoed back. An empty-string value clears that field.
@@ -128,6 +131,29 @@ class SettingsPayload(BaseModel):
     backup_dir: str | None = None
     backup_retention: int | None = None
 
+    @field_validator("model_fallbacks")
+    @classmethod
+    def known_fallback_scopes(
+        cls, value: dict[str, ModelCategories] | None
+    ) -> dict[str, ModelCategories] | None:
+        from precursor.backend.services.llm.registry import PROVIDERS
+
+        if value is not None and set(value) - (set(PROVIDERS) | {"agents"}):
+            raise ValueError("Fallback scope must be a provider id or agents")
+        for scope, categories in (value or {}).items():
+            seen: set[tuple[str, str, str | int]] = set()
+            for presets in (categories.efficiency, categories.balanced, categories.intelligence):
+                for preset in presets:
+                    signature = (
+                        preset.model,
+                        preset.reasoning_effort,
+                        preset.context_tier if scope == "agents" else preset.context_tokens,
+                    )
+                    if signature in seen:
+                        raise ValueError(f"Duplicate effective preset in {scope}")
+                    seen.add(signature)
+        return value
+
 
 class SettingsRead(BaseModel):
     theme: Theme = "system"
@@ -153,6 +179,7 @@ class SettingsRead(BaseModel):
     # Active LLM provider id + per-provider public config (secrets redacted) and
     # a per-provider secret-presence map.
     llm_provider: str = "github_copilot"
+    model_fallbacks: dict[str, ModelCategories] = Field(default_factory=dict)
     llm_providers: dict[str, dict[str, str]] = Field(default_factory=dict)
     llm_providers_present: dict[str, dict[str, bool]] = Field(default_factory=dict)
     # Azure AI Speech: configured endpoint + language (never echoes the key) and

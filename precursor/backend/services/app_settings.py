@@ -224,6 +224,22 @@ async def resolve_llm_model(session: AsyncSession) -> str:
     if stored and stored in offered:
         return stored
     if stored:
+        from precursor.backend.services.model_fallbacks import (
+            ModelSelection,
+            category_presets,
+            resolve_model_fallbacks,
+        )
+
+        categories = await resolve_model_fallbacks(session, await resolve_llm_provider(session))
+        selection = ModelSelection(
+            model=stored,
+            reasoning_effort=await resolve_llm_reasoning_effort(session),
+            context_tokens=await resolve_llm_max_input_tokens(session),
+        )
+        if category_presets(categories, selection):
+            # Keep the desired pin; the request wrapper chooses its replacement
+            # together with the replacement's own effort and context budget.
+            return stored
         logger.warning(
             "Chat model %r is no longer offered by the provider — falling back to %r",
             stored,

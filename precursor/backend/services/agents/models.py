@@ -15,10 +15,18 @@ from sqlalchemy import select
 
 from precursor.backend.db import SessionLocal
 from precursor.backend.models import AgentRun, AgentSession
+from precursor.backend.schemas.agent import AgentEvent
 from precursor.backend.services.app_settings import (
     resolve_agents_context_tier,
     resolve_agents_default_model,
     resolve_agents_reasoning_effort,
+)
+from precursor.backend.services.llm.base import LLMError
+from precursor.backend.services.model_fallbacks import (
+    ModelSelection,
+    category_presets,
+    is_model_rejection,
+    resolve_model_fallbacks,
 )
 
 if TYPE_CHECKING:
@@ -100,6 +108,175 @@ class ModelSelector:
             return "auto"
         return model
 
+    async def choices(
+        self, agent_id: int, model: str, effort: str, tier: str
+    ) -> list[tuple[str, str | None, str]]:
+        initial = (model, effort or None, tier or "default")
+        if not model or model == "auto":
+            return [initial]
+        async with SessionLocal() as session:
+            categories = await resolve_model_fallbacks(session, "agents")
+        selection = ModelSelection(model=model, reasoning_effort=effort, context_tier=tier)
+        presets = category_presets(categories, selection, agents=True)
+        if not presets:
+            return [(await self.sanitize(agent_id, model), effort or None, tier or "default")]
+        available = await self.available_model_ids()
+        choices = list(
+            dict.fromkeys(
+                [
+                    initial,
+                    *((p.model, p.reasoning_effort or None, p.context_tier) for p in presets),
+                ]
+            )
+        )
+        choices = [c for c in choices if not available or c[0] in available]
+        if not choices:
+            raise LLMError(
+                f"No available model remains in the category for {model!r}. "
+                "Update Settings > Model > Model alternatives."
+            )
+        return choices
+
+    async def _apply(
+        self,
+        agent: AgentSession,
+        run: AgentRun,
+        live: _LiveSession,
+        default_model: str,
+        effort: str,
+        tier: str,
+    ) -> None:
+        model = run.model or agent.model or default_model
+        requested = (model, effort or None, tier or "default")
+        choices = await self.choices(agent.id, model, effort, tier)
+        if (
+            live.requested_model_signature == requested
+            and live.model_candidates == choices
+            and live.model_signature in choices
+        ):
+            return
+        live.model_candidates = choices
+        live.model_attempts.clear()
+        for choice in choices:
+            live.model_attempts.add(choice)
+            try:
+                await self._set_model(live, choice)
+                live.requested_model_signature = requested
+                if choice != requested:
+                    await self.announce(run.id, choice)
+                return
+            except Exception as exc:
+                if not is_model_rejection(exc):
+                    raise
+                logger.warning("agent %s: model configuration rejected: %s", agent.id, exc)
+                if choice == choices[-1]:
+                    raise
+
+    @staticmethod
+    async def _set_model(live: _LiveSession, choice: tuple[str, str | None, str]) -> None:
+        model, effort, tier = choice
+        # None explicitly clears the previous model's effort on a switch.
+        await live.sdk_session.set_model(model, reasoning_effort=effort, context_tier=tier)
+        live.model_signature = choice
+
+    async def send(self, run_id: int, live: _LiveSession, prompt: str) -> None:
+        live.model_turn_id += 1
+        live.dispatched_prompt = prompt
+        live.model_output_started = False
+        live.model_recovering = False
+        live.model_retry_scheduled = False
+        if live.model_signature is not None:
+            live.model_attempts.add(live.model_signature)
+        while True:
+            try:
+                await live.sdk_session.send(prompt)
+                return
+            except Exception as exc:
+                if not await self.replace_rejected(run_id, live, exc):
+                    raise
+
+    async def replace_rejected(
+        self, run_id: int, live: _LiveSession, error: BaseException | str
+    ) -> bool:
+        if live.model_output_started or not is_model_rejection(error):
+            return False
+        for choice in live.model_candidates:
+            if choice in live.model_attempts:
+                continue
+            live.model_attempts.add(choice)
+            try:
+                await self._set_model(live, choice)
+            except Exception as exc:
+                if not is_model_rejection(exc):
+                    raise
+                logger.warning("agent run %s: alternative rejected: %s", run_id, exc)
+                continue
+            logger.warning("agent run %s: using alternative %s after %s", run_id, choice, error)
+            await self.announce(run_id, choice)
+            return True
+        return False
+
+    async def announce(self, run_id: int, choice: tuple[str, str | None, str]) -> None:
+        loaded = await self._manager._load_run(run_id)
+        if loaded is not None:
+            await self._manager._emit_synthetic(
+                loaded[1].id,
+                AgentEvent(
+                    kind="model_fallback",
+                    text=(
+                        f"Using model {choice[0]} "
+                        f"(effort: {choice[1] or 'auto'}, context: {choice[2]}). "
+                        "The saved model selection is unchanged."
+                    ),
+                    agent_run_id=run_id,
+                ),
+            )
+
+    async def recover(
+        self, run_id: int, live: _LiveSession, error: str, *, turn_id: int | None = None
+    ) -> None:
+        expected_turn = live.model_turn_id if turn_id is None else turn_id
+        try:
+            run = await self._manager._run(run_id)
+            if (
+                run is None
+                or run.status != "running"
+                or self._manager._live.get(run_id) is not live
+                or live.model_turn_id != expected_turn
+            ):
+                if live.model_turn_id == expected_turn:
+                    live.model_recovering = False
+                return
+            while await self.replace_rejected(run_id, live, error):
+                if not live.dispatched_prompt:
+                    break
+                run = await self._manager._run(run_id)
+                if run is None or run.status != "running" or live.model_turn_id != expected_turn:
+                    if live.model_turn_id == expected_turn:
+                        live.model_recovering = False
+                    return
+                try:
+                    await live.sdk_session.send(live.dispatched_prompt)
+                    # A trailing idle from the rejected attempt must not finish
+                    # the run; turn-start/content releases this guard.
+                    return
+                except Exception as exc:
+                    if not is_model_rejection(exc):
+                        raise
+                    error = str(exc)
+            raise LLMError(error)
+        except Exception as exc:
+            if live.model_turn_id != expected_turn:
+                logger.warning(
+                    "agent run %s: discarded stale model recovery failure: %s", run_id, exc
+                )
+                return
+            live.model_recovering = False
+            await self._manager._fail_turn(run_id, exc)
+        finally:
+            if live.model_turn_id == expected_turn:
+                live.model_retry_scheduled = False
+
     async def sync_selected_model(self, agent: AgentSession, run: AgentRun) -> None:
         """Reconcile ``run``'s live session to the current model selection.
 
@@ -115,9 +292,7 @@ class ModelSelector:
             default_model = await resolve_agents_default_model(s)
             effort = await resolve_agents_reasoning_effort(s)
             tier = await resolve_agents_context_tier(s)
-        await apply_agent_model(
-            agent, live, default_model=default_model, effort=effort, tier=tier, pinned=run.model
-        )
+        await self._apply(agent, run, live, default_model, effort, tier)
 
     async def apply_session_overrides(self) -> None:
         """Apply the current global model / reasoning-effort / context-tier prefs
@@ -159,48 +334,4 @@ class ModelSelector:
                 continue
             if run.status in {"running", "needs_approval", "pending"}:
                 continue
-            await apply_agent_model(
-                agent,
-                live,
-                default_model=default_model,
-                effort=effort,
-                tier=tier,
-                pinned=run.model,
-            )
-
-
-async def apply_agent_model(
-    agent: AgentSession,
-    live: _LiveSession,
-    *,
-    default_model: str,
-    effort: str,
-    tier: str,
-    pinned: str | None = None,
-) -> None:
-    """``set_model`` a single idle live agent to its selected model.
-
-    The model is ``pinned or agent.model or default_model`` — the executing
-    run's snapshot wins (a workflow step can pin a model for its turn), then
-    an explicit per-agent pin, otherwise the current composer/Settings
-    selection applies. History preserving and effective on the agent's next
-    turn. No-op when the target (model, effort, tier) already matches what we
-    last applied.
-    """
-    model = pinned or agent.model or default_model
-    if not model:
-        return
-    signature = (model, effort or None, tier or "default")
-    if live.model_signature == signature:
-        return
-    # Always send the tier (incl. "default") so toggling back resets it;
-    # a falsy effort is sent as None so the runtime restores the model
-    # default rather than pinning a stale level.
-    kwargs: dict[str, Any] = {"context_tier": tier or "default"}
-    if effort:
-        kwargs["reasoning_effort"] = effort
-    try:
-        await live.sdk_session.set_model(model, **kwargs)
-        live.model_signature = signature
-    except Exception:
-        logger.debug("set_model failed for agent %s", agent.id, exc_info=True)
+            await self._apply(agent, run, live, default_model, effort, tier)

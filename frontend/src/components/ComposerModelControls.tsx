@@ -30,6 +30,17 @@ function formatTokens(n: number): string {
   return String(n);
 }
 
+export function groupModelsByPublisher(models: LLMModel[]): MenuGroup[] {
+  const grouped = models.reduce<Record<string, LLMModel[]>>((acc, model) => {
+    (acc[model.publisher || "Other"] ||= []).push(model);
+    return acc;
+  }, {});
+  return Object.entries(grouped).map(([label, list]) => ({
+    label,
+    options: list.map((model) => ({ value: model.id, label: model.name })),
+  }));
+}
+
 // Ascending list of the (up to three) context-budget values offered for a model
 // with the given window. The window itself is always the top value.
 function contextValuesForModel(maxCtx: number | null | undefined): number[] {
@@ -114,15 +125,7 @@ function LlmModelControls() {
     }
   }
 
-  const grouped = models.reduce<Record<string, LLMModel[]>>((acc, m) => {
-    const k = m.publisher || "Other";
-    (acc[k] ||= []).push(m);
-    return acc;
-  }, {});
-  const modelGroups: MenuGroup[] = Object.entries(grouped).map(([label, list]) => ({
-    label,
-    options: list.map((m) => ({ value: m.id, label: m.name })),
-  }));
+  const modelGroups = groupModelsByPublisher(models);
   const inCatalog = models.some((m) => m.id === modelId);
   const modelLabel = currentModel?.name ?? modelId ?? "Model";
 

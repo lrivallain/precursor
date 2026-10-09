@@ -145,12 +145,14 @@ async def _run(
             if isinstance(ev, AssistantFinalTurn):
                 elapsed_ms = int((time.monotonic() - turn_started) * 1000)
                 await persist_final_turn(
-                    "topic", topic_id, ev, model=settings.model, elapsed_ms=elapsed_ms
+                    "topic", topic_id, ev, model=ev.model or settings.model, elapsed_ms=elapsed_ms
                 )
                 return
 
             if isinstance(ev, AssistantToolCallsTurn):
-                await persist_tool_calls_turn("topic", topic_id, ev, model=settings.model)
+                await persist_tool_calls_turn(
+                    "topic", topic_id, ev, model=ev.model or settings.model
+                )
 
             elif isinstance(ev, ToolResultTurn):
                 await persist_tool_result("topic", topic_id, ev)

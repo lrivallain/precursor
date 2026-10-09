@@ -109,6 +109,7 @@ def _as_read(
         # Resolved, not raw: nothing is stored on a fresh install and a stored
         # id may have been retired, so this is what a turn would actually use.
         llm_model=llm_model,
+        model_fallbacks=data.get("model_fallbacks") or {},
         llm_reasoning_effort=data.get("llm_reasoning_effort", DEFAULT_LLM_REASONING_EFFORT),
         github_repo=data.get("github_repo", DEFAULT_GITHUB_REPO),
         issue_context_ttl_minutes=data.get(
@@ -305,7 +306,12 @@ async def update_settings(
     # sessions so they apply on the next message instead of only new sessions.
     if any(
         k in data
-        for k in ("agents_default_model", "agents_reasoning_effort", "agents_context_tier")
+        for k in (
+            "agents_default_model",
+            "agents_reasoning_effort",
+            "agents_context_tier",
+            "model_fallbacks",
+        )
     ):
         try:
             await get_agent_manager().apply_session_overrides()
