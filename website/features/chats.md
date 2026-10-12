@@ -108,6 +108,10 @@ while you're looking elsewhere, the chat's row shows an unread count, the sideba
 tab highlights, and (when notifications are enabled and the window is unfocused) a
 browser notification fires. Opening the chat clears its badge.
 
+For an audible cue, turn on **Play a sound when a reply finishes** in Settings →
+Chat: a short, quiet pop plays when a reply you asked for in a topic or chat
+completes. It's off by default, and stopped or failed turns stay silent.
+
 Right-click a chat in the left sidebar to rename, pin, set a reminder, open
 `/notes`, or archive it.
 

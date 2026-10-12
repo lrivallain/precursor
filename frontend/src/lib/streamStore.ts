@@ -62,9 +62,9 @@ class StreamStore {
   private remoteStreaming = new Set<string>();
   private version = 0;
   private listeners = new Set<Listener>();
-  private onCompleteCb: ((key: string) => void) | null = null;
+  private onCompleteCb: ((key: string, ok: boolean) => void) | null = null;
 
-  setOnComplete(cb: ((key: string) => void) | null): void {
+  setOnComplete(cb: ((key: string, ok: boolean) => void) | null): void {
     this.onCompleteCb = cb;
   }
 
@@ -235,6 +235,8 @@ class StreamStore {
     this.sessions.set(key, session);
     this.notify();
 
+    // False when the user stopped the turn or the request failed.
+    let ok = true;
     try {
       const onEvent = (ev: { event: string; data: string }): void =>
         this.handleEvent(key, ev);
@@ -244,6 +246,7 @@ class StreamStore {
         await streamChatSession(id, body, { signal: controller.signal, onEvent });
       }
     } catch (err) {
+      ok = false;
       if ((err as Error).name !== "AbortError") {
         console.error(err);
       }
@@ -253,7 +256,7 @@ class StreamStore {
         cur.streaming = false;
         this.notify();
       }
-      this.onCompleteCb?.(key);
+      this.onCompleteCb?.(key, ok);
     }
   }
 

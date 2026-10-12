@@ -1,5 +1,7 @@
 import { useEffect } from "react";
 import { api } from "./api";
+import { settingsStore } from "./settingsStore";
+import { playCompletionSound } from "./sound";
 import { streamStore } from "./streamStore";
 import type { AgentsController } from "./useAgentsController";
 import type { ChatsController } from "./useChatsController";
@@ -24,7 +26,10 @@ export function useReadSync(deps: ReadSyncDeps): void {
   // updated_at timestamps reflect the new server state. If the user happens to
   // be viewing the topic that just finished, also mark it read.
   useEffect(() => {
-    streamStore.setOnComplete((key) => {
+    streamStore.setOnComplete((key, ok) => {
+      if (ok && settingsStore.current()?.completion_sound_enabled) {
+        playCompletionSound();
+      }
       const [kind, rawId] = key.split(":");
       const id = Number(rawId);
       void (async () => {

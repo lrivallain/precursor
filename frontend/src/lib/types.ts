@@ -1485,6 +1485,7 @@ export interface Settings {
   issue_context_ttl_minutes: number;
   show_chat_stats: boolean;
   notifications_enabled: boolean;
+  completion_sound_enabled: boolean;
   max_tool_rounds: number;
   mcp_enabled: Record<string, boolean>;
   mcp_servers: Record<string, Record<string, unknown>>;
@@ -1601,6 +1602,7 @@ export interface SettingsUpdate {
   issue_context_ttl_minutes?: number;
   show_chat_stats?: boolean;
   notifications_enabled?: boolean;
+  completion_sound_enabled?: boolean;
   max_tool_rounds?: number;
   mcp_enabled?: Record<string, boolean>;
   mcp_servers?: Record<string, Record<string, unknown>>;

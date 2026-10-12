@@ -39,6 +39,7 @@ import {
   notificationsSupported,
   requestNotificationPermission,
 } from "../lib/notifications";
+import { playCompletionSound } from "../lib/sound";
 import type {
   BackupRunResult,
   LLMModel,
@@ -279,6 +280,7 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
   const [ttlMinutes, setTtlMinutes] = useState(60);
   const [showChatStats, setShowChatStats] = useState(true);
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
+  const [completionSoundEnabled, setCompletionSoundEnabled] = useState(false);
   const [maxToolRounds, setMaxToolRounds] = useState(15);
   const [issueAssociationsEnabled, setIssueAssociationsEnabled] = useState(true);
   // Folder backup (DB + blobs) — editable prefs plus a manual "run now" action.
@@ -423,6 +425,7 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
       setTtlMinutes(s.issue_context_ttl_minutes);
       setShowChatStats(s.show_chat_stats);
       setNotificationsEnabled(s.notifications_enabled);
+      setCompletionSoundEnabled(s.completion_sound_enabled);
       setMaxToolRounds(s.max_tool_rounds);
       setIssueAssociationsEnabled(s.issue_associations_enabled);
       setBackupEnabled(s.backup_enabled);
@@ -520,6 +523,7 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
         issue_context_ttl_minutes: ttlMinutes,
         show_chat_stats: showChatStats,
         notifications_enabled: notificationsEnabled,
+        completion_sound_enabled: completionSoundEnabled,
         max_tool_rounds: maxToolRounds,
         issue_associations_enabled: issueAssociationsEnabled,
         azure_speech_endpoint: azureEndpoint,
@@ -919,6 +923,28 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
                         {notificationsSupported()
                           ? "Shows a browser notification when an assistant turn (including scheduled tasks) finishes while the Precursor window isn't focused. The unread count always appears in the tab title regardless of this setting."
                           : "Your browser doesn't support notifications."}
+                      </span>
+                    </span>
+                  </label>
+                  <label className="flex items-start gap-2 cursor-pointer mt-3">
+                    <input
+                      type="checkbox"
+                      checked={completionSoundEnabled}
+                      onChange={(e) => {
+                        const on = e.target.checked;
+                        // Previews the sound, and the click unlocks audio.
+                        if (on) playCompletionSound();
+                        setCompletionSoundEnabled(on);
+                      }}
+                      className="mt-0.5 accent-accent"
+                    />
+                    <span>
+                      <span className="block text-sm">
+                        Play a sound when a reply finishes
+                      </span>
+                      <span className="block text-[11px] text-muted">
+                        A short, quiet pop when a reply you asked for in a topic
+                        or chat completes. Off by default.
                       </span>
                     </span>
                   </label>
