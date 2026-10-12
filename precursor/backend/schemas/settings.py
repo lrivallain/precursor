@@ -40,6 +40,8 @@ class SettingsPayload(BaseModel):
     # When true, the SPA shows a browser notification on turn completion while
     # the window is unfocused (requires the user to grant browser permission).
     notifications_enabled: bool | None = None
+    # When true, the SPA plays a short sound when a reply you asked for finishes.
+    completion_sound_enabled: bool | None = None
     # Max tool-call iterations per user turn before the stream aborts.
     max_tool_rounds: int | None = None
     # Map of MCP server name -> enabled.    mcp_enabled: dict[str, bool] | None = None
@@ -171,6 +173,7 @@ class SettingsRead(BaseModel):
     issue_context_ttl_minutes: int = 60
     show_chat_stats: bool = True
     notifications_enabled: bool = False
+    completion_sound_enabled: bool = False
     max_tool_rounds: int = 15
     mcp_enabled: dict[str, bool] = Field(default_factory=dict)
     mcp_servers: dict[str, dict[str, Any]] = Field(default_factory=dict)

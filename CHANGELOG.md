@@ -15,6 +15,10 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **Completion sound.** Settings -> Chat has a new, off-by-default toggle that
+  plays a short, quiet pop when a reply you asked for in a topic or chat
+  finishes. Stopped or failed turns stay silent. The sound is synthesized with
+  Web Audio, so there is no asset to load.
 - **Same-category model alternatives.** Settings -> Model optionally groups
   model/context/effort presets into **Efficiency**, **Balanced**, and
   **Intelligence**, separately for each provider and for Agents/Workflows.

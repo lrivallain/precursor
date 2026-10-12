@@ -123,6 +123,7 @@ def _as_read(
         ),
         show_chat_stats=bool(data.get("show_chat_stats", True)),
         notifications_enabled=bool(data.get("notifications_enabled", False)),
+        completion_sound_enabled=bool(data.get("completion_sound_enabled", False)),
         max_tool_rounds=_clamp_max_tool_rounds(
             data.get("max_tool_rounds", DEFAULT_MAX_TOOL_ROUNDS)
         ),
