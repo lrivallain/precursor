@@ -130,7 +130,7 @@ def test_backup_archives_definitions_folder(tmp_path) -> None:
     _init_db()
     defs = Path(get_settings().definitions_dir)
     (defs / "workflows").mkdir(parents=True, exist_ok=True)
-    (defs / "workflows" / "backup-test.workflow.yaml").write_text("name: x\n")
+    (defs / "workflows" / "backup-test.workflow.yaml").write_bytes(b"name: x\n")
     dest = tmp_path / "backup-target"
 
     async def _run() -> None:
