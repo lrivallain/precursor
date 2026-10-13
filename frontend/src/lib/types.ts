@@ -1673,6 +1673,8 @@ export interface BackupRunResult {
   blobs_copied: number;
   // Total blob files present in the destination mirror after the run.
   blobs_total: number;
+  // Dated zip of the definitions folder written this run, if it exists.
+  definitions_archive: string | null;
 }
 
 export interface IssueLabel {

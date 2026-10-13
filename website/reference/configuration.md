@@ -139,10 +139,14 @@ follows `PRECURSOR_HOST` / `PRECURSOR_PORT`.
 
 ## Backup
 
-A periodic copy of the SQLite DB + attachment blobs into a plain folder (e.g. a
-OneDrive/Dropbox/iCloud-synced directory). Enable it, pick the target folder, and
-set snapshot retention **at runtime** — **Settings → Backup**. Only the scheduling
-knobs are env-level:
+A periodic copy of the SQLite DB, attachment blobs and the
+[definitions folder](/features/workspaces#the-definitions-workspace) (the built-in
+**Definitions** workspace by default) into a plain folder (e.g. a
+OneDrive/Dropbox/iCloud-synced directory). The folder holds `db/` snapshots, a
+`blobs/` mirror and one dated `definitions/definitions-<timestamp>.zip` per run;
+snapshot retention applies to the DB snapshots and the definitions archives alike.
+Enable it, pick the target folder, and set retention **at runtime** —
+**Settings → Backup**. Only the scheduling knobs are env-level:
 
 | Variable | Default | Description |
 | --- | --- | --- |

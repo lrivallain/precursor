@@ -260,7 +260,7 @@ feature it configures:
 | **Agents** | Turn [Agents mode](/features/agents-mode) on/off, set the global [approval policy](/features/agents-mode/running#approval-policy-per-agent), manage [blueprints](/features/agents-mode/orchestration#blueprints-reusable-templates), choose whether new sessions [track file changes for rewind](/features/rewind#restoring-files) (on by default), and bound [timeline retention](/features/storage#why-agent-timelines-have-two-levers). |
 | **Workflows** | The [defaults a new pipeline starts from](/features/workflows/building). |
 | **Live / Speech-to-text** | Enable the section, pick the fast insights model, set [transcript retention](/features/live-sessions#transcript-retention) and Azure Speech credentials. |
-| **Backup** | Periodic copy of the database + attachment blobs into a plain folder. |
+| **Backup** | Periodic copy of the database, attachment blobs and definitions into a plain folder. |
 | **System** | The scheduled-run timeout, [storage retention](/features/storage) and the [command-runner jail](/features/command-runner). All database-only, and applied without a restart. |
 
 Fleet-wide knobs that aren't per-object — the agent concurrency cap, retry

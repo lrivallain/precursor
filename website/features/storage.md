@@ -108,8 +108,8 @@ and a running agent is safe to clean.
 
 ## Backups are separate
 
-The [backup](/reference/configuration#backup) job copies the database and blobs
-into a plain folder on its own schedule and keeps its own snapshot retention.
+The [backup](/reference/configuration#backup) job copies the database, blobs and
+definitions into a plain folder on its own schedule and keeps its own snapshot retention.
 Cleaning up doesn't touch existing snapshots — but a snapshot taken *before* a
 cleanup still holds the old data, which is exactly what you want if you ever need
 to go back.

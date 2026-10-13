@@ -283,7 +283,7 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
   const [completionSoundEnabled, setCompletionSoundEnabled] = useState(false);
   const [maxToolRounds, setMaxToolRounds] = useState(15);
   const [issueAssociationsEnabled, setIssueAssociationsEnabled] = useState(true);
-  // Folder backup (DB + blobs) — editable prefs plus a manual "run now" action.
+  // Folder backup (DB + blobs + definitions) — editable prefs plus a manual "run now" action.
   const [backupEnabled, setBackupEnabled] = useState(false);
   const [backupDir, setBackupDir] = useState("");
   const [backupRetention, setBackupRetention] = useState(7);
@@ -600,6 +600,7 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
         db_snapshot: null,
         blobs_copied: 0,
         blobs_total: 0,
+        definitions_archive: null,
       });
     } finally {
       setBackupRunning(false);
@@ -1699,8 +1700,9 @@ function BackupTab({
           />
           <p className="text-[11px] text-muted mt-1">
             Absolute path to an existing, writable directory. Snapshots go under{" "}
-            <code className="font-mono">db/</code> and attachment files under{" "}
-            <code className="font-mono">blobs/</code>.
+            <code className="font-mono">db/</code>, attachment files under{" "}
+            <code className="font-mono">blobs/</code> and zipped definitions under{" "}
+            <code className="font-mono">definitions/</code>.
           </p>
         </div>
 
