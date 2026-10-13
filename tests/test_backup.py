@@ -123,6 +123,60 @@ def test_backup_writes_snapshot_and_mirrors_blobs(tmp_path) -> None:
     asyncio.run(_run())
 
 
+def test_backup_archives_definitions_folder(tmp_path) -> None:
+    import zipfile
+    from pathlib import Path
+
+    _init_db()
+    defs = Path(get_settings().definitions_dir)
+    (defs / "workflows").mkdir(parents=True, exist_ok=True)
+    (defs / "workflows" / "backup-test.workflow.yaml").write_text("name: x\n")
+    dest = tmp_path / "backup-target"
+
+    async def _run() -> None:
+        await _clear_backup_keys()
+        await _set("backup_enabled", True)
+        await _set("backup_dir", str(dest))
+        result = await run_backup()
+        assert result.ok, result.detail
+        assert result.definitions_archive is not None
+        archives = list((dest / "definitions").glob("definitions-*.zip"))
+        assert [str(a) for a in archives] == [result.definitions_archive]
+        with zipfile.ZipFile(archives[0]) as zf:
+            assert zf.read("workflows/backup-test.workflow.yaml") == b"name: x\n"
+        assert not list((dest / "definitions").glob("*.tmp"))
+
+    try:
+        asyncio.run(_run())
+    finally:
+        (defs / "workflows" / "backup-test.workflow.yaml").unlink(missing_ok=True)
+
+
+def test_backup_without_definitions_folder_skips_archive(tmp_path) -> None:
+    _init_db()
+    dest = tmp_path / "backup-target"
+    result = backup_svc._run_backup_sync(None, tmp_path / "no-blobs", dest, 3, tmp_path / "nope")
+    assert result.ok
+    assert result.definitions_archive is None
+    assert not (dest / "definitions").exists()
+
+
+def test_retention_prunes_definitions_archives(tmp_path) -> None:
+    src = tmp_path / "defs"
+    src.mkdir()
+    (src / "a.yaml").write_text("a")
+    dest = tmp_path / "backup-target"
+    defs_out = dest / "definitions"
+    defs_out.mkdir(parents=True)
+    for stamp in ("20260101-000000", "20260102-000000", "20260103-000000"):
+        (defs_out / f"definitions-{stamp}.zip").write_bytes(b"old")
+    backup_svc._run_backup_sync(None, tmp_path / "no-blobs", dest, 2, src)
+    names = sorted(p.name for p in defs_out.glob("definitions-*.zip"))
+    assert len(names) == 2
+    assert "definitions-20260101-000000.zip" not in names
+    assert "definitions-20260102-000000.zip" not in names
+
+
 def test_retention_prunes_oldest_snapshots(tmp_path) -> None:
     _init_db()
     dest = tmp_path / "backup-target"

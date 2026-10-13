@@ -15,6 +15,11 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **Backups include the Definitions workspace.** Each backup run now also zips
+  the definitions folder (workflow, agent and summary files) into
+  `definitions/definitions-<timestamp>.zip` in the backup folder, pruned by the
+  same snapshot retention as the database. Previously those files, which live
+  outside the database, were not backed up.
 - **Completion sound.** Settings -> Chat has a new, off-by-default toggle that
   plays a short, quiet pop when a reply you asked for in a topic or chat
   finishes. Stopped or failed turns stay silent. The sound is synthesized with
