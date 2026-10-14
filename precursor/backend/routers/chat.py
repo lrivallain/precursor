@@ -183,7 +183,7 @@ async def stream_chat(
     history = await snapshot_history(
         session, "topic", topic_id, prompt_override=payload.prompt_override
     )
-    settings = await resolve_turn_settings(session, model_override=payload.model)
+    settings = await resolve_turn_settings(session, topic_id=topic_id, model_override=payload.model)
     return EventSourceResponse(
         stream_turn(
             "topic",

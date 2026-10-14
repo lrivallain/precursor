@@ -48,6 +48,7 @@ class Topic(Base, TimestampMixin):
         default=lambda: str(uuid.uuid4()),
     )
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    llm_selection: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Tree layout — self-referential parent/child relationship. We do NOT
     # cascade deletes: when a parent is removed, the API layer reparents

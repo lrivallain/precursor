@@ -26,6 +26,7 @@ from precursor.backend.services.collections import (
     resolve_collection_default_role_id,
     resolve_collection_id,
 )
+from precursor.backend.services.conversation_llm import validate_selection
 from precursor.backend.services.events import publish_read_changed, publish_topic_changed
 from precursor.backend.services.side_chats import (
     discard_if_untouched,
@@ -94,6 +95,7 @@ async def create_chat(
     settings) still wins.
     """
     base = slugify(payload.slug) if payload.slug else uuid4().hex
+    await validate_selection(session, payload.llm_selection)
     slug = await allocate_unique_slug(session, base or uuid4().hex, Chat)
     chat = Chat(
         title=payload.title,
@@ -102,6 +104,7 @@ async def create_chat(
         description_as_system_prompt=payload.description_as_system_prompt,
         pinned=payload.pinned,
         role_id=payload.role_id,
+        llm_selection=payload.llm_selection.model_dump_json() if payload.llm_selection else None,
         autoname_pending=payload.autoname,
     )
     session.add(chat)
@@ -155,6 +158,11 @@ async def update_chat(
         chat.pinned = payload.pinned
     if "role_id" in payload.model_fields_set:
         chat.role_id = payload.role_id
+    if "llm_selection" in payload.model_fields_set:
+        await validate_selection(session, payload.llm_selection)
+        chat.llm_selection = (
+            payload.llm_selection.model_dump_json() if payload.llm_selection else None
+        )
     if payload.slug is not None:
         slug = await allocate_unique_slug(session, payload.slug, Chat, exclude_id=chat.id)
         chat.slug = slug
@@ -322,6 +330,7 @@ async def promote_chat_to_topic(
     )
     topic = Topic(
         title=chat.title,
+        llm_selection=chat.llm_selection,
         slug=await allocate_unique_slug(session, slugify(chat.title) or "topic", Topic),
         description=chat.description,
         pinned=chat.pinned,

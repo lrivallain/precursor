@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   X,
   ChevronDown,
@@ -25,6 +25,7 @@ import {
   RefreshCw,
   HardDriveDownload,
   Layers,
+  ListOrdered,
 } from "lucide-react";
 import { GithubIcon as Github } from "./icons/GithubIcon";
 import { api } from "../lib/api";
@@ -34,6 +35,7 @@ import { signInWorkiq } from "../lib/workiqSignIn";
 import { setTheme, getStoredTheme, type Theme } from "../lib/theme";
 import { setFont, getStoredFont, FONT_OPTIONS, type FontChoice } from "../lib/font";
 import { modelsStore } from "../lib/modelsStore";
+import { ProviderConfigurationBadge } from "./ProviderConfigurationBadge";
 import { settingsStore } from "../lib/settingsStore";
 import {
   notificationsSupported,
@@ -66,7 +68,7 @@ import { usePluginDescriptors } from "../lib/pluginStore";
 import { WorkflowsSettings } from "./WorkflowsSettings";
 import { OpenAIProxySettings } from "./OpenAIProxySettings";
 import { IQSettings } from "./IQSettings";
-import { ModelFallbackSettings } from "./ModelFallbackSettings";
+import { PresetsSettings } from "./PresetsSettings";
 import { DefinitionsMigrationWizard } from "./DefinitionsMigrationWizard";
 
 interface Props {
@@ -125,6 +127,7 @@ type CoreCategory =
   | "appearance"
   | "chat"
   | "model"
+  | "presets"
   | "github"
   | "speech"
   | "live"
@@ -175,6 +178,7 @@ const CATEGORIES: ReadonlyArray<CategoryDef> = [
   { id: "appearance", label: "Appearance", icon: Palette, group: "App" },
   { id: "chat", label: "Chat", icon: MessageSquare, group: "App" },
   { id: "model", label: "Model", icon: Cpu, group: "App" },
+  { id: "presets", label: "Presets", icon: ListOrdered, group: "App" },
   { id: "github", label: "GitHub", icon: Github, group: "Integrations" },
   { id: "speech", label: "Speech-to-text", icon: Mic, group: "Integrations" },
   { id: "live", label: "Live", icon: Radio, group: "Integrations" },
@@ -219,7 +223,7 @@ const FONT_PREVIEW_STACKS: Record<FontChoice, string | undefined> = {
   lexend: '"Lexend", sans-serif',
 };
 
-export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }: Props) {
+export function SettingsPanel({ onClose: closeNow, initialCategory, onCollectionsChanged }: Props) {
   const confirmAction = useConfirm();
   const [category, setCategory] = useState<Category>(initialCategory ?? "appearance");
   // Settings pages contributed by installed plugins, appended as their own group.
@@ -253,12 +257,14 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
   const [models, setModels] = useState<LLMModel[]>([]);
   const [modelsError, setModelsError] = useState<string | null>(null);
   const [modelsLoading, setModelsLoading] = useState(false);
-  const [modelsProvider, setModelsProvider] = useState<string | null>(null);
   const modelsRequest = useRef(0);
   useEffect(() => () => { modelsRequest.current++; }, []);
   const [provider, setProvider] = useState("");
+  const [defaultProvider, setDefaultProvider] = useState("");
+  const [defaultModel, setDefaultModel] = useState("");
+  const [defaultModels, setDefaultModels] = useState<LLMModel[]>([]);
   const [providers, setProviders] = useState<LLMProviderSpec[]>([]);
-  const [modelFallbacks, setModelFallbacks] = useState<Settings["model_fallbacks"]>({});
+  const [modelFallbacks, setModelFallbacks] = useState<Settings["model_fallbacks"]>({ categories: [] });
   const [providerConfig, setProviderConfig] = useState<
     Record<string, Record<string, string>>
   >({});
@@ -274,6 +280,7 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
   // Auto-naming a fresh chat from its first message, and the model that does it
   // ("" = the default chat model).
   const [chatAutonameEnabled, setChatAutonameEnabled] = useState(true);
+  const [mockEnabled, setMockEnabled] = useState(true);
   const [chatAutonameModel, setChatAutonameModel] = useState("");
   const [sttTest, setSttTest] = useState<
     { state: "idle" | "testing" | "ok" | "error"; detail?: string }
@@ -365,13 +372,13 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
     const request = ++modelsRequest.current;
     setModelsLoading(true);
     setModelsError(null);
-    setModelsProvider(providerOverride);
     setModels([]);
     try {
       const list = await api.llm.listModels(providerOverride);
       if (request !== modelsRequest.current) return list;
       setModels(list);
-      if (share) modelsStore.adopt(list);
+      modelsStore.adopt(list, providerOverride);
+      if (share) modelsStore.applySettings(settingsStore.current());
       return list;
     } catch (e) {
       if (request === modelsRequest.current) {
@@ -384,27 +391,6 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
     }
   }
 
-  async function checkModelCatalogs(): Promise<LLMModel[]> {
-    const request = ++modelsRequest.current;
-    setModelsLoading(true);
-    setModelsError(null);
-    setModelsProvider(provider);
-    setModels([]);
-    try {
-      const refreshed = await api.settings.get();
-      if (request !== modelsRequest.current) return [];
-      setSettings(refreshed);
-      settingsStore.set(refreshed);
-      return await loadModels(provider, { share: provider === refreshed.llm_provider });
-    } catch (error) {
-      if (request === modelsRequest.current) {
-        setModelsError(`Settings/catalogue refresh failed: ${error instanceof Error ? error.message : String(error)}`);
-        setModelsLoading(false);
-      }
-      return [];
-    }
-  }
-
   // Switching providers reloads the catalog for the newly selected provider
   // (previewed via the override param, using its saved config) so the model
   // list and selection always match the chosen provider.
@@ -413,6 +399,19 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
     void loadModels(next);
   }
 
+  useEffect(() => {
+    if (!defaultProvider) return;
+    let stale = false;
+    setDefaultModels([]);
+    api.llm.listModels(defaultProvider).then(
+      (list) => { if (!stale) setDefaultModels(list); },
+      () => {},
+    );
+    return () => { stale = true; };
+  }, [defaultProvider]);
+
+  const liveSettings = settings ? { ...settings, mock_provider_enabled: mockEnabled } : settings;
+
   const activeProviderSpec = providers.find((p) => p.id === provider);
 
   useEffect(() => {
@@ -420,7 +419,9 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
       const s = await api.settings.get();
       setSettings(s);
       setProvider(s.llm_provider);
-      setModelFallbacks(s.model_fallbacks ?? {});
+      setDefaultProvider(s.llm_provider);
+      setDefaultModel(s.llm_model_category ? "" : s.llm_model);
+      setModelFallbacks(s.model_fallbacks ?? { categories: [] });
       setProviderConfig(s.llm_providers ?? {});
       setRepo(s.github_repo);
       setTtlMinutes(s.issue_context_ttl_minutes);
@@ -439,6 +440,7 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
       setLiveEnabled(s.live_enabled);
       setLiveTranscriptRetentionDays(s.live_transcript_retention_days);
       setChatAutonameEnabled(s.chat_autoname_enabled);
+      setMockEnabled(s.mock_provider_enabled ?? true);
       setChatAutonameModel(s.chat_autoname_model);
       setSys(pickSystem(s));
       setDockerAvailable(s.docker_available);
@@ -451,7 +453,7 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
       settingsStore.set(s);
       await refreshMcp();
       try {
-        setProviders(await api.llm.listProviders());
+        setProviders(await api.llm.listProviders(true));
       } catch {
         setProviders([]);
       }
@@ -490,14 +492,13 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
     return out;
   }
 
-  // Persist the provider + its config, then refresh the catalog — without
+  // Persist provider config without changing the default, then refresh the catalog — without
   // closing the panel. The server resolves retired pins; don't overwrite a
   // categorised pin merely because it is absent from the refreshed catalogue.
   async function applyProviderSettings(): Promise<void> {
     setModelsLoading(true);
     try {
       const updated = await api.settings.update({
-        llm_provider: provider,
         llm_providers: buildLlmProvidersPayload(),
       });
       setSettings(updated);
@@ -518,7 +519,7 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
       const payload: Parameters<typeof api.settings.update>[0] = {
         theme,
         font_family: font,
-        llm_provider: provider,
+        llm_provider: defaultProvider,
         github_repo: repo,
         model_fallbacks: modelFallbacks,
         issue_context_ttl_minutes: ttlMinutes,
@@ -534,6 +535,7 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
         live_enabled: liveEnabled,
         live_transcript_retention_days: liveTranscriptRetentionDays,
         chat_autoname_enabled: chatAutonameEnabled,
+        mock_provider_enabled: mockEnabled,
         chat_autoname_model: chatAutonameModel,
         mcp_expose: expose,
         mcp_http_enabled: httpEnabled,
@@ -545,6 +547,15 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
         ...(sys ?? {}),
       };
       const llmProviders = buildLlmProvidersPayload();
+      if (defaultProvider !== settings?.llm_provider) {
+        payload.llm_model = "";
+        payload.llm_model_category = null;
+        payload.llm_reasoning_effort = "";
+      } else if (defaultModel && defaultModel !== settings?.llm_model) {
+        payload.llm_model = defaultModel;
+        payload.llm_model_category = null;
+        payload.llm_reasoning_effort = "";
+      }
       if (Object.keys(llmProviders).length > 0) {
         payload.llm_providers = llmProviders;
       }
@@ -555,6 +566,7 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
         payload.api_keys = apiKeys;
       }
       const updated = await api.settings.update(payload);
+      for (const configuredProvider of Object.keys(llmProviders)) void modelsStore.refresh(configuredProvider);
       setSettings(updated);
       modelsStore.applySettings(updated);
       // A new GitHub token can mean a different account/plan, hence a different
@@ -565,7 +577,7 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
       setAzureKey("");
       setTheme(theme);
       setFont(font);
-      onClose();
+      closeNow();
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -724,6 +736,37 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
       );
     }
   }
+
+  const formSnapshot = JSON.stringify([
+    theme, font, defaultProvider, defaultModel, mockEnabled, modelFallbacks, providerConfig,
+    repo, githubToken, azureKey, azureEndpoint, azureLanguage, ttlMinutes, showChatStats,
+    notificationsEnabled, completionSoundEnabled, maxToolRounds, issueAssociationsEnabled,
+    liveFastModel, liveReasoningEffort, liveEnabled, liveTranscriptRetentionDays,
+    chatAutonameEnabled, chatAutonameModel, expose, httpEnabled, workiqTenant,
+    playwrightBrowser, backupEnabled, backupDir, backupRetention, sys,
+  ]);
+  // Captured on the render right after the initial load populates the form.
+  const baseline = useRef<string | null>(null);
+  useEffect(() => {
+    if (settings && baseline.current === null) baseline.current = formSnapshot;
+  }, [settings, formSnapshot]);
+
+  const confirming = useRef(false);
+  const onClose = useCallback(async (): Promise<void> => {
+    if (confirming.current) return;
+    const dirty = baseline.current !== null && baseline.current !== formSnapshot;
+    if (dirty) confirming.current = true;
+    const keep = dirty && !(await confirmAction({
+      title: "Discard unsaved changes?",
+      message: "You have unsaved settings. Closing now will discard them.",
+      confirmLabel: "Discard changes",
+      cancelLabel: "Keep editing",
+      variant: "warning",
+    }));
+    confirming.current = false;
+    if (keep) return;
+    closeNow();
+  }, [formSnapshot, confirmAction, closeNow]);
 
   // Esc closes the modal — convention shared with most settings dialogs
   // (VS Code, Linear, GitHub).
@@ -979,15 +1022,54 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
               </>
             )}
 
+            {category === "presets" && (
+              <PresetsSettings
+                value={modelFallbacks}
+                onChange={setModelFallbacks}
+                settings={settings}
+                providers={providers}
+              />
+            )}
+
             {category === "model" && (
               <section>
-                <h3 className="text-sm font-medium mb-2">Provider</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="min-w-0">
+                    <h3 className="text-sm font-medium mb-2">Global default provider</h3>
+                    <Select
+                      value={defaultProvider}
+                      onChange={(next) => { setDefaultProvider(next); setDefaultModel(""); }}
+                      options={providers.filter((p) => p.id !== "mock" || mockEnabled || defaultProvider === "mock").map((p) => ({ value: p.id, label: p.label, suffix: <ProviderConfigurationBadge settings={liveSettings} provider={p} /> }))}
+                      ariaLabel="Global default provider"
+                      fullWidth
+                    />
+                  </div>
+                  <div className="min-w-0">
+                    <h3 className="text-sm font-medium mb-2">Global default model</h3>
+                    <Select
+                      value={defaultModel}
+                      onChange={setDefaultModel}
+                      options={[
+                        ...(defaultModel === "" ? [{ value: "", label: settings?.llm_model_category ? "Preset category (set in the composer)" : "Select a model…" }] : []),
+                        ...defaultModels.map((m) => ({ value: m.id, label: m.name || m.id })),
+                      ]}
+                      ariaLabel="Global default model"
+                      fullWidth
+                    />
+                  </div>
+                </div>
+                <p className="text-[11px] text-muted mt-2 mb-4">
+                  Applies to conversations using the global default. Agents stay on the Copilot SDK.
+                  {" "}Provider marks reflect saved setup, not a connection test.
+                </p>
+                <h3 className="text-sm font-medium mb-2">Configure provider</h3>
                 <Select
                   value={provider}
                   onChange={onProviderChange}
                   options={providers.map((p) => ({
                     value: p.id,
                     label: p.label,
+                    suffix: <ProviderConfigurationBadge settings={liveSettings} provider={p} />,
                   }))}
                   ariaLabel="LLM provider"
                   fullWidth
@@ -996,6 +1078,24 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
                 {(() => {
                   const activeSpec = activeProviderSpec;
                   if (!activeSpec) return null;
+                  if (activeSpec.id === "mock") {
+                    return (
+                      <label className="flex items-start gap-2 cursor-pointer mt-3 p-3 rounded border border-border bg-surface">
+                        <input
+                          type="checkbox"
+                          checked={mockEnabled}
+                          onChange={(e) => setMockEnabled(e.target.checked)}
+                          className="mt-0.5 accent-accent"
+                        />
+                        <span>
+                          <span className="block text-sm">Enabled</span>
+                          <span className="block text-[11px] text-muted">
+                            Offline canned replies. When disabled, Mock is hidden from pickers and unconfigured providers report an error instead.
+                          </span>
+                        </span>
+                      </label>
+                    );
+                  }
                   if (activeSpec.uses_github_token) {
                     return (
                       <p className="text-[11px] text-muted mt-2">
@@ -1083,21 +1183,12 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
                   </span>
                 </div>
                 <p className="text-[11px] text-muted mt-2">
-                  Pick the model, reasoning effort and context size from the
-                  composer toolbar — they apply to every conversation.
+                  Configure several providers without changing the global default.
+                  Chat and topic model pickers list all configured providers and save
+                  the provider with your model choice, effort and context size.
+                  Use global default removes that override. Group models from any
+                  provider into ordered fallbacks in Settings &gt; Presets.
                 </p>
-                <ModelFallbackSettings
-                  value={modelFallbacks}
-                  onChange={setModelFallbacks}
-                  settings={settings}
-                  provider={provider}
-                  providers={providers}
-                  models={models}
-                  modelsProvider={modelsProvider}
-                  modelsLoading={modelsLoading}
-                  modelsError={modelsError}
-                  onCheckModels={checkModelCatalogs}
-                />
 
                 {sys && (
                   <div className="mt-6 space-y-3">

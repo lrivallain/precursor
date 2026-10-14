@@ -518,6 +518,7 @@ class AssistantFinalTurn:
     usage: UsageEvent | None
     reasoning: str = ""
     model: str | None = None
+    provider: str | None = None
 
 
 @dataclass(slots=True)
@@ -530,6 +531,7 @@ class AssistantToolCallsTurn:
     usage: UsageEvent | None
     reasoning: str = ""
     model: str | None = None
+    provider: str | None = None
 
 
 @dataclass(slots=True)
@@ -676,6 +678,10 @@ TurnEvent = (
 )
 
 
+def _effective_provider(provider: Any) -> str | None:
+    return getattr(provider, "effective_provider", None) or getattr(provider, "name", None)
+
+
 async def run_tool_loop(
     *,
     active: Any,
@@ -749,6 +755,7 @@ async def run_tool_loop(
                 round_usage,
                 reasoning,
                 getattr(provider, "effective_model", None) or model,
+                _effective_provider(provider),
             )
             return
 
@@ -767,6 +774,7 @@ async def run_tool_loop(
             round_usage,
             reasoning,
             getattr(provider, "effective_model", None) or model,
+            _effective_provider(provider),
         )
 
         messages.append(
@@ -892,6 +900,7 @@ async def persist_final_turn(
             prompt_tokens=usage.prompt_tokens if usage else None,
             completion_tokens=usage.completion_tokens if usage else None,
             model=model,
+            provider=ev.provider,
             elapsed_ms=elapsed_ms,
             **container_message_kwargs(kind, container_id),
         )
@@ -1080,6 +1089,7 @@ async def run_message_stream(
                                 "id": answer.message_id,
                                 "content": answer.text,
                                 "model": actual_model,
+                                "provider": ev.provider,
                                 "elapsed_ms": elapsed_ms,
                             }
                         ),

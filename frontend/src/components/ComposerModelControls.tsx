@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
-import { modelsStore, useCurrentModel, useModelsVersion } from "../lib/modelsStore";
+import { modelsStore, useModelsVersion } from "../lib/modelsStore";
 import { settingsStore, useSettings } from "../lib/settingsStore";
-import type { AgentModelInfo, LLMModel, ModelCategory } from "../lib/types";
-import { selectedModelCategoryEntry, modelPresetMenuEntries, MODEL_PRESET_CATEGORIES, type ModelPresetMenuEntry } from "../lib/modelPresetMenus";
+import type { AgentModelInfo, ConversationLLMSelection, LLMModel, LLMProviderSpec, ModelCategory } from "../lib/types";
+import { selectedModelCategoryEntry, modelPresetMenuEntries, providerModelMenuValue, categoryLabel, type ModelPresetMenuEntry } from "../lib/modelPresetMenus";
 import { openModelPresetSettings } from "../lib/modelPresetSettingsOpen";
+import { providerSetupIssue } from "../lib/modelPresetHealth";
 import { ComposerSelectMenu, type MenuGroup, type MenuOption } from "./ComposerSelectMenu";
 
 const EFFORT_LABELS: Record<string, string> = {
@@ -47,11 +48,11 @@ function presetModelGroups(entries: ModelPresetMenuEntry[], models: { id: string
   if (!entries.length) return [];
   return [{
     parentLabel: "Presets",
-    options: entries.map(({ value, category, presets }) => {
+    options: entries.map(({ value, label, presets }) => {
       return {
         value,
-        label: MODEL_PRESET_CATEGORIES.find((entry) => entry.id === category)?.label ?? category,
-        description: `Engine chooses from ${presets.length} ordered ${presets.length === 1 ? "preset" : "presets"}`,
+        label,
+        description: `Engine chooses from ${presets.length} ordered ${presets.length === 1 ? "preset" : "presets"}${new Set(presets.map((preset) => preset.provider)).size > 1 ? " across providers" : ""}`,
         searchText: presets.map((preset) => `${preset.model} ${models.find((model) => model.id === preset.model)?.name ?? ""}`).join(" "),
       };
     }),
@@ -95,62 +96,161 @@ function snapContextForModel(maxCtx: number | null | undefined, current: number)
 
 /**
  * Compact model + reasoning-effort + context-size pickers rendered inside the
- * composer toolbar. The `llm` variant writes the *global* LLM defaults to app
- * settings (mirroring Settings → Model); the `agents` variant writes the SDK
+ * composer toolbar. Chats/topics persist their own LLM selection; other `llm`
+ * surfaces keep writing global defaults. The `agents` variant writes the SDK
  * agents' default model (Settings → Agents). Kept self-contained — it
  * reads/writes the shared stores directly so the dumb `Composer` doesn't need
  * new props.
  */
 export function ComposerModelControls({
   variant = "llm",
+  conversation,
 }: {
   variant?: "llm" | "agents";
+  conversation?: {
+    kind: "topic" | "chat";
+    id: number;
+    selection: ConversationLLMSelection | null;
+    onUpdated: () => void;
+  };
 }) {
   if (variant === "agents") return <AgentModelControls />;
-  return <LlmModelControls />;
+  return <LlmModelControls key={conversation ? `${conversation.kind}:${conversation.id}` : "global"} conversation={conversation} />;
 }
 
-function LlmModelControls() {
+function LlmModelControls({ conversation }: { conversation?: Parameters<typeof ComposerModelControls>[0]["conversation"] }) {
   useModelsVersion();
-  const currentModel = useCurrentModel();
   const settings = useSettings();
   const [saving, setSaving] = useState(false);
+  const [selection, setSelection] = useState(conversation?.selection ?? null);
+  const [providers, setProviders] = useState<LLMProviderSpec[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const providerId = selection?.provider || settings?.llm_provider || "github_copilot";
+  const currentProvider = providers.find((entry) => entry.id === providerId);
+  const configuredProviders = settings ? providers.filter((provider) => !providerSetupIssue(settings, provider)) : [];
 
   useEffect(() => {
-    void modelsStore.ensureLoaded();
-  }, []);
+    setSelection(conversation?.selection ?? null);
+  }, [conversation?.selection]);
+  useEffect(() => {
+    void modelsStore.ensureLoaded(providerId);
+  }, [providerId]);
+  useEffect(() => {
+    if (conversation) for (const provider of configuredProviders) void modelsStore.ensureLoaded(provider.id);
+  }, [!!conversation, providers, settings]);
+  useEffect(() => {
+    modelsStore.applySettings(settings);
+  }, [settings]);
+  useEffect(() => {
+    if (!conversation) return;
+    let alive = true;
+    api.llm.listProviders().then((list) => { if (alive) setProviders(list); })
+      .catch((err: unknown) => { if (alive) setError(err instanceof Error ? err.message : String(err)); });
+    return () => { alive = false; };
+  }, [!!conversation]);
 
-  const models = modelsStore.all();
-  const effort = settings?.llm_reasoning_effort ?? "";
-  const category = settings?.llm_model_category ?? null;
-  const modelId = currentModel?.id ?? settings?.llm_model ?? "";
-  const selectedModel = currentModel ?? models.find((m) => m.id === modelId) ?? null;
+  const models = modelsStore.all(providerId);
+  const effort = selection?.reasoning_effort ?? settings?.llm_reasoning_effort ?? "";
+  const category = selection ? selection.category : settings?.llm_model_category ?? null;
+  const modelId = selection?.model || (category
+    ? settings?.model_fallbacks?.categories.find((entry) => entry.id === category)?.presets.find((preset) => preset.provider !== "agents")?.model
+    : settings?.llm_model) || "";
+  const selectedModel = models.find((m) => m.id === modelId) ?? null;
+  const ctxValue = selection?.context_tokens ?? settings?.llm_max_input_tokens ?? 128_000;
+
+  async function saveSelection(next: ConversationLLMSelection | null): Promise<void> {
+    if (!conversation) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const updated = conversation.kind === "topic"
+        ? await api.topics.update(conversation.id, { llm_selection: next })
+        : await api.chats.update(conversation.id, { llm_selection: next });
+      setSelection(updated.llm_selection);
+      conversation.onUpdated();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  }
 
   async function save(patch: {
     llm_model?: string;
     llm_model_category?: ModelCategory | null;
     llm_reasoning_effort?: string;
     llm_max_input_tokens?: number;
-  }): Promise<void> {
+  }, nextProvider = providerId): Promise<void> {
+    if (conversation) {
+      const nextCategory = patch.llm_model_category !== undefined ? patch.llm_model_category : category;
+      const nextEffort = patch.llm_reasoning_effort ?? effort;
+      if (!["", "minimal", "low", "medium", "high", "xhigh", "max"].includes(nextEffort)) {
+        setError(`Unsupported reasoning effort: ${nextEffort}`);
+        return;
+      }
+      await saveSelection({
+        provider: nextProvider,
+        model: nextCategory ? "" : patch.llm_model ?? modelId,
+        category: nextCategory,
+        reasoning_effort: nextEffort as ConversationLLMSelection["reasoning_effort"],
+        context_tokens: patch.llm_max_input_tokens ?? ctxValue,
+      });
+      return;
+    }
     setSaving(true);
+    setError(null);
     try {
       const updated = await api.settings.update(patch);
       modelsStore.applySettings(updated);
       settingsStore.set(updated);
     } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
       console.warn("Failed to update model settings", err);
     } finally {
       setSaving(false);
     }
   }
 
-  const presets = modelPresetMenuEntries(settings?.model_fallbacks?.[settings.llm_provider], false, [...models.map((model) => model.id), modelId]);
+  const presets = modelPresetMenuEntries(settings?.model_fallbacks, false, [...models.map((model) => model.id), modelId]);
   const activePreset = selectedModelCategoryEntry(presets, category);
-  const modelGroups = [...presetModelGroups(presets, models), ...groupModelsByPublisher(models)];
+  const menuSelections = new Map<string, { provider: string; model: string; category: ModelCategory | null }>();
+  function modelValue(provider: string, model: string, category: ModelCategory | null = null): string {
+    const value = providerModelMenuValue(provider, category ? "preset" : "model", category ?? model);
+    menuSelections.set(value, { provider, model, category });
+    return value;
+  }
+  const allCatalogModels = configuredProviders.flatMap((provider) => modelsStore.all(provider.id));
+  const modelGroups: MenuGroup[] = conversation ? [
+    { options: [{ value: "", label: "Use global default" }] },
+    ...presetModelGroups(presets, allCatalogModels).map((group) => ({
+      ...group,
+      options: group.options.map((option, index) => ({
+        ...option, value: modelValue("", "", presets[index].category),
+      })),
+    })),
+    ...configuredProviders.flatMap((provider): MenuGroup[] => {
+      const catalog = modelsStore.all(provider.id);
+      const groups: MenuGroup[] = groupModelsByPublisher(catalog).map((group) => ({
+        ...group, parentLabel: provider.label,
+        options: group.options.map((option) => ({
+          ...option, value: modelValue(provider.id, option.value), searchText: option.value,
+        })),
+      }));
+      if (!groups.length) groups.push({
+        parentLabel: provider.label,
+        options: [{
+          value: `${provider.id}:catalog-status`, disabled: true,
+          label: modelsStore.error(provider.id) ? "Models unavailable" : modelsStore.hasLoaded(provider.id) ? "No models available" : "Loading models...",
+          description: modelsStore.error(provider.id) ?? (modelsStore.hasLoaded(provider.id) ? "Configure providers in Settings > Model." : "Fetching model catalogue..."),
+        }],
+      });
+      return groups;
+    }),
+  ] : [...presetModelGroups(presets, models), ...groupModelsByPublisher(models)];
   const inCatalog = models.some((m) => m.id === modelId);
   const modelLabel = category
-    ? MODEL_PRESET_CATEGORIES.find((entry) => entry.id === category)?.label ?? category
-    : currentModel?.name ?? modelId ?? "Model";
+    ? categoryLabel(settings?.model_fallbacks, category)
+    : selectedModel?.name ?? modelId ?? "Model";
 
   // Reasoning efforts advertised by the selected model (plus Auto). When the
   // model isn't reasoning-capable the picker is hidden entirely.
@@ -162,21 +262,28 @@ function LlmModelControls() {
   const effortLabelText =
     effort && supportedEfforts.includes(effort) ? effortLabel(effort) : "Auto";
 
-  // Context size maps to the global llm_max_input_tokens budget; options adapt
-  // to the selected model's advertised window.
-  const ctxValue = settings?.llm_max_input_tokens ?? 0;
+  // Budget options adapt to the selected model's advertised window.
   const ctxOptions = contextOptions(selectedModel?.context_window);
 
   // Switching model carries over the reasoning effort + context size only if
   // they're still valid for the new model, otherwise they're reset/snapped so
   // we never send an unsupported value (e.g. a 936K budget to a 128K model).
-  function onModelChange(nextId: string): void {
-    const preset = presets.find((entry) => entry.value === nextId);
+  function onModelChange(value: string): void {
+    if (conversation && !value) { void saveSelection(null); return; }
+    const chosen = conversation ? menuSelections.get(value) : undefined;
+    if (conversation && !chosen) { setError("This model selection is no longer available. Reopen the model menu."); return; }
+    const nextProvider = chosen?.provider ?? providerId;
+    const nextId = chosen?.model ?? value;
+    const preset = conversation ? undefined : presets.find((entry) => entry.value === nextId);
+    if (chosen?.category) {
+      void save({ llm_model_category: chosen.category }, "");
+      return;
+    }
     if (preset) {
       void save({ llm_model_category: preset.category });
       return;
     }
-    const next = models.find((m) => m.id === nextId) ?? null;
+    const next = modelsStore.byIdOrNull(nextId, nextProvider);
     const patch: {
       llm_model: string;
       llm_model_category: null;
@@ -189,25 +296,36 @@ function LlmModelControls() {
       const snapped = snapContextForModel(next?.context_window, ctxValue);
       if (snapped !== ctxValue) patch.llm_max_input_tokens = snapped;
     }
-    void save(patch);
+    void save(patch, nextProvider);
   }
 
   return (
     <div className="flex flex-wrap items-center gap-1 min-w-0">
       <ComposerSelectMenu
         ariaLabel="Model"
-        tooltip="Model (applies to every conversation)"
-        triggerLabel={modelLabel || "Select a model\u2026"}
-        value={activePreset?.value ?? (inCatalog ? modelId : "")}
+        tooltip={conversation ? `Model for this conversation only\nProvider: ${currentProvider?.label ?? providerId}` : "Model (global default)"}
+        triggerLabel={`${modelLabel || "Select a model\u2026"}${conversation && !selection ? " · Default" : ""}`}
+        value={conversation ? selection ? modelValue(providerId, selection.model, selection.category) : "" : activePreset?.value ?? (inCatalog ? modelId : "")}
         groups={modelGroups}
         menuMinWidthClass="min-w-[18rem]"
         emptyHint="No model catalog — set one in Settings."
         disabled={saving}
         filterPlaceholder="Filter models…"
-        scrollToSelected={presets.length === 0}
-        footerAction={presets.length ? { label: "Manage presets in Settings...", onSelect: openModelPresetSettings } : undefined}
-        onOpen={() => void modelsStore.ensureLoaded()}
+        scrollToSelected={!conversation && presets.length === 0}
+        footerAction={{ label: "Manage presets in Settings...", onSelect: openModelPresetSettings }}
+        onOpen={() => {
+          if (conversation) for (const provider of configuredProviders) void modelsStore.ensureLoaded(provider.id);
+          else void modelsStore.ensureLoaded(providerId);
+        }}
         onSelect={onModelChange}
+        onCustomValue={conversation ? undefined : onModelChange}
+        customOptions={conversation ? (query) => configuredProviders
+          .filter((provider) => !modelsStore.all(provider.id).some((model) => model.id === query))
+          .map((provider) => ({
+            value: modelValue(provider.id, query),
+            label: `Use model id "${query}"`,
+            description: provider.label,
+          })) : undefined}
       />
       {category && <span className={`text-[11px] ${activePreset ? "text-muted" : "text-amber-700 dark:text-amber-400"}`} data-tooltip={activePreset ? "The engine chooses an available model and its effort/context from the selected category" : "This category has no configured presets. Choose a direct model or configure it in Settings."}>{activePreset ? "Engine selects model" : "Category needs presets"}</span>}
       {!category && supportedEfforts.length > 0 && (
@@ -231,6 +349,11 @@ function LlmModelControls() {
           disabled={saving}
           onSelect={(v) => void save({ llm_max_input_tokens: Number(v) })}
         />
+      )}
+      {(error || (conversation && modelsStore.error(providerId))) && (
+        <span role="alert" className="text-[11px] text-red-600 dark:text-red-400">
+          {error || modelsStore.error(providerId)} Configure providers in Settings &gt; Model.
+        </span>
       )}
     </div>
   );
@@ -287,11 +410,11 @@ function AgentModelControls() {
     ...models.map((m) => ({ value: m.id, label: m.name })),
   ];
   const label = category
-    ? MODEL_PRESET_CATEGORIES.find((entry) => entry.id === category)?.label ?? category
+    ? categoryLabel(settings?.model_fallbacks, category)
     : defaultModel
     ? (models.find((m) => m.id === defaultModel)?.name ?? defaultModel)
     : "Runtime default";
-  const presets = modelPresetMenuEntries(settings?.model_fallbacks?.agents, true, [...models.map((model) => model.id), defaultModel]);
+  const presets = modelPresetMenuEntries(settings?.model_fallbacks, true, [...models.map((model) => model.id), defaultModel]);
   const activePreset = selectedModelCategoryEntry(presets, category);
   const modelGroups = [...presetModelGroups(presets, models), { options }];
 
@@ -342,7 +465,7 @@ function AgentModelControls() {
         disabled={saving}
         filterPlaceholder="Filter models…"
         scrollToSelected={presets.length === 0}
-        footerAction={presets.length ? { label: "Manage presets in Settings...", onSelect: openModelPresetSettings } : undefined}
+        footerAction={{ label: "Manage presets in Settings...", onSelect: openModelPresetSettings }}
         onSelect={onModelChange}
       />
       {category && <span className={`text-[11px] ${activePreset ? "text-muted" : "text-amber-700 dark:text-amber-400"}`} data-tooltip={activePreset ? "The engine chooses model, effort and context for unpinned agent runs from this category" : "This category has no configured presets. Choose a direct model or configure it in Settings."}>{activePreset ? "Engine selects model" : "Category needs presets"}</span>}

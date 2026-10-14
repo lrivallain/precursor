@@ -105,7 +105,7 @@ export default function App() {
     setSettingsCategory(category);
     setGlobalSettingsOpen(true);
   }, []);
-  useEffect(() => subscribeModelPresetSettingsOpen(() => openSettingsAt("model")), [openSettingsAt]);
+  useEffect(() => subscribeModelPresetSettingsOpen(() => openSettingsAt("presets")), [openSettingsAt]);
   // Agent setup and recovery land on the Agents category rather than making
   // the user hunt for the relevant toggle or runtime controls.
   const openAgentSettings = useCallback(() => openSettingsAt("agents"), [openSettingsAt]);

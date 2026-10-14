@@ -15,7 +15,12 @@ from pydantic import ValidationError
 from precursor.backend.db import SessionLocal
 from precursor.backend.main import create_app
 from precursor.backend.models import AgentRun, AgentSession, AppSetting
-from precursor.backend.schemas.model_fallback import ModelCategories, ModelCategory, ModelPreset
+from precursor.backend.schemas.model_fallback import (
+    ModelCategories,
+    ModelCategoryDef,
+    ModelPreset,
+    normalize_stored_categories,
+)
 from precursor.backend.schemas.settings import SettingsPayload
 from precursor.backend.services.agents.live_session import _LiveSession
 from precursor.backend.services.agents.manager import AgentManager
@@ -38,29 +43,48 @@ REJECTION = (
 )
 
 
-def _preset(model: str, effort: str = "", tokens: int = 128_000, tier: str = "default"):
+def _preset(
+    model: str,
+    effort: str = "",
+    tokens: int = 128_000,
+    tier: str = "default",
+    provider: str = "openai",
+):
     return ModelPreset(
-        model=model, reasoning_effort=effort, context_tokens=tokens, context_tier=tier
+        provider=provider,
+        model=model,
+        reasoning_effort=effort,
+        context_tokens=tokens,
+        context_tier=tier,
+    )
+
+
+def _cats(**tiers: list[ModelPreset]) -> ModelCategories:
+    return ModelCategories(
+        categories=[
+            ModelCategoryDef(id=name, label=name.title(), presets=presets)
+            for name, presets in tiers.items()
+        ]
     )
 
 
 def test_category_matching_prefers_exact_configuration_and_never_guesses() -> None:
     fast = _preset("same", "low", 32_000)
     smart = _preset("same", "high", 128_000)
-    categories = ModelCategories(efficiency=[fast], intelligence=[smart])
+    categories = _cats(efficiency=[fast], intelligence=[smart])
     assert category_presets(categories, smart) == [smart]
     assert category_presets(categories, ModelSelection("same", "medium")) == []
     assert category_presets(categories, ModelSelection("unassigned")) == []
-    assert category_presets(ModelCategories(efficiency=[fast]), ModelSelection("same", "high")) == [
-        fast
-    ]
+    assert category_presets(_cats(efficiency=[fast]), ModelSelection("same", "high")) == [fast]
 
 
 def test_agent_category_matches_context_tier_not_chat_budget() -> None:
-    fast = _preset("same", "low")
-    smart = _preset("same", "high", tier="long_context")
-    categories = ModelCategories(efficiency=[fast], intelligence=[smart])
-    selection = ModelSelection("same", "high", 32_000, "long_context")
+    fast = _preset("same", "low", provider="agents")
+    smart = _preset("same", "high", tier="long_context", provider="agents")
+    categories = _cats(efficiency=[fast], intelligence=[smart])
+    selection = ModelSelection(
+        "same", reasoning_effort="high", context_tokens=32_000, context_tier="long_context"
+    )
     assert category_presets(categories, selection, agents=True) == [smart]
 
 
@@ -97,33 +121,65 @@ def test_unrelated_failures_are_not_retried(error: str) -> None:
     assert not is_model_rejection(error)
 
 
+def _config(*categories: tuple[str, list[dict[str, Any]]]) -> dict[str, Any]:
+    return {
+        "categories": [
+            {"id": cid, "label": cid.title(), "presets": presets} for cid, presets in categories
+        ]
+    }
+
+
+def _p(model: str, provider: str = "openai", **extra: Any) -> dict[str, Any]:
+    return {"provider": provider, "model": model, **extra}
+
+
 @pytest.mark.parametrize(
     "config",
     [
-        {"unknown": {"efficiency": [{"model": "a"}]}},
-        {"agents": {"efficiency": [{"model": "auto"}]}},
-        {"openai": {"efficiency": [{"model": " "}]}},
-        {"openai": {"efficiency": [{"model": "a", "reasoning_effort": "invalid"}]}},
-        {"openai": {"efficiency": [{"model": "a", "context_tokens": 0}]}},
-        {"openai": {"efficiency": [{"model": "a"}], "balanced": [{"model": "a"}]}},
-        {
-            "agents": {
-                "efficiency": [{"model": "a", "context_tokens": 32_000}],
-                "balanced": [{"model": "a", "context_tokens": 128_000}],
-            }
-        },
-        {
-            "openai": {
-                "efficiency": [{"model": "a", "context_tier": "default"}],
-                "balanced": [{"model": "a", "context_tier": "long_context"}],
-            }
-        },
-        {"openai": {"efficiency": [{"model": str(i)} for i in range(13)]}},
+        _config(("a", [_p("a", "unknown")])),
+        _config(("a", [_p("auto", "agents")])),
+        _config(("a", [_p(" ")])),
+        _config(("a", [_p("a", reasoning_effort="invalid")])),
+        _config(("a", [_p("a", context_tokens=0)])),
+        _config(("a", [_p("a")]), ("b", [_p("a")])),
+        _config(("A_", [_p("a")])),
+        _config(("a", []), ("a", [])),
+        _config(
+            ("a", [_p("a", "agents", context_tier="default")]),
+            ("b", [_p("a", "agents", context_tier="default", context_tokens=32_000)]),
+        ),
+        _config(("a", [_p(str(i)) for i in range(13)])),
+        {"categories": [{"id": "a", "label": " ", "presets": []}]},
+        {"openai": {"efficiency": [{"model": "a"}]}},
     ],
 )
 def test_invalid_category_settings_are_rejected(config: dict[str, Any]) -> None:
     with pytest.raises(ValidationError):
         SettingsPayload(model_fallbacks=config)
+
+
+def test_mixed_provider_categories_are_valid_and_legacy_shape_is_normalised() -> None:
+    mixed = SettingsPayload(
+        model_fallbacks=_config(
+            ("fast", [_p("a", "github_copilot"), _p("a", "openai"), _p("b", "agents")])
+        )
+    )
+    assert mixed.model_fallbacks is not None
+    assert [p.provider for p in mixed.model_fallbacks.categories[0].presets] == [
+        "github_copilot",
+        "openai",
+        "agents",
+    ]
+    legacy = normalize_stored_categories(
+        {
+            "openai": {"efficiency": [{"model": "a"}]},
+            "agents": {"efficiency": [{"model": "b"}], "balanced": [{"model": "c"}]},
+        }
+    )
+    assert [(c.id, c.label, [p.provider for p in c.presets]) for c in legacy.categories] == [
+        ("efficiency", "Efficiency", ["openai", "agents"]),
+        ("balanced", "Balanced", ["agents"]),
+    ]
 
 
 class _Provider:
@@ -168,7 +224,7 @@ async def _call(wrapper: CategoryFallbackProvider, model: str = "haiku", effort:
 async def test_effort_rejection_uses_same_model_preset_then_keeps_it_for_tool_rounds() -> None:
     provider = _Provider(["haiku", "smart"])
     provider.failures[("haiku", "high")] = REJECTION
-    categories = ModelCategories(efficiency=[_preset("haiku"), _preset("smart", "low")])
+    categories = _cats(efficiency=[_preset("haiku"), _preset("smart", "low")])
     wrapper = CategoryFallbackProvider(provider, categories, 128_000)
     assert (await _call(wrapper))[0].content == "done"
     assert [(c["model"], c["reasoning_effort"]) for c in provider.calls] == [
@@ -182,7 +238,7 @@ async def test_effort_rejection_uses_same_model_preset_then_keeps_it_for_tool_ro
 
 async def test_missing_model_uses_ordered_category_not_unrelated_catalog_entry() -> None:
     provider = _Provider(["unrelated", "replacement"])
-    categories = ModelCategories(
+    categories = _cats(
         efficiency=[_preset("retired"), _preset("also-retired"), _preset("replacement", "low")],
         intelligence=[_preset("unrelated", "high")],
     )
@@ -197,7 +253,7 @@ async def test_unreachable_catalog_still_recovers_from_actual_model_rejection() 
     provider = _Provider()
     provider.failures[("retired", "")] = "model_not_found"
     wrapper = CategoryFallbackProvider(
-        provider, ModelCategories(balanced=[_preset("retired"), _preset("replacement")]), 128_000
+        provider, _cats(balanced=[_preset("retired"), _preset("replacement")]), 128_000
     )
     await _call(wrapper, "retired", "")
     assert [c["model"] for c in provider.calls] == ["retired", "replacement"]
@@ -211,7 +267,7 @@ async def test_all_rejected_presets_stop_with_clear_error() -> None:
         ("other", "low"): "invalid_context_tier",
     }
     wrapper = CategoryFallbackProvider(
-        provider, ModelCategories(efficiency=[_preset("haiku"), _preset("other", "low")]), 128_000
+        provider, _cats(efficiency=[_preset("haiku"), _preset("other", "low")]), 128_000
     )
     with pytest.raises(LLMError, match="No working model preset remains"):
         await _call(wrapper)
@@ -222,7 +278,7 @@ async def test_fallback_context_budget_drops_old_history_and_preserves_tools_and
     provider = _Provider(["replacement"])
     wrapper = CategoryFallbackProvider(
         provider,
-        ModelCategories(balanced=[_preset("retired"), _preset("replacement", tokens=1000)]),
+        _cats(balanced=[_preset("retired"), _preset("replacement", tokens=1000)]),
         128_000,
     )
     messages = [
@@ -254,7 +310,7 @@ async def test_no_retry_after_output_or_on_auth_failure(partial: bool, error: st
     provider.partial = partial
     provider.failures[("haiku", "high")] = error
     wrapper = CategoryFallbackProvider(
-        provider, ModelCategories(efficiency=[_preset("haiku"), _preset("smart")]), 128_000
+        provider, _cats(efficiency=[_preset("haiku"), _preset("smart")]), 128_000
     )
     with pytest.raises(LLMError):
         await _call(wrapper)
@@ -264,9 +320,7 @@ async def test_no_retry_after_output_or_on_auth_failure(partial: bool, error: st
 async def test_uncategorised_or_auto_request_is_not_changed() -> None:
     provider = _Provider(["haiku", "other", "auto"])
     provider.failures[("other", "high")] = REJECTION
-    wrapper = CategoryFallbackProvider(
-        provider, ModelCategories(efficiency=[_preset("haiku")]), 128_000
-    )
+    wrapper = CategoryFallbackProvider(provider, _cats(efficiency=[_preset("haiku")]), 128_000)
     with pytest.raises(LLMError):
         await _call(wrapper, "other")
     await _call(wrapper, "auto", "")
@@ -315,29 +369,47 @@ async def _store(key: str, value: Any) -> None:
         await s.commit()
 
 
-async def test_settings_roundtrip_is_optional_and_preserves_provider_scopes(
+async def test_settings_roundtrip_is_optional_and_keeps_mixed_providers(
     stored_settings,
 ) -> None:
-    config = {
-        "openai": {"efficiency": [{"model": "retired"}, {"model": "replacement"}]},
-        "agents": {"intelligence": [{"model": "smart", "reasoning_effort": "high"}]},
-    }
+    config = _config(
+        ("fast", [_p("retired"), _p("replacement", "github_copilot")]),
+        ("deep", [_p("smart", "agents", reasoning_effort="high")]),
+    )
     with TestClient(create_app()) as client:
         response = client.put("/api/settings", json={"model_fallbacks": config})
         assert response.status_code == 200
-        assert (
-            response.json()["model_fallbacks"]["agents"]["intelligence"][0]["context_tier"]
-            == "default"
-        )
+        deep = response.json()["model_fallbacks"]["categories"][1]
+        assert deep["presets"][0]["context_tier"] == "default"
         assert (
             client.get("/api/settings").json()["model_fallbacks"]
             == response.json()["model_fallbacks"]
         )
         assert client.put("/api/settings", json={"model_fallbacks": {"bad": {}}}).status_code == 422
-        assert (
-            client.put("/api/settings", json={"model_fallbacks": {}}).json()["model_fallbacks"]
-            == {}
-        )
+        assert client.put("/api/settings", json={"model_fallbacks": {}}).json()[
+            "model_fallbacks"
+        ] == {"categories": []}
+
+
+async def test_legacy_stored_presets_are_served_in_the_new_shape(stored_settings) -> None:
+    await _store("model_fallbacks", {"openai": {"balanced": [{"model": "a"}]}})
+    with TestClient(create_app()) as client:
+        categories = client.get("/api/settings").json()["model_fallbacks"]["categories"]
+    assert categories == [
+        {
+            "id": "balanced",
+            "label": "Balanced",
+            "presets": [
+                {
+                    "provider": "openai",
+                    "model": "a",
+                    "reasoning_effort": "",
+                    "context_tokens": 128000,
+                    "context_tier": "default",
+                }
+            ],
+        }
+    ]
 
 
 async def test_catalog_resolution_preserves_retired_categorised_pin(
@@ -509,7 +581,7 @@ async def test_one_shot_reports_and_meters_actual_model(stored_settings, monkeyp
 
     provider = _Provider(["replacement"])
     wrapper = CategoryFallbackProvider(
-        provider, ModelCategories(balanced=[_preset("retired"), _preset("replacement")]), 128_000
+        provider, _cats(balanced=[_preset("retired"), _preset("replacement")]), 128_000
     )
     monkeypatch.setattr(one_shot, "get_llm_provider", AsyncMock(return_value=wrapper))
     record = AsyncMock()
@@ -532,7 +604,7 @@ async def test_proxy_reports_actual_model_after_opening_fallback(stored_settings
 
     provider = _Provider(["replacement"])
     wrapper = CategoryFallbackProvider(
-        provider, ModelCategories(balanced=[_preset("retired"), _preset("replacement")]), 128_000
+        provider, _cats(balanced=[_preset("retired"), _preset("replacement")]), 128_000
     )
     request = CompletionRequest(model="retired", messages=[ChatMessage(role="user", content="go")])
     result = await complete(await open_completion(wrapper, request), request)
@@ -544,7 +616,7 @@ async def test_tool_loop_reports_actual_model_without_replaying_tools() -> None:
 
     provider = _Provider(["replacement"])
     wrapper = CategoryFallbackProvider(
-        provider, ModelCategories(balanced=[_preset("retired"), _preset("replacement")]), 128_000
+        provider, _cats(balanced=[_preset("retired"), _preset("replacement")]), 128_000
     )
     active = SimpleNamespace(tools=[], tool_to_server={})
     events = [
@@ -776,12 +848,12 @@ async def test_selected_category_ignores_manual_model_and_uses_ordered_presets()
     provider.failures[("first", "high")] = "invalid_reasoning_effort"
     wrapper = CategoryFallbackProvider(
         provider,
-        ModelCategories(
+        _cats(
             efficiency=[_preset("retired"), _preset("first", "high"), _preset("second", "low")],
             intelligence=[_preset("outside", "high")],
         ),
         600_000,
-        selected_category=ModelCategory.EFFICIENCY,
+        selected_category="efficiency",
     )
     await _call(wrapper, "manual", "")
     assert [(call["model"], call["reasoning_effort"]) for call in provider.calls] == [
@@ -797,14 +869,14 @@ async def test_selected_category_ignores_manual_model_and_uses_ordered_presets()
 async def test_selected_empty_or_unavailable_category_never_uses_manual_or_other_category() -> None:
     provider = _Provider(["manual", "outside"])
     for categories in (
-        ModelCategories(intelligence=[_preset("outside")]),
-        ModelCategories(efficiency=[_preset("retired")], intelligence=[_preset("outside")]),
+        _cats(intelligence=[_preset("outside")]),
+        _cats(efficiency=[_preset("retired")], intelligence=[_preset("outside")]),
     ):
         wrapper = CategoryFallbackProvider(
             provider,
             categories,
             128_000,
-            selected_category=ModelCategory.EFFICIENCY,
+            selected_category="efficiency",
         )
         with pytest.raises(LLMError, match=r"No presets|No working"):
             await _call(wrapper, "manual", "")
@@ -820,13 +892,13 @@ async def test_category_turn_retains_fallback_history_and_uses_candidate_budgets
 
     await _store("llm_model_category", "efficiency")
     await _store("llm_max_input_tokens", 1000)
-    categories = ModelCategories(
+    categories = _cats(
         efficiency=[
             _preset("first", "high", 32_000),
             _preset("second", "low", 128_000),
         ]
     )
-    await _store("model_fallbacks", {"github_copilot": categories.model_dump()})
+    await _store("model_fallbacks", categories.model_dump())
     provider = _Provider(["first", "second"])
     provider.list_models = AsyncMock(
         return_value=[
@@ -839,7 +911,7 @@ async def test_category_turn_retains_fallback_history_and_uses_candidate_budgets
         provider,
         categories,
         1000,
-        selected_category=ModelCategory.EFFICIENCY,
+        selected_category="efficiency",
     )
     build = AsyncMock(return_value=wrapper)
     monkeypatch.setattr(conversation_turn, "get_llm_provider", build)
@@ -847,7 +919,7 @@ async def test_category_turn_retains_fallback_history_and_uses_candidate_budgets
         resolved = await conversation_turn.resolve_turn_settings(session)
     assert resolved.max_input_tokens == 128_000
     build.assert_awaited_once()
-    assert build.call_args.kwargs["model_category"] == ModelCategory.EFFICIENCY
+    assert build.call_args.kwargs["model_category"] == "efficiency"
     old = ChatMessage(role="user", content="history " * 25_000)
     async for _ in run_tool_loop(
         active=SimpleNamespace(tools=[], tool_to_server={}),
@@ -893,19 +965,21 @@ async def test_category_selection_api_preserves_manual_defaults_and_direct_model
                 "llm_model": "available",
                 "llm_reasoning_effort": "high",
                 "llm_max_input_tokens": 600_000,
-                "model_fallbacks": {
-                    "github_copilot": {
-                        "efficiency": [
-                            {"model": "retired"},
-                            {
-                                "model": "available",
-                                "reasoning_effort": "low",
-                                "context_tokens": 32_000,
-                            },
-                        ]
-                    },
-                    "agents": {"balanced": [{"model": "available", "reasoning_effort": "medium"}]},
-                },
+                "model_fallbacks": _config(
+                    (
+                        "efficiency",
+                        [
+                            _p("retired", "github_copilot"),
+                            _p(
+                                "available",
+                                "github_copilot",
+                                reasoning_effort="low",
+                                context_tokens=32_000,
+                            ),
+                        ],
+                    ),
+                    ("balanced", [_p("available", "agents", reasoning_effort="medium")]),
+                ),
             },
         )
         assert initial.status_code == 200
@@ -1007,7 +1081,7 @@ async def test_default_one_shot_uses_category_but_explicit_model_does_not(
 
     await _store("llm_model_category", "efficiency")
     provider = _Provider(["manual", "available"])
-    categories = ModelCategories(efficiency=[_preset("available", "low")])
+    categories = _cats(efficiency=[_preset("available", "low")])
     builds: list[dict[str, Any]] = []
 
     async def build(session, **kwargs):
@@ -1041,8 +1115,45 @@ async def test_category_does_not_turn_missing_credentials_into_mock_success(
     monkeypatch.setattr(llm, "resolve_github_token", AsyncMock(return_value=None))
     async with SessionLocal() as session:
         provider = await llm.get_llm_provider(
-            session, override_provider="github_copilot", model_category=ModelCategory.EFFICIENCY
+            session, override_provider="github_copilot", model_category="efficiency"
         )
     with pytest.raises(LLMError, match="not configured"):
         async for _ in provider.stream_chat_with_tools(model="manual", messages=[], tools=[]):
             pass
+
+
+async def test_category_serves_each_preset_from_its_own_provider_and_fails_over() -> None:
+    primary = _Provider(["big"])
+    primary.name = "github_copilot"
+    primary.failures[("big", "")] = "model_not_found"
+    backup = _Provider(["small"])
+    categories = _cats(
+        fast=[_preset("big", provider="github_copilot"), _preset("small", provider="openai")]
+    )
+    wrapper = CategoryFallbackProvider(
+        primary,
+        categories,
+        128_000,
+        provider_id="github_copilot",
+        selected_category="fast",
+        providers={"github_copilot": primary, "openai": backup},
+    )
+    assert (await _call(wrapper, "ignored", ""))[0].content == "done"
+    assert [c["model"] for c in primary.calls] == ["big"]
+    assert [c["model"] for c in backup.calls] == ["small"]
+    assert wrapper.effective_model == "small"
+
+
+async def test_category_skips_unconfigured_provider_visibly_when_nothing_else_works() -> None:
+    base = _Provider(["x"])
+    categories = _cats(fast=[_preset("x", provider="azure_foundry")])
+    wrapper = CategoryFallbackProvider(
+        base,
+        categories,
+        128_000,
+        selected_category="fast",
+        providers={"azure_foundry": LLMError("Azure AI Foundry is not configured.")},
+    )
+    with pytest.raises(LLMError, match="not configured"):
+        await _call(wrapper, "x", "")
+    assert base.calls == []

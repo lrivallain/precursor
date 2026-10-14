@@ -6,6 +6,7 @@
  */
 
 import { CLIENT_ID } from "./clientId";
+import { httpError } from "./api";
 
 export interface SSEEvent {
   event: string;
@@ -37,6 +38,7 @@ export async function postSSE(
     signal,
   });
   if (!res.ok || !res.body) {
+    if (!res.ok) throw await httpError(res);
     throw new Error(`Stream failed: ${res.status} ${res.statusText}`);
   }
 

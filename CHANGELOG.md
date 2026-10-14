@@ -15,6 +15,26 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **Closing Settings with unsaved changes asks for confirmation** (Esc, the close button, Cancel or a click outside).
+- **Disable the Mock provider** via Settings → Model → Configure provider → Mock: it disappears from provider lists and unconfigured providers fail visibly instead of answering with canned replies.
+- **Provider shown with the model on each reply**, and a **Global default model** selector next to the global default provider in Settings → Model.
+- **Conversation-scoped providers.** Configure GitHub Copilot and Azure AI
+  Foundry together, then save a provider, model or preset, reasoning effort and
+  context budget per chat/topic. **Use global default** clears the override.
+  A single model picker groups models and presets from all configured providers;
+  selecting a model saves its provider automatically without a second toolbar control.
+  Replies, retries, compaction, summaries, naming and scheduled topic turns
+  honor it; side chats and promotion preserve it. Explicit providers fail
+  visibly instead of silently returning Mock replies. Agents remain Copilot-only.
+  Provider pickers show green configured and amber not-configured badges from saved
+  credentials and required settings, independently of endpoint health.
+  Ollama is included only after its Base URL has been explicitly saved, rather
+  than being considered configured merely because it has a default endpoint.
+  Model presets moved to their own **Settings -> Presets** tab (the modal is
+  gone): create your own categories, drag models from any configured provider
+  into them, and reorder by dragging. Each preset carries its provider, so one
+  category can fail over across providers.
+
 - **Pick where a promoted chat lands.** The "Promote to topic" confirmation now
   offers a target collection and parent topic (or top level); the API takes
   `parent_id` alongside `collection_id`.

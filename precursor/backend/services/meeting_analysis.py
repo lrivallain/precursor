@@ -455,6 +455,7 @@ async def analyze_session(
     try:
         result = await complete_once(
             session,
+            use_conversation_selection=False,
             system=system,
             user="\n".join(user_parts),
             usage_source="/live-analysis",
@@ -537,6 +538,7 @@ async def translate_transcript(
     )
     result = await complete_once(
         session,
+        use_conversation_selection=False,
         system=system,
         user=source,
         usage_source="/live-translate",
@@ -577,6 +579,7 @@ async def translate_lines(
     numbered = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(clean))
     completion = await complete_once(
         session,
+        use_conversation_selection=False,
         system=system,
         user=numbered,
         usage_source="/live-translate",

@@ -159,6 +159,7 @@ PROVIDERS: dict[str, ProviderSpec] = {
                 name="base_url",
                 label="Base URL",
                 placeholder="http://localhost:11434/v1",
+                required=True,
             ),
         ),
         build=_build_openai_compatible("ollama", "http://localhost:11434/v1", "Ollama"),

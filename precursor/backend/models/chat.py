@@ -23,6 +23,7 @@ class Chat(Base, TimestampMixin):
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     slug: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    llm_selection: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # When True and a description is set, the description is enforced as a
     # system instruction prepended to every user turn rather than injected once

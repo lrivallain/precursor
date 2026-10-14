@@ -12,9 +12,25 @@ live in `.env`; see the [configuration reference](/reference/configuration).
 
 ## Connecting a model
 
-Open **Settings → Model** to pick a provider and enter its credentials. Secrets
+Open **Settings → Model → Configure provider** to enter each provider's credentials.
+You can configure several providers at once; **Apply & refresh models** saves
+credentials without changing **Global default provider**. Save that separate
+default selector only when you want inheriting conversations to switch. **Global default model** sits right below it and lists that provider's
+models. Each assistant reply's footer names the provider that served it. Select **Mock (offline)** under
+**Configure provider** and untick **Enabled** to hide it from pickers and make
+unconfigured providers report an error instead of answering with canned replies. Secrets
 are stored in the local database and **never echoed back** by the API — only a
 `*_present` boolean is returned.
+
+Provider pickers show a **green ✓ Configured** or **amber ○ Not configured** badge using
+the saved required fields and GitHub sign-in status. Mock is available without
+configuration. Ollama needs an explicitly saved **Base URL** (for example,
+`http://localhost:11434/v1`) before it counts as configured or appears in the
+conversation model picker; the input's placeholder does not configure it.
+This is a setup indicator,
+not a connection test or a guarantee that inference will succeed.
+
+<Screenshot src="/screenshots/provider-configuration.png" alt="Provider configuration picker with green configured and amber not-configured badges" caption="Saved configuration is visible independently of the selected provider." />
 
 | Provider | What it is | Credential |
 | --- | --- | --- |
@@ -31,6 +47,39 @@ you're ready.
 
 ### Which model gets used
 
+Chats and topics have a single **model** picker in the composer. It lists
+models and preset categories from all configured providers, grouped by provider.
+Choosing a model saves its provider automatically for that conversation; there
+is no separate provider control. Search by model, publisher or provider name.
+Reasoning effort and context size are saved with it, not applied to other
+conversations. **Use global default** clears the complete override; new and
+existing conversations inherit the global selection until you override it.
+The start screen and workspace composer still edit the global model defaults.
+
+<Screenshot src="/screenshots/conversation-providers.png" alt="A single model picker grouping GitHub Copilot and Azure AI Foundry models" caption="Choose a model once; its provider is saved with it." />
+
+The model's hover hint identifies its provider. Identical model IDs on different
+providers remain separate choices. **Use global default** is in this same menu.
+To enter a model ID missing from the catalogue, type it and choose the manual
+entry labelled with its destination provider. An unavailable provider catalogue
+does not hide working models from other configured providers.
+
+Conversation-related replies, retries, `/compact`, summaries, notes and naming
+use this selection, including scheduled topic turns. A conversation override
+also takes precedence over global feature-specific naming models. Side chats
+copy their source topic's override, and promoting a chat preserves it. Ordinary
+child topics do not inherit their parent's override.
+
+An explicitly selected provider that is missing credentials fails visibly; it
+never switches to Mock or another provider. The automatic offline fallback still
+applies to conversations using the global default. Provider-local model
+alternatives and retirement handling remain available.
+
+Agents and workflows stay on the **Copilot SDK**. Live, IQ, workspace chat and
+the OpenAI-compatible endpoint retain their global defaults. Each provider still
+has one saved configuration: multiple named Azure endpoints/accounts are not
+supported.
+
 For **Azure AI Foundry**, add deployments one at a time in **Deployment names**:
 enter a name such as `my-gpt-4o`, then press **Enter** or click **Add model**.
 Each added model appears as a small bubble; use its remove button to delete it
@@ -46,8 +95,8 @@ entry remains available.
 <Screenshot src="/screenshots/foundry-models.png" alt="Azure AI Foundry settings with removable model bubbles and an Add model input" caption="Add deployment names individually, then apply the configuration to populate the model picker." />
 
 Precursor pins **no** model id of its own. Until you choose one in
-**Settings → Model**, the chat model is the first entry in the catalogue the
-active provider advertises — so a fresh install works without picking anything,
+the composer, the global chat model is the first entry in the catalogue the
+default provider advertises — so a fresh install works without picking anything,
 whatever that provider happens to offer today.
 
 Your choice is honoured for as long as the provider still lists it. Providers
@@ -62,31 +111,34 @@ or credentials.
 
 ### Optional model alternatives
 
-**Settings -> Model -> Model alternatives** lets you organise models into
-three categories: **Efficiency** (fast, economical tasks), **Balanced** (everyday
-work), and **Intelligence** (complex reasoning). Nothing is configured by default.
+**Settings -> Presets** is a dedicated tab for ordered model presets. A preset
+group is a **category** (Efficiency, Balanced, Intelligence, or your own, such as
+"Deep research"). Each category is an ordered list of models, and **each entry
+carries its own provider**, so one category can mix GitHub Copilot, Azure AI
+Foundry and any other configured provider. There is no global provider selector,
+and nothing is configured by default.
 
-<Screenshot src="/screenshots/model-alternatives.png" alt="Compact model alternative summary with configuration counts and an overall catalogue check" caption="Settings keeps just configuration presence and the overall check. Manage presets opens the focused editor; Review configuration goes directly to a problem." />
+<Screenshot src="/screenshots/presets.png" alt="Presets tab with category cards on the left and a searchable model palette on the right" caption="Drag models from the palette into a category, reorder entries by dragging, or press + to add to the selected category." />
 
-Settings shows a compact summary: **Chat & live** and **Agents & workflows**
-each have a preset/category count, or **Not configured** when empty. Below them
-is the overall **Check models** result. **Review configuration** appears when a
-preset or provider setup needs attention and opens the affected category directly.
+- **Create categories** with **New category**, or click a suggested
+  Efficiency, Balanced or Intelligence chip just under it (a chip disappears
+  once a category with that name exists). Rename a category inline.
+- **Add models** by dragging them from the palette (search and filter by
+  provider) or with the **+** button. Models from unconfigured providers are
+  listed with a **Not configured** badge.
+- **Order** is the failover order: the first entry is tried first, and the next
+  one when a model is missing or rejects the effort/context.
+- Set the **effort** and **context** (or context tier for **Copilot agents**
+  entries) on each entry. Each combination must be unique across all categories.
 
-**Manage presets** opens a dedicated modal with all six configurations visible
-at once: Efficiency/Balanced/Intelligence are rows, and Chat & live / Agents &
-workflows are columns. Each cell shows its preset count and catalogue health.
-Click a cell to edit only that list below the overview. Model, effort and context
-are compact columns in wide panes and stacked fields on narrow screens. Both
-runtime columns remain visible in the overview.
+Chats and topics can use any provider's models. Agents and workflows run on
+the Copilot SDK, so they only use entries tagged **Agents (Copilot SDK)**; put
+both kinds in one category to cover every surface.
 
-<Screenshot src="/screenshots/model-alternatives-editor.png" alt="Dedicated preset editor with a category by runtime overview and a single compact preset list" caption="See coverage across both runtimes, then edit one short list. Apply to settings transfers your changes to the Settings draft; Cancel discards modal edits." />
+A category can be chosen from the composer model picker, so one conversation
+can fail over across providers. Categories hold at most 12 entries, and at most
+24 categories can exist. **Save** in Settings persists them.
 
-They are independent scopes: configure both to cover both chat and agent tasks,
-or just the surface you use. Presets remain independent even when both use the
-same Copilot subscription. **Apply to settings** updates the Settings draft
-without saving it; **Save** in Settings persists both configurations together.
-**Cancel**, the modal's close button and Escape discard only the modal's edits.
 Topics/chats, live analysis and summaries use the provider scope;
 agents and workflow steps use the SDK scope, even when both use the same
 GitHub Copilot subscription. Each has its own categories and context controls.
@@ -94,17 +146,11 @@ Alternatives never switch provider or credentials.
 
 #### Selecting a preset from a prompt
 
-The prompt's model dropdown includes a **Presets** group with selectable
-**Efficiency**, **Balanced** and **Intelligence** categories.
-Unconfigured categories are hidden. When the current runtime/provider has no
-saved presets, the entire group and its management shortcut are absent.
-Chat/topic composers use the selected provider's presets; agent composers use
-the independent Copilot SDK presets.
-
-Configure profiles through **Settings -> Model -> Manage presets**, then **Apply
-to settings** and **Save** in Settings. Applying only the modal draft does not
-persist it. Once presets exist, **Manage presets in Settings...** in the model
-dropdown provides a shortcut to edit them. The shortcut never saves anything.
+The prompt's model dropdown includes a **Presets** group listing your
+categories. Chat/topic composers show presets alongside the models of every
+configured provider; choosing a category saves it with the conversation.
+Agent composers use the entries tagged **Copilot agents**. **Manage presets in
+Settings...** opens the Presets tab.
 
 Select a **category**, not an individual model. Precursor saves that category
 as your intent; the engine chooses the first currently listed preset in its

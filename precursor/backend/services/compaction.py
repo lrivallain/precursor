@@ -161,7 +161,11 @@ async def compact_container(
     if not any(m.role in ("user", "assistant") for m in history):
         raise CompactionError("Nothing to compact yet.")
 
-    budget_tokens = await resolve_llm_preparation_budget(session)
+    budget_tokens = await resolve_llm_preparation_budget(
+        session,
+        topic_id=container_id if kind == "topic" else None,
+        chat_id=container_id if kind == "chat" else None,
+    )
     chunk_chars = int(budget_tokens * _CHUNK_BUDGET_RATIO) * _CHARS_PER_TOKEN
     chunks = chunk_blocks(render_transcript(history), chunk_chars)
     focus = (instructions or "").strip()

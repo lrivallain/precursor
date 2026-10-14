@@ -150,6 +150,8 @@ class MessageRead(BaseModel):
     completion_tokens: int | None = None
     # The LLM model id that produced this assistant turn, surfaced in the UI.
     model: str | None = None
+    # Provider id that served this assistant turn.
+    provider: str | None = None
     # Wall-clock duration in ms the assistant turn took to generate.
     elapsed_ms: int | None = None
     created_at: datetime

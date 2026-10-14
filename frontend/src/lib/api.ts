@@ -214,7 +214,7 @@ function parseDetail(body: string): string | null {
 
 // Build an Error from a failed response: prefer the server's `detail` message
 // (clean, user-facing) and fall back to the HTTP status when there's none.
-async function httpError(res: Response): Promise<Error> {
+export async function httpError(res: Response): Promise<Error> {
   const body = await res.text().catch(() => "");
   const detail = parseDetail(body);
   if (detail) return new Error(detail);
@@ -1192,7 +1192,8 @@ export const api = {
       request<LLMModel[]>(
         `/api/llm/models${provider ? `?provider=${encodeURIComponent(provider)}` : ""}`,
       ),
-    listProviders: () => request<LLMProviderSpec[]>(`/api/llm/providers`),
+    listProviders: (includeDisabled = false) =>
+      request<LLMProviderSpec[]>(`/api/llm/providers${includeDisabled ? "?include_disabled=true" : ""}`),
   },
 
   notes: {

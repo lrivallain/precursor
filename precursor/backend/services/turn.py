@@ -105,7 +105,9 @@ async def _run(
         # Never let a programmatically-driven turn (scheduler / MCP post_message)
         # re-expose Precursor's own MCP server to itself — that would let a
         # post_message-triggered turn recursively call post_message.
-        settings = await resolve_turn_settings(session, exclude_servers={"precursor"})
+        settings = await resolve_turn_settings(
+            session, topic_id=topic_id, exclude_servers={"precursor"}
+        )
 
     async with manager.acquired(
         settings.enabled_servers, github_token=settings.github_token, advertise_cached=True

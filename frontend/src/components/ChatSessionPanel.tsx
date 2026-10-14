@@ -295,7 +295,7 @@ export function ChatSessionPanel({
               onResizeStart={onComposerResize}
               toolbarStart={
                 <>
-                  <ComposerModelControls />
+                  <ComposerModelControls conversation={{ kind: "chat", id: chat.id, selection: chat.llm_selection, onUpdated: onChatUpdated }} />
                   <RoleSelector
                     value={chat.role_id ?? null}
                     onChange={(roleId) => void onSetRole?.(roleId)}
@@ -316,6 +316,7 @@ export function ChatSessionPanel({
           messages={conv.messages}
           kind="chat"
           containerId={chat.id}
+          selection={chat.llm_selection}
           streaming={streaming}
           compaction={conv.compaction}
           reminder={{

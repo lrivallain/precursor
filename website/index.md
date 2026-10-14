@@ -39,6 +39,8 @@ features:
     details: >-
       Simple conversations for when you just need an answer fast. Streaming
       replies, markdown, diagrams generation, and code highlighting out of the box.
+      Pick GitHub Copilot or Azure AI Foundry per conversation without switching
+      other chats or topics.
     link: /features/chats
     linkText: About chats
   - icon: 🎙️

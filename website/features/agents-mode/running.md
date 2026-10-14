@@ -80,13 +80,12 @@ the cut stay in the agent's context.
 ## When a model disappears or rejects its configuration
 
 Optional [model alternatives](/guide/configuration#optional-model-alternatives)
-under **Settings -> Model** give agents and workflow steps ordered
-Efficiency/Balanced/Intelligence presets. Open **Manage presets** and select the
-category under **Agents & workflows** (Copilot SDK): **Chat & live** presets do not apply to these runs, even
-when both use your Copilot subscription.
+under **Settings -> Presets** give agents and workflow steps ordered
+presets. Add entries tagged **Copilot agents** to a category: entries from other
+providers do not apply to agent runs.
 
-The agent prompt's **Agent model** dropdown also offers **Presets**, grouped into
-Efficiency, Balanced and Intelligence. Select a category and the engine resolves
+The agent prompt's **Agent model** dropdown also offers **Presets**, listing
+your categories. Select a category and the engine resolves
 its ordered models, reasoning efforts and context tiers for unpinned runs.
 The category remains selected even when a model is substituted. Explicit agent
 and workflow model pins win over the default category. Only Copilot SDK categories

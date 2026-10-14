@@ -16,7 +16,6 @@ from sqlalchemy import select
 from precursor.backend.db import SessionLocal
 from precursor.backend.models import AgentRun, AgentSession
 from precursor.backend.schemas.agent import AgentEvent
-from precursor.backend.schemas.model_fallback import ModelCategory
 from precursor.backend.services.app_settings import (
     resolve_agents_context_tier,
     resolve_agents_default_model,
@@ -118,7 +117,7 @@ class ModelSelector:
         effort: str,
         tier: str,
         *,
-        category: ModelCategory | None = None,
+        category: str | None = None,
     ) -> list[tuple[str, str | None, str]]:
         initial = (model, effort or None, tier or "default")
         if category is None and (not model or model == "auto"):
@@ -133,8 +132,8 @@ class ModelSelector:
         )
         if category is not None and not presets:
             raise LLMError(
-                f"No presets are configured for the selected category {category.value!r}. "
-                "Update Settings > Model > Manage presets."
+                f"No presets are configured for the selected category {category!r}. "
+                "Update Settings > Presets."
             )
         if not presets:
             return [(await self.sanitize(agent_id, model), effort or None, tier or "default")]
@@ -149,10 +148,10 @@ class ModelSelector:
         )
         choices = [c for c in choices if not available or c[0] in available]
         if not choices:
-            target = category.value if category is not None else model
+            target = category if category is not None else model
             raise LLMError(
                 f"No available model remains in the category for {target!r}. "
-                "Update Settings > Model > Model alternatives."
+                "Update Settings > Presets."
             )
         return choices
 
@@ -164,7 +163,7 @@ class ModelSelector:
         default_model: str,
         effort: str,
         tier: str,
-        category: ModelCategory | None,
+        category: str | None,
     ) -> None:
         model = run.model or agent.model or default_model
         category = category if not (run.model or agent.model) else None
@@ -244,7 +243,7 @@ class ModelSelector:
         run_id: int,
         choice: tuple[str, str | None, str],
         *,
-        category: ModelCategory | None = None,
+        category: str | None = None,
     ) -> None:
         loaded = await self._manager._load_run(run_id)
         if loaded is not None:
