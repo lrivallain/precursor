@@ -106,6 +106,8 @@ Conversations refer to a role by its **name**, so a role can't be renamed — cr
 a new one to use another name. Deleting a role reverts whatever used it to the
 default. With [definition files](/features/definitions#roles-as-files) in files
 mode, each role is a `roles/<name>.role.yaml` file and this tab edits it.
+Until you migrate, the tab shows where to start: a note linking to
+**Settings → Definition files**.
 
 ### Picking a role where you type
 

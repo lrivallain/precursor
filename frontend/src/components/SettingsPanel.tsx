@@ -1672,7 +1672,7 @@ export function SettingsPanel({ onClose: closeNow, initialCategory, onCollection
 
             {category === "skills" && <SkillsTab />}
 
-            {category === "roles" && <RolesTab />}
+            {category === "roles" && <RolesTab onOpenMigration={() => setCategory("definitions")} />}
             {category === "collections" && (
               <CollectionsTab onChanged={onCollectionsChanged} />
             )}

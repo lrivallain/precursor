@@ -1,20 +1,26 @@
 import { useEffect, useState } from "react";
-import { Drama, FileText, Lock, Pencil, Plus, Trash2, X } from "lucide-react";
+import { ArrowRight, Drama, FileText, Lock, Pencil, Plus, Trash2, X } from "lucide-react";
 import { api } from "../lib/api";
 import { rolesStore, useRoles } from "../lib/rolesStore";
 import type { Role } from "../lib/types";
 import { useConfirm } from "./ConfirmDialog";
 import { RefineTextarea } from "./RefineTextarea";
 
-export function RolesTab() {
+export function RolesTab({ onOpenMigration }: { onOpenMigration?: () => void }) {
   const confirmAction = useConfirm();
   const roles = useRoles();
   const [editing, setEditing] = useState<Role | "new" | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const [fromDatabase, setFromDatabase] = useState(false);
+
   useEffect(() => {
     void rolesStore.ensureLoaded();
+    api.definitions
+      .status()
+      .then((st) => setFromDatabase(st.stage === "database"))
+      .catch(() => setFromDatabase(false));
   }, []);
 
   async function handleDelete(role: Role): Promise<void> {
@@ -53,6 +59,22 @@ export function RolesTab() {
           <Plus size={12} /> New
         </button>
       </div>
+
+      {fromDatabase && onOpenMigration && (
+        <div className="text-[11px] text-muted border border-border rounded px-2 py-1.5 flex items-center justify-between gap-2">
+          <span>
+            Roles are stored in the database. Migrate to definition files to keep
+            them as <code>roles/*.role.yaml</code>.
+          </span>
+          <button
+            type="button"
+            onClick={onOpenMigration}
+            className="shrink-0 flex items-center gap-1 text-accent hover:underline"
+          >
+            Definition files <ArrowRight size={12} aria-hidden />
+          </button>
+        </div>
+      )}
 
       {error && (
         <div className="text-xs text-red-500 border border-red-500/30 rounded p-2">
