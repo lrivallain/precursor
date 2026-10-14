@@ -17,7 +17,7 @@ from sqlalchemy import select
 from precursor.backend.main import create_app
 from precursor.backend.services.definitions.checker import check_definitions
 from precursor.backend.services.definitions.loader import load_definitions
-from tests.definitions_support import mark_database, restore_database
+from tests.definitions_support import mark_database, restore_database, wipe_agents_and_workflows
 
 
 def _uid() -> str:
@@ -177,6 +177,8 @@ async def database_mode(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Path]:
     from precursor.backend.services.definitions import overlay
 
     mark = await mark_database()
+    # The migration refuses while any workflow is mid-run, and the shared DB holds other modules' leftovers.
+    await wipe_agents_and_workflows()
     async with SessionLocal() as session:
         for key, value in (("agents_enabled", True), ("definitions_source", "database")):
             row = await session.get(AppSetting, key)
