@@ -2247,7 +2247,7 @@ const EXPOSE_SECTIONS: ReadonlyArray<{
   {
     key: "tools",
     label: "Basic tools",
-    hint: "Small helpers that read none of your data, like the current date and time.",
+    hint: "Small helpers that read none of your data: date and time, calculator, unit conversion, UUIDs, hashing, text counts.",
   },
 ];
 

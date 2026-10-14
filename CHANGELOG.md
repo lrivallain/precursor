@@ -23,9 +23,13 @@ are the per-version history; releasing does not rewrite this file.
   `create_workspace_file`, `write_workspace_file`, `create_workspace_folder`).
   Both stay opt-in for Precursor's own agents, and agents still get a permission
   prompt before each write.
-- **Basic tools section** in Precursor capabilities, starting with `get_datetime`
-  (current date, time, weekday, ISO week and UTC offset, in the local zone or a
-  given IANA timezone).
+- **Basic tools section** in Precursor capabilities: stateless helpers that read
+  none of your data. `get_datetime` and `convert_timezone` (IANA zones),
+  `date_math` (shift a date or measure a gap, with business days), `calculate`
+  (safe arithmetic and math functions), `convert_units`, `generate_uuid` (v4/v7),
+  `random_value` (secure tokens and integers), `hash_or_encode` (hashes, base64,
+  URL, hex, HTML), `count_text` (words, sentences, estimated tokens) and
+  `get_system_info` (OS, Python, locale, version; never host or user names).
 - **Select all / Unselect all** for the Settings → MCP → Precursor capabilities
   section list.
 

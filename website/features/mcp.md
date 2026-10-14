@@ -414,9 +414,21 @@ retrieval and cited answers, skills, memory,
 reminders, [workspaces](/features/workspaces), and a few **basic tools**.
 
 **Basic tools** is a section of small stateless helpers that read none of your
-data. For now it holds `get_datetime` (the current date, time, weekday, ISO week
-and UTC offset, in this machine's zone or any IANA `timezone` you pass), so a
-model no longer has to guess "today". Like every section it is off by default.
+data, so a model stops guessing at things it is bad at. Like every section it is
+off by default.
+
+| Tool | What it does |
+| --- | --- |
+| `get_datetime` | Current date, time, weekday, ISO week and UTC offset, in this machine's zone or any IANA `timezone`. |
+| `convert_timezone` | Convert an ISO 8601 date-time between IANA zones. |
+| `date_math` | Shift a date by years/months/weeks/days/hours/minutes, or measure the gap between two dates (including business days). |
+| `calculate` | Evaluate arithmetic and common math functions (`sqrt`, `log`, `round`, …) without running arbitrary code. |
+| `convert_units` | Length, mass, volume, time, data size, speed and temperature. |
+| `generate_uuid` | UUID v4 (random) or v7 (time-ordered), up to 100 at a time. |
+| `random_value` | Cryptographically secure URL-safe or hex tokens, and integers in a range. |
+| `hash_or_encode` | MD5/SHA hashes and base64, URL, hex and HTML encode/decode. |
+| `count_text` | Characters, words, lines, sentences, paragraphs and an estimated token count. |
+| `get_system_info` | App version, OS, architecture, Python, locale and time zone. Never host or user names, paths or environment variables. |
 
 **Workspaces are part of this server.** The standalone `workspace-fs` server was
 folded in. The **Workspaces** section serves `list_workspaces`,
