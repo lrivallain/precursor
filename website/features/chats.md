@@ -201,3 +201,7 @@ chat started from a reply keeps its quoted reply: the new topic shows it above
 its transcript and gives it to the model on every turn, as the chat did. A
 side chat whose topic was deleted becomes a top-level topic, like any other
 promoted chat.
+
+Promoting an ordinary chat asks, in the confirmation dialog, for the **target collection** and the
+**parent topic** (or top level) before promoting; the topic lands in the
+parent's collection.
