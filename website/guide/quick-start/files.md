@@ -23,9 +23,10 @@ Markdown gets a rendered preview, and `.drawio` files open in a full
 
 ## Let the assistant work on it
 
-Enable the **`workspace-fs`** [MCP server](/features/mcp) and the assistant can
-read and write those files during a normal conversation — every path confined to
-the workspace root, with `.git` off limits. When it touches a file, the tool call
+Turn on the **Workspaces** (and, to let it write, **Edit workspaces**) sections
+of the built-in **`precursor`** [MCP server](/features/mcp) and the assistant can
+read and write those files — and create new workspaces — during a normal
+conversation, every path confined to the workspace root, with `.git` off limits. When it touches a file, the tool call
 in the transcript carries an **Open** chip that jumps you straight to it.
 
 Pair it with the [command runner](/features/command-runner) to run tests or a

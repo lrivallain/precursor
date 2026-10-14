@@ -209,8 +209,8 @@ def _stream(client: TestClient, ws_id: int, **payload: Any) -> list[tuple[str, d
 
 
 _READ = MCPToolDef(
-    server="workspace-fs",
-    name="read_file",
+    server="precursor",
+    name="read_workspace_file",
     description="Read a workspace file",
     input_schema={"type": "object", "properties": {"path": {"type": "string"}}},
 )
@@ -286,7 +286,7 @@ def test_prompt_carries_file_context_history_and_prompt_override(monkeypatch) ->
 def test_one_tool_round_emits_tool_calls_and_tool_result(monkeypatch) -> None:
     provider = _ScriptedProvider(
         _tool_round(
-            _Call("call-1", "workspace-fs__read_file", '{"path": "intro.md"}'),
+            _Call("call-1", "precursor__read_workspace_file", '{"path": "intro.md"}'),
             text="Let me look.",
         ),
         _text_round("It reads fine."),
@@ -308,22 +308,26 @@ def test_one_tool_round_emits_tool_calls_and_tool_result(monkeypatch) -> None:
 
     names = [n for n, _ in events]
     assert names == ["delta", "tool_calls", "tool_result", "delta", "done"]
-    assert seen == [("workspace-fs", "read_file", {"path": "intro.md"})]
+    assert seen == [("precursor", "read_workspace_file", {"path": "intro.md"})]
     assert events[1][1] == {
         "calls": [
-            {"id": "call-1", "name": "workspace-fs__read_file", "arguments": '{"path": "intro.md"}'}
+            {
+                "id": "call-1",
+                "name": "precursor__read_workspace_file",
+                "arguments": '{"path": "intro.md"}',
+            }
         ]
     }
     result = events[2][1]
     assert result["tool_call_id"] == "call-1"
-    assert result["name"] == "workspace-fs__read_file"
+    assert result["name"] == "precursor__read_workspace_file"
     assert result["arguments"] == '{"path": "intro.md"}'
     assert result["content"] == "# Intro"
     assert result["is_error"] is False
     assert events[-1][1]["content"] == "It reads fine."
 
     # The tool was advertised, and its result fed back for the second round.
-    assert provider.calls[0]["tools"] == ["workspace-fs__read_file"]
+    assert provider.calls[0]["tools"] == ["precursor__read_workspace_file"]
     second = provider.calls[1]["messages"]
     assert second[-2].role == "assistant"
     assert second[-2].tool_calls[0]["id"] == "call-1"
@@ -336,7 +340,7 @@ def test_one_tool_round_emits_tool_calls_and_tool_result(monkeypatch) -> None:
 
 def test_auth_required_tool_prompts_then_retries_after_sign_in(monkeypatch) -> None:
     provider = _ScriptedProvider(
-        _tool_round(_Call("call-1", "workspace-fs__read_file")),
+        _tool_round(_Call("call-1", "precursor__read_workspace_file")),
         _text_round("Signed in and read it."),
     )
     _install_provider(monkeypatch, provider)
@@ -358,9 +362,9 @@ def test_auth_required_tool_prompts_then_retries_after_sign_in(monkeypatch) -> N
     names = [n for n, _ in events]
     assert names.index("tool_calls") < names.index("mcp_auth_required") < names.index("tool_result")
     assert next(d for n, d in events if n == "mcp_auth_required") == {
-        "server": "workspace-fs",
+        "server": "precursor",
         "message": "Sign-in expired.",
-        "tool": "workspace-fs__read_file",
+        "tool": "precursor__read_workspace_file",
     }
     result = next(d for n, d in events if n == "tool_result")
     assert result["is_error"] is False
@@ -398,7 +402,7 @@ def test_provider_failure_becomes_an_error_event(monkeypatch) -> None:
 
 
 def test_tool_round_cap_ends_with_an_error_event(monkeypatch) -> None:
-    provider = _ScriptedProvider(_tool_round(_Call("call-n", "workspace-fs__read_file")))
+    provider = _ScriptedProvider(_tool_round(_Call("call-n", "precursor__read_workspace_file")))
     _install_provider(monkeypatch, provider)
 
     async def handler(server: str, raw_name: str, args: dict[str, Any]) -> Any:
@@ -422,7 +426,7 @@ def test_tool_round_cap_ends_with_an_error_event(monkeypatch) -> None:
 
 def test_every_metered_round_is_counted_in_usage_stats(monkeypatch) -> None:
     provider = _ScriptedProvider(
-        _tool_round(_Call("call-1", "workspace-fs__read_file")),
+        _tool_round(_Call("call-1", "precursor__read_workspace_file")),
         _text_round("Counted."),
     )
     _install_provider(monkeypatch, provider)
@@ -489,7 +493,7 @@ async def test_usage_rows_are_tagged_as_workspace_traffic(monkeypatch) -> None:
 
 def test_tool_result_carries_the_workspace_file_link(monkeypatch) -> None:
     provider = _ScriptedProvider(
-        _tool_round(_Call("call-1", "workspace-fs__read_file", '{"path": "intro.md"}')),
+        _tool_round(_Call("call-1", "precursor__read_workspace_file", '{"path": "intro.md"}')),
         _text_round("Linked."),
     )
     _install_provider(monkeypatch, provider)

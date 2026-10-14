@@ -992,6 +992,21 @@ const scenes = {
 
   // Settings → Appearance: theme toggle + the reading-font picker (dyslexia /
   // low-vision friendly options).
+  // Settings -> MCP servers with the "Precursor capabilities" card open, so the
+  // Select all / Unselect all controls and the workspace sections show.
+  "mcp-settings": {
+    viewport: { width: 1440, height: 1100 },
+    async go(page) {
+      await page.goto(`${BASE}/`, { waitUntil: "networkidle" });
+      await openSettings(page, "MCP servers");
+      await page.getByRole("button", { name: /Precursor capabilities/ }).click();
+      await page.getByRole("button", { name: "Select all", exact: true }).waitFor();
+      await page.mouse.move(0, 0);
+      await sleep(600);
+      return clipOf(page, "div.fixed.inset-0 > div, [role=dialog]", 0);
+    },
+  },
+
   accessibility: {
     viewport: { width: 1440, height: 1000 },
     async go(page) {

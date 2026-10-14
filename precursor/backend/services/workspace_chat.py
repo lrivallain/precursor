@@ -57,8 +57,9 @@ _SYSTEM_PROMPT = (
 def _workspace_tool_context(ws: Workspace, path: str | None) -> str:
     """Tell the model which workspace it's operating on for file tools.
 
-    The workspace-fs MCP tools take a ``workspace_id``; surfacing it (and the
-    active file) means the model doesn't have to call ``list_workspaces`` first.
+    The ``precursor`` workspace tools take a ``workspace_id``; surfacing it (and
+    the active file) means the model doesn't have to call ``list_workspaces``
+    first.
     """
     lines = [
         "\n\nWorkspace tools (if enabled) operate on this workspace:",

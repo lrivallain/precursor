@@ -219,7 +219,7 @@ Runtime settings (**Settings → MCP servers → Precursor IQ**) stored in `AppS
 | `iq_ask_model` | `""` | Model that writes Ask answers. Empty uses the chat model. |
 
 Two `mcp_expose` sections gate the MCP tools: `iq` (`retrieve`) and `iq_ask`
-(`ask`), both off by default.
+(`ask`), both off by default. The `workspaces` (read) and `workspaces_write` (create workspaces, write files) sections gate the workspace tools; they stay opt-in even for Precursor's own agents.
 
 ## Skills directory
 

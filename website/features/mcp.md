@@ -8,7 +8,7 @@ Precursor is **both** an MCP client and an MCP server, with working transports i
 each direction. [Model Context Protocol](https://modelcontextprotocol.io) is the
 open standard for connecting AI apps to tools and data.
 
-<Screenshot src="/screenshots/mcp-settings.png" alt="The MCP settings tab with toggles for built-in tool servers" caption="Settings → MCP — toggle built-in tool servers per turn and expose your own conversations." />
+<Screenshot src="/screenshots/mcp-settings.png" alt="The MCP settings tab with toggles for built-in tool servers" caption="Settings → MCP — pick which Precursor capabilities to serve (with Select all / Unselect all), then toggle built-in tool servers per turn." />
 
 ## As a client — attaching tool servers
 
@@ -24,7 +24,6 @@ Built-in servers ship in-tree:
 | `github` | GitHub issue/PR/repo operations. |
 | `fetch` | Fetch and read web content, and make arbitrary HTTP requests. |
 | `playwright` | Drive a real Chromium — navigate, read the rendered DOM/text, screenshot. Uses a **persistent profile** so an interactive sign-in reaches **authenticated** pages (see below). |
-| `workspace-fs` | Sandboxed file operations inside a [workspace](/features/workspaces). |
 | `drawio` | Author native `.drawio` diagrams into a workspace, with server-side layout (see below). |
 | `cmd-runner` | Run bash / python / node in a [Docker jail](/features/command-runner). |
 | `workiq` | Microsoft 365 (mail, calendar, …) — read-only locally, or full read/write via the hosted preview. |
@@ -149,7 +148,7 @@ the Workspace UI — and it stays editable in draw.io, unlike a rendered image. 
 is also editable **in Precursor**, via
 [Workspaces → Editing diagrams](/features/workspaces#editing-diagrams).
 
-It shares `workspace-fs`'s sandbox: every path goes through `safe_join`, so
+It shares the [workspace](/features/workspaces) sandbox: every path goes through `safe_join`, so
 nothing outside `workspaces_dir/<slug>` is reachable.
 
 | Tool | What it does |
@@ -412,7 +411,20 @@ retrieval and cited answers, skills, memory,
 [agent state](/features/agents-mode/artifacts-state#durable-state-the-private-scratchpad),
 [workflow state](/features/workflows/steps#pipeline-state-what-a-workflow-remembers),
 `append_note`, `post_message`, [side chats](/features/chats#side-chats), schedules,
-and reminders.
+reminders, and [workspaces](/features/workspaces).
+
+**Workspaces are part of this server.** The standalone `workspace-fs` server was
+folded in. The **Workspaces** section serves `list_workspaces`,
+`list_workspace_files` and `read_workspace_file`; **Edit workspaces** adds
+`create_workspace` (an empty local workspace, or a git clone from a repository
+URL), `create_workspace_file`, `write_workspace_file` and
+`create_workspace_folder`. Both sections are opt-in even for Precursor's own
+agents, and an agent still gets a permission prompt before each write. An
+existing `workspace-fs` enablement is migrated automatically on upgrade (and a
+`workspace-fs` agent scope now resolves to `precursor`).
+
+In **Settings → MCP → Precursor capabilities**, **Select all** and **Unselect
+all** flip every section at once.
 
 `append_note` and `post_message` are deliberately different tools. `append_note`
 persists the text you hand it and returns — the right call for filing an

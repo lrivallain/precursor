@@ -15,6 +15,17 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **`create_workspace` over MCP, and workspace tools in the `precursor` server.**
+  The standalone `workspace-fs` server is folded into the built-in `precursor`
+  server as two new opt-in sections: **Workspaces** (`list_workspaces`,
+  `list_workspace_files`, `read_workspace_file`) and **Edit workspaces**
+  (`create_workspace` for an empty local workspace or a git clone,
+  `create_workspace_file`, `write_workspace_file`, `create_workspace_folder`).
+  Both stay opt-in for Precursor's own agents, and agents still get a permission
+  prompt before each write.
+- **Select all / Unselect all** for the Settings → MCP → Precursor capabilities
+  section list.
+
 - **Multiple Azure AI Foundry deployments.** Settings -> Model accepts
   adding deployment names individually as removable bubbles on one endpoint.
   Each is available in the
@@ -388,6 +399,11 @@ are the per-version history; releasing does not rewrite this file.
   receipt is now the signal, on every platform.
 
 ### Changed
+
+- **Breaking:** the `workspace-fs` MCP server is removed. A migration carries an
+  existing `workspace-fs` enablement over to `precursor` plus the two workspace
+  sections, and a `workspace-fs` agent scope now resolves to `precursor` (so
+  that step sees the rest of the server's enabled sections too).
 
 - **Agents stop archiving streaming fragments.** Every token of an agent's reply
   and thinking was written to `agent_events` as its own row and commit, with its

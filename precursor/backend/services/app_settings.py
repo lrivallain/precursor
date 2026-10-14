@@ -82,6 +82,10 @@ MCP_EXPOSE_SECTIONS: tuple[str, ...] = (
     "side_chats",
     "schedules",
     "reminders",
+    # Sandboxed file access to workspace working trees; writes (and creating a
+    # workspace, which can clone a repo) are a separate, riskier toggle.
+    "workspaces",
+    "workspaces_write",
 )
 DEFAULT_MCP_EXPOSE: dict[str, bool] = {s: False for s in MCP_EXPOSE_SECTIONS}
 

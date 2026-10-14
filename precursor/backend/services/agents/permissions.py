@@ -28,6 +28,7 @@ from precursor.backend.services.app_settings import (
 )
 from precursor.backend.services.definitions import overlay as definition_overlay
 from precursor.backend.services.events import publish_agent_changed
+from precursor.backend.services.workspaces import WORKSPACE_WRITE_TOOLS
 
 if TYPE_CHECKING:
     from precursor.backend.services.agents.manager import AgentManager
@@ -53,7 +54,12 @@ def should_auto_approve(request: Any) -> bool:
         return True
     if name == "PermissionRequestMcp":
         server = str(getattr(request, "server_name", "") or "")
-        return server == "precursor" or bool(getattr(request, "read_only", False))
+        if server == "precursor":
+            tool = str(getattr(request, "tool_name", "") or "")
+            # The workspace writes used to live in a separate server whose calls
+            # always prompted; folding them in must not silently lift that.
+            return tool not in WORKSPACE_WRITE_TOOLS
+        return bool(getattr(request, "read_only", False))
     return False
 
 

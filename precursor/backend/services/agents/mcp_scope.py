@@ -15,6 +15,11 @@ from __future__ import annotations
 _MCP_OFF_FINGERPRINT = frozenset({"\x00mcp-off"})
 
 
+# Servers folded into another one. Stored scopes (DB rows and definition files)
+# keep working: the old name resolves to the server that absorbed it.
+_LEGACY_SERVER_ALIASES = {"workspace-fs": "precursor"}
+
+
 def parse_mcp_scope(raw: str | None) -> frozenset[str] | None:
     """Parse an ``mcp_servers`` CSV into the set of servers a session may see.
 
@@ -32,7 +37,8 @@ def parse_mcp_scope(raw: str | None) -> frozenset[str] | None:
     """
     if raw is None:
         return None
-    return frozenset(part.strip() for part in raw.split(",") if part.strip())
+    names = (part.strip() for part in raw.split(","))
+    return frozenset(_LEGACY_SERVER_ALIASES.get(n, n) for n in names if n)
 
 
 #: Ceiling for a stored scope, matching the ``mcp_servers`` column width on

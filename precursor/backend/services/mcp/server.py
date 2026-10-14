@@ -49,6 +49,13 @@ _TOOLS_BY_SECTION: dict[str, list[str]] = {
         "set_reminder",
         "cancel_reminder",
     ],
+    "workspaces": ["list_workspaces", "list_workspace_files", "read_workspace_file"],
+    "workspaces_write": [
+        "create_workspace",
+        "create_workspace_file",
+        "write_workspace_file",
+        "create_workspace_folder",
+    ],
 }
 
 

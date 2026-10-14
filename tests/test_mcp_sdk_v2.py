@@ -61,7 +61,7 @@ def test_the_in_tree_stdio_servers_are_all_covered() -> None:
     # Derived from the catalogue so a new built-in is covered without editing
     # this file; this just proves the derivation found them.
     assert "precursor.backend.services.mcp.precursor_server" in _IN_TREE_SERVER_MODULES
-    assert len(_IN_TREE_SERVER_MODULES) >= 5
+    assert len(_IN_TREE_SERVER_MODULES) >= 4
 
 
 @pytest.mark.parametrize("module_name", _IN_TREE_SERVER_MODULES)

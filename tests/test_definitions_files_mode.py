@@ -1053,15 +1053,19 @@ async def test_a_pull_applies_new_files_at_once(
 async def test_the_assistant_cannot_write_definitions_in_a_workspace(
     files_mode: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from precursor.backend.services.mcp import workspace_fs_server as srv
+    from precursor.backend.services.mcp import precursor_server as srv
 
+    async def _open(_section: str) -> None:
+        return None
+
+    monkeypatch.setattr(srv, "_workspace_gate", _open)
     ws_id, root = await _workspace_holding(files_mode, monkeypatch)
-    written = await srv.write_file(
+    written = await srv.write_workspace_file(
         workspace_id=ws_id, path="defs/agents/evil.agent.yaml", content="kind: agent\n"
     )
     assert "read-only for tools" in written["error"]
     assert not (root / "defs/agents/evil.agent.yaml").exists()
-    ok = await srv.write_file(workspace_id=ws_id, path="notes/plan.md", content="# fine")
+    ok = await srv.write_workspace_file(workspace_id=ws_id, path="notes/plan.md", content="# fine")
     assert "error" not in ok
 
 
