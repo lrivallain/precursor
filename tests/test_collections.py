@@ -377,6 +377,25 @@ def test_promoting_a_chat_lands_it_in_the_named_collection() -> None:
         assert fallback["collection_id"] == _default_collection(client)["id"]
 
 
+def test_promoting_a_chat_under_a_chosen_parent_topic() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        col = _make(client, "Promote parent col")
+        parent = client.post(
+            "/api/topics", json={"title": "Promote parent", "collection_id": col["id"]}
+        ).json()
+        chat = client.post("/api/chats", json={"title": "Nest me"}).json()
+
+        topic = client.post(f"/api/chats/{chat['id']}/promote?parent_id={parent['id']}").json()
+        assert topic["parent_id"] == parent["id"]
+        assert topic["collection_id"] == col["id"]
+
+        missing = client.post("/api/chats", json={"title": "Orphan"}).json()
+        assert (
+            client.post(f"/api/chats/{missing['id']}/promote?parent_id=999999").status_code == 404
+        )
+
+
 def test_topic_permalink_survives_renames_and_moves() -> None:
     """`/t/<uuid>` is the address that doesn't move when the readable one does."""
     app = create_app()

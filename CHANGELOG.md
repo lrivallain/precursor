@@ -35,6 +35,9 @@ are the per-version history; releasing does not rewrite this file.
   into them, and reorder by dragging. Each preset carries its provider, so one
   category can fail over across providers.
 
+- **Pick where a promoted chat lands.** The "Promote to topic" confirmation now
+  offers a target collection and parent topic (or top level); the API takes
+  `parent_id` alongside `collection_id`.
 - **Multiple Azure AI Foundry deployments.** Settings -> Model accepts
   adding deployment names individually as removable bubbles on one endpoint.
   Each is available in the

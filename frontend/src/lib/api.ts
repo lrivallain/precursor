@@ -448,13 +448,13 @@ export const api = {
       request<Chat>(`/api/chats/${id}/unarchive`, { method: "POST" }),
     // Promote a flat chat into a full topic (moves the transcript over). Chats
     // have no collection, so the caller names the one it is looking at.
-    promote: (id: number, collectionId?: number | null) =>
-      request<Topic>(
-        collectionId == null
-          ? `/api/chats/${id}/promote`
-          : `/api/chats/${id}/promote?collection_id=${collectionId}`,
-        { method: "POST" },
-      ),
+    promote: (id: number, collectionId?: number | null, parentId?: number | null) => {
+      const qs = new URLSearchParams();
+      if (collectionId != null) qs.set("collection_id", String(collectionId));
+      if (parentId != null) qs.set("parent_id", String(parentId));
+      const q = qs.toString();
+      return request<Topic>(`/api/chats/${id}/promote${q ? `?${q}` : ""}`, { method: "POST" });
+    },
 
     // Chat messages (mirror topic message endpoints)
     listMessages: (chatId: number, opts?: MessageWindow) =>
