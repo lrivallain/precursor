@@ -53,6 +53,7 @@ from precursor.backend.schemas.workflow_state import (
     WorkflowStateRead,
     WorkflowStateWrite,
 )
+from precursor.backend.services import roles as roles_service
 from precursor.backend.services import workflow_state as workflow_state_service
 from precursor.backend.services.agents import workflow as workflow_svc
 from precursor.backend.services.agents.manager import get_agent_manager
@@ -541,7 +542,7 @@ async def create_workflow(
             if payload.step_timeout_seconds is not None
             else (await resolve_workflows_default_step_timeout(session)) or None
         ),
-        role_id=payload.role_id,
+        role=await roles_service.require_role(session, payload.role),
         approval_policy=payload.approval_policy,
         status="draft",
     )
@@ -632,9 +633,9 @@ async def update_workflow(
         # 0 is the "turn the watchdog off" signal (null isn't distinguishable
         # from "field omitted" in a partial update).
         workflow.step_timeout_seconds = payload.step_timeout_seconds or None
-    if payload.role_id is not None:
-        # Same convention: 0 clears the role.
-        workflow.role_id = payload.role_id or None
+    if payload.role is not None:
+        # An empty name clears the role.
+        workflow.role = await roles_service.require_role(session, payload.role)
     if "approval_policy" in payload.model_fields_set:
         # ``None`` is meaningful (inherit each agent's own policy), so this keys
         # off what the client actually sent rather than the value alone.

@@ -13,10 +13,8 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import func, select
-
 from precursor.backend.db import SessionLocal
-from precursor.backend.models import Role
+from precursor.backend.services import roles as roles_service
 
 if TYPE_CHECKING:
     from precursor.backend.services.agents.manager import AgentManager
@@ -52,13 +50,11 @@ async def cmd_role(manager: AgentManager, agent_id: int, argument: str) -> None:
         # normally never reaches here.
         raise ValueError("Usage: /role <name>")
     async with SessionLocal() as session:
-        role = (
-            await session.execute(select(Role).where(func.lower(Role.name) == name.lower()))
-        ).scalar_one_or_none()
+        role = await roles_service.find_role(session, name)
     if role is None:
         raise ValueError(f'Unknown role "{name}". Manage roles in Settings → Roles.')
-    # The default role is persisted as NULL, never by its own id.
-    await manager._patch(agent_id, role_id=None if role.is_default else role.id)
+    # The default role is persisted as NULL, never by its own name.
+    await manager._patch(agent_id, role=None if role.is_default else role.name)
     await manager._publish(agent_id)
 
 

@@ -47,7 +47,7 @@ interface ChatPanelProps {
   /** Refresh the sidebar Reminders section after a set / cancel / done. */
   onRemindersChanged?: () => void;
   /** Persist a role change for this topic (null = default). */
-  onSetRole?: (roleId: number | null) => Promise<void>;
+  onSetRole?: (roleName: string | null) => Promise<void>;
 }
 
 type PendingKind = "gh-update" | "gh-create" | "gh-close";
@@ -804,8 +804,8 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
               <>
                 <ComposerModelControls conversation={{ kind: "topic", id: topic.id, selection: topic.llm_selection, onUpdated: onTopicUpdated }} />
                 <RoleSelector
-                  value={topic.role_id ?? null}
-                  onChange={(roleId) => void onSetRole?.(roleId)}
+                  value={topic.role ?? null}
+                  onChange={(roleName) => void onSetRole?.(roleName)}
                   open={conv.roleOpen}
                   onOpenChange={conv.setRoleOpen}
                 />

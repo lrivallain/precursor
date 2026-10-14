@@ -74,6 +74,7 @@ from precursor.backend.schemas.agent_state import (
 )
 from precursor.backend.schemas.workflow import WorkflowSummary
 from precursor.backend.services import agent_state as agent_state_service
+from precursor.backend.services import roles as roles_service
 from precursor.backend.services.agents import fleet, provision, runtime
 from precursor.backend.services.agents.directives import parse_agent_command
 from precursor.backend.services.agents.manager import get_agent_manager
@@ -542,7 +543,7 @@ async def instantiate_blueprint(
         model=blueprint.model,
         topic_id=payload.topic_id,
         chat_id=payload.chat_id,
-        role_id=blueprint.role_id,
+        role=blueprint.role,
         # Blueprints carry no server scope of their own (no column for it), so a
         # stamped agent starts unscoped and is narrowed after the fact.
         mcp_servers=None,
@@ -655,7 +656,7 @@ async def _spawn_agent(
     model: str | None,
     topic_id: int | None,
     chat_id: int | None,
-    role_id: int | None,
+    role: str | None,
     mcp_servers: str | None,
     autonomy_enabled: bool,
     max_steps: int,
@@ -678,7 +679,7 @@ async def _spawn_agent(
         model=model,
         topic_id=topic_id,
         chat_id=chat_id,
-        role_id=role_id,
+        role=role,
         mcp_servers=normalize_mcp_scope(mcp_servers),
         autonomy_enabled=autonomy_enabled,
         max_steps=max_steps,
@@ -732,9 +733,9 @@ async def create_agent(
         model=payload.model or (blueprint.model if blueprint else None),
         topic_id=payload.topic_id,
         chat_id=payload.chat_id,
-        role_id=payload.role_id
-        if payload.role_id is not None
-        else (blueprint.role_id if blueprint else None),
+        role=await roles_service.require_role(session, payload.role)
+        if payload.role
+        else (blueprint.role if blueprint else None),
         mcp_servers=payload.mcp_servers,
         autonomy_enabled=payload.autonomy_enabled
         or (blueprint.autonomy_enabled if blueprint else False),
@@ -1040,9 +1041,11 @@ async def update_agent(
     # session's system preamble, baked in once at (re)creation. Tearing the live
     # session down (below) forces the new persona to be injected on the next run.
     role_changed = False
-    if "role_id" in payload.model_fields_set and payload.role_id != agent.role_id:
-        agent.role_id = payload.role_id
-        role_changed = True
+    if "role" in payload.model_fields_set:
+        new_role = await roles_service.require_role(session, payload.role)
+        if new_role != agent.role:
+            agent.role = new_role
+            role_changed = True
 
     # Retuning the step budget is a plain field write — no session rebuild.
     if payload.max_steps is not None:

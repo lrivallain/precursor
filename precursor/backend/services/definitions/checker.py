@@ -16,6 +16,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 
+from precursor.backend.schemas.definitions import DEFAULT_ROLE_ID, DEFAULT_ROLE_NAME
 from precursor.backend.schemas.definitions_api import (
     DefinitionFileSummary,
     DefinitionIssue,
@@ -112,8 +113,60 @@ def _step_references(dset: DefinitionSet) -> list[DefinitionIssue]:
     return issues
 
 
+def _role_files(dset: DefinitionSet) -> list[DefinitionIssue]:
+    """Role names are the reference, so they must be unique and the default protected."""
+    by_name: dict[str, list[str]] = defaultdict(list)
+    issues: list[DefinitionIssue] = []
+    for f, role in dset.roles():
+        by_name[role.name.lower()].append(f.path)
+        is_default_name = role.name.lower() == DEFAULT_ROLE_NAME
+        if is_default_name and role.id != DEFAULT_ROLE_ID:
+            issues.append(
+                DefinitionIssue(
+                    severity="error",
+                    path=f.path,
+                    location="name",
+                    message=f"'{DEFAULT_ROLE_NAME}' is the built-in role's name; "
+                    f"its file needs id '{DEFAULT_ROLE_ID}'",
+                )
+            )
+        elif role.id == DEFAULT_ROLE_ID and not is_default_name:
+            issues.append(
+                DefinitionIssue(
+                    severity="error",
+                    path=f.path,
+                    location="id",
+                    message=f"id '{DEFAULT_ROLE_ID}' is reserved for the role named "
+                    f"'{DEFAULT_ROLE_NAME}'",
+                )
+            )
+    for paths in by_name.values():
+        if len(paths) < 2:
+            continue
+        for path in paths:
+            others = ", ".join(p for p in paths if p != path)
+            issues.append(
+                DefinitionIssue(
+                    severity="error",
+                    path=path,
+                    location="name",
+                    message=f"another role file ({others}) has this name; "
+                    "a role is looked up by name, so each needs its own",
+                )
+            )
+    if by_name and DEFAULT_ROLE_NAME not in by_name:
+        issues.append(
+            DefinitionIssue(
+                severity="warning",
+                message=f"no role file named '{DEFAULT_ROLE_NAME}'; Precursor re-creates it "
+                "when it runs, with an empty prompt",
+            )
+        )
+    return issues
+
+
 def _role_names(dset: DefinitionSet, known: frozenset[str]) -> list[DefinitionIssue]:
-    lowered = {name.lower() for name in known}
+    lowered = {name.lower() for name in known} | {DEFAULT_ROLE_NAME}
     issues: list[DefinitionIssue] = []
     for f in dset.files:
         role = getattr(f.definition, "role", None)
@@ -163,8 +216,12 @@ def check_definitions(
     issues += _duplicate_ids(dset)
     issues += _agent_references(dset)
     issues += _step_references(dset)
-    if names.roles is not None:
-        issues += _role_names(dset, names.roles)
+    issues += _role_files(dset)
+    # A folder that carries its roles is checked against them, with or without
+    # a running instance (the CLI); an instance adds the ones it knows of.
+    file_roles = frozenset(role.name for _, role in dset.roles())
+    if names.roles is not None or file_roles:
+        issues += _role_names(dset, (names.roles or frozenset()) | file_roles)
     if names.mcp_servers is not None:
         issues += _mcp_names(dset, names.mcp_servers)
     order = {f.path: i for i, f in enumerate(dset.files)}

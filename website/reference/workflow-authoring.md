@@ -147,7 +147,7 @@ its new owner.
 | `clear_artifacts` | bool | `true` | `true` wipes the artifact blackboard between runs. Set `false` only for a deliberately cumulative board. |
 | `max_loops` | int | `3` | 1–25. Caps gate **and** approval-rework loop-backs. |
 | `step_timeout_seconds` | int \| null | `null` | 30–86400. The stall watchdog. `null` (or `0` via `PATCH`) disables it. |
-| `role` / `role_id` | — | `null` | Assistant role applied to every step's agent for the duration of the run. |
+| `role` | — | `null` | Assistant role applied to every step's agent for the duration of the run. |
 | `approval_policy` | enum \| null | `null` | Tool-approval policy for every step. `null` = each agent keeps its own. |
 | `steps` | list | `[]` | Ordered. Position is the list index. |
 

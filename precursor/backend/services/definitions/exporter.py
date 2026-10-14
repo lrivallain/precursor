@@ -34,7 +34,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from precursor.backend.models import AgentSession, Role, Workflow, WorkflowStep
+from precursor.backend.models import AgentSession, Workflow, WorkflowStep
 from precursor.backend.schemas.definitions import (
     AGENT_FILE_SUFFIX,
     WORKFLOW_FILE_SUFFIX,
@@ -159,7 +159,6 @@ def _server_list(raw: str | None) -> list[str] | None:
 @dataclass
 class _Context:
     root: Path
-    roles: dict[int, str]
     result: DefinitionsExportResult
 
     def warn(self, path: str | None, message: str, location: str | None = None) -> None:
@@ -178,8 +177,8 @@ def _agent_document(ctx: _Context, agent: AgentSession, ident: str, path: str) -
         doc["prompt"] = agent.task_prompt
     if agent.model:
         doc["model"] = agent.model
-    if agent.role_id is not None and agent.role_id in ctx.roles:
-        doc["role"] = ctx.roles[agent.role_id]
+    if agent.role:
+        doc["role"] = agent.role
     if agent.approval_policy in _APPROVAL_POLICIES:
         doc["approval_policy"] = agent.approval_policy
     elif agent.approval_policy:
@@ -253,7 +252,7 @@ def _vessel_settings_lost(vessel: AgentSession, workflow: Workflow) -> list[str]
     none.
     """
     lost = []
-    if vessel.role_id is not None and workflow.role_id is None:
+    if vessel.role and not workflow.role:
         lost.append("role")
     if vessel.approval_policy and workflow.approval_policy is None:
         lost.append("approval policy")
@@ -407,8 +406,8 @@ def _workflow_document(
         doc["icon"] = workflow.icon
     if workflow.color:
         doc["color"] = workflow.color
-    if workflow.role_id is not None and workflow.role_id in ctx.roles:
-        doc["role"] = ctx.roles[workflow.role_id]
+    if workflow.role:
+        doc["role"] = workflow.role
     if workflow.approval_policy in _APPROVAL_POLICIES:
         doc["approval_policy"] = workflow.approval_policy
     elif workflow.approval_policy:
@@ -485,7 +484,7 @@ def _existing_ids(dset: DefinitionSet) -> dict[str, dict[str, str]]:
     """``{kind: {id: path}}`` for every file whose id could be read."""
     out: dict[str, dict[str, str]] = {"agent": {}, "workflow": {}, "summary": {}}
     for f in dset.files:
-        if f.raw_id:
+        if f.raw_id and f.kind in out:
             out[f.kind].setdefault(f.raw_id, f.path)
     return out
 
@@ -527,8 +526,7 @@ async def export_definitions(
     existing = _existing_ids(dset)
     plan = _Plan(taken_paths={p.lower() for p in dset.by_path})
     result = DefinitionsExportResult(root=str(root))
-    roles = {r.id: r.name for r in (await session.execute(select(Role))).scalars()}
-    ctx = _Context(root=root, roles=roles, result=result)
+    ctx = _Context(root=root, result=result)
     pending: list[tuple[str, str]] = []
 
     agents = (

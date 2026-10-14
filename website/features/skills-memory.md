@@ -102,6 +102,11 @@ Roles are managed in **Settings → Roles**. Every install seeds one built-in
 nothing. It can be edited but not renamed or deleted, which guarantees every
 discussion always has a fallback.
 
+Conversations refer to a role by its **name**, so a role can't be renamed — create
+a new one to use another name. Deleting a role reverts whatever used it to the
+default. With [definition files](/features/definitions#roles-as-files) in files
+mode, each role is a `roles/<name>.role.yaml` file and this tab edits it.
+
 ### Picking a role where you type
 
 The role picker sits in the **composer toolbar**, next to the model controls, on

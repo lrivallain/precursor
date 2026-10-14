@@ -13,8 +13,10 @@ from pydantic import BaseModel
 
 # What a database row can be declared by.
 DefinitionKind = Literal["agent", "workflow"]
-# What a file in the folder can declare: summary templates have no row.
-DefinitionFileKind = Literal["agent", "workflow", "summary"]
+# What a file in the folder can declare: summary templates have no row, and a
+# role is looked up by name (its table row, while one still exists, is not
+# linked to the file by id).
+DefinitionFileKind = Literal["agent", "workflow", "summary", "role"]
 
 
 class DefinitionSource(BaseModel):
@@ -191,6 +193,7 @@ class MigrationRecord(BaseModel):
     regenerated: int = 0
     unchanged: int = 0
     added_from_disk: int = 0
+    roles: int = 0
 
 
 class FinalizedRecord(BaseModel):
@@ -202,6 +205,7 @@ class FinalizedRecord(BaseModel):
     step_prompts: int = 0
     workflows: int = 0
     steps: int = 0
+    roles: int = 0
 
 
 class CleanupPreview(BaseModel):
@@ -216,6 +220,7 @@ class CleanupPreview(BaseModel):
     step_prompts: int = 0
     workflows: int = 0
     steps: int = 0
+    roles: int = 0
     # Agents and workflows that have no file yet; cleanup writes one for each
     # (from the database, which still declares them) before clearing anything.
     missing_files: list[str] = []
@@ -237,6 +242,8 @@ class MigrationPreview(BaseModel):
     # A definition file in the folder, for an "Open in Files" link.
     sample_path: str | None = None
     items: list[MigrationItem] = []
+    # Roles that get a file (roles are written with the agents and workflows).
+    roles: int = 0
     issues: list[DefinitionIssue] = []
     # Why it can't run now (a workflow mid-run, two files sharing an id…).
     blockers: list[str] = []
@@ -259,6 +266,7 @@ class MigrationResult(BaseModel):
     regenerated: int = 0
     unchanged: int = 0
     added_from_disk: int = 0
+    roles: int = 0
     issues: list[DefinitionIssue] = []
     # Filled when verification failed: the switch was not made.
     mismatches: list[str] = []
@@ -270,6 +278,7 @@ class RevertResult(BaseModel):
     snapshot: str | None = None
     agents: int = 0
     workflows: int = 0
+    roles: int = 0
     # Declarations that couldn't be copied back (file missing or broken); the
     # database keeps its older values for those.
     skipped: list[str] = []

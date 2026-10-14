@@ -91,7 +91,7 @@ class AgentRunRead(BaseModel):
     # enabled server, ``"a,b"`` = only those, ``""`` = none at all.
     mcp_servers: str | None = None
     approval_policy: AgentApprovalPolicy | None = None
-    role_id: int | None = None
+    role: str | None = None
     # Files mode: the definition file this run was declared by, and its SHA-256
     # when the run opened.
     definition_path: str | None = None
@@ -135,7 +135,7 @@ class AgentSessionRead(BaseModel):
     finished_at: UtcDateTime | None = None
     topic_id: int | None = None
     chat_id: int | None = None
-    role_id: int | None = None
+    role: str | None = None
     # True when the agent is a workflow step's private execution vessel rather
     # than a reusable unit (hidden from the Agents roster).
     inline: bool = False
@@ -226,7 +226,7 @@ class AgentSessionCreate(BaseModel):
     model: str | None = None
     topic_id: int | None = None
     chat_id: int | None = None
-    role_id: int | None = None
+    role: str | None = None
     # Restrict which MCP servers the new agent may see. Null (the default)
     # attaches every enabled server; ``"a,b"`` attaches only those; ``""``
     # attaches none. Not validated against the local registry — an unknown name
@@ -260,12 +260,12 @@ class AgentUpdateRequest(BaseModel):
 
     Both fields are optional so a caller can patch either independently (the
     Settings drawer sends ``title`` on rename and ``task`` when the instructions
-    are edited). ``role_id`` reassigns the agent's Assistant Role.
+    are edited). ``role`` reassigns the agent's Assistant Role.
     """
 
     title: str | None = Field(default=None, min_length=1, max_length=200)
     task: str | None = Field(default=None, min_length=1)
-    role_id: int | None = None
+    role: str | None = None
     # Capability toggles — what the agent may draw on. Omit to leave unchanged.
     use_mcp: bool | None = None
     use_skills: bool | None = None
@@ -479,7 +479,7 @@ class AgentBlueprintRead(BaseModel):
     description: str | None = None
     task_prompt: str
     model: str | None = None
-    role_id: int | None = None
+    role: str | None = None
     approval_policy: AgentApprovalPolicy | None = None
     autonomy_enabled: bool = False
     max_steps: int = 12
@@ -496,7 +496,7 @@ class AgentBlueprintCreate(BaseModel):
     description: str | None = Field(default=None, max_length=2000)
     task_prompt: str = Field(default="", max_length=20000)
     model: str | None = None
-    role_id: int | None = None
+    role: str | None = None
     approval_policy: AgentApprovalPolicy | None = None
     autonomy_enabled: bool = False
     max_steps: int = Field(default=12, ge=1, le=100)
@@ -511,7 +511,7 @@ class AgentBlueprintUpdate(BaseModel):
     description: str | None = Field(default=None, max_length=2000)
     task_prompt: str | None = Field(default=None, max_length=20000)
     model: str | None = None
-    role_id: int | None = None
+    role: str | None = None
     approval_policy: AgentApprovalPolicy | None = None
     autonomy_enabled: bool | None = None
     max_steps: int | None = Field(default=None, ge=1, le=100)

@@ -1037,8 +1037,8 @@ async def _snapshot_step_overrides(run: AgentRun, workflow: Workflow, step: Work
     # happens to carry". Without this a narrow step would silently inherit a
     # scope it never asked for.
     run.mcp_servers = step.mcp_servers
-    if workflow.role_id is not None:
-        run.role_id = workflow.role_id
+    if workflow.role is not None:
+        run.role = workflow.role
     if workflow.approval_policy is not None:
         # The pipeline's tool-approval stance wins for the duration of the run.
         # On the run rather than the agent, so a shared agent keeps its own
@@ -1079,7 +1079,7 @@ async def _open_agent_run(
         use_memory=agent.use_memory,
         mcp_servers=agent.mcp_servers,
         approval_policy=agent.approval_policy,
-        role_id=agent.role_id,
+        role=agent.role,
         started_at=datetime.now(UTC),
     )
     if step is not None:

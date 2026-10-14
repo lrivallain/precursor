@@ -92,7 +92,7 @@ from precursor.backend.services.app_settings import (
     resolve_scheduled_run_timeout_seconds,
 )
 from precursor.backend.services.collections import (
-    resolve_collection_default_role_id,
+    resolve_collection_default_role,
     resolve_collection_id,
 )
 from precursor.backend.services.links import app_base_url
@@ -1527,7 +1527,7 @@ async def create_schedule(
             title=title,
             slug=await allocate_unique_slug(session, slugify(title) or "scheduled-topic", Topic),
             collection_id=collection_id,
-            role_id=await resolve_collection_default_role_id(session, collection_id),
+            role=await resolve_collection_default_role(session, collection_id),
         )
         session.add(topic)
         await session.flush()

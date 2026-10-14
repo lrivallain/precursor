@@ -35,10 +35,10 @@ and are read from the folder whatever the mode.
 | Triggers | Stay in the database — the webhook token is a secret and must never reach a git-tracked file. |
 | Ad-hoc agents (`/agent <task>` in a topic or chat) | Get a file like every other agent, under `agents/adhoc/`, so there is a single way to read a declaration. |
 | Archive | A database flag only; the file is left in place so paths and references stay stable. |
-| Roles | Referenced by name (`role: Analyst`), matched case-insensitively. A name that doesn't exist on the instance is a **warning** in the check, not an error. Roles themselves stay in the database for now. |
+| Roles | Files too (`roles/<slug>.role.yaml`). Everything refers to a role by **name** (`role: Analyst`), matched case-insensitively, so a conversation stores the name, not an id. A name nothing defines falls back to the `default` role with a log warning; in the check it is a **warning** when no role file or instance role has it. A role can't be renamed in the app (a rename would orphan what uses the old name); `default` can be neither renamed nor deleted. |
 
-Out of scope for now: roles, blueprints and the MCP server registry stay in
-the database; skills are already files.
+Out of scope for now: blueprints and the MCP server registry stay in the
+database; skills are already files.
 
 ## Folder layout
 
@@ -47,6 +47,9 @@ the database; skills are already files.
 ├── agents/
 │   ├── inbox-triager.agent.yaml
 │   └── adhoc/            # agents spawned from a topic or chat
+├── roles/                # assistant roles (personas)
+│   ├── default.role.yaml
+│   └── analyst.role.yaml
 ├── summaries/            # live summary templates
 │   └── customer-call.summary.yaml
 └── workflows/
@@ -143,6 +146,37 @@ never re-points a reference.
 | `on_reject` | Approval only: `rework` (default), `stop` or `skip`. |
 | `context` | `mode: auto` (previous output + artifacts, default), `selected` (only the steps listed in `from`), or `none`. |
 | `capabilities` | Per-step `mcp` / `skills` / `memory` / `mcp_servers`; an omitted toggle inherits the agent. |
+
+## Role files — `*.role.yaml`
+
+An [assistant role](../website/features/skills-memory.md#assistant-roles): a
+persona injected into every turn of whatever adopts it.
+
+```yaml
+kind: role
+id: analyst
+name: Analyst          # the reference: topics, chats, agents and workflows use it
+description: Evidence first, conclusions second.
+prompt: |
+  You are a careful analyst. State what the evidence shows before what you
+  conclude from it.
+```
+
+- `name` is unique (case-insensitively) and is what everything refers to; two
+  files with the same name are an error on both. The prompt may reference
+  skills (`/rewrite`), expanded when the role is applied.
+- The built-in role lives in `roles/default.role.yaml` with `id: default` and
+  `name: default`. Precursor re-creates it, with an empty prompt, when a
+  folder in files mode has none.
+- A prompt is content, not a permission: editing a role file never waits for
+  review.
+- **Files mode:** the role list comes from the files; **Settings → Roles**
+  writes them (new, edit the prompt, delete — deleting clears the role from
+  whatever used it). The **migration wizard** writes a file for every role in
+  the database, and **Switch back to the database** copies the files' prompts
+  back into the table. The cleanup blanks the table's prompts.
+- The `roles` table and the old `role_id` columns stay in the schema for now;
+  conversations read and write the `role` name columns.
 
 ## Summary template files — `*.summary.yaml`
 
@@ -271,7 +305,9 @@ The check runs every rule above per file, then across the folder:
 | The same `id` in two files | error, on both files |
 | A step's `agent:` path that points at no file (with a *did you mean* when a file of that name exists elsewhere) | error |
 | A step whose agent file has errors | error |
-| A role name that doesn't exist on this instance | warning |
+| Two role files with the same name; the `default` name and id used apart | error |
+| A role name that no role file or instance role has | warning |
+| A folder with role files but no `default` one | warning |
 | An MCP server name that isn't configured on this instance | warning |
 | Database agents or workflows with no file yet | warning |
 
@@ -627,7 +663,9 @@ Each step ships on its own and is validated before the next starts.
    ✅ **Migration wizard** in Settings → Definition files — previewed with
    each file's content, verified, reversible — ending, on request, with the
    **database cleanup** (irreversible).
-9. The old declaration columns are dropped from the schema (an Alembic
+   ✅ **Roles** are definition files too, referenced by name.
+9. The old declaration columns — and the `roles` table with the `role_id`
+   columns they replaced — are dropped from the schema (an Alembic
    migration for every install). Before that, the upgrade must migrate and
    clean up every install still in database mode automatically — refusing to
    drop anything if it doesn't verify.

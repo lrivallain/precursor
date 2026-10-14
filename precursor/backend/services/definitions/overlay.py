@@ -30,12 +30,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import event, inspect, select
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import set_committed_value
 
 from precursor.backend.config import get_settings
-from precursor.backend.models import AgentSession, AppSetting, Role, Workflow, WorkflowStep
+from precursor.backend.models import AgentSession, AppSetting, Workflow, WorkflowStep
 from precursor.backend.schemas.definitions import (
     AgentDefinition,
     WorkflowDefinition,
@@ -56,7 +56,6 @@ SNAPSHOT_MAX_AGE = 1.0
 
 _lock = threading.Lock()
 _snapshot: tuple[float, Path, DefinitionSet] | None = None
-_role_ids: dict[str, int] = {}
 
 
 @dataclass(frozen=True)
@@ -164,54 +163,6 @@ def invalidate() -> None:
         _snapshot = None
 
 
-# --- Roles ------------------------------------------------------------------
-# Files name a role; rows hold its id. Listeners are synchronous and can't
-# query, so the name → id map is kept here and refreshed at startup and on every
-# role change.
-
-
-async def refresh_role_cache(session: AsyncSession) -> None:
-    rows = (await session.execute(select(Role.id, Role.name))).all()
-    fresh = {name.lower(): role_id for role_id, name in rows}
-    with _lock:
-        _role_ids.clear()
-        _role_ids.update(fresh)
-
-
-def _role_id(name: str | None) -> int | None:
-    if not name:
-        return None
-    with _lock:
-        return _role_ids.get(name.lower())
-
-
-# Kept current from wherever a role changes (the roles API, a transfer import,
-# the demo seed) rather than by each caller remembering to refresh.
-
-
-@event.listens_for(Role, "after_insert")
-def _role_inserted(_mapper: object, _connection: object, target: Role) -> None:
-    with _lock:
-        _role_ids[target.name.lower()] = target.id
-
-
-@event.listens_for(Role, "after_update")
-def _role_updated(_mapper: object, _connection: object, target: Role) -> None:
-    old_names = inspect(target).attrs.name.history.deleted
-    with _lock:
-        for old in old_names:
-            if isinstance(old, str) and _role_ids.get(old.lower()) == target.id:
-                del _role_ids[old.lower()]
-        _role_ids[target.name.lower()] = target.id
-
-
-@event.listens_for(Role, "after_delete")
-def _role_deleted(_mapper: object, _connection: object, target: Role) -> None:
-    with _lock:
-        if _role_ids.get(target.name.lower()) == target.id:
-            del _role_ids[target.name.lower()]
-
-
 # --- File → column values ---------------------------------------------------
 
 
@@ -225,7 +176,7 @@ def agent_columns(defn: AgentDefinition) -> dict[str, Any]:
         "title": defn.title,
         "task_prompt": defn.prompt,
         "model": defn.model,
-        "role_id": _role_id(defn.role),
+        "role": defn.role,
         "approval_policy": defn.approval_policy,
         "autonomy_enabled": defn.autonomy.enabled,
         "max_steps": defn.autonomy.max_steps,
@@ -250,7 +201,7 @@ def vessel_columns(step: WorkflowStepDefinition) -> dict[str, Any]:
         "title": (step.name or prompt).strip()[:200] or "Inline step",
         "task_prompt": prompt,
         "model": step.model,
-        "role_id": None,
+        "role": None,
         "approval_policy": None,
         "autonomy_enabled": False,
         "max_steps": 12,
@@ -269,7 +220,7 @@ def workflow_columns(defn: WorkflowDefinition) -> dict[str, Any]:
         "description": defn.description,
         "icon": defn.icon,
         "color": defn.color,
-        "role_id": _role_id(defn.role),
+        "role": defn.role,
         "approval_policy": defn.approval_policy,
         "clear_artifacts": defn.clear_artifacts,
         "max_loops": defn.max_loops,

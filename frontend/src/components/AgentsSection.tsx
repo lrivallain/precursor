@@ -199,7 +199,7 @@ export function AgentsMain({
   onOpenWorkflow: (id: number) => void;
   onOpenSettings: () => void;
   onOpenMigration?: () => void;
-  onSetRole: (roleId: number | null) => Promise<void>;
+  onSetRole: (roleName: string | null) => Promise<void>;
 }) {
   const {
     agents,

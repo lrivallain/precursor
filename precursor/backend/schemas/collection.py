@@ -18,7 +18,7 @@ class CollectionBase(BaseModel):
     icon: str | None = Field(default=None, max_length=64)
     # Default Assistant Role for new topics in this collection; null = built-in
     # default role.
-    default_role_id: int | None = None
+    default_role: str | None = None
 
     @field_validator("accent")
     @classmethod
@@ -41,7 +41,7 @@ class CollectionUpdate(BaseModel):
     slug: str | None = Field(default=None, min_length=1, max_length=255)
     # Send explicit null to clear the collection's default role; omit to leave
     # it unchanged (relies on `exclude_unset=True` in the router).
-    default_role_id: int | None = None
+    default_role: str | None = None
 
     @field_validator("accent")
     @classmethod

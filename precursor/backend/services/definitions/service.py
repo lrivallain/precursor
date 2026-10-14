@@ -13,7 +13,7 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from precursor.backend.models import AgentSession, Role, Workflow
+from precursor.backend.models import AgentSession, Workflow
 from precursor.backend.schemas.definitions_api import (
     DefinitionIssue,
     DefinitionsCheckReport,
@@ -21,6 +21,7 @@ from precursor.backend.schemas.definitions_api import (
     UnlinkedAgent,
     UnlinkedWorkflow,
 )
+from precursor.backend.services import roles as roles_service
 from precursor.backend.services.definitions import overlay
 from precursor.backend.services.definitions.checker import InstanceNames, build_report
 from precursor.backend.services.definitions.loader import DefinitionSet, load_definitions
@@ -28,7 +29,7 @@ from precursor.backend.services.mcp.client import get_mcp_client_manager
 
 
 async def instance_names(session: AsyncSession) -> InstanceNames:
-    roles = frozenset((await session.execute(select(Role.name))).scalars())
+    roles = frozenset(r.name for r in await roles_service.list_roles(session))
     servers = frozenset(entry.name for entry in get_mcp_client_manager().list_entries())
     return InstanceNames(roles=roles, mcp_servers=servers)
 

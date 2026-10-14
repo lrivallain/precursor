@@ -265,10 +265,9 @@ class AgentSession(Base, TimestampMixin):
 
     # Assistant Role appended to the agent's system preamble to give it a
     # persistent persona. Null resolves to the default role (no persona
-    # injected). SET NULL on delete reverts to default.
-    role_id: Mapped[int | None] = mapped_column(
-        ForeignKey("roles.id", ondelete="SET NULL"), nullable=True, index=True
-    )
+    # injected). Stored by name, resolved at turn time; an unknown name falls
+    # back to the default role.
+    role: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
 
     # Last time the runtime reported activity for this session (event arrival).
     # MIRROR of ``AgentRun.last_activity_at``.

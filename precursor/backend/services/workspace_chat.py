@@ -98,7 +98,7 @@ async def build_workspace_system_prompt(
             )
 
     system_prompt = _SYSTEM_PROMPT + file_context + _workspace_tool_context(ws, path)
-    role_prompt = await resolve_role_prompt(session, ws.role_id)
+    role_prompt = await resolve_role_prompt(session, ws.role)
     if role_prompt:
         system_prompt += (
             f"\n\nActive assistant role — adopt this persona for every reply:\n{role_prompt}"

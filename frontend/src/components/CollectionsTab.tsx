@@ -70,7 +70,7 @@ export function CollectionsTab({ onChanged }: Props) {
         <ul className="space-y-1.5">
           {collections.map((c) => {
             const color = collectionColor(c.accent);
-            const defaultRole = roles.find((r) => r.id === c.default_role_id);
+            const defaultRole = roles.find((r) => r.name === c.default_role);
             return (
               <li
                 key={c.id}
@@ -159,8 +159,8 @@ function CollectionEditor({ collection, onClose, onSaved }: EditorProps) {
   const [description, setDescription] = useState(collection?.description ?? "");
   const [repo, setRepo] = useState(collection?.github_repo ?? "");
   const [accent, setAccent] = useState<CollectionAccent>(collection?.accent ?? "sky");
-  const [defaultRoleId, setDefaultRoleId] = useState<number | null>(
-    collection?.default_role_id ?? null,
+  const [defaultRole, setDefaultRole] = useState<string | null>(
+    collection?.default_role ?? null,
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -180,7 +180,7 @@ function CollectionEditor({ collection, onClose, onSaved }: EditorProps) {
       description: description.trim() || null,
       github_repo: repo.trim() || null,
       accent,
-      default_role_id: defaultRoleId,
+      default_role: defaultRole,
     };
     try {
       if (collection) {
@@ -274,15 +274,15 @@ function CollectionEditor({ collection, onClose, onSaved }: EditorProps) {
           <label className="block space-y-1">
             <span className="text-xs text-muted">Default role</span>
             <select
-              value={defaultRoleId ?? ""}
+              value={defaultRole ?? ""}
               onChange={(e) =>
-                setDefaultRoleId(e.target.value ? Number(e.target.value) : null)
+                setDefaultRole(e.target.value || null)
               }
               className="w-full px-2 py-1.5 text-sm bg-surface border border-border rounded outline-none focus:border-accent"
             >
               <option value="">Default role</option>
               {selectableRoles.map((role) => (
-                <option key={role.id} value={role.id}>
+                <option key={role.name} value={role.name}>
                   {role.name}
                 </option>
               ))}

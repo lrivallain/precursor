@@ -32,7 +32,7 @@ export interface Topic {
   pinned: boolean;
   kind: TopicKind;
   archived_at: string | null;
-  role_id: number | null;
+  role: string | null;
   // Collection the topic belongs to. Membership cascades down the tree, so a
   // subtree is never split across collections.
   collection_id: number | null;
@@ -123,7 +123,7 @@ export interface Chat {
   archived_at: string | null;
   last_read_at: string | null;
   unread_count: number;
-  role_id: number | null;
+  role: string | null;
   created_at: string;
   updated_at: string;
   /** Side chat: the topic it was started from (null once that topic is deleted). */
@@ -165,7 +165,7 @@ export interface ChatCreate {
   pinned?: boolean;
   slug?: string | null;
   /** Assistant Role to assign at creation. Null/omitted = the default role. */
-  role_id?: number | null;
+  role?: string | null;
   /**
    * Declares `title` a placeholder the client picked rather than something the
    * user typed, letting the server replace it with one derived from the first
@@ -181,7 +181,7 @@ export interface ChatUpdate {
   description_as_system_prompt?: boolean;
   pinned?: boolean;
   slug?: string | null;
-  role_id?: number | null;
+  role?: string | null;
 }
 
 // One-shot date/time reminder for a topic or chat. Datetimes are ISO-8601 UTC.
@@ -267,7 +267,7 @@ export interface AgentRun {
   /** The server allowlist this run executes under (see `AgentSession`). */
   mcp_servers: string | null;
   approval_policy: AgentApprovalPolicy | null;
-  role_id: number | null;
+  role: string | null;
   /** Files mode: the definition file this run was declared by, and its SHA-256. */
   definition_path?: string | null;
   definition_hash?: string | null;
@@ -321,7 +321,7 @@ export interface AgentSession {
   chat_id: number | null;
   // Assistant Role appended to the agent's system preamble. Null resolves to
   // the default role (no persona).
-  role_id: number | null;
+  role: string | null;
   /** True when the agent is a workflow step's private execution vessel. */
   inline: boolean;
   /** What this agent may draw on (all default on). */
@@ -485,7 +485,7 @@ export interface AgentSessionCreate {
   model?: string | null;
   topic_id?: number | null;
   chat_id?: number | null;
-  role_id?: number | null;
+  role?: string | null;
   autonomy_enabled?: boolean;
   max_steps?: number;
   approval_policy?: AgentApprovalPolicy | null;
@@ -656,7 +656,7 @@ export interface AgentBlueprint {
   description: string | null;
   task_prompt: string;
   model: string | null;
-  role_id: number | null;
+  role: string | null;
   approval_policy: AgentApprovalPolicy | null;
   autonomy_enabled: boolean;
   max_steps: number;
@@ -673,7 +673,7 @@ export interface AgentBlueprintCreate {
   description?: string | null;
   task_prompt?: string;
   model?: string | null;
-  role_id?: number | null;
+  role?: string | null;
   approval_policy?: AgentApprovalPolicy | null;
   autonomy_enabled?: boolean;
   max_steps?: number;
@@ -697,7 +697,7 @@ export interface AgentBlueprintUpdate {
   description?: string | null;
   task_prompt?: string;
   model?: string | null;
-  role_id?: number | null;
+  role?: string | null;
   approval_policy?: AgentApprovalPolicy | null;
   autonomy_enabled?: boolean;
   max_steps?: number;
@@ -944,7 +944,7 @@ export interface Workflow {
   /** Seconds a step may run before the watchdog stops it (null = disabled). */
   step_timeout_seconds: number | null;
   /** Assistant Role applied to every step's agent while the workflow runs. */
-  role_id: number | null;
+  role: string | null;
   /**
    * Tool-approval policy applied to every step's agent while it runs; null
    * leaves each agent's own setting alone. The lever that makes an unattended
@@ -1009,7 +1009,7 @@ export interface WorkflowCreate {
   clear_artifacts?: boolean;
   max_loops?: number;
   step_timeout_seconds?: number | null;
-  role_id?: number | null;
+  role?: string | null;
   approval_policy?: AgentApprovalPolicy | null;
   steps?: WorkflowStepInput[];
 }
@@ -1024,7 +1024,7 @@ export interface WorkflowUpdate {
   /** Seconds before the stall watchdog fires; 0 disables it. */
   step_timeout_seconds?: number | null;
   /** Assistant Role for the whole workflow; 0 clears it. */
-  role_id?: number | null;
+  role?: string | null;
   /** Tool-approval policy for every step; null means inherit each agent's own. */
   approval_policy?: AgentApprovalPolicy | null;
   /** When provided, replaces the entire ordered step list. Omit to leave untouched. */
@@ -1105,7 +1105,7 @@ export interface TransferImportResult {
 
 export type DefinitionKind = "agent" | "workflow";
 /** What a file in the definitions folder can declare: summary templates have no row. */
-export type DefinitionFileKind = DefinitionKind | "summary";
+export type DefinitionFileKind = DefinitionKind | "summary" | "role";
 
 /**
  * Where an agent's or workflow's declaration comes from, in files mode:
@@ -1221,6 +1221,7 @@ export interface MigrationRecord {
   regenerated: number;
   unchanged: number;
   added_from_disk: number;
+  roles?: number;
 }
 
 export interface FinalizedRecord {
@@ -1230,6 +1231,7 @@ export interface FinalizedRecord {
   step_prompts: number;
   workflows: number;
   steps: number;
+  roles?: number;
 }
 
 export interface CleanupPreview {
@@ -1240,6 +1242,8 @@ export interface CleanupPreview {
   step_prompts: number;
   workflows: number;
   steps: number;
+  /** Roles whose prompt the cleanup blanks in the database (the files hold them). */
+  roles?: number;
   /** Agents and workflows without a file yet; the cleanup writes them first. */
   missing_files: string[];
 }
@@ -1258,6 +1262,8 @@ export interface MigrationPreview {
   /** A definition file in the folder, for an "Open in Files" link. */
   sample_path: string | null;
   items: MigrationItem[];
+  /** Roles that get a file (database stage) or already have one. */
+  roles?: number;
   issues: DefinitionIssue[];
   blockers: string[];
   ready: boolean;
@@ -1272,6 +1278,7 @@ export interface MigrationResult {
   regenerated: number;
   unchanged: number;
   added_from_disk: number;
+  roles?: number;
   issues: DefinitionIssue[];
   mismatches: string[];
 }
@@ -1302,6 +1309,7 @@ export interface RevertResult {
   snapshot: string | null;
   agents: number;
   workflows: number;
+  roles?: number;
   skipped: string[];
 }
 
@@ -2125,12 +2133,13 @@ export interface SkillUpdate {
 // Assistant Role — a persistent persona (system prompt) attached to a
 // discussion. Mirrors the backend RoleRead schema.
 export interface Role {
-  id: number;
+  // A role is identified by its name: there is no id, and conversations store the name.
   name: string;
   system_prompt: string;
   is_default: boolean;
-  created_at: string;
-  updated_at: string;
+  description?: string | null;
+  // The role file, relative to the definitions folder; null for a role held in the database.
+  path?: string | null;
 }
 
 export interface RoleCreate {
@@ -2139,6 +2148,7 @@ export interface RoleCreate {
 }
 
 export interface RoleUpdate {
+  // Renaming isn't supported: a different name is refused.
   name?: string;
   system_prompt?: string;
 }
@@ -2155,7 +2165,7 @@ export interface Collection {
   accent: CollectionAccent;
   icon: string | null;
   // Default Assistant Role for new topics here; null = built-in default role.
-  default_role_id: number | null;
+  default_role: string | null;
   is_default: boolean;
   topic_count: number;
   created_at: string;
@@ -2178,7 +2188,7 @@ export interface CollectionCreate {
   github_repo?: string | null;
   accent?: CollectionAccent;
   icon?: string | null;
-  default_role_id?: number | null;
+  default_role?: string | null;
 }
 
 export interface CollectionUpdate {
@@ -2187,7 +2197,7 @@ export interface CollectionUpdate {
   github_repo?: string | null;
   accent?: CollectionAccent;
   icon?: string | null;
-  default_role_id?: number | null;
+  default_role?: string | null;
 }
 
 export interface Memory {
@@ -2220,7 +2230,7 @@ export interface Workspace {
   subdir: string | null;
   cloned_at: string | null;
   last_synced_at: string | null;
-  role_id: number | null;
+  role: string | null;
   /** Holds the definition files (the built-in "Definitions" workspace). */
   hosts_definitions?: boolean;
   created_at: string;
@@ -2237,7 +2247,7 @@ export interface WorkspaceCreate {
 }
 
 export interface WorkspaceUpdate {
-  role_id?: number | null;
+  role?: string | null;
 }
 
 export interface WorkspaceFileNode {
@@ -2613,7 +2623,7 @@ export interface MeetingSession {
   topic_id: number | null;
   // Assistant Role grounding the live assistant (insights/tips, Q&A, chat).
   // Null resolves to the default role (no persona).
-  role_id: number | null;
+  role: string | null;
   // Chat spawned for the "Ask assistant" tab (created on first ask), or null.
   chat_id: number | null;
   // Map of raw diarization label (e.g. "Guest-2") -> chosen display name.
@@ -2657,7 +2667,7 @@ export interface MeetingSessionUpdate {
   title?: string | null;
   language?: string | null;
   topic_id?: number | null;
-  role_id?: number | null;
+  role?: string | null;
   status?: MeetingStatus;
   notes?: string | null;
   summary?: string | null;

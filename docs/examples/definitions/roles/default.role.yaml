@@ -1,0 +1,8 @@
+# yaml-language-server: $schema=../../../schemas/role.schema.json
+# The role that applies when nothing else is chosen. Its name and id are
+# reserved; an empty prompt injects nothing.
+kind: role
+id: default
+name: default
+description: Applies when nothing else is chosen; empty injects nothing.
+prompt: ""

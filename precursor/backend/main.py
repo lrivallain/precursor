@@ -74,6 +74,7 @@ from precursor.backend.routers import (
 from precursor.backend.services.definitions import overlay as definition_overlay
 from precursor.backend.services.llm import ProviderConfigurationError
 from precursor.backend.services.llm.one_shot import LLMCallFailed
+from precursor.backend.services.roles import ensure_default_role_file
 
 logger = logging.getLogger(__name__)
 
@@ -81,11 +82,11 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await init_db()
-    # Imported above for its load listeners; files mode also needs role names.
     async with SessionLocal() as session:
-        await definition_overlay.refresh_role_cache(session)
         # Which source declares agents and workflows (the migration's choice).
         await definition_overlay.refresh_source(session)
+        # Files mode: roles live in the folder, where the default must exist.
+        ensure_default_role_file()
         from precursor.backend.services.app_settings import resolve_agents_enabled
         from precursor.backend.services.definitions.anchors import restore_pins
         from precursor.backend.services.definitions.home import ensure_definitions_workspace

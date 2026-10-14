@@ -46,7 +46,6 @@ async def env(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Path]:
                 row.value = json.dumps(value)
         await session.commit()
         await overlay.refresh_source(session)
-        await overlay.refresh_role_cache(session)
     settings = get_settings()
     monkeypatch.setattr(settings, "definitions_source", "database")
     root = Path(settings.definitions_dir)

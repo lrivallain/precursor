@@ -50,10 +50,8 @@ class MeetingSession(Base, TimestampMixin):
 
     # Assistant Role that grounds the live assistant (insights/tips, Q&A and the
     # Ask-assistant chat). Null resolves to the default role (no persona
-    # injected). SET NULL on delete reverts to default.
-    role_id: Mapped[int | None] = mapped_column(
-        ForeignKey("roles.id", ondelete="SET NULL"), nullable=True, index=True
-    )
+    # injected). Stored by name; an unknown name falls back to it.
+    role: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
 
     # Chat spawned for the "Ask assistant" tab, created on the first question and
     # grounded on the live context. Logically references chats.id; kept as a

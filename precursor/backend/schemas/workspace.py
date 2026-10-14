@@ -31,7 +31,7 @@ class WorkspaceRead(BaseModel):
     subdir: str | None = None
     cloned_at: datetime | None = None
     last_synced_at: datetime | None = None
-    role_id: int | None = None
+    role: str | None = None
     # Holds the agent and workflow definition files (the built-in "Agents &
     # workflows" workspace, or the one PRECURSOR_DEFINITIONS_WORKSPACE names).
     hosts_definitions: bool = False
@@ -41,7 +41,7 @@ class WorkspaceRead(BaseModel):
 
 class WorkspaceUpdate(BaseModel):
     # Currently only the assigned Assistant Role is mutable post-creation.
-    role_id: int | None = None
+    role: str | None = None
 
 
 class FileNode(BaseModel):

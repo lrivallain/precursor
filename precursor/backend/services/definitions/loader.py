@@ -1,4 +1,4 @@
-"""Read a definitions folder into validated agent, workflow and summary definitions.
+"""Read a definitions folder into validated agent, workflow, summary and role definitions.
 
 Parsing is cached per file on its stat fingerprint, so re-checking a folder
 only re-reads the files that changed. Loading never raises for a bad file: every
@@ -22,6 +22,7 @@ from precursor.backend.schemas.definitions import (
     DEFINITION_MODELS,
     FILE_SUFFIXES,
     AgentDefinition,
+    RoleDefinition,
     SummaryDefinition,
     WorkflowDefinition,
 )
@@ -29,7 +30,7 @@ from precursor.backend.schemas.definitions_api import DefinitionFileKind, Defini
 
 MAX_DEFINITION_BYTES = 1_000_000
 
-Definition = AgentDefinition | WorkflowDefinition | SummaryDefinition
+Definition = AgentDefinition | WorkflowDefinition | SummaryDefinition | RoleDefinition
 
 
 @dataclass(frozen=True)
@@ -48,7 +49,7 @@ class LoadedFile:
     def name(self) -> str | None:
         if isinstance(self.definition, AgentDefinition):
             return self.definition.title
-        if isinstance(self.definition, WorkflowDefinition | SummaryDefinition):
+        if isinstance(self.definition, WorkflowDefinition | SummaryDefinition | RoleDefinition):
             return self.definition.name
         return None
 
@@ -86,6 +87,9 @@ class DefinitionSet:
         return [
             (f, f.definition) for f in self.files if isinstance(f.definition, SummaryDefinition)
         ]
+
+    def roles(self) -> list[tuple[LoadedFile, RoleDefinition]]:
+        return [(f, f.definition) for f in self.files if isinstance(f.definition, RoleDefinition)]
 
 
 def kind_for(name: str) -> DefinitionFileKind | None:
@@ -301,7 +305,7 @@ def _load_file(root: Path, path: Path) -> LoadedFile:
 
 
 def load_definitions(root: Path) -> DefinitionSet:
-    """Load every ``*.agent.yaml`` / ``*.workflow.yaml`` / ``*.summary.yaml`` under ``root``."""
+    """Load every ``*.agent.yaml`` / ``*.workflow.yaml`` / ``*.summary.yaml`` / ``*.role.yaml`` under ``root``."""
     if not root.is_dir():
         return DefinitionSet(root=root, exists=False)
     paths = _scan(root)

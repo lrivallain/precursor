@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "``roles/<slug>.role.yaml``: a persona applied to every turn it is assigned to.",
+  "properties": {
+    "kind": {
+      "const": "role",
+      "type": "string"
+    },
+    "format": {
+      "default": 1,
+      "maximum": 1,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "id": {
+      "description": "Stable identity linking this file to its run history. Never change it; renaming or moving the file keeps the history as long as the id stays.",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+      "type": "string"
+    },
+    "name": {
+      "description": "How agents, workflows, topics and chats refer to this role. Matched case-insensitively and unique across the folder. Renaming it leaves whatever names it by the old name on the default role.",
+      "maxLength": 64,
+      "minLength": 1,
+      "type": "string"
+    },
+    "description": {
+      "anyOf": [
+        {
+          "maxLength": 300,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "One line on what the persona is for."
+    },
+    "prompt": {
+      "default": "",
+      "description": "The system prompt injected into every turn while the role is assigned. May reference skills (`/rewrite`). Empty injects nothing.",
+      "maxLength": 20000,
+      "type": "string"
+    }
+  },
+  "required": [
+    "kind",
+    "id",
+    "name"
+  ],
+  "title": "Precursor assistant role",
+  "type": "object"
+}

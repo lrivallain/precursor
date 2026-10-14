@@ -4,9 +4,9 @@ import { useRoles } from "../lib/rolesStore";
 import { ComposerSelectMenu } from "./ComposerSelectMenu";
 
 interface Props {
-  /** Currently assigned role id on the discussion (null = default). */
-  value: number | null;
-  onChange: (roleId: number | null) => void;
+  /** Name of the role assigned to the discussion (null = default). */
+  value: string | null;
+  onChange: (roleName: string | null) => void;
   /** Controlled open state so `/role` (no args) can pop it open. */
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -50,13 +50,13 @@ export function RoleSelector({
   }, [open, onOpenChange, variant]);
 
   const defaultRole = roles.find((r) => r.is_default);
-  // A null/unknown role_id resolves to the default role server-side.
-  const selected = roles.find((r) => r.id === value) ?? defaultRole ?? null;
+  // A null/unknown role resolves to the default role server-side.
+  const selected = roles.find((r) => r.name.toLowerCase() === value?.toLowerCase()) ?? defaultRole ?? null;
   const label = selected?.name ?? "default";
 
-  function choose(roleId: number | null) {
+  function choose(roleName: string | null) {
     onOpenChange(false);
-    onChange(roleId);
+    onChange(roleName);
   }
 
   if (variant === "composer") {
@@ -68,11 +68,11 @@ export function RoleSelector({
         // "default" on its own would read as a sibling of "Default ctx", so
         // the role pill keeps a glyph the model/context pills don't need.
         icon={<Drama size={13} className="shrink-0 opacity-70" />}
-        value={String(selected?.id ?? "")}
+        value={selected?.name ?? ""}
         groups={[
           {
             options: roles.map((r) => ({
-              value: String(r.id),
+              value: r.name,
               label: r.name,
               description: r.system_prompt || undefined,
             })),
@@ -82,8 +82,8 @@ export function RoleSelector({
         open={open}
         onOpenChange={onOpenChange}
         onSelect={(v) => {
-          const role = roles.find((r) => String(r.id) === v);
-          choose(role && !role.is_default ? role.id : null);
+          const role = roles.find((r) => r.name === v);
+          choose(role && !role.is_default ? role.name : null);
         }}
       />
     );
@@ -113,14 +113,14 @@ export function RoleSelector({
           className="absolute left-0 top-full mt-1 z-40 min-w-[12rem] max-w-[16rem] rounded-md border border-border bg-bg shadow-lg py-1 text-sm max-h-[60vh] overflow-y-auto"
         >
           {roles.map((r) => {
-            const isSelected = selected?.id === r.id;
+            const isSelected = selected?.name === r.name;
             return (
               <button
-                key={r.id}
+                key={r.name}
                 type="button"
                 role="menuitemradio"
                 aria-checked={isSelected}
-                onClick={() => choose(r.is_default ? null : r.id)}
+                onClick={() => choose(r.is_default ? null : r.name)}
                 className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-surface"
               >
                 <Check

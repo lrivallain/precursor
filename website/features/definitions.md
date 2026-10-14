@@ -51,6 +51,17 @@ Steps have **keys**, so references (`on_fail`, context sources,
 unknown keys, duplicate keys and contradictions are errors — and JSON Schemas
 give editors completion.
 
+## Roles as files
+
+[Assistant roles](/features/skills-memory#assistant-roles) are definition files
+too — `roles/<name>.role.yaml` with a `name` and a `prompt`. Topics, chats,
+agents and workflows refer to a role by its **name** (case-insensitive), so it
+can't be renamed in the app, and a name nothing defines falls back to the
+`default` role. `roles/default.role.yaml` is always there: Precursor re-creates
+it when it's missing. The migration wizard writes your existing roles with the
+agents and workflows, and switching back copies their prompts into the
+database again.
+
 ## Getting there from today's data
 
 While the database still declares them, the **Agents** and **Workflows** homes

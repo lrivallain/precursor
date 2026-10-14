@@ -34,7 +34,8 @@ from sqlalchemy import delete, select
 
 from precursor.backend.config import get_settings
 from precursor.backend.db import SessionLocal
-from precursor.backend.models import Message, MessageRole, Role, Topic
+from precursor.backend.models import Message, MessageRole, Topic
+from precursor.backend.services import roles as roles_service
 from precursor.backend.services import side_chats
 from precursor.backend.services.events import (
     publish_mcp_auth_required,
@@ -731,16 +732,14 @@ async def _handle_role(topic_id: int, argument: str) -> None:
         await _record(topic_id, "Usage: `/role <role name>` (the picker isn't available headless).")
         return
     async with SessionLocal() as session:
-        role = (
-            await session.execute(select(Role).where(Role.name.ilike(name)))
-        ).scalar_one_or_none()
+        role = await roles_service.find_role(session, name)
         if role is None:
             await _record(topic_id, f'Unknown role "{name}". Manage roles in Settings → Roles.')
             return
         topic = await session.get(Topic, topic_id)
         if topic is None:
             return
-        topic.role_id = None if role.is_default else role.id
+        topic.role = None if role.is_default else role.name
         await session.commit()
     await publish_topic_changed(topic_id)
     await _record(topic_id, f'Assistant role set to "{role.name}".')

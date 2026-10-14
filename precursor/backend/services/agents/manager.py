@@ -674,7 +674,7 @@ class AgentManager:
                 use_memory=agent.use_memory,
                 mcp_servers=agent.mcp_servers,
                 approval_policy=agent.approval_policy,
-                role_id=agent.role_id,
+                role=agent.role,
                 started_at=datetime.now(UTC),
             )
             if (source := definition_overlay.provenance(agent)) is not None:

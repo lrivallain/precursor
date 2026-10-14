@@ -54,7 +54,7 @@ export function WorkspaceChat({
 }: {
   area: Workspace;
   activePath: string | null;
-  onSetRole?: (roleId: number | null) => Promise<void>;
+  onSetRole?: (roleName: string | null) => Promise<void>;
 }) {
   const [messages, setMessages] = useState<WorkspaceChatItem[]>([]);
   // Autocomplete offers only the commands this surface handles in `send`
@@ -143,7 +143,7 @@ export function WorkspaceChat({
         return;
       }
       try {
-        await onSetRole?.(role.is_default ? null : role.id);
+        await onSetRole?.(role.is_default ? null : role.name);
       } catch (err) {
         setError(`Role change failed: ${(err as Error).message}`);
       }
@@ -442,8 +442,8 @@ export function WorkspaceChat({
             <>
               <ComposerModelControls />
               <RoleSelector
-                value={area.role_id ?? null}
-                onChange={(roleId) => void onSetRole?.(roleId)}
+                value={area.role ?? null}
+                onChange={(roleName) => void onSetRole?.(roleName)}
                 open={roleOpen}
                 onOpenChange={setRoleOpen}
               />

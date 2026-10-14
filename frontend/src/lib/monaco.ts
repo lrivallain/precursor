@@ -66,7 +66,7 @@ export const monacoYaml = configureMonacoYaml(
   { enableSchemaRequest: false, format: { enable: true } },
 );
 
-const DEFINITION_KINDS = ["agent", "workflow", "summary"] as const;
+const DEFINITION_KINDS = ["agent", "workflow", "summary", "role"] as const;
 let definitionSchemas: Promise<void> | null = null;
 
 // Keywords whose value is data, not a subschema: a "title" in there is a value.

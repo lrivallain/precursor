@@ -26,7 +26,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from precursor.backend.models import AgentSession, Role, Workflow, WorkflowRun, WorkflowStep
+from precursor.backend.models import AgentSession, Workflow, WorkflowRun, WorkflowStep
 from precursor.backend.schemas.definitions import (
     AGENT_FILE_SUFFIX,
     WORKFLOW_FILE_SUFFIX,
@@ -49,9 +49,8 @@ from precursor.backend.services.definitions.loader import DefinitionSet, LoadedF
 
 
 async def _context(session: AsyncSession) -> _Context:
-    roles = {r.id: r.name for r in (await session.execute(select(Role))).scalars()}
     root = overlay.definitions_root()
-    return _Context(root=root, roles=roles, result=DefinitionsExportResult(root=str(root)))
+    return _Context(root=root, result=DefinitionsExportResult(root=str(root)))
 
 
 def _refuse_broken(linked: LoadedFile | None) -> None:
@@ -161,7 +160,7 @@ _SETTING_KEYS = {
     "description": "description",
     "icon": "icon",
     "color": "color",
-    "role_id": "role",
+    "role": "role",
     "approval_policy": "approval_policy",
     "clear_artifacts": "clear_artifacts",
     "max_loops": "max_loops",

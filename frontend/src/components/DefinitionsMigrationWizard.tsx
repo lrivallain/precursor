@@ -375,8 +375,8 @@ function OverviewStep({
               "Declared by definition files."
             ) : (
               <>
-                {plural(agents, "agent")} and {plural(workflows, "workflow")} declared by the
-                database.
+                {plural(agents, "agent")}, {plural(workflows, "workflow")} and{" "}
+                {plural(preview.roles ?? 0, "role")} declared by the database.
               </>
             )}
           </p>
@@ -492,7 +492,7 @@ function ReviewStep({
           ))}
       </div>
       {preview.items.length === 0 ? (
-        <p className="text-muted">No agents or workflows yet — nothing to migrate.</p>
+        <p className="text-muted">No agents or workflows to list yet.</p>
       ) : (
         <ul className="divide-y divide-border rounded border border-border">
           {items.map((item) => {
@@ -983,6 +983,7 @@ function CleanupStep({
             <li>The prompts of {plural(c.step_prompts, "step")} that have their own</li>
             <li>The settings of {plural(c.workflows, "workflow")}</li>
             <li>The declarations of {plural(c.steps, "workflow step")}</li>
+            <li>The prompts of {plural(c.roles ?? 0, "role")}</li>
           </ul>
         </div>
         <div className="rounded bg-surface/50 p-3">
@@ -1078,7 +1079,8 @@ function DoneStep({ preview }: { preview: MigrationPreview }) {
         <ul className="space-y-0.5 rounded bg-surface/50 p-3 text-muted">
           <li>
             Cleared: {plural(f.agents, "agent")}, {plural(f.step_prompts, "step prompt")},{" "}
-            {plural(f.workflows, "workflow")}, {plural(f.steps, "workflow step")}.
+            {plural(f.workflows, "workflow")}, {plural(f.steps, "workflow step")},{" "}
+            {plural(f.roles ?? 0, "role prompt")}.
           </li>
           {f.snapshot && (
             <li>

@@ -16,9 +16,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.db import get_session
-from precursor.backend.models import Collection, Role, Topic
+from precursor.backend.models import Collection, Topic
 from precursor.backend.models.collection import DEFAULT_COLLECTION_NAME
 from precursor.backend.schemas import CollectionCreate, CollectionRead, CollectionUpdate
+from precursor.backend.services import roles as roles_service
 from precursor.backend.services.collections import (
     get_default_collection,
     topic_counts_by_collection,
@@ -28,12 +29,12 @@ from precursor.backend.services.slugs import allocate_unique_slug, slugify
 router = APIRouter(prefix="/api/collections", tags=["collections"])
 
 
-async def _validate_role_id(session: AsyncSession, role_id: int | None) -> None:
-    """400 if a non-null default role id doesn't point at an existing role."""
-    if role_id is None:
-        return
-    if await session.get(Role, role_id) is None:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Default role not found")
+async def _validate_role(session: AsyncSession, name: str | None) -> str | None:
+    """400 if a non-empty default role name isn't a role that exists."""
+    try:
+        return await roles_service.require_role(session, name)
+    except HTTPException as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Default role not found") from exc
 
 
 async def _find_by_name(
@@ -60,7 +61,7 @@ def _to_read(collection: Collection, counts: dict[int, int]) -> CollectionRead:
                     "github_repo",
                     "accent",
                     "icon",
-                    "default_role_id",
+                    "default_role",
                     "is_default",
                     "created_at",
                     "updated_at",
@@ -94,7 +95,7 @@ async def create_collection(
         raise HTTPException(
             status.HTTP_409_CONFLICT, f"A collection named '{payload.name}' already exists."
         )
-    await _validate_role_id(session, payload.default_role_id)
+    default_role = await _validate_role(session, payload.default_role)
     collection = Collection(
         name=payload.name,
         slug=await allocate_unique_slug(session, slugify(payload.name), Collection),
@@ -102,7 +103,7 @@ async def create_collection(
         github_repo=payload.github_repo,
         accent=payload.accent,
         icon=payload.icon,
-        default_role_id=payload.default_role_id,
+        default_role=default_role,
         is_default=False,
     )
     session.add(collection)
@@ -138,8 +139,8 @@ async def update_collection(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Collection not found")
 
     data = payload.model_dump(exclude_unset=True)
-    if "default_role_id" in data:
-        await _validate_role_id(session, data["default_role_id"])
+    if "default_role" in data:
+        data["default_role"] = await _validate_role(session, data["default_role"])
     if "name" in data and data["name"] != collection.name:
         if collection.is_default:
             raise HTTPException(

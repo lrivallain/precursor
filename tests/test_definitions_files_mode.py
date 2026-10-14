@@ -64,7 +64,6 @@ async def files_mode(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Path]:
         else:
             row.value = json.dumps(True)
         await session.commit()
-        await overlay.refresh_role_cache(session)
 
     settings = get_settings()
     root = Path(settings.definitions_dir)
@@ -226,9 +225,10 @@ async def test_runs_record_the_file_they_ran_from(files_mode: Path) -> None:
     assert path == "agents/a.agent.yaml" and len(digest) == 64
 
 
-async def test_roles_are_resolved_by_name_including_new_ones(files_mode: Path) -> None:
+async def test_roles_come_from_role_files_and_match_by_name(files_mode: Path) -> None:
     from precursor.backend.db import SessionLocal
-    from precursor.backend.models import AgentSession, Role
+    from precursor.backend.models import AgentSession
+    from precursor.backend.services import roles as roles_service
 
     ident, name = _uid(), f"Persona {_uid()}"
     agent_id = await _agent_row(title="t", task_prompt="p", export_id=ident)
@@ -239,20 +239,17 @@ async def test_roles_are_resolved_by_name_including_new_ones(files_mode: Path) -
     )
     async with SessionLocal() as session:
         agent = await session.get(AgentSession, agent_id)
-        assert agent is not None and agent.role_id is None  # not created yet
+        assert agent is not None and agent.role == name.upper()
+        # No role file yet: the reference falls back to the default prompt.
+        assert await roles_service.resolve_role_prompt(session, agent.role) == ""
 
-    # Created after startup: the cache hears about it without a refresh.
+    _write(
+        files_mode,
+        "roles/persona.role.yaml",
+        {"kind": "role", "id": _uid(), "name": name, "prompt": "Be a persona."},
+    )
     async with SessionLocal() as session:
-        role = Role(name=name, system_prompt="")
-        session.add(role)
-        await session.commit()
-        role_id = role.id
-    async with SessionLocal() as session:
-        agent = await session.get(AgentSession, agent_id)
-        assert agent is not None and agent.role_id == role_id
-
-
-# --- Workflows --------------------------------------------------------------
+        assert await roles_service.resolve_role_prompt(session, name.upper()) == "Be a persona."
 
 
 async def _exported_workflow() -> dict[str, Any]:

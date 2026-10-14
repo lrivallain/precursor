@@ -33,7 +33,7 @@ export interface WorkspacesController {
   closeRoute: () => void;
   syncFromRoute: () => void;
   startNew: () => void;
-  setRoleForActive: (roleId: number | null) => Promise<void>;
+  setRoleForActive: (roleName: string | null) => Promise<void>;
 }
 
 export function useWorkspacesController(
@@ -131,10 +131,10 @@ export function useWorkspacesController(
   }
 
   // The workspaces branch of App's shared role persistence (`setRoleForActive`).
-  async function setRoleForActive(roleId: number | null): Promise<void> {
+  async function setRoleForActive(roleName: string | null): Promise<void> {
     if (!activeWorkspace) return;
     const updated = await api.workspaces.update(activeWorkspace.id, {
-      role_id: roleId,
+      role: roleName,
     });
     setWorkspaces((prev) =>
       prev ? prev.map((w) => (w.id === updated.id ? updated : w)) : prev,
