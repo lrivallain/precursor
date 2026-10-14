@@ -170,6 +170,9 @@ prompt: |
 - The built-in role lives in `roles/default.role.yaml` with `id: default` and
   `name: default`. Precursor re-creates it, with an empty prompt, when a
   folder in files mode has none.
+- An install that was already in files mode before roles became files has its
+  role rows written out as files on the first start (once, never over an
+  existing file).
 - A prompt is content, not a permission: editing a role file never waits for
   review.
 - **Files mode:** the role list comes from the files; **Settings → Roles**

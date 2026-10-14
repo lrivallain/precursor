@@ -83,6 +83,8 @@ from precursor.backend.services.definitions.writer import preferred_step_keys
 ACTIVE = overlay.ACTIVE_WORKFLOW_STATUSES
 # What the switch to files did, for the wizard: ``{"at", "snapshot", …}``.
 MIGRATED_SETTING_KEY = "definitions_migrated"
+# Set once the role rows were filed on an install that was already in files mode.
+ROLES_FILED_SETTING_KEY = "definitions_roles_filed"
 
 
 # --- Planning ---------------------------------------------------------------
@@ -366,6 +368,23 @@ async def adopt_files_if_fresh(session: AsyncSession) -> bool:
         session, {"at": datetime.now(UTC).isoformat(timespec="seconds"), "fresh": True}
     )
     return True
+
+
+async def backfill_role_files(session: AsyncSession) -> int:
+    """File the role rows of an install that reached files mode before roles did.
+
+    Such an install migrated its agents and workflows when roles were still table
+    rows, so none has a file and every role would read as missing. Runs once, and
+    never overwrites a file.
+    """
+    if not overlay.files_mode():
+        return 0
+    if await session.get(AppSetting, ROLES_FILED_SETTING_KEY) is not None:
+        return 0
+    written = await roles_service.export_to_files(session)
+    session.add(AppSetting(key=ROLES_FILED_SETTING_KEY, value=json.dumps(True)))
+    await session.commit()
+    return written
 
 
 async def preview(session: AsyncSession) -> MigrationPreview:

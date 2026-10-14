@@ -123,13 +123,18 @@ def _isolated_autostart_units(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.fixture(autouse=True)
 def _installs_start_in_database_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     """The scratch DB is always "fresh", which would flip every app start to
-    files mode. Tests opt in by calling ``adopt_files_if_fresh`` themselves."""
+    files mode. Tests opt in by calling ``adopt_files_if_fresh`` themselves; the
+    same goes for ``backfill_role_files``, which would file the shared roles."""
     from precursor.backend import main
 
     async def _skip(_session: object) -> bool:
         return False
 
+    async def _none(_session: object) -> int:
+        return 0
+
     monkeypatch.setattr(main, "adopt_files_if_fresh", _skip)
+    monkeypatch.setattr(main, "backfill_role_files", _none)
 
 
 @pytest.fixture(autouse=True)

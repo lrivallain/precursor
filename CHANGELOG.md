@@ -315,6 +315,13 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Fixed
 
+- **An install already in files mode lost its roles.** Installs that had
+  migrated agents and workflows before roles became files kept their roles in
+  the database only, so every role read as missing (warnings like "no role named
+  'Azure CSA'") and the default persona applied. On the first start in files mode
+  Precursor now writes a `roles/<slug>.role.yaml` for each role row that has no
+  file, once and without overwriting any file.
+
 - **The `precursor` MCP server listed every tool even with no capability
   exposed.** `tools/list` now advertises only the exposed sections (just
   `precursor_info` when none is on), so the tool count in Settings and the tools
