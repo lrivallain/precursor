@@ -3,7 +3,9 @@
 > **Work in progress.** This page describes the file format for declaring
 > agents and workflows, the folder check, the one-shot export of today's agents
 > and workflows into files, and an opt-in **files mode** in which the runtime
-> reads them. By default Precursor still runs everything from the database. The
+> reads them. A **new install** starts in files mode and never sees the migration
+> wizard; an install that already has agents, workflows or custom roles keeps
+> running from the database until you migrate it. The
 > [roadmap](#roadmap) lists the steps that get it there, and each one ships on
 > its own.
 

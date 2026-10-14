@@ -188,11 +188,20 @@ async def test_the_definitions_workspace_is_not_deleted_with_its_files(env: Path
 # --- Preview ----------------------------------------------------------------
 
 
+async def _export_roles() -> None:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.services import roles as roles_service
+
+    async with SessionLocal() as session:
+        await roles_service.export_to_files(session)
+
+
 async def test_the_preview_says_what_happens_to_each_file(env: Path) -> None:
     ids = await _seed()
     with TestClient(create_app()) as client:
         # An earlier export: every row linked, every file matching.
         client.post("/api/definitions/export")
+        await _export_roles()
         clean = client.get("/api/definitions/migration").json()
         assert clean["source"] == "database" and clean["ready"] is True
         assert {i["action"] for i in clean["items"]} == {"unchanged"}
@@ -707,3 +716,92 @@ async def test_the_status_counts_what_is_left_to_migrate(env: Path) -> None:
     assert (done["stage"], done["agents"], done["workflows"]) == ("finalized", 0, 0)
     async with SessionLocal() as session:
         assert await session.get(Workflow, ids["workflow"]) is not None
+
+
+# --- Roles in the wizard, and fresh installs ----------------------------------
+
+
+async def test_the_preview_lists_roles_and_their_files(env: Path) -> None:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import Role
+
+    async with SessionLocal() as session:
+        session.add(Role(name=f"Mig {_uid()}", system_prompt="Be terse."))
+        await session.commit()
+    with TestClient(create_app()) as client:
+        items = client.get("/api/definitions/migration").json()["items"]
+        roles = [i for i in items if i["kind"] == "role"]
+        assert roles and {i["action"] for i in roles} == {"create"}
+        assert all(i["path"].startswith("roles/") for i in roles)
+
+        detail = client.get(f"/api/definitions/migration/items/role/{roles[0]['id']}")
+        assert detail.status_code == 200, detail.text
+        assert detail.json()["kind"] == "role"
+        assert detail.json()["proposed"]
+
+
+async def _adopt(monkeypatch: pytest.MonkeyPatch, roles: list[Any] | None = None) -> bool:
+    from types import SimpleNamespace
+
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AppSetting
+    from precursor.backend.services.definitions import migration, overlay
+
+    async with SessionLocal() as session:
+        row = await session.get(AppSetting, "definitions_source")
+        if row is not None:
+            await session.delete(row)
+            await session.commit()
+        await overlay.refresh_source(session)
+
+    async def rows(_session: Any) -> list[Any]:
+        return roles if roles is not None else [SimpleNamespace(name="default", system_prompt="")]
+
+    monkeypatch.setattr(migration, "_role_rows", rows)
+    async with SessionLocal() as session:
+        return await migration.adopt_files_if_fresh(session)
+
+
+async def test_a_fresh_install_starts_in_files_mode(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert await _adopt(monkeypatch) is True
+    from precursor.backend.services.definitions import overlay
+
+    assert overlay.files_mode() is True
+    assert overlay.finalized() is not None
+
+
+async def test_an_install_with_agents_keeps_the_wizard(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await _seed()
+    assert await _adopt(monkeypatch) is False
+
+
+async def test_an_install_with_a_custom_role_keeps_the_wizard(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+
+    custom = SimpleNamespace(name="Reviewer", system_prompt="Review it.")
+    assert await _adopt(monkeypatch, [custom]) is False
+
+
+async def test_a_chosen_source_is_never_overridden(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.services.definitions import migration
+
+    assert await _adopt(monkeypatch) is True
+    from precursor.backend.models import AppSetting
+
+    async with SessionLocal() as session:
+        await session.merge(AppSetting(key="definitions_source", value=json.dumps("database")))
+        await session.merge(AppSetting(key="definitions_finalized", value="null"))
+        await session.commit()
+        from precursor.backend.services.definitions import overlay
+
+        await overlay.refresh_source(session)
+        assert await migration.adopt_files_if_fresh(session) is False

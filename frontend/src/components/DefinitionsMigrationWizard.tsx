@@ -355,7 +355,7 @@ function OverviewStep({
   const agents = preview.items.filter((i) => i.kind === "agent" && i.id !== null).length;
   const workflows = preview.items.filter((i) => i.kind === "workflow" && i.id !== null).length;
   const stepsOutline: [string, string][] = [
-    ["Review", "See, for each agent and workflow, the file that will be written — and what's on disk now."],
+    ["Review", "See, for each agent, workflow and role, the file that will be written — and what's on disk now."],
     ["Migrate", "A copy of the database is taken, the files are written and checked one by one against the database. Nothing switches if any differs."],
     ["Try it out", "Agents and workflows run from their files. Edit them in Files; switch back to the database at any time."],
     ["Clean up", "When you're sure, clear the declarations out of the database. Switching back isn't possible after that."],
@@ -492,7 +492,7 @@ function ReviewStep({
           ))}
       </div>
       {preview.items.length === 0 ? (
-        <p className="text-muted">No agents or workflows to list yet.</p>
+        <p className="text-muted">No agents, workflows or roles to list yet.</p>
       ) : (
         <ul className="divide-y divide-border rounded border border-border">
           {items.map((item) => {

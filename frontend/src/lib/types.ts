@@ -1104,6 +1104,8 @@ export interface TransferImportResult {
 // see docs/definitions.md. They declare agents and workflows only in files mode.
 
 export type DefinitionKind = "agent" | "workflow";
+/** What the migration wizard lists: roles are files too. */
+export type MigrationKind = DefinitionKind | "role";
 /** What a file in the definitions folder can declare: summary templates have no row. */
 export type DefinitionFileKind = DefinitionKind | "summary" | "role";
 
@@ -1206,7 +1208,7 @@ export interface DefinitionsWorkspaceRef {
 export type MigrationAction = "create" | "regenerate" | "unchanged" | "new_from_disk";
 
 export interface MigrationItem {
-  kind: DefinitionKind;
+  kind: MigrationKind;
   id: number | null;
   name: string;
   path: string | null;
@@ -1285,7 +1287,7 @@ export interface MigrationResult {
 
 /** The actual content behind one migration preview line. */
 export interface MigrationItemDetail {
-  kind: DefinitionKind;
+  kind: MigrationKind;
   id: number;
   name: string;
   action: "create" | "regenerate" | "unchanged";

@@ -121,6 +121,18 @@ def _isolated_autostart_units(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _installs_start_in_database_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The scratch DB is always "fresh", which would flip every app start to
+    files mode. Tests opt in by calling ``adopt_files_if_fresh`` themselves."""
+    from precursor.backend import main
+
+    async def _skip(_session: object) -> bool:
+        return False
+
+    monkeypatch.setattr(main, "adopt_files_if_fresh", _skip)
+
+
+@pytest.fixture(autouse=True)
 def _sse_shutdown_flag_is_per_test():
     """Don't let one test's server shutdown end every later SSE stream.
 

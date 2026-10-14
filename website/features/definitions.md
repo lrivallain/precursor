@@ -14,8 +14,9 @@ The same folder holds the **summary templates** of
 [below](#summary-templates).
 
 ::: warning Work in progress
-Opt-in and still evolving. By default Precursor keeps running everything from
-the database, as it always has. The full design, file format and roadmap live
+Still evolving. A new install starts in files mode, with nothing to migrate.
+An install that already has agents, workflows or custom roles keeps running from
+the database, as it always has, until you migrate it. The full design, file format and roadmap live
 in [`docs/definitions.md`](https://github.com/lrivallain/precursor/blob/main/docs/definitions.md).
 :::
 
@@ -72,7 +73,7 @@ files** directly. The wizard takes you through it:
 1. **Overview** — what's declared today, where the files will go (the
    **Definitions** workspace), what stays in the database, and anything
    in the way (a workflow mid-run, two files with the same id).
-2. **Review** — every agent and workflow with what happens to its file: new,
+2. **Review** — every agent, workflow and role with what happens to its file: new,
    rewritten from the database (and why), or already up to date. Open a line to
    see the **file itself**, as it will be written, next to what's on disk now.
 3. **Migrate** — a copy of the database is taken, the files are written and

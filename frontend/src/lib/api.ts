@@ -41,6 +41,7 @@ import type {
   DefinitionFileKind,
   DefinitionFileReport,
   DefinitionKind,
+  MigrationKind,
   DefinitionsCheckReport,
   DefinitionsExportResult,
   DefinitionsStatus,
@@ -911,7 +912,7 @@ export const api = {
         body: JSON.stringify({ acknowledge }),
       }),
     revert: () => request<RevertResult>(`/api/definitions/revert`, { method: "POST" }),
-    migrationItem: (kind: DefinitionKind, id: number) =>
+    migrationItem: (kind: MigrationKind, id: number) =>
       request<MigrationItemDetail>(`/api/definitions/migration/items/${kind}/${id}`),
     // The last, irreversible step: clears the declarations out of the database.
     finalize: () =>

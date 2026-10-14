@@ -23,7 +23,6 @@ from precursor.backend.schemas.definitions_api import (
     DefinitionAcceptRequest,
     DefinitionFileKind,
     DefinitionFileReport,
-    DefinitionKind,
     DefinitionsCheckReport,
     DefinitionsExportResult,
     DefinitionSource,
@@ -31,6 +30,7 @@ from precursor.backend.schemas.definitions_api import (
     FinalizeRequest,
     FinalizeResult,
     MigrationItemDetail,
+    MigrationKind,
     MigrationPreview,
     MigrationRequest,
     MigrationResult,
@@ -219,7 +219,7 @@ async def revert_to_database(session: AsyncSession = Depends(get_session)) -> Re
 
 @router.get("/migration/items/{kind}/{item_id}", response_model=MigrationItemDetail)
 async def migration_item(
-    kind: DefinitionKind, item_id: int, session: AsyncSession = Depends(get_session)
+    kind: MigrationKind, item_id: int, session: AsyncSession = Depends(get_session)
 ) -> MigrationItemDetail:
     """The file the migration would write for one agent or workflow, next to the
     one on disk now."""

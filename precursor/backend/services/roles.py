@@ -224,8 +224,8 @@ def _free(taken_paths: set[str], root: Path, ids: set[str], stem: str) -> tuple[
         n += 1
 
 
-def create_role_file(name: str, prompt: str, description: str | None = None) -> str:
-    """Write a new role file; returns its path relative to the folder."""
+def _plan_new_file(name: str) -> tuple[str, str]:
+    """The ``(id, path)`` a new role file would get, without writing it."""
     root = overlay.definitions_root()
     dset = overlay.current_definitions()
     if name.lower() == DEFAULT_ROLE_NAME:
@@ -237,9 +237,85 @@ def create_role_file(name: str, prompt: str, description: str | None = None) -> 
         if stem == DEFAULT_ROLE_ID:
             stem = "role"
         ident, rel = _free({p.lower() for p in dset.by_path}, root, set(dset.by_id), stem)
-    _write_new(root / rel, _document(ident, name[:ROLE_NAME_MAX], prompt, description))
+    return ident, rel
+
+
+def create_role_file(name: str, prompt: str, description: str | None = None) -> str:
+    """Write a new role file; returns its path relative to the folder."""
+    ident, rel = _plan_new_file(name)
+    _write_new(
+        overlay.definitions_root() / rel,
+        _document(ident, name[:ROLE_NAME_MAX], prompt, description),
+    )
     overlay.invalidate()
     return rel
+
+
+@dataclass(frozen=True)
+class RoleMigration:
+    """What the migration does with one role row."""
+
+    row: Role
+    path: str | None
+    action: str  # "create" | "unchanged"
+    reason: str | None
+    proposed: str
+    current: str | None
+
+
+def plan_migration(rows: list[Role]) -> list[RoleMigration]:
+    """For each role row: the file it would get, or the one that already carries it."""
+    overlay.invalidate()
+    dset = overlay.current_definitions()
+    root = overlay.definitions_root()
+    have = {defn.name.lower(): (f.path, defn) for f, defn in dset.roles()}
+    taken = {p.lower() for p in dset.by_path}
+    ids = set(dset.by_id)
+    out: list[RoleMigration] = []
+    for row in rows:
+        existing = have.get(row.name.lower())
+        if existing is not None:
+            path, defn = existing
+            differs = defn.prompt.strip() != (row.system_prompt or "").strip()
+            try:
+                current: str | None = (root / path).read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                current = None
+            out.append(
+                RoleMigration(
+                    row=row,
+                    path=path,
+                    action="unchanged",
+                    reason=(
+                        "The file's prompt differs from the database; the file is kept."
+                        if differs
+                        else None
+                    ),
+                    proposed=current or "",
+                    current=current,
+                )
+            )
+            continue
+        if row.name.lower() == DEFAULT_ROLE_NAME:
+            ident, rel = DEFAULT_ROLE_ID, f"{FOLDER}/{DEFAULT_ROLE_ID}{ROLE_FILE_SUFFIX}"
+        else:
+            stem = slugify(row.name)[:48] or "role"
+            if stem == DEFAULT_ROLE_ID:
+                stem = "role"
+            ident, rel = _free(taken, root, ids, stem)
+        taken.add(rel.lower())
+        ids.add(ident)
+        out.append(
+            RoleMigration(
+                row=row,
+                path=rel,
+                action="create",
+                reason=None,
+                proposed=_document(ident, row.name[:ROLE_NAME_MAX], row.system_prompt or "", None),
+                current=None,
+            )
+        )
+    return out
 
 
 def save_role_file(role: RoleInfo, prompt: str) -> None:

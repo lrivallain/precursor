@@ -13,6 +13,8 @@ from pydantic import BaseModel
 
 # What a database row can be declared by.
 DefinitionKind = Literal["agent", "workflow"]
+# What a migration line can be: roles are listed (and written) with them.
+MigrationKind = Literal["agent", "workflow", "role"]
 # What a file in the folder can declare: summary templates have no row, and a
 # role is looked up by name (its table row, while one still exists, is not
 # linked to the file by id).
@@ -175,7 +177,7 @@ class MigrationItem(BaseModel):
     its permissions wait for review.
     """
 
-    kind: DefinitionKind
+    kind: MigrationKind
     # The database row; null for ``new_from_disk``.
     id: int | None = None
     name: str
@@ -287,7 +289,7 @@ class RevertResult(BaseModel):
 class MigrationItemDetail(BaseModel):
     """The actual content behind one preview line."""
 
-    kind: DefinitionKind
+    kind: MigrationKind
     id: int
     name: str
     action: Literal["create", "regenerate", "unchanged"]

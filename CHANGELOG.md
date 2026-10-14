@@ -15,6 +15,13 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **A new install starts in files mode.** When nothing is declared in the
+  database yet (no agent, no workflow, no role beyond the untouched `default`)
+  and no source was ever chosen, Precursor records the install as migrated and
+  reads definition files from the first start — the migration wizard is skipped.
+  Existing installs are unchanged. The wizard's **Review** step now also lists
+  roles, each with the file it would write.
+
 - **Assistant roles are definition files.** A role is a `roles/<slug>.role.yaml`
   file (`name`, `description`, `prompt`) with a published JSON Schema, checked by
   the folder check and `precursor validate`. In files mode **Settings → Roles**

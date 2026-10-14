@@ -36,7 +36,11 @@ from sqlalchemy.orm import selectinload
 
 from precursor.backend.config import get_settings
 from precursor.backend.models import AgentSession, AppSetting, Role, Workflow, WorkflowStep
-from precursor.backend.schemas.definitions import AgentDefinition, WorkflowDefinition
+from precursor.backend.schemas.definitions import (
+    DEFAULT_ROLE_NAME,
+    AgentDefinition,
+    WorkflowDefinition,
+)
 from precursor.backend.schemas.definitions_api import (
     CleanupPreview,
     DefinitionIssue,
@@ -48,6 +52,7 @@ from precursor.backend.schemas.definitions_api import (
     FinalizeResult,
     MigrationItem,
     MigrationItemDetail,
+    MigrationKind,
     MigrationPreview,
     MigrationRecord,
     MigrationResult,
@@ -338,6 +343,31 @@ async def _write_record(session: AsyncSession, key: str, value: dict[str, Any] |
         row.value = json.dumps(value)
 
 
+async def adopt_files_if_fresh(session: AsyncSession) -> bool:
+    """A new install declares everything in files from the start.
+
+    Applies only while no source was ever chosen and the database declares
+    nothing: no agent, no workflow, no role beyond an untouched ``default``.
+    There is then nothing to migrate, so the wizard is skipped and the install
+    is recorded as clean. Any existing install keeps the wizard.
+    """
+    if overlay.files_mode():
+        return False
+    if await session.get(AppSetting, overlay.SOURCE_SETTING_KEY) is not None:
+        return False
+    for model in (AgentSession, Workflow):
+        if (await session.execute(select(model.id).limit(1))).first() is not None:
+            return False
+    roles = await _role_rows(session)
+    if any(r.name.lower() != DEFAULT_ROLE_NAME or r.system_prompt for r in roles):
+        return False
+    await overlay.persist_source(session, "files")
+    await overlay.persist_finalized(
+        session, {"at": datetime.now(UTC).isoformat(timespec="seconds"), "fresh": True}
+    )
+    return True
+
+
 async def preview(session: AsyncSession) -> MigrationPreview:
     migrated = await _read_record(session, MIGRATED_SETTING_KEY)
     migrated_record = MigrationRecord(**migrated) if migrated else None
@@ -373,7 +403,7 @@ async def preview(session: AsyncSession) -> MigrationPreview:
         folder=str(plan.root),
         workspace=await _workspace_ref(session),
         sample_path=_sample_path(plan.dset),
-        items=plan.items(),
+        items=[*plan.items(), *await _role_items(session)],
         roles=len(await roles_service.unfiled_roles(session)),
         issues=plan.issues,
         blockers=plan.blockers,
@@ -382,13 +412,51 @@ async def preview(session: AsyncSession) -> MigrationPreview:
     )
 
 
+async def _role_rows(session: AsyncSession) -> list[Role]:
+    return list((await session.execute(select(Role).order_by(Role.id))).scalars())
+
+
+async def _role_items(session: AsyncSession) -> list[MigrationItem]:
+    return [
+        MigrationItem(
+            kind="role",
+            id=m.row.id,
+            name=m.row.name,
+            path=m.path,
+            action="create" if m.action == "create" else "unchanged",
+            reason=m.reason,
+        )
+        for m in roles_service.plan_migration(await _role_rows(session))
+    ]
+
+
+async def _role_detail(session: AsyncSession, row_id: int) -> MigrationItemDetail:
+    planned = next(
+        (m for m in roles_service.plan_migration(await _role_rows(session)) if m.row.id == row_id),
+        None,
+    )
+    if planned is None:
+        raise LookupError(f"No role {row_id} in the migration")
+    return MigrationItemDetail(
+        kind="role",
+        id=row_id,
+        name=planned.row.name,
+        action="create" if planned.action == "create" else "unchanged",
+        path=planned.path,
+        proposed=planned.proposed,
+        current=planned.current,
+    )
+
+
 async def item_detail(
-    session: AsyncSession, kind: DefinitionKind, row_id: int
+    session: AsyncSession, kind: MigrationKind, row_id: int
 ) -> MigrationItemDetail:
     """The file the migration would write for one agent or workflow, and the
     one on disk now — the content behind a preview line."""
     if overlay.files_mode():
         raise MigrationRefused("Agents and workflows are already declared by their files")
+    if kind == "role":
+        return await _role_detail(session, row_id)
     plan = await _plan(session)
     planned = next((p for p in plan.planned if p.item.kind == kind and p.item.id == row_id), None)
     if planned is None or planned.item.action == "new_from_disk":
