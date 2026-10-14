@@ -150,9 +150,7 @@ class Workflow(Base, TimestampMixin, RecurrenceMixin):
     # Assistant Role applied to every step's agent for the duration of a run, so
     # a pipeline speaks with one voice without stamping the persona onto each
     # (shared, reusable) agent row. Null leaves each agent's own role alone.
-    role_id: Mapped[int | None] = mapped_column(
-        ForeignKey("roles.id", ondelete="SET NULL"), nullable=True, index=True
-    )
+    role: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
 
     # Tool-approval policy applied to every step's agent while the workflow runs
     # ("manual" / "balanced" / "autonomous"). Null leaves each agent's own

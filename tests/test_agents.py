@@ -682,7 +682,7 @@ async def _make_agent(**overrides: object) -> int:
             use_memory=agent.use_memory,
             mcp_servers=agent.mcp_servers,
             approval_policy=agent.approval_policy,
-            role_id=agent.role_id,
+            role=agent.role,
         )
         session.add(run)
         await session.flush()
@@ -971,7 +971,6 @@ async def test_run_command_role_assigns_by_name() -> None:
         role = Role(name="Sceptic", system_prompt="Question everything.")
         session.add(role)
         await session.commit()
-        role_id = role.id
         default_role = (
             await session.scalars(select(Role).where(Role.is_default.is_(True)))
         ).first()
@@ -981,15 +980,15 @@ async def test_run_command_role_assigns_by_name() -> None:
     async with SessionLocal() as session:
         agent = await session.get(AgentSession, agent_id)
         assert agent is not None
-        assert agent.role_id == role_id
+        assert agent.role == "Sceptic"
 
-    # The built-in default is stored as NULL, never by its own id.
+    # The built-in default is stored as NULL, never by its own name.
     assert default_role is not None
     await mgr.run_command(agent_id, "role", default_role.name)
     async with SessionLocal() as session:
         agent = await session.get(AgentSession, agent_id)
         assert agent is not None
-        assert agent.role_id is None
+        assert agent.role is None
 
     with pytest.raises(ValueError, match="Unknown role"):
         await mgr.run_command(agent_id, "role", "nope")
@@ -1778,7 +1777,7 @@ async def test_spawn_agent_parked_stays_waiting() -> None:
             model=None,
             topic_id=None,
             chat_id=None,
-            role_id=None,
+            role=None,
             mcp_servers=None,
             autonomy_enabled=False,
             max_steps=8,
@@ -2913,7 +2912,7 @@ async def _seed_agent_run(session, agent_id: int, workflow_run_id: int | None):
         use_memory=agent.use_memory,
         mcp_servers=agent.mcp_servers,
         approval_policy=agent.approval_policy,
-        role_id=agent.role_id,
+        role=agent.role,
         started_at=datetime.now(UTC),
     )
     session.add(run)
@@ -4139,12 +4138,11 @@ async def test_step_capability_overrides_and_workflow_role_apply_at_launch() -> 
         session.add(role)
         await session.commit()
         await session.refresh(role)
-        role_id = role.id
 
     wf_id, agents = await _seed_linear_workflow(
         kinds=["task", "task"],
         step_kwargs=[{}, {"use_mcp": False, "use_memory": False}],
-        role_id=role_id,
+        role="Terse",
     )
 
     mgr = _FakeWorkflowManager()
@@ -4160,14 +4158,14 @@ async def test_step_capability_overrides_and_workflow_role_apply_at_launch() -> 
     assert run.use_mcp is False
     assert run.use_memory is False
     assert run.use_skills is True  # not overridden → inherited
-    assert run.role_id == role_id  # workflow-wide persona
+    assert run.role == "Terse"  # workflow-wide persona
 
     async with SessionLocal() as session:
         agent = await session.get(AgentSession, agents[1])
         assert agent is not None
         assert agent.use_mcp is True  # the definition is untouched
         assert agent.use_memory is True
-        assert agent.role_id is None
+        assert agent.role is None
 
 
 async def test_workflow_events_carry_status_for_notifications() -> None:

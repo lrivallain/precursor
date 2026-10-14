@@ -136,7 +136,7 @@ interface AgentViewProps {
   /** Topic to preselect in the new-agent form (e.g. opened from a topic). */
   draftTopicId?: number | null;
   /** Persist a role change for the open agent (null = default). */
-  onSetRole?: (roleId: number | null) => Promise<void>;
+  onSetRole?: (roleName: string | null) => Promise<void>;
 }
 
 // One step in the workflow timeline.
@@ -1989,7 +1989,7 @@ export function AgentView({
   const [task, setTask] = useState("");
   const [newTopicId, setNewTopicId] = useState<number | null>(null);
   // Assistant Role the new agent is created with. Null = the default role.
-  const [newRoleId, setNewRoleId] = useState<number | null>(null);
+  const [newRole, setNewRole] = useState<string | null>(null);
   const [roleOpen, setRoleOpen] = useState(false);
   // Autonomy opt-in for the next started agent: when on, it runs a goal loop
   // toward the objective and pauses only by exception (default off).
@@ -2672,7 +2672,7 @@ export function AgentView({
       const created = await api.agents.create({
         task: message,
         topic_id: newTopicId,
-        role_id: newRoleId,
+        role: newRole,
         autonomy_enabled: newAutonomy,
         max_steps: newMaxSteps,
         approval_policy: newApprovalPolicy || null,
@@ -2685,7 +2685,7 @@ export function AgentView({
       if (newStart) setPending({ agentId: created.id, text: message });
       setTask("");
       setNewTopicId(null);
-      setNewRoleId(null);
+      setNewRole(null);
       setNewStart(true);
       onReload();
       onSelect(created.id);
@@ -3010,8 +3010,8 @@ export function AgentView({
             <>
               <ComposerModelControls variant="agents" />
               <RoleSelector
-                value={newRoleId}
-                onChange={setNewRoleId}
+                value={newRole}
+                onChange={setNewRole}
                 open={roleOpen}
                 onOpenChange={setRoleOpen}
                 disabled={!available || busy}
@@ -3434,8 +3434,8 @@ export function AgentView({
                 <>
                   <ComposerModelControls variant="agents" />
                   <RoleSelector
-                    value={selected.role_id ?? null}
-                    onChange={(roleId) => void onSetRole?.(roleId)}
+                    value={selected.role ?? null}
+                    onChange={(roleName) => void onSetRole?.(roleName)}
                     open={roleOpen}
                     onOpenChange={setRoleOpen}
                   />

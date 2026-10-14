@@ -39,7 +39,7 @@ interface ChatSessionPanelProps {
   /** Refresh the sidebar Reminders section after a set / cancel / done. */
   onRemindersChanged?: () => void;
   /** Persist a role change for this chat (null = default). */
-  onSetRole?: (roleId: number | null) => Promise<void>;
+  onSetRole?: (roleName: string | null) => Promise<void>;
 }
 
 // Chats are flat sessions with no GitHub issue, so the gh-* commands, the
@@ -297,8 +297,8 @@ export function ChatSessionPanel({
                 <>
                   <ComposerModelControls conversation={{ kind: "chat", id: chat.id, selection: chat.llm_selection, onUpdated: onChatUpdated }} />
                   <RoleSelector
-                    value={chat.role_id ?? null}
-                    onChange={(roleId) => void onSetRole?.(roleId)}
+                    value={chat.role ?? null}
+                    onChange={(roleName) => void onSetRole?.(roleName)}
                     open={conv.roleOpen}
                     onOpenChange={conv.setRoleOpen}
                   />

@@ -23,7 +23,7 @@ export function WorkspacesMain({
   onSetRole,
 }: {
   controller: WorkspacesController;
-  onSetRole: (roleId: number | null) => Promise<void>;
+  onSetRole: (roleName: string | null) => Promise<void>;
 }) {
   const {
     workspaces,

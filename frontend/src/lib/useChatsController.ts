@@ -42,11 +42,11 @@ export interface ChatsController {
   refreshActiveChat: () => Promise<void>;
   toggleChatPin: () => Promise<void>;
   handleRenameChat: (id: number, title: string) => Promise<void>;
-  handleStartChat: (prompt: string, roleId?: number | null) => Promise<void>;
-  startChatFromHome: (prompt: string, roleId?: number | null) => Promise<void>;
+  handleStartChat: (prompt: string, roleName?: string | null) => Promise<void>;
+  startChatFromHome: (prompt: string, roleName?: string | null) => Promise<void>;
   handleOpenChatNotes: (chat: Chat) => Promise<void>;
   handleStreamComplete: (chatId: number) => Promise<void>;
-  setRoleForActive: (roleId: number | null) => Promise<void>;
+  setRoleForActive: (roleName: string | null) => Promise<void>;
   sectionUrl: () => string;
   syncFromRoute: (r: AppRoute) => void;
   startNew: () => void;
@@ -283,12 +283,12 @@ export function useChatsController(deps: ChatsControllerDeps): ChatsController {
   // while the answer is still streaming.
   async function handleStartChat(
     prompt: string,
-    roleId: number | null = null,
+    roleName: string | null = null,
     reveal?: () => void,
   ): Promise<void> {
     const text = prompt.trim();
     if (!text) return;
-    const chat = await api.chats.create({ title: "New chat", autoname: true, role_id: roleId });
+    const chat = await api.chats.create({ title: "New chat", autoname: true, role: roleName });
     reveal?.();
     setActiveChat(chat);
     setChatListReloadKey((k) => k + 1);
@@ -296,20 +296,20 @@ export function useChatsController(deps: ChatsControllerDeps): ChatsController {
   }
 
   // The "New chat" card's inline composer: create + stream, then reveal the chat.
-  async function startChatFromHome(prompt: string, roleId: number | null = null): Promise<void> {
+  async function startChatFromHome(prompt: string, roleName: string | null = null): Promise<void> {
     // Leave home only once the chat exists, in the batch that selects it.
     // Switching first would commit the chat still open in Chats, and the URL
     // effect would push an entry for it ahead of the new one.
-    await handleStartChat(prompt, roleId, () => {
+    await handleStartChat(prompt, roleName, () => {
       setAtHome(false);
       setSidebarMode("chats");
     });
   }
 
   // The chats branch of App's shared role persistence (`setRoleForActive`).
-  async function setRoleForActive(roleId: number | null): Promise<void> {
+  async function setRoleForActive(roleName: string | null): Promise<void> {
     if (!activeChat) return;
-    const updated = await api.chats.update(activeChat.id, { role_id: roleId });
+    const updated = await api.chats.update(activeChat.id, { role: roleName });
     if (activeChatRef.current?.id === activeChat.id) setActiveChat(updated);
   }
 

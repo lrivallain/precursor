@@ -156,9 +156,7 @@ class AgentRun(Base, TimestampMixin):
     # server. Matches ``AgentSession.mcp_servers``.
     mcp_servers: Mapped[str | None] = mapped_column(String(400), nullable=True)
     approval_policy: Mapped[str | None] = mapped_column(String(16), nullable=True)
-    role_id: Mapped[int | None] = mapped_column(
-        ForeignKey("roles.id", ondelete="SET NULL"), nullable=True
-    )
+    role: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # Files mode only (docs/definitions.md): the definition file this execution
     # was declared by, and its SHA-256 when the run opened — which version of
     # the agent (or, for a step's private agent, of the workflow) actually ran.

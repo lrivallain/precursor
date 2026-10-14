@@ -78,7 +78,7 @@ export interface UseConversationOptions {
   /** Refresh the sidebar Reminders section after a set / cancel / done. */
   onRemindersChanged?: () => void;
   /** Persist a role change for this conversation (null = default). */
-  onSetRole?: (roleId: number | null) => Promise<void>;
+  onSetRole?: (roleName: string | null) => Promise<void>;
   /** Topic-only: post the notes pad as a GitHub issue comment. */
   onPostComment?: UseNotesDraftOptions["onPostComment"];
 }
@@ -603,7 +603,7 @@ export function useConversation({
       return;
     }
     try {
-      await onSetRole?.(role.is_default ? null : role.id);
+      await onSetRole?.(role.is_default ? null : role.name);
       systemNote(`Assistant role set to "${role.name}".`);
     } catch (err) {
       systemNote(`Role change failed: ${(err as Error).message}`);

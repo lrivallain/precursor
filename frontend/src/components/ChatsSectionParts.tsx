@@ -97,7 +97,7 @@ export function ChatsMain({
 }: {
   controller: ChatsController;
   onRemindersChanged: () => void;
-  onSetRole: (roleId: number | null) => Promise<void>;
+  onSetRole: (roleName: string | null) => Promise<void>;
 }) {
   const {
     activeChat,

@@ -12,7 +12,7 @@ from __future__ import annotations
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from precursor.backend.models import Collection, Role, Topic
+from precursor.backend.models import Collection, Topic
 from precursor.backend.models.collection import DEFAULT_COLLECTION_NAME
 from precursor.backend.services.app_settings import resolve_global_github_repo
 
@@ -106,22 +106,19 @@ async def resolve_collection_github_repo(session: AsyncSession, collection_id: i
     return await resolve_global_github_repo(session)
 
 
-async def resolve_collection_default_role_id(
+async def resolve_collection_default_role(
     session: AsyncSession, collection_id: int | None
-) -> int | None:
-    """Return the default Assistant Role id for topics created in a collection.
+) -> str | None:
+    """Return the default Assistant Role name for topics created in a collection.
 
     A null ``collection_id`` — or one pointing at a collection with no default
-    role (or a since-deleted role) — yields ``None``, which callers treat as
-    "use the built-in default role".
+    role — yields ``None``, which callers treat as "use the built-in default
+    role". A name nothing defines any more resolves to the default at turn time.
     """
     if collection_id is None:
         return None
     collection = await session.get(Collection, collection_id)
-    if collection is None or collection.default_role_id is None:
-        return None
-    role = await session.get(Role, collection.default_role_id)
-    return role.id if role is not None else None
+    return collection.default_role if collection is not None else None
 
 
 async def topic_counts_by_collection(session: AsyncSession) -> dict[int, int]:

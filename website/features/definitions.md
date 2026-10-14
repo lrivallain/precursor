@@ -14,8 +14,9 @@ The same folder holds the **summary templates** of
 [below](#summary-templates).
 
 ::: warning Work in progress
-Opt-in and still evolving. By default Precursor keeps running everything from
-the database, as it always has. The full design, file format and roadmap live
+Still evolving. A new install starts in files mode, with nothing to migrate.
+An install that already has agents, workflows or custom roles keeps running from
+the database, as it always has, until you migrate it. The full design, file format and roadmap live
 in [`docs/definitions.md`](https://github.com/lrivallain/precursor/blob/main/docs/definitions.md).
 :::
 
@@ -51,6 +52,17 @@ Steps have **keys**, so references (`on_fail`, context sources,
 unknown keys, duplicate keys and contradictions are errors — and JSON Schemas
 give editors completion.
 
+## Roles as files
+
+[Assistant roles](/features/skills-memory#assistant-roles) are definition files
+too — `roles/<name>.role.yaml` with a `name` and a `prompt`. Topics, chats,
+agents and workflows refer to a role by its **name** (case-insensitive), so it
+can't be renamed in the app, and a name nothing defines falls back to the
+`default` role. `roles/default.role.yaml` is always there: Precursor re-creates
+it when it's missing. The migration wizard writes your existing roles with the
+agents and workflows, and switching back copies their prompts into the
+database again.
+
 ## Getting there from today's data
 
 While the database still declares them, the **Agents** and **Workflows** homes
@@ -61,7 +73,7 @@ files** directly. The wizard takes you through it:
 1. **Overview** — what's declared today, where the files will go (the
    **Definitions** workspace), what stays in the database, and anything
    in the way (a workflow mid-run, two files with the same id).
-2. **Review** — every agent and workflow with what happens to its file: new,
+2. **Review** — every agent, workflow and role with what happens to its file: new,
    rewritten from the database (and why), or already up to date. Open a line to
    see the **file itself**, as it will be written, next to what's on disk now.
 3. **Migrate** — a copy of the database is taken, the files are written and

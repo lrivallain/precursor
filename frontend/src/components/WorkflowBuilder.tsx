@@ -30,7 +30,7 @@ export function WorkflowBuilder({ workflow, onSaved, onCancel }: Props) {
   );
   // Workflow-wide Assistant Role: one voice for the whole pipeline, applied to
   // each step's agent at launch rather than stamped onto the shared agent rows.
-  const [roleId, setRoleId] = useState<number | null>(workflow?.role_id ?? null);
+  const [roleName, setRoleName] = useState<string | null>(workflow?.role ?? null);
   const [roles, setRoles] = useState<Role[]>([]);
   // Workflow-wide tool-approval policy. What makes an *unattended* pipeline
   // actually unattended: a step that stops at a permission gate parks the whole
@@ -65,7 +65,7 @@ export function WorkflowBuilder({ workflow, onSaved, onCancel }: Props) {
             clear_artifacts: clearArtifacts,
             max_loops: maxLoops,
             step_timeout_seconds: timeoutMin > 0 ? timeoutMin * 60 : 0,
-            role_id: roleId ?? 0,
+            role: roleName ?? "",
             approval_policy: approvalPolicy,
           })
         : await api.workflows.create({
@@ -75,7 +75,7 @@ export function WorkflowBuilder({ workflow, onSaved, onCancel }: Props) {
             clear_artifacts: clearArtifacts,
             max_loops: maxLoops,
             step_timeout_seconds: timeoutMin > 0 ? timeoutMin * 60 : null,
-            role_id: roleId,
+            role: roleName,
             approval_policy: approvalPolicy,
           });
       onSaved(saved);
@@ -187,13 +187,13 @@ export function WorkflowBuilder({ workflow, onSaved, onCancel }: Props) {
               </span>
             </span>
             <select
-              value={roleId ?? ""}
-              onChange={(e) => setRoleId(e.target.value ? Number(e.target.value) : null)}
+              value={roleName ?? ""}
+              onChange={(e) => setRoleName(e.target.value || null)}
               className="max-w-[14rem] rounded-lg border border-border bg-bg/40 px-2 py-1 text-sm outline-none focus:border-indigo-500"
             >
               <option value="">Each agent&apos;s own role</option>
               {roles.map((r) => (
-                <option key={r.id} value={r.id}>
+                <option key={r.name} value={r.name}>
                   {r.name}
                 </option>
               ))}

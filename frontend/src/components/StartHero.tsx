@@ -53,12 +53,12 @@ export function TopicStartHero({
 export function ChatStartHero({
   onStart,
 }: {
-  onStart: (prompt: string, roleId: number | null) => void | Promise<void>;
+  onStart: (prompt: string, roleName: string | null) => void | Promise<void>;
 }) {
   const [prompt, setPrompt] = useState("");
   const [busy, setBusy] = useState(false);
   // Assistant Role the new chat is created with. Null = the default role.
-  const [roleId, setRoleId] = useState<number | null>(null);
+  const [roleName, setRoleName] = useState<string | null>(null);
   const [roleOpen, setRoleOpen] = useState(false);
   const { height: composerHeight, onMouseDown: onComposerResize } =
     useResizableHeight({
@@ -77,7 +77,7 @@ export function ChatStartHero({
     setBusy(true);
     if (speech.listening) speech.stop();
     try {
-      await onStart(text, roleId);
+      await onStart(text, roleName);
       setPrompt("");
     } finally {
       setBusy(false);
@@ -113,8 +113,8 @@ export function ChatStartHero({
           <>
             <ComposerModelControls />
             <RoleSelector
-              value={roleId}
-              onChange={setRoleId}
+              value={roleName}
+              onChange={setRoleName}
               open={roleOpen}
               onOpenChange={setRoleOpen}
               disabled={busy}

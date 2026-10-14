@@ -301,7 +301,7 @@ async def _seed() -> tuple[dict[str, int], str]:
             task_prompt="Write it.\nKeep it short.",
             status="waiting",
             model="gpt-5",
-            role_id=role.id,
+            role=role.name,
             approval_policy="balanced",
             autonomy_enabled=True,
             max_steps=5,
@@ -327,7 +327,7 @@ async def _seed() -> tuple[dict[str, int], str]:
             name=f"Pipeline {tag}",
             status="idle",
             description="does things",
-            role_id=role.id,
+            role=role.name,
             approval_policy="autonomous",
             max_loops=5,
             step_timeout_seconds=600,
@@ -589,14 +589,14 @@ async def test_hidden_agent_settings_are_only_flagged_when_they_would_stop_apply
                 task_prompt="do",
                 status="waiting",
                 inline=True,
-                role_id=role.id,
+                role=role.name,
                 approval_policy="autonomous",
                 mcp_servers="fetch",
             )
             wf = Workflow(
                 name=f"Vessel {tag} {overridden}",
                 status="idle",
-                role_id=role.id if overridden else None,
+                role=role.name if overridden else None,
                 approval_policy="autonomous" if overridden else None,
             )
             session.add_all([vessel, wf])

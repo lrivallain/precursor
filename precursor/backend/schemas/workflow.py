@@ -250,7 +250,7 @@ class WorkflowRead(BaseModel):
     # no watchdog).
     step_timeout_seconds: int | None = None
     # Assistant Role applied to every step's agent while the workflow runs.
-    role_id: int | None = None
+    role: str | None = None
     # Tool-approval policy applied to every step's agent while it runs; null
     # leaves each agent's own setting alone.
     approval_policy: AgentApprovalPolicy | None = None
@@ -335,7 +335,7 @@ class WorkflowCreate(BaseModel):
     clear_artifacts: bool = True
     max_loops: int = Field(default=3, ge=1, le=25)
     step_timeout_seconds: int | None = Field(default=None, ge=30, le=86400)
-    role_id: int | None = None
+    role: str | None = None
     approval_policy: AgentApprovalPolicy | None = None
     steps: list[WorkflowStepInput] = []
 
@@ -349,8 +349,8 @@ class WorkflowUpdate(BaseModel):
     max_loops: int | None = Field(default=None, ge=1, le=25)
     # ``0`` disables the watchdog (mapped to null); omit to leave unchanged.
     step_timeout_seconds: int | None = Field(default=None, ge=0, le=86400)
-    # ``0`` clears the role (mapped to null); omit to leave unchanged.
-    role_id: int | None = Field(default=None, ge=0)
+    # An empty name clears the role; omit to leave unchanged.
+    role: str | None = Field(default=None, max_length=64)
     # ``None`` is meaningful here (inherit each agent's own policy), so the
     # router keys off ``model_fields_set`` to tell it from "field omitted".
     approval_policy: AgentApprovalPolicy | None = None

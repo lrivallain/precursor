@@ -8,7 +8,8 @@ stays in the database, keyed to the file by its stable ``id``. See
 
 The same folder also holds **summary templates** (``*.summary.yaml``): the
 instructions a live session's recap is written from. They have no database
-side at all.
+side at all. **Assistant roles** (``*.role.yaml``) are files too: agents,
+workflows, topics and chats name one, and its prompt is read from here.
 
 The models are strict (unknown keys are rejected) because these files are
 written by hand: a typo such as ``instuctions:`` must fail loudly rather than
@@ -39,12 +40,20 @@ DEFINITION_FORMAT_VERSION = 1
 AGENT_FILE_SUFFIX = ".agent.yaml"
 WORKFLOW_FILE_SUFFIX = ".workflow.yaml"
 SUMMARY_FILE_SUFFIX = ".summary.yaml"
+ROLE_FILE_SUFFIX = ".role.yaml"
 SUMMARY_NAME_MAX = 80
+ROLE_NAME_MAX = 64
+ROLE_PROMPT_MAX = 20_000
+# The protected built-in role: every discussion without a role of its own gets
+# it, and it can be neither renamed nor deleted.
+DEFAULT_ROLE_NAME = "default"
+DEFAULT_ROLE_ID = "default"
 
 FILE_SUFFIXES: dict[DefinitionFileKind, str] = {
     "agent": AGENT_FILE_SUFFIX,
     "workflow": WORKFLOW_FILE_SUFFIX,
     "summary": SUMMARY_FILE_SUFFIX,
+    "role": ROLE_FILE_SUFFIX,
 }
 
 DefinitionId = Annotated[
@@ -399,12 +408,67 @@ class SummaryDefinition(_Strict):
         return value
 
 
+# --- Assistant role ---------------------------------------------------------
+
+
+class RoleDefinition(_Strict):
+    """``roles/<slug>.role.yaml``: a persona applied to every turn it is assigned to."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={"title": "Precursor assistant role"},
+    )
+
+    kind: Literal["role"]
+    format: int = Field(default=DEFINITION_FORMAT_VERSION, ge=1, le=DEFINITION_FORMAT_VERSION)
+    id: DefinitionId
+    name: str = Field(
+        min_length=1,
+        max_length=ROLE_NAME_MAX,
+        description=(
+            "How agents, workflows, topics and chats refer to this role. Matched "
+            "case-insensitively and unique across the folder. Renaming it leaves "
+            "whatever names it by the old name on the default role."
+        ),
+    )
+    description: str | None = Field(
+        default=None, max_length=300, description="One line on what the persona is for."
+    )
+    prompt: str = Field(
+        default="",
+        max_length=ROLE_PROMPT_MAX,
+        description=(
+            "The system prompt injected into every turn while the role is assigned. "
+            "May reference skills (`/rewrite`). Empty injects nothing."
+        ),
+    )
+
+    @field_validator("format", mode="before")
+    @classmethod
+    def _format(cls, value: Any) -> Any:
+        return _check_format(value)
+
+    @field_validator("name")
+    @classmethod
+    def _name(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("name is empty")
+        if value != value.strip():
+            raise ValueError("name has leading or trailing whitespace")
+        return value
+
+
 DEFINITION_MODELS: dict[
-    str, type[AgentDefinition] | type[WorkflowDefinition] | type[SummaryDefinition]
+    str,
+    type[AgentDefinition]
+    | type[WorkflowDefinition]
+    | type[SummaryDefinition]
+    | type[RoleDefinition],
 ] = {
     "agent": AgentDefinition,
     "workflow": WorkflowDefinition,
     "summary": SummaryDefinition,
+    "role": RoleDefinition,
 }
 
 

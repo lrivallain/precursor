@@ -15,7 +15,7 @@ class ChatBase(ConversationLLMFields):
     description: str | None = None
     description_as_system_prompt: bool = False
     pinned: bool = False
-    role_id: int | None = None
+    role: str | None = None
 
 
 class ChatCreate(ChatBase):
@@ -32,7 +32,7 @@ class ChatUpdate(ConversationLLMFields):
     description: str | None = None
     description_as_system_prompt: bool | None = None
     pinned: bool | None = None
-    role_id: int | None = None
+    role: str | None = None
     # When present, the router normalizes and uniquifies it before storing.
     slug: str | None = Field(default=None, min_length=1, max_length=255)
 

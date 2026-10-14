@@ -192,12 +192,12 @@ def test_side_chat_inherits_the_topic_role() -> None:
             "/api/roles", json={"name": "Side chat reviewer", "system_prompt": "Be terse."}
         ).json()
         topic = _topic(client, "Role parent")
-        client.patch(f"/api/topics/{topic['id']}", json={"role_id": role["id"]})
+        client.patch(f"/api/topics/{topic['id']}", json={"role": role["name"]})
 
         chat = client.post(f"/api/topics/{topic['id']}/chats", json={}).json()
-        assert chat["role_id"] == role["id"]
+        assert chat["role"] == role["name"]
         client.delete(f"/api/chats/{chat['id']}")
-        client.delete(f"/api/roles/{role['id']}")
+        client.delete(f"/api/roles/{role['name']}")
 
 
 def test_mcp_chat_dict_exposes_the_parent_link() -> None:

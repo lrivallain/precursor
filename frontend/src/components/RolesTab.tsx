@@ -1,20 +1,26 @@
 import { useEffect, useState } from "react";
-import { Drama, Lock, Pencil, Plus, Trash2, X } from "lucide-react";
+import { ArrowRight, Drama, FileText, Lock, Pencil, Plus, Trash2, X } from "lucide-react";
 import { api } from "../lib/api";
 import { rolesStore, useRoles } from "../lib/rolesStore";
 import type { Role } from "../lib/types";
 import { useConfirm } from "./ConfirmDialog";
 import { RefineTextarea } from "./RefineTextarea";
 
-export function RolesTab() {
+export function RolesTab({ onOpenMigration }: { onOpenMigration?: () => void }) {
   const confirmAction = useConfirm();
   const roles = useRoles();
   const [editing, setEditing] = useState<Role | "new" | null>(null);
-  const [busyId, setBusyId] = useState<number | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const [fromDatabase, setFromDatabase] = useState(false);
 
   useEffect(() => {
     void rolesStore.ensureLoaded();
+    api.definitions
+      .status()
+      .then((st) => setFromDatabase(st.stage === "database"))
+      .catch(() => setFromDatabase(false));
   }, []);
 
   async function handleDelete(role: Role): Promise<void> {
@@ -26,10 +32,10 @@ export function RolesTab() {
       }))
     )
       return;
-    setBusyId(role.id);
+    setBusyId(role.name);
     setError(null);
     try {
-      await api.roles.remove(role.id);
+      await api.roles.remove(role.name);
       await rolesStore.load();
     } catch (err) {
       setError((err as Error).message);
@@ -54,6 +60,22 @@ export function RolesTab() {
         </button>
       </div>
 
+      {fromDatabase && onOpenMigration && (
+        <div className="text-[11px] text-muted border border-border rounded px-2 py-1.5 flex items-center justify-between gap-2">
+          <span>
+            Roles are stored in the database. Migrate to definition files to keep
+            them as <code>roles/*.role.yaml</code>.
+          </span>
+          <button
+            type="button"
+            onClick={onOpenMigration}
+            className="shrink-0 flex items-center gap-1 text-accent hover:underline"
+          >
+            Definition files <ArrowRight size={12} aria-hidden />
+          </button>
+        </div>
+      )}
+
       {error && (
         <div className="text-xs text-red-500 border border-red-500/30 rounded p-2">
           {error}
@@ -70,13 +92,22 @@ export function RolesTab() {
         <ul className="space-y-1.5">
           {roles.map((r) => (
             <li
-              key={r.id}
+              key={r.name}
               className="border border-border rounded px-2 py-1.5 flex items-center gap-2"
             >
               <div className="flex-1 min-w-0">
                 <div className="text-sm text-text truncate flex items-center gap-1">
                   {r.is_default && <Lock size={11} className="text-muted shrink-0" />}
                   {r.name}
+                  {r.path && (
+                    <span
+                      className="ml-1 inline-flex items-center gap-1 rounded bg-surface px-1.5 py-0.5 text-[10px] font-normal text-muted"
+                      data-tooltip={`Defined by ${r.path}`}
+                    >
+                      <FileText size={10} aria-hidden />
+                      file
+                    </span>
+                  )}
                 </div>
                 <div className="text-[11px] text-muted truncate">
                   {r.system_prompt
@@ -99,7 +130,7 @@ export function RolesTab() {
                 <button
                   type="button"
                   onClick={() => void handleDelete(r)}
-                  disabled={busyId === r.id}
+                  disabled={busyId === r.name}
                   className="p-1 rounded hover:bg-surface text-muted hover:text-red-500 disabled:opacity-40"
                   data-tooltip="Delete"
                   aria-label="Delete role"
@@ -134,6 +165,8 @@ interface EditorProps {
 
 function RoleEditor({ role, onClose, onSaved }: EditorProps) {
   const isDefault = role?.is_default ?? false;
+  // Everything refers to a role by name, so an existing role keeps its own.
+  const locked = role !== null;
   const [name, setName] = useState(role?.name ?? "");
   const [systemPrompt, setSystemPrompt] = useState(role?.system_prompt ?? "");
   const [saving, setSaving] = useState(false);
@@ -144,10 +177,7 @@ function RoleEditor({ role, onClose, onSaved }: EditorProps) {
     setError(null);
     try {
       if (role) {
-        await api.roles.update(role.id, {
-          ...(isDefault ? {} : { name: name.trim() }),
-          system_prompt: systemPrompt,
-        });
+        await api.roles.update(role.name, { system_prompt: systemPrompt });
       } else {
         await api.roles.create({
           name: name.trim(),
@@ -198,12 +228,15 @@ function RoleEditor({ role, onClose, onSaved }: EditorProps) {
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="Senior Code Reviewer"
-              disabled={isDefault}
+              disabled={locked}
               className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent disabled:opacity-50"
             />
-            {isDefault && (
+            {locked && (
               <p className="text-[10px] text-muted mt-1">
-                The default role can't be renamed or deleted.
+                {isDefault
+                  ? "The default role can't be renamed or deleted."
+                  : "Conversations refer to a role by its name, so it can't be renamed. Create a new role to use another name."}
+                {role?.path && ` Defined by ${role.path}.`}
               </p>
             )}
           </div>
@@ -234,7 +267,7 @@ function RoleEditor({ role, onClose, onSaved }: EditorProps) {
           </button>
           <button
             onClick={() => void save()}
-            disabled={saving || (!isDefault && !name.trim())}
+            disabled={saving || (!locked && !name.trim())}
             className="px-3 py-1.5 rounded bg-accent text-white text-sm disabled:opacity-50"
           >
             {saving ? "Saving…" : role ? "Save" : "Create"}

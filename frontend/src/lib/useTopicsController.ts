@@ -70,7 +70,7 @@ export interface TopicsController {
   togglePin: () => Promise<void>;
   openPromotedTopic: (topic: Topic) => Promise<void>;
   handleStreamComplete: (topicId: number) => Promise<void>;
-  setRoleForActive: (roleId: number | null) => Promise<void>;
+  setRoleForActive: (roleName: string | null) => Promise<void>;
   sectionUrl: () => string;
   modeUrl: () => string;
   syncFromRoute: (r: AppRoute) => void;
@@ -519,9 +519,9 @@ export function useTopicsController(deps: TopicsControllerDeps): TopicsControlle
   }
 
   // The topics branch of App's shared role persistence (`setRoleForActive`).
-  async function setRoleForActive(roleId: number | null): Promise<void> {
+  async function setRoleForActive(roleName: string | null): Promise<void> {
     if (!activeTopic) return;
-    const updated = await api.topics.update(activeTopic.id, { role_id: roleId });
+    const updated = await api.topics.update(activeTopic.id, { role: roleName });
     if (activeTopicRef.current?.id === activeTopic.id) setActiveTopic(updated);
   }
 

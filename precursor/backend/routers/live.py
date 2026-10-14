@@ -733,7 +733,7 @@ async def ask(
     lang = language_name(ms.language)
     if lang:
         system += f" Respond in {lang}."
-    persona = role_persona_instruction(await resolve_role_prompt(session, ms.role_id))
+    persona = role_persona_instruction(await resolve_role_prompt(session, ms.role))
     if persona:
         system += f"\n\n{persona}"
     user_parts = [

@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 
 class RoleBase(BaseModel):
@@ -25,6 +23,8 @@ class RoleCreate(RoleBase):
 
 
 class RoleUpdate(BaseModel):
+    # Accepted so a client can send the whole role back; a different name is
+    # refused, as everything refers to a role by its name.
     name: str | None = Field(default=None, min_length=1, max_length=64)
     system_prompt: str | None = Field(default=None, max_length=20_000)
 
@@ -39,10 +39,12 @@ class RoleUpdate(BaseModel):
         return v
 
 
-class RoleRead(RoleBase):
-    model_config = ConfigDict(from_attributes=True)
+class RoleRead(BaseModel):
+    """A role as the API shows it. The name is its identity: there is no id."""
 
-    id: int
+    name: str
+    system_prompt: str
     is_default: bool
-    created_at: datetime
-    updated_at: datetime
+    description: str | None = None
+    # Relative to the definitions folder when the role is a file; else null.
+    path: str | None = None

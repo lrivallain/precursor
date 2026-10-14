@@ -41,6 +41,7 @@ import type {
   DefinitionFileKind,
   DefinitionFileReport,
   DefinitionKind,
+  MigrationKind,
   DefinitionsCheckReport,
   DefinitionsExportResult,
   DefinitionsStatus,
@@ -622,7 +623,7 @@ export const api = {
       payload: {
         title?: string;
         task?: string;
-        role_id?: number | null;
+        role?: string | null;
         autonomy_enabled?: boolean;
         max_steps?: number;
         approval_policy?: AgentApprovalPolicy | null;
@@ -911,7 +912,7 @@ export const api = {
         body: JSON.stringify({ acknowledge }),
       }),
     revert: () => request<RevertResult>(`/api/definitions/revert`, { method: "POST" }),
-    migrationItem: (kind: DefinitionKind, id: number) =>
+    migrationItem: (kind: MigrationKind, id: number) =>
       request<MigrationItemDetail>(`/api/definitions/migration/items/${kind}/${id}`),
     // The last, irreversible step: clears the declarations out of the database.
     finalize: () =>
@@ -1325,13 +1326,13 @@ export const api = {
     list: () => request<Role[]>(`/api/roles`),
     create: (data: RoleCreate) =>
       request<Role>(`/api/roles`, { method: "POST", body: JSON.stringify(data) }),
-    update: (id: number, data: RoleUpdate) =>
-      request<Role>(`/api/roles/${id}`, {
+    update: (name: string, data: RoleUpdate) =>
+      request<Role>(`/api/roles/${encodeURIComponent(name)}`, {
         method: "PATCH",
         body: JSON.stringify(data),
       }),
-    remove: (id: number) =>
-      request<void>(`/api/roles/${id}`, { method: "DELETE" }),
+    remove: (name: string) =>
+      request<void>(`/api/roles/${encodeURIComponent(name)}`, { method: "DELETE" }),
   },
 
   collections: {

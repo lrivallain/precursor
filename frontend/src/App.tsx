@@ -628,15 +628,15 @@ export default function App() {
   // persists null (which resolves to default server-side). Live sessions are
   // absent on purpose — LiveView persists its own role from its capture
   // toolbar, the way it already does for the meeting language.
-  async function setRoleForActive(roleId: number | null): Promise<void> {
+  async function setRoleForActive(roleName: string | null): Promise<void> {
     if (sidebarMode === "topics" && activeTopic) {
-      await topicsCtl.setRoleForActive(roleId);
+      await topicsCtl.setRoleForActive(roleName);
     } else if (sidebarMode === "chats" && activeChat) {
-      await chatsCtl.setRoleForActive(roleId);
+      await chatsCtl.setRoleForActive(roleName);
     } else if (sidebarMode === "workspaces" && wsCtl.activeWorkspace) {
-      await wsCtl.setRoleForActive(roleId);
+      await wsCtl.setRoleForActive(roleName);
     } else if (sidebarMode === "agents" && agentsCtl.activeAgent) {
-      const updated = await api.agents.update(agentsCtl.activeAgent.id, { role_id: roleId });
+      const updated = await api.agents.update(agentsCtl.activeAgent.id, { role: roleName });
       agentsCtl.setAgents((prev) =>
         prev ? prev.map((a) => (a.id === updated.id ? updated : a)) : prev,
       );

@@ -26,10 +26,11 @@ from precursor.backend.schemas.schedule import (
     ScheduleUpdate,
     TopicScheduleCreate,
 )
+from precursor.backend.services import roles as roles_service
 from precursor.backend.services import side_chats
 from precursor.backend.services.collections import (
     move_subtree_to_collection,
-    resolve_collection_default_role_id,
+    resolve_collection_default_role,
     resolve_collection_id,
 )
 from precursor.backend.services.events import (
@@ -188,8 +189,9 @@ async def create_topic(
 
     # When no role is picked, a new topic inherits its collection's default
     # Assistant Role (null leaves it on the built-in default role).
-    if data.get("role_id") is None:
-        data["role_id"] = await resolve_collection_default_role_id(session, data["collection_id"])
+    data["role"] = await roles_service.require_role(session, data.get("role"))
+    if data["role"] is None:
+        data["role"] = await resolve_collection_default_role(session, data["collection_id"])
 
     if create_linked_issue:
         # Create the issue first so a GitHub failure aborts before the topic is

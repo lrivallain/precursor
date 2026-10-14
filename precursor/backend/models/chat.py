@@ -33,10 +33,8 @@ class Chat(Base, TimestampMixin):
     )
 
     # Assistant Role assigned to this chat. Null resolves to the default role
-    # (no persona injected). SET NULL on delete reverts to default.
-    role_id: Mapped[int | None] = mapped_column(
-        ForeignKey("roles.id", ondelete="SET NULL"), nullable=True, index=True
-    )
+    # (no persona injected). Stored by name; an unknown name falls back to it.
+    role: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
 
     # Timestamp of the last time the user opened this chat. Used to compute
     # unread badge (non-user messages newer than this are unread).

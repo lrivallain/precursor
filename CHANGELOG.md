@@ -15,6 +15,20 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **A new install starts in files mode.** When nothing is declared in the
+  database yet (no agent, no workflow, no role beyond the untouched `default`)
+  and no source was ever chosen, Precursor records the install as migrated and
+  reads definition files from the first start — the migration wizard is skipped.
+  Existing installs are unchanged. The wizard's **Review** step now also lists
+  roles, each with the file it would write.
+
+- **Assistant roles are definition files.** A role is a `roles/<slug>.role.yaml`
+  file (`name`, `description`, `prompt`) with a published JSON Schema, checked by
+  the folder check and `precursor validate`. In files mode **Settings → Roles**
+  reads and writes those files, `roles/default.role.yaml` is always re-created,
+  and the migration wizard writes, verifies, reverts and cleans up roles along
+  with agents and workflows. Documented in `docs/definitions.md` and the website.
+
 - **`create_workspace` over MCP, and workspace tools in the `precursor` server.**
   The standalone `workspace-fs` server is folded into the built-in `precursor`
   server as two new opt-in sections: **Workspaces** (`list_workspaces`,
@@ -434,6 +448,14 @@ are the per-version history; releasing does not rewrite this file.
   receipt is now the signal, on every platform.
 
 ### Changed
+
+- **Roles are referenced by name, not id.** Topics, chats, workspaces, live
+  sessions, agents, workflows and collections store the role's `name`
+  (case-insensitive); an unknown name falls back to the `default` role with a
+  warning. The API follows: `/api/roles/{name}`, `role` / `default_role` replace
+  `role_id` / `default_role_id`, and a role can no longer be renamed. An Alembic
+  migration backfills the names; the `roles` table and legacy `role_id` columns
+  stay for the time being.
 
 - **MCP servers are listed in a fixed order.** Settings → MCP now shows
   `precursor`, `cmd-runner`, `fetch`, `github`, `playwright`, the `workiq*`

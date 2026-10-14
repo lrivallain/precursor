@@ -582,8 +582,8 @@ export function LiveView({
     }
   }
 
-  async function applyRole(roleId: number | null): Promise<void> {
-    onUpdated(await api.meetings.updateSession(session.id, { role_id: roleId }));
+  async function applyRole(roleName: string | null): Promise<void> {
+    onUpdated(await api.meetings.updateSession(session.id, { role: roleName }));
   }
 
   async function generateTopicSummary(): Promise<void> {
@@ -1115,8 +1115,8 @@ export function LiveView({
       />
 
       <RoleSelector
-        value={session.role_id ?? null}
-        onChange={(roleId) => void applyRole(roleId)}
+        value={session.role ?? null}
+        onChange={(roleName) => void applyRole(roleName)}
         open={roleOpen}
         onOpenChange={setRoleOpen}
         variant="toolbar"

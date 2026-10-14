@@ -73,11 +73,8 @@ class Topic(Base, TimestampMixin):
     github_issue_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # Assistant Role assigned to this topic. Null resolves to the default role
-    # (no persona injected). SET NULL on delete so removing a role reverts every
-    # topic that used it back to the default.
-    role_id: Mapped[int | None] = mapped_column(
-        ForeignKey("roles.id", ondelete="SET NULL"), nullable=True, index=True
-    )
+    # (no persona injected). Stored by name; removing a role clears it here.
+    role: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
 
     # Collection this topic belongs to — the lens the sidebar filters by.
     # Membership cascades down the tree, so a subtree is never split across

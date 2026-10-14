@@ -202,7 +202,7 @@ export function WorkspaceView({
   initialPath: string | null;
   onPathChange: (path: string | null) => void;
   onDeleted: () => void;
-  onSetRole?: (roleId: number | null) => Promise<void>;
+  onSetRole?: (roleName: string | null) => Promise<void>;
 }) {
   const confirmAction = useConfirm();
   const area = workspace;

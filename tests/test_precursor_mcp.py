@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Iterator
+
+import pytest
 from fastapi.testclient import TestClient
 
 from precursor.backend.config import get_settings
@@ -12,6 +16,18 @@ from precursor.backend.services.app_settings import (
     resolve_mcp_expose,
 )
 from precursor.backend.services.mcp import precursor_server as ps
+
+
+@pytest.fixture(autouse=True)
+def _reset_mcp_expose() -> Iterator[None]:
+    """Leave every section off after each test.
+
+    The test DB is process-wide, so a toggle left behind (e.g. by the
+    round-trip test below) would otherwise leak into the defaults assertion
+    depending on how xdist spreads the tests over workers.
+    """
+    yield
+    asyncio.run(_set_expose("{}"))
 
 
 def test_precursor_registered_as_builtin() -> None:

@@ -91,7 +91,7 @@ async def build_system_context(session: AsyncSession, topic: Topic) -> str:
         "anything that may have changed.",
     ]
 
-    role_prompt = await resolve_role_prompt(session, topic.role_id)
+    role_prompt = await resolve_role_prompt(session, topic.role)
     if role_prompt:
         parts.append(f"Active assistant role — adopt this persona for every reply:\n{role_prompt}")
 
@@ -145,7 +145,7 @@ async def build_chat_system_context(session: AsyncSession, chat: Chat) -> str:
         "tool calls over stale context for anything that may have changed.",
     ]
 
-    role_prompt = await resolve_role_prompt(session, chat.role_id)
+    role_prompt = await resolve_role_prompt(session, chat.role)
     if role_prompt:
         parts.append(f"Active assistant role — adopt this persona for every reply:\n{role_prompt}")
 

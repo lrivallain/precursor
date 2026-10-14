@@ -78,16 +78,24 @@ def test_builtin_stdio_server_module_builds_an_mcp_server(module_name: str) -> N
 # --------------------------------------------------------------------------
 
 
-async def _expose_topics() -> None:
+async def _expose_topics(value: str | None = None) -> None:
     """``tools/list`` only advertises exposed sections, so opt ``topics`` in."""
     async with SessionLocal() as session:
-        value = json.dumps({"topics": True})
+        value = value or json.dumps({"topics": True})
         row = await session.get(AppSetting, "mcp_expose")
         if row is None:
             session.add(AppSetting(key="mcp_expose", value=value))
         else:
             row.value = value
         await session.commit()
+
+
+@pytest.fixture(autouse=True)
+async def _restore_mcp_expose() -> AsyncIterator[None]:
+    """Don't leave ``topics`` exposed in the shared DB for other files."""
+    yield
+    await init_db()
+    await _expose_topics("{}")
 
 
 async def test_stdio_builtin_lists_calls_recycles_and_closes(

@@ -36,7 +36,11 @@ from sqlalchemy.orm import selectinload
 
 from precursor.backend.config import get_settings
 from precursor.backend.models import AgentSession, AppSetting, Role, Workflow, WorkflowStep
-from precursor.backend.schemas.definitions import AgentDefinition, WorkflowDefinition
+from precursor.backend.schemas.definitions import (
+    DEFAULT_ROLE_NAME,
+    AgentDefinition,
+    WorkflowDefinition,
+)
 from precursor.backend.schemas.definitions_api import (
     CleanupPreview,
     DefinitionIssue,
@@ -48,11 +52,13 @@ from precursor.backend.schemas.definitions_api import (
     FinalizeResult,
     MigrationItem,
     MigrationItemDetail,
+    MigrationKind,
     MigrationPreview,
     MigrationRecord,
     MigrationResult,
     RevertResult,
 )
+from precursor.backend.services import roles as roles_service
 from precursor.backend.services.app_settings import resolve_agents_enabled
 from precursor.backend.services.definitions import anchors, overlay, trust
 from precursor.backend.services.definitions.exporter import (
@@ -187,8 +193,7 @@ async def _plan(session: AsyncSession) -> _Plan:
     if not await resolve_agents_enabled(session):
         plan.blockers.append("Agents mode is off")
 
-    roles = {r.id: r.name for r in (await session.execute(select(Role))).scalars()}
-    ctx = _Context(root=root, roles=roles, result=DefinitionsExportResult(root=str(root)))
+    ctx = _Context(root=root, result=DefinitionsExportResult(root=str(root)))
 
     agents = (
         (
@@ -338,6 +343,31 @@ async def _write_record(session: AsyncSession, key: str, value: dict[str, Any] |
         row.value = json.dumps(value)
 
 
+async def adopt_files_if_fresh(session: AsyncSession) -> bool:
+    """A new install declares everything in files from the start.
+
+    Applies only while no source was ever chosen and the database declares
+    nothing: no agent, no workflow, no role beyond an untouched ``default``.
+    There is then nothing to migrate, so the wizard is skipped and the install
+    is recorded as clean. Any existing install keeps the wizard.
+    """
+    if overlay.files_mode():
+        return False
+    if await session.get(AppSetting, overlay.SOURCE_SETTING_KEY) is not None:
+        return False
+    for model in (AgentSession, Workflow):
+        if (await session.execute(select(model.id).limit(1))).first() is not None:
+            return False
+    roles = await _role_rows(session)
+    if any(r.name.lower() != DEFAULT_ROLE_NAME or r.system_prompt for r in roles):
+        return False
+    await overlay.persist_source(session, "files")
+    await overlay.persist_finalized(
+        session, {"at": datetime.now(UTC).isoformat(timespec="seconds"), "fresh": True}
+    )
+    return True
+
+
 async def preview(session: AsyncSession) -> MigrationPreview:
     migrated = await _read_record(session, MIGRATED_SETTING_KEY)
     migrated_record = MigrationRecord(**migrated) if migrated else None
@@ -373,7 +403,8 @@ async def preview(session: AsyncSession) -> MigrationPreview:
         folder=str(plan.root),
         workspace=await _workspace_ref(session),
         sample_path=_sample_path(plan.dset),
-        items=plan.items(),
+        items=[*plan.items(), *await _role_items(session)],
+        roles=len(await roles_service.unfiled_roles(session)),
         issues=plan.issues,
         blockers=plan.blockers,
         ready=not plan.blockers,
@@ -381,13 +412,51 @@ async def preview(session: AsyncSession) -> MigrationPreview:
     )
 
 
+async def _role_rows(session: AsyncSession) -> list[Role]:
+    return list((await session.execute(select(Role).order_by(Role.id))).scalars())
+
+
+async def _role_items(session: AsyncSession) -> list[MigrationItem]:
+    return [
+        MigrationItem(
+            kind="role",
+            id=m.row.id,
+            name=m.row.name,
+            path=m.path,
+            action="create" if m.action == "create" else "unchanged",
+            reason=m.reason,
+        )
+        for m in roles_service.plan_migration(await _role_rows(session))
+    ]
+
+
+async def _role_detail(session: AsyncSession, row_id: int) -> MigrationItemDetail:
+    planned = next(
+        (m for m in roles_service.plan_migration(await _role_rows(session)) if m.row.id == row_id),
+        None,
+    )
+    if planned is None:
+        raise LookupError(f"No role {row_id} in the migration")
+    return MigrationItemDetail(
+        kind="role",
+        id=row_id,
+        name=planned.row.name,
+        action="create" if planned.action == "create" else "unchanged",
+        path=planned.path,
+        proposed=planned.proposed,
+        current=planned.current,
+    )
+
+
 async def item_detail(
-    session: AsyncSession, kind: DefinitionKind, row_id: int
+    session: AsyncSession, kind: MigrationKind, row_id: int
 ) -> MigrationItemDetail:
     """The file the migration would write for one agent or workflow, and the
     one on disk now — the content behind a preview line."""
     if overlay.files_mode():
         raise MigrationRefused("Agents and workflows are already declared by their files")
+    if kind == "role":
+        return await _role_detail(session, row_id)
     plan = await _plan(session)
     planned = next((p for p in plan.planned if p.item.kind == kind and p.item.id == row_id), None)
     if planned is None or planned.item.action == "new_from_disk":
@@ -418,8 +487,7 @@ async def _new_document(session: AsyncSession, kind: DefinitionKind, row_id: int
     """What the export would write for a row with no file yet (id shown as-is,
     or as a placeholder when it will be minted at migration)."""
     root = overlay.definitions_root()
-    roles = {r.id: r.name for r in (await session.execute(select(Role))).scalars()}
-    ctx = _Context(root=root, roles=roles, result=DefinitionsExportResult(root=str(root)))
+    ctx = _Context(root=root, result=DefinitionsExportResult(root=str(root)))
     if kind == "agent":
         agent = await session.get(AgentSession, row_id)
         assert agent is not None
@@ -521,6 +589,7 @@ async def migrate(session: AsyncSession, *, acknowledge: bool = False) -> Migrat
     root = overlay.definitions_root()
 
     # 1. A file for every agent and workflow that has none (linked, accepted).
+    roles_written = await roles_service.export_to_files(session)
     exported = await export_definitions(session, root)
     # 2. The files that differ from the database, rewritten from it.
     plan = await _plan(session)
@@ -538,6 +607,9 @@ async def migrate(session: AsyncSession, *, acknowledge: bool = False) -> Migrat
         if p.item.action in ("create", "regenerate")
     ]
     mismatches += check.blockers
+    mismatches += [
+        f"role '{name}': no valid file" for name in await roles_service.unfiled_roles(session)
+    ]
     created = len(exported.written)
     result = MigrationResult(
         ok=not mismatches,
@@ -548,6 +620,7 @@ async def migrate(session: AsyncSession, *, acknowledge: bool = False) -> Migrat
         # Just-created files match by construction; the rest were already right.
         unchanged=max(0, plan.count("unchanged") - created),
         added_from_disk=plan.count("new_from_disk"),
+        roles=roles_written,
         issues=exported.issues + [i for i in plan.issues if i not in exported.issues],
         mismatches=mismatches,
     )
@@ -573,6 +646,7 @@ async def migrate(session: AsyncSession, *, acknowledge: bool = False) -> Migrat
             "regenerated": result.regenerated,
             "unchanged": result.unchanged,
             "added_from_disk": result.added_from_disk,
+            "roles": roles_written,
         },
     )
     await session.commit()
@@ -615,6 +689,7 @@ async def revert(session: AsyncSession) -> RevertResult:
     snapshot = await _snapshot("revert")
     overlay.invalidate()
     result = RevertResult(ok=True, source="files", snapshot=snapshot)
+    result.roles = await roles_service.import_from_files(session)
 
     agents = (
         (await session.execute(select(AgentSession).where(AgentSession.inline.is_(False))))
@@ -704,7 +779,7 @@ async def revert(session: AsyncSession) -> RevertResult:
 _BLANK_AGENT: dict[str, Any] = {
     "task_prompt": "",
     "model": None,
-    "role_id": None,
+    "role": None,
     "approval_policy": None,
     "autonomy_enabled": False,
     "max_steps": 12,
@@ -719,7 +794,7 @@ _BLANK_WORKFLOW: dict[str, Any] = {
     "description": None,
     "icon": None,
     "color": None,
-    "role_id": None,
+    "role": None,
     "approval_policy": None,
     "clear_artifacts": True,
     "max_loops": 3,
@@ -801,6 +876,7 @@ async def cleanup_preview(session: AsyncSession) -> CleanupPreview:
                 f"({'; '.join(changes)}); they stay pending"
             )
 
+    preview.roles = len(dset.roles())
     preview.agents = len(agents)
     preview.workflows = len(workflows)
     preview.step_prompts = (
@@ -819,7 +895,9 @@ async def _verify_all_declared(session: AsyncSession) -> list[str]:
     """Everything that would be left with no declaration once the columns are blank."""
     overlay.invalidate()
     dset = overlay.current_definitions()
-    problems: list[str] = []
+    problems: list[str] = [
+        f"role '{name}' has no valid file" for name in await roles_service.unfiled_roles(session)
+    ]
     for agent in (
         (await session.execute(select(AgentSession).where(AgentSession.inline.is_(False))))
         .scalars()
@@ -879,6 +957,7 @@ async def finalize(session: AsyncSession, *, confirm: bool) -> FinalizeResult:
 
     snapshot = await _snapshot("cleanup")
     root = overlay.definitions_root()
+    await roles_service.export_to_files(session)
     exported = await export_definitions(session, root)
     await anchors.refresh(session)
     session.expire_all()
@@ -895,6 +974,7 @@ async def finalize(session: AsyncSession, *, confirm: bool) -> FinalizeResult:
         "step_prompts": ready.step_prompts,
         "workflows": ready.workflows,
         "steps": ready.steps,
+        "roles": ready.roles,
     }
     for model, blank in (
         (AgentSession, _BLANK_AGENT),
@@ -906,6 +986,11 @@ async def finalize(session: AsyncSession, *, confirm: bool) -> FinalizeResult:
             .values(**blank, updated_at=model.updated_at)
             .execution_options(synchronize_session=False)
         )
+    await session.execute(
+        update(Role)
+        .values(system_prompt="", updated_at=Role.updated_at)
+        .execution_options(synchronize_session=False)
+    )
     await session.commit()
     record = {"at": datetime.now(UTC).isoformat(timespec="seconds"), "snapshot": snapshot, **counts}
     await overlay.persist_source(session, "files")

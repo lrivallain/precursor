@@ -21,9 +21,10 @@ from precursor.backend.schemas import (
     TopicNoteSend,
 )
 from precursor.backend.schemas.topic import TopicRead
+from precursor.backend.services import roles as roles_service
 from precursor.backend.services import side_chat_notes
 from precursor.backend.services.collections import (
-    resolve_collection_default_role_id,
+    resolve_collection_default_role,
     resolve_collection_id,
 )
 from precursor.backend.services.conversation_llm import validate_selection
@@ -103,7 +104,7 @@ async def create_chat(
         description=payload.description,
         description_as_system_prompt=payload.description_as_system_prompt,
         pinned=payload.pinned,
-        role_id=payload.role_id,
+        role=await roles_service.require_role(session, payload.role),
         llm_selection=payload.llm_selection.model_dump_json() if payload.llm_selection else None,
         autoname_pending=payload.autoname,
     )
@@ -156,8 +157,8 @@ async def update_chat(
         chat.description_as_system_prompt = payload.description_as_system_prompt
     if payload.pinned is not None:
         chat.pinned = payload.pinned
-    if "role_id" in payload.model_fields_set:
-        chat.role_id = payload.role_id
+    if "role" in payload.model_fields_set:
+        chat.role = await roles_service.require_role(session, payload.role)
     if "llm_selection" in payload.model_fields_set:
         await validate_selection(session, payload.llm_selection)
         chat.llm_selection = (
@@ -338,7 +339,7 @@ async def promote_chat_to_topic(
         collection_id=resolved_collection_id,
         # Keep the quoted reply: the transcript alone lacks what it answered.
         seed_content=chat.seed_content,
-        role_id=await resolve_collection_default_role_id(session, resolved_collection_id),
+        role=await resolve_collection_default_role(session, resolved_collection_id),
     )
     session.add(topic)
     await session.flush()  # assign topic.id

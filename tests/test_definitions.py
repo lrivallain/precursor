@@ -20,9 +20,11 @@ from pydantic import ValidationError
 from precursor.backend.schemas.definitions import (
     AGENT_FILE_SUFFIX,
     FILE_SUFFIXES,
+    ROLE_FILE_SUFFIX,
     SUMMARY_FILE_SUFFIX,
     WORKFLOW_FILE_SUFFIX,
     AgentDefinition,
+    RoleDefinition,
     SummaryDefinition,
     WorkflowDefinition,
     definition_json_schema,
@@ -68,6 +70,7 @@ def test_examples_exist_for_every_kind() -> None:
     assert any(n.endswith(AGENT_FILE_SUFFIX) for n in names)
     assert any(n.endswith(WORKFLOW_FILE_SUFFIX) for n in names)
     assert any(n.endswith(SUMMARY_FILE_SUFFIX) for n in names)
+    assert any(n.endswith(ROLE_FILE_SUFFIX) for n in names)
 
 
 @pytest.mark.parametrize("path", _example_files(), ids=lambda p: p.name)
@@ -77,6 +80,8 @@ def test_example_files_validate(path: Path) -> None:
         AgentDefinition.model_validate(data)
     elif path.name.endswith(SUMMARY_FILE_SUFFIX):
         SummaryDefinition.model_validate(data)
+    elif path.name.endswith(ROLE_FILE_SUFFIX):
+        RoleDefinition.model_validate(data)
     else:
         workflow = WorkflowDefinition.model_validate(data)
         # The docs example must be self-consistent: every agent it names exists.

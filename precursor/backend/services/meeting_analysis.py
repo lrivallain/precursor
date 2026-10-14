@@ -209,7 +209,7 @@ async def live_chat_grounding(session: AsyncSession, chat_id: int) -> str:
         "meeting context below; it updates as the meeting progresses. Prefer it "
         "over prior assumptions for anything time-sensitive."
     ]
-    persona = role_persona_instruction(await resolve_role_prompt(session, ms.role_id))
+    persona = role_persona_instruction(await resolve_role_prompt(session, ms.role))
     if persona:
         parts.append(persona)
     if segments:
@@ -436,7 +436,7 @@ async def analyze_session(
     lang = language_name(ms.language)
     if lang:
         system += f"\n\nWrite every insight's content and the suggestion in {lang}."
-    persona = role_persona_instruction(await resolve_role_prompt(session, ms.role_id))
+    persona = role_persona_instruction(await resolve_role_prompt(session, ms.role))
     if persona:
         system += f"\n\n{persona}"
 

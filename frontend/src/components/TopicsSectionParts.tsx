@@ -144,7 +144,7 @@ export function TopicsMain({
 }: {
   controller: TopicsController;
   onRemindersChanged: () => void;
-  onSetRole: (roleId: number | null) => Promise<void>;
+  onSetRole: (roleName: string | null) => Promise<void>;
 }) {
   const {
     tree,
