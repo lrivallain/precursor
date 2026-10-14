@@ -23,6 +23,9 @@ are the per-version history; releasing does not rewrite this file.
   `create_workspace_file`, `write_workspace_file`, `create_workspace_folder`).
   Both stay opt-in for Precursor's own agents, and agents still get a permission
   prompt before each write.
+- **Basic tools section** in Precursor capabilities, starting with `get_datetime`
+  (current date, time, weekday, ISO week and UTC offset, in the local zone or a
+  given IANA timezone).
 - **Select all / Unselect all** for the Settings → MCP → Precursor capabilities
   section list.
 

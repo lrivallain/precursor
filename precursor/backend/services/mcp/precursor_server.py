@@ -58,6 +58,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 from urllib.parse import quote
 from urllib.parse import quote as quote_url
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
@@ -1928,6 +1929,42 @@ async def create_workspace_folder(workspace_id: int, path: str) -> dict[str, Any
     except FileExistsError:
         return {"error": f"Path already exists: {path}"}
     return {"path": path, "created": True}
+
+
+# --------------------------------------------------------------------------
+# basic tools (stateless helpers; read no Precursor data)
+# --------------------------------------------------------------------------
+@mcp.tool()
+async def get_datetime(timezone: str | None = None) -> dict[str, Any]:
+    """Get the current date and time.
+
+    Models can't know "now" on their own. ``timezone`` is an IANA name such as
+    ``Europe/Paris`` or ``America/New_York``; omit it for this machine's local zone.
+    """
+    if not await _section_enabled("tools"):
+        return {"error": _GATED.format(section="tools")}
+    if timezone:
+        try:
+            now = datetime.now(ZoneInfo(timezone))
+        except (ZoneInfoNotFoundError, ValueError):
+            return {
+                "error": f"Unknown timezone: {timezone!r}. Use an IANA name like 'Europe/Paris'."
+            }
+    else:
+        now = datetime.now().astimezone()
+    offset = now.utcoffset()
+    iso_year, iso_week, _ = now.isocalendar()
+    return {
+        "iso": now.isoformat(timespec="seconds"),
+        "date": now.date().isoformat(),
+        "time": now.strftime("%H:%M:%S"),
+        "weekday": now.strftime("%A"),
+        "iso_week": f"{iso_year}-W{iso_week:02d}",
+        "timezone": timezone or now.tzname(),
+        "utc_offset": now.strftime("%z"),
+        "utc_offset_minutes": int(offset.total_seconds() // 60) if offset else 0,
+        "unix": int(now.timestamp()),
+    }
 
 
 # Loopback hosts the HTTP transport is allowed to bind to. 0.0.0.0 is *not*

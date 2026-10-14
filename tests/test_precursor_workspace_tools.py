@@ -286,3 +286,16 @@ async def test_full_access_lists_everything_but_the_strict_sections(monkeypatch)
     names = {t.name for t in await ps.build_mcp().list_tools()}
     assert "list_topics" in names and "post_message" in names
     assert not names & (WORKSPACE_READ_TOOLS | WORKSPACE_WRITE_TOOLS)
+
+
+async def test_get_datetime_is_gated_then_reports_now_in_a_zone() -> None:
+    await _set_expose({})
+    assert "not exposed" in (await ps.get_datetime())["error"]
+
+    await _set_expose({"tools": True})
+    paris = await ps.get_datetime("Europe/Paris")
+    assert paris["timezone"] == "Europe/Paris"
+    assert paris["utc_offset"] in {"+0100", "+0200"}
+    assert paris["iso"].startswith(paris["date"])
+    assert (await ps.get_datetime())["unix"] > 0
+    assert "Unknown timezone" in (await ps.get_datetime("Mars/Olympus"))["error"]

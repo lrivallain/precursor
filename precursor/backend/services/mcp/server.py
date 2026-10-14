@@ -63,6 +63,7 @@ _TOOLS_BY_SECTION: dict[str, list[str]] = {
         "write_workspace_file",
         "create_workspace_folder",
     ],
+    "tools": ["get_datetime"],
 }
 
 # Tool name -> the section whose toggle gates it. ``precursor_info`` is absent on

@@ -2244,6 +2244,11 @@ const EXPOSE_SECTIONS: ReadonlyArray<{
     hint: "Let callers create workspaces (local or git clone) and write files in them. Agents still ask before each write.",
     danger: true,
   },
+  {
+    key: "tools",
+    label: "Basic tools",
+    hint: "Small helpers that read none of your data, like the current date and time.",
+  },
 ];
 
 const GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

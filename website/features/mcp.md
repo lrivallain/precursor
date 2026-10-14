@@ -411,7 +411,12 @@ retrieval and cited answers, skills, memory,
 [agent state](/features/agents-mode/artifacts-state#durable-state-the-private-scratchpad),
 [workflow state](/features/workflows/steps#pipeline-state-what-a-workflow-remembers),
 `append_note`, `post_message`, [side chats](/features/chats#side-chats), schedules,
-reminders, and [workspaces](/features/workspaces).
+reminders, [workspaces](/features/workspaces), and a few **basic tools**.
+
+**Basic tools** is a section of small stateless helpers that read none of your
+data. For now it holds `get_datetime` (the current date, time, weekday, ISO week
+and UTC offset, in this machine's zone or any IANA `timezone` you pass), so a
+model no longer has to guess "today". Like every section it is off by default.
 
 **Workspaces are part of this server.** The standalone `workspace-fs` server was
 folded in. The **Workspaces** section serves `list_workspaces`,
