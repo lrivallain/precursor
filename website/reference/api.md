@@ -47,6 +47,41 @@ palette and the About dialog).
 
 ## Surface at a glance
 
+### Conversation model selection
+
+Chat/topic create, read and update schemas include nullable `llm_selection`.
+For example, `PATCH /api/chats/{id}` or `PATCH /api/topics/{id}` accepts:
+
+```json
+{
+  "llm_selection": {
+    "provider": "azure_foundry",
+    "model": "my-gpt-4o",
+    "category": null,
+    "reasoning_effort": "",
+    "context_tokens": 128000
+  }
+}
+```
+
+Choose exactly one nonempty `model` or `category` (`efficiency`, `balanced`,
+`intelligence`); the category must have presets in that provider's scope.
+Unknown providers, unsupported effort values, extra fields and budgets outside
+1,000-5,000,000 return `422`. Sending `llm_selection: null` clears the complete
+override; omitting it from a PATCH leaves it unchanged. Credentials remain in
+`llm_providers`, never in conversation payloads.
+
+Streaming and retry requests retain their optional `model` override, applied
+within the conversation's effective provider. The saved selection also controls
+compaction, summaries, naming and scheduled/MCP topic turns. Side-chat creation
+copies it and promotion preserves it.
+
+`GET /api/llm/models?provider=azure_foundry` lists that provider's models.
+An unknown or unconfigured explicit provider returns `422`, never a Mock
+catalogue; upstream catalogue failures return `502`. Explicit conversation
+provider configuration errors return a meaningful HTTP error before streaming;
+inference errors use the existing stream error events. No SSE event shape changes.
+
 The JSON API lives under `/api/*`. Routers are grouped by domain:
 
 | Area | What it covers |
@@ -170,13 +205,13 @@ assistant message it produced — the `tool_calls` round or the final answer —
 returned as `reasoning` (`null` when the model surfaced none).
 
 `GET /api/settings` and `PUT /api/settings` expose the optional
-`model_fallbacks` map (default `{}`). Keys are provider ids or `agents`; values
-contain `efficiency`, `balanced`, and `intelligence` ordered preset lists.
-Preset fields are `model`, `reasoning_effort`, `context_tokens`, and
+`model_fallbacks` object (default `{"categories": []}`): an ordered list of
+`{id, label, presets}` categories. Each preset has a `provider` (a provider id,
+or `agents` for Copilot SDK entries) plus `model`, `reasoning_effort`, `context_tokens`, and
 `context_tier`; omitted configuration fields receive their documented
-[defaults](/reference/configuration#llm-provider). An unknown scope, category,
+[defaults](/reference/configuration#llm-provider). An unknown provider scope, category id,
 effort/tier, duplicate effective preset, blank/`auto` model or out-of-range budget
-answers `422`. This map is replaced as a whole on update; `{}` clears it,
+answers `422`. This map is replaced as a whole on update; an empty list clears it,
 and omitting it preserves it. A category fallback never writes the replacement
 into settings, agent definitions or workflow model pins. Chat `done.model`,
 persisted assistant-message models and usage report the model actually used.

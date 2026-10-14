@@ -60,7 +60,7 @@ async def draft_topic_note(
     if not any(m.role in ("user", "assistant") for m in history):
         raise HTTPException(status.HTTP_409_CONFLICT, "Nothing to send yet.")
 
-    budget_tokens = await resolve_llm_preparation_budget(session)
+    budget_tokens = await resolve_llm_preparation_budget(session, chat_id=chat_id)
     chunk_chars = int(budget_tokens * _CHUNK_BUDGET_RATIO) * _CHARS_PER_TOKEN
     focus = (instructions or "").strip()
     head = f"Main topic: {topic.title}"

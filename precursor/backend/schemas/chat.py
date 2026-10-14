@@ -6,10 +6,11 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from precursor.backend.schemas.conversation_llm import ConversationLLMFields
 from precursor.backend.schemas.schedule import UtcDateTime
 
 
-class ChatBase(BaseModel):
+class ChatBase(ConversationLLMFields):
     title: str = Field(min_length=1, max_length=255)
     description: str | None = None
     description_as_system_prompt: bool = False
@@ -26,7 +27,7 @@ class ChatCreate(ChatBase):
     autoname: bool = False
 
 
-class ChatUpdate(BaseModel):
+class ChatUpdate(ConversationLLMFields):
     title: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = None
     description_as_system_prompt: bool | None = None

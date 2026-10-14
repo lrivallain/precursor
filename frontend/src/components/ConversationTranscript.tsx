@@ -145,6 +145,7 @@ function renderRow({
       agentSessionId={hideAgentBadge ? undefined : m.agent_session_id}
       createdAt={m.created_at}
       model={m.model}
+      provider={m.provider}
       elapsedMs={m.elapsed_ms}
       isError={m.is_error}
       onRetry={retryable ? () => onRetry(m) : undefined}

@@ -9,7 +9,16 @@ export interface AppVersion {
 
 export type TopicKind = "standard";
 
+export interface ConversationLLMSelection {
+  provider: string;
+  model: string;
+  category: ModelCategory | null;
+  reasoning_effort: "" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+  context_tokens: number;
+}
+
 export interface Topic {
+  llm_selection: ConversationLLMSelection | null;
   id: number;
   slug: string;
   // Immutable UUID permalink (`/t/<public_id>`). Unlike the readable URL it
@@ -104,6 +113,7 @@ export interface TopicNode extends Topic {
 // A flat conversation session (no tree hierarchy, no GitHub link). Mirrors the
 // backend ChatRead schema.
 export interface Chat {
+  llm_selection: ConversationLLMSelection | null;
   id: number;
   slug: string;
   title: string;
@@ -148,6 +158,7 @@ export interface TopicNoteDraft {
 }
 
 export interface ChatCreate {
+  llm_selection?: ConversationLLMSelection | null;
   title: string;
   description?: string | null;
   description_as_system_prompt?: boolean;
@@ -164,6 +175,7 @@ export interface ChatCreate {
 }
 
 export interface ChatUpdate {
+  llm_selection?: ConversationLLMSelection | null;
   title?: string;
   description?: string | null;
   description_as_system_prompt?: boolean;
@@ -1335,6 +1347,7 @@ export interface Message {
   model?: string | null;
   /** Wall-clock time in ms the assistant turn took to generate. */
   elapsed_ms?: number | null;
+  provider?: string | null;
   created_at: string;
   attachments?: Attachment[];
   /** Follow-up reply chips the assistant offered on this turn. */
@@ -1464,14 +1477,23 @@ export interface NoteDraftAttachment {
 export type AgentApprovalPolicy = "manual" | "balanced" | "autonomous";
 
 export interface ModelPreset {
+  // An LLM provider id, or "agents" for the Copilot SDK runtime.
+  provider: string;
   model: string;
   reasoning_effort: "" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
   context_tokens: number;
   context_tier: "default" | "long_context";
 }
 
-export type ModelCategory = "efficiency" | "balanced" | "intelligence";
-export type ModelCategories = Record<ModelCategory, ModelPreset[]>;
+export type ModelCategory = string;
+export interface ModelCategoryDef {
+  id: ModelCategory;
+  label: string;
+  presets: ModelPreset[];
+}
+export interface ModelCategories {
+  categories: ModelCategoryDef[];
+}
 
 export interface Settings {
   theme: "light" | "dark" | "system";
@@ -1495,7 +1517,7 @@ export interface Settings {
   // Active LLM provider id + per-provider public config (secrets redacted) and
   // a per-provider secret-presence map.
   llm_provider: string;
-  model_fallbacks: Record<string, ModelCategories>;
+  model_fallbacks: ModelCategories;
   llm_providers: Record<string, Record<string, string>>;
   llm_providers_present: Record<string, Record<string, boolean>>;
   // Azure AI Speech: configured endpoint + language + readiness (key never echoed).
@@ -1510,6 +1532,7 @@ export interface Settings {
   // Auto-naming a placeholder-titled chat from its first message. Empty model
   // resolves to the default chat model.
   chat_autoname_enabled: boolean;
+  mock_provider_enabled: boolean;
   chat_autoname_model: string;
   // Which Precursor capability sections the built-in MCP server exposes.
   mcp_expose: Record<string, boolean>;
@@ -1609,7 +1632,7 @@ export interface SettingsUpdate {
   api_keys?: Record<string, string>;
   issue_associations_enabled?: boolean;
   llm_provider?: string;
-  model_fallbacks?: Record<string, ModelCategories>;
+  model_fallbacks?: ModelCategories;
   llm_providers?: Record<string, Record<string, string>>;
   azure_speech_endpoint?: string;
   azure_speech_language?: string;
@@ -1617,6 +1640,7 @@ export interface SettingsUpdate {
   live_fast_model?: string;
   live_reasoning_effort?: string;
   chat_autoname_enabled?: boolean;
+  mock_provider_enabled?: boolean;
   chat_autoname_model?: string;
   mcp_expose?: Record<string, boolean>;
   mcp_http_enabled?: boolean;

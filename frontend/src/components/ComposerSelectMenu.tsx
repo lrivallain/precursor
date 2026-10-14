@@ -5,6 +5,7 @@ import { Check, ChevronDown, Plus, Search } from "lucide-react";
 export interface MenuOption {
   value: string;
   label: string;
+  disabled?: boolean;
   /** Optional muted second line (e.g. a role's system prompt). */
   description?: string;
   /** Additional filter text when the option's value is an opaque action id. */
@@ -36,6 +37,7 @@ export function ComposerSelectMenu({
   fullWidth = false,
   portal = false,
   onCustomValue,
+  customOptions,
   footerAction,
   scrollToSelected = true,
   open: controlledOpen,
@@ -61,6 +63,8 @@ export function ComposerSelectMenu({
   portal?: boolean;
   /** Opt-in manual ids for catalogues that omit a deployment/retired model. */
   onCustomValue?: (value: string) => void;
+  /** Manual choices whose destination must be explicit (e.g. a provider). */
+  customOptions?: (value: string) => MenuOption[];
   footerAction?: { label: string; onSelect: () => void };
   scrollToSelected?: boolean;
   /** Optional controlled open state, so a slash command can pop the menu. */
@@ -164,10 +168,12 @@ export function ComposerSelectMenu({
   const canUseCustomValue = Boolean(
     onCustomValue && customValue && !groups.some((g) => g.options.some((o) => o.value === customValue)),
   );
+  const manualOptions = customValue ? customOptions?.(customValue) ?? [] : [];
 
   function selectFirstMatch(): void {
-    const first = visibleGroups.flatMap((g) => g.options)[0];
+    const first = visibleGroups.flatMap((g) => g.options).find((option) => !option.disabled);
     if (first) onSelect(first.value);
+    else if (manualOptions.length === 1) onSelect(manualOptions[0].value);
     else if (canUseCustomValue) onCustomValue?.(customValue);
     else return;
     setOpen(false);
@@ -225,7 +231,7 @@ export function ComposerSelectMenu({
             </div>
           )}
           <div ref={optionsRef} className="max-h-72 min-h-0 overflow-y-auto">
-            {!hasOptions && !canUseCustomValue && (
+            {!hasOptions && !canUseCustomValue && manualOptions.length === 0 && (
               <div className="px-2 py-1.5 text-xs text-muted">
                 {q ? "No match" : (emptyHint ?? "No options")}
               </div>
@@ -251,12 +257,14 @@ export function ComposerSelectMenu({
                       type="button"
                       role="option"
                       aria-selected={selected}
+                      disabled={opt.disabled}
+                      data-tooltip={opt.disabled ? opt.description : undefined}
                       onClick={() => {
                         onSelect(opt.value);
                         setOpen(false);
                         if (portal) triggerRef.current?.focus();
                       }}
-                      className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-border/50 ${
+                      className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-border/50 disabled:cursor-default disabled:opacity-60 ${
                         selected ? "text-text" : "text-text/90"
                       }`}
                     >
@@ -275,6 +283,26 @@ export function ComposerSelectMenu({
                   );
                 })}
               </div>
+            ))}
+            {manualOptions.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    role="option"
+                    aria-selected={false}
+                    onClick={() => {
+                      onSelect(option.value);
+                      setOpen(false);
+                      if (portal) triggerRef.current?.focus();
+                    }}
+                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-border/50"
+                  >
+                    <Plus size={14} className="shrink-0 text-accent" aria-hidden="true" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate">{option.label}</span>
+                      {option.description && <span className="block truncate text-[11px] text-muted">{option.description}</span>}
+                    </span>
+                  </button>
             ))}
             {canUseCustomValue && (
               <button

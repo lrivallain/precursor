@@ -72,6 +72,7 @@ from precursor.backend.routers import (
     workspaces,
 )
 from precursor.backend.services.definitions import overlay as definition_overlay
+from precursor.backend.services.llm import ProviderConfigurationError
 from precursor.backend.services.llm.one_shot import LLMCallFailed
 
 logger = logging.getLogger(__name__)
@@ -387,6 +388,13 @@ def create_app() -> FastAPI:
             status_code=status.HTTP_502_BAD_GATEWAY,
             content={"detail": exc.detail},
         )
+
+    @app.exception_handler(ProviderConfigurationError)
+    async def _provider_configuration_failed(
+        _request: Request, exc: ProviderConfigurationError
+    ) -> JSONResponse:
+        logger.warning("LLM provider configuration: %s", exc)
+        return JSONResponse(status_code=422, content={"detail": str(exc)})
 
     @app.middleware("http")
     async def _client_id_middleware(request, call_next):  # type: ignore[no-untyped-def]

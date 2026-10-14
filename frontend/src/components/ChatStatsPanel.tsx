@@ -3,13 +3,15 @@ import { AlarmClock, ChevronLeft, ChevronRight, BarChart3, MessagesSquare, Shrin
 import { streamStore } from "../lib/streamStore";
 import { api } from "../lib/api";
 import { modelsStore, useCurrentModel } from "../lib/modelsStore";
+import { useSettings } from "../lib/settingsStore";
 import { useIsNarrow } from "../lib/useMediaQuery";
-import type { ContextEstimate, Message, ReminderContainer } from "../lib/types";
+import type { ContextEstimate, ConversationLLMSelection, Message, ReminderContainer } from "../lib/types";
 import { COMPACT_NUDGE_PERCENT, CompactContextButton } from "./CompactContext";
 import { ReminderSection, reminderSummary, type ReminderPanelControls } from "./ChatStatsReminder";
 import { SideChatsSection, type SideChatsControls } from "./SideChatsSection";
 
 interface ChatStatsPanelProps {
+  selection?: ConversationLLMSelection | null;
   streamKey: string;
   messages: Message[];
   kind: ReminderContainer;
@@ -105,7 +107,9 @@ export function ChatStatsPanel({
   compaction,
   reminder,
   sideChats,
+  selection,
 }: ChatStatsPanelProps) {
+  const settings = useSettings();
   const narrow = useIsNarrow();
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     if (typeof window === "undefined") return true;
@@ -134,8 +138,16 @@ export function ChatStatsPanel({
       cancelled = true;
     };
   }, []);
-  const model = useCurrentModel();
-  const contextWindow = model?.context_window ?? null;
+  const globalModel = useCurrentModel();
+  useEffect(() => {
+    if (selection?.provider) void modelsStore.ensureLoaded(selection.provider);
+  }, [selection?.provider]);
+  const selectedPresets = selection?.category ? (settings?.model_fallbacks?.categories.find((entry) => entry.id === selection.category)?.presets ?? []).filter((preset) => preset.provider !== "agents") : [];
+  const selectedId = selection?.model || selectedPresets[0]?.model;
+  const model = selection ? modelsStore.byIdOrNull(selectedId, selectedPresets[0]?.provider || selection.provider) : globalModel;
+  const contextWindow = selection
+    ? selectedPresets.length ? Math.max(...selectedPresets.map((preset) => preset.context_tokens)) : selection.context_tokens
+    : model?.context_window ?? null;
 
   const totals = useMemo(() => computeTotals(messages), [messages]);
   const roles = useMemo(() => countByRole(messages), [messages]);

@@ -166,6 +166,12 @@ async def create_topic(
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "parent_id does not exist")
 
     data = payload.model_dump()
+    from precursor.backend.services.conversation_llm import validate_selection
+
+    await validate_selection(session, payload.llm_selection)
+    data["llm_selection"] = (
+        payload.llm_selection.model_dump_json() if payload.llm_selection else None
+    )
     create_linked_issue = data.pop("create_linked_issue", False)
     requested_slug = data.pop("slug", None)
     base = slugify(requested_slug) if requested_slug else slugify(payload.title)
@@ -252,6 +258,13 @@ async def update_topic(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
 
     data = payload.model_dump(exclude_unset=True)
+    if "llm_selection" in data:
+        from precursor.backend.services.conversation_llm import validate_selection
+
+        await validate_selection(session, payload.llm_selection)
+        data["llm_selection"] = (
+            payload.llm_selection.model_dump_json() if payload.llm_selection else None
+        )
     if "parent_id" in data and data["parent_id"] == topic_id:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Topic cannot be its own parent")
     if "slug" in data:

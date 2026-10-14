@@ -93,6 +93,8 @@ class Message(Base, TimestampMixin):
     # The LLM model id that produced this assistant turn (NULL for user/tool/
     # system turns and for assistant turns persisted before this was tracked).
     model: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The provider id that served it (a cross-provider preset can differ per turn).
+    provider: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Wall-clock time in milliseconds the provider took to produce this
     # assistant turn, end to end including any tool rounds (NULL when not an

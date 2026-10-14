@@ -62,6 +62,7 @@ async def complete_once(
     model: str | None = None,
     reasoning_effort: str | None = None,
     release_connection: bool = True,
+    use_conversation_selection: bool = True,
 ) -> OneShotResult:
     """Run a tool-less completion and record its token usage.
 
@@ -76,14 +77,27 @@ async def complete_once(
     Usage is written in its own session, so it lands even when the caller later
     rejects the output or rolls back.
     """
-    resolved_model = model or await resolve_llm_model(session)
+    from precursor.backend.services.conversation_llm import resolve_selection, saved_selection
+
+    selection = (
+        await saved_selection(session, topic_id=topic_id, chat_id=chat_id)
+        if use_conversation_selection
+        else None
+    )
+    resolved_model = model or await resolve_llm_model(session) if selection is None else ""
     try:
-        category = await resolve_model_category(session) if not model else None
-        provider = (
-            await get_llm_provider(session, model_category=category)
-            if category is not None
-            else await get_llm_provider(session)
-        )
+        if selection is not None:
+            resolved = await resolve_selection(session, selection)
+            provider = resolved.provider
+            resolved_model = resolved.model
+            reasoning_effort = resolved.reasoning_effort
+        else:
+            category = await resolve_model_category(session) if not model else None
+            provider = (
+                await get_llm_provider(session, model_category=category)
+                if category is not None
+                else await get_llm_provider(session)
+            )
     except Exception as exc:
         raise LLMCallFailed(usage_source, exc) from exc
     if release_connection:

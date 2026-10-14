@@ -9,57 +9,75 @@ from dataclasses import dataclass
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from precursor.backend.schemas.model_fallback import ModelCategories, ModelCategory, ModelPreset
+from precursor.backend.schemas.model_fallback import (
+    AGENTS_PROVIDER,
+    ModelCategories,
+    ModelCategoryDef,
+    ModelPreset,
+    normalize_stored_categories,
+)
 
 logger = logging.getLogger(__name__)
-CATEGORY_NAMES = ("efficiency", "balanced", "intelligence")
 
 
 @dataclass(frozen=True)
 class ModelSelection:
     model: str
+    provider: str = ""
     reasoning_effort: str = ""
     context_tokens: int = 128_000
     context_tier: str = "default"
 
 
-async def resolve_model_fallbacks(session: AsyncSession, scope: str) -> ModelCategories:
+def scoped_categories(categories: ModelCategories, scope: str) -> ModelCategories:
+    """Keep presets for ``scope``: ``agents``, ``llm`` (every non-agent provider) or a provider id."""
+
+    def keep(preset: ModelPreset) -> bool:
+        if scope == AGENTS_PROVIDER:
+            return preset.provider == AGENTS_PROVIDER
+        if scope == "llm":
+            return preset.provider != AGENTS_PROVIDER
+        return preset.provider == scope
+
+    return ModelCategories(
+        categories=[
+            c.model_copy(update={"presets": [p for p in c.presets if keep(p)]})
+            for c in categories.categories
+        ]
+    )
+
+
+async def resolve_all_model_categories(session: AsyncSession) -> ModelCategories:
     from precursor.backend.services.app_settings import _get_db_value
 
     raw = await _get_db_value(session, "model_fallbacks")
-    if not isinstance(raw, dict) or scope not in raw:
-        return ModelCategories()
     try:
-        return ModelCategories.model_validate(raw[scope])
+        return normalize_stored_categories(raw)
     except ValidationError:
-        logger.exception("Invalid saved model fallback configuration for %s", scope)
+        logger.exception("Invalid saved model preset configuration")
         return ModelCategories()
 
 
-async def resolve_model_category(
-    session: AsyncSession, *, agents: bool = False
-) -> ModelCategory | None:
+async def resolve_model_fallbacks(session: AsyncSession, scope: str = "llm") -> ModelCategories:
+    return scoped_categories(await resolve_all_model_categories(session), scope)
+
+
+async def resolve_model_category(session: AsyncSession, *, agents: bool = False) -> str | None:
     from precursor.backend.services.app_settings import _get_db_value
 
     key = "agents_model_category" if agents else "llm_model_category"
     raw = await _get_db_value(session, key)
     if raw is None:
         return None
-    try:
-        return ModelCategory(raw)
-    except ValueError:
+    if not isinstance(raw, str) or not raw:
         logger.warning("Invalid selected model category for %s: %r", key, raw)
         return None
+    return raw
 
 
-def selected_category_presets(
-    categories: ModelCategories, category: ModelCategory
-) -> list[ModelPreset]:
-    return {
-        ModelCategory.EFFICIENCY: categories.efficiency,
-        ModelCategory.BALANCED: categories.balanced,
-        ModelCategory.INTELLIGENCE: categories.intelligence,
-    }[category]
+def selected_category_presets(categories: ModelCategories, category: str) -> list[ModelPreset]:
+    found = categories.get(category)
+    return list(found.presets) if found is not None else []
 
 
 async def preview_llm_category_preset(session: AsyncSession) -> ModelPreset | None:
@@ -69,19 +87,38 @@ async def preview_llm_category_preset(session: AsyncSession) -> ModelPreset | No
     category = await resolve_model_category(session)
     if category is None:
         return None
-    categories = await resolve_model_fallbacks(session, await resolve_llm_provider(session))
+    categories = await resolve_model_fallbacks(session)
     presets = selected_category_presets(categories, category)
     if not presets:
         return None
+    default_provider = await resolve_llm_provider(session)
     offered = await offered_model_ids(session)
     # A preview must never block Settings when all configured models disappear.
+    # Only the default provider's catalogue is cached here; others are trusted.
     return next(
-        (preset for preset in presets if not offered or preset.model in offered), presets[0]
+        (
+            preset
+            for preset in presets
+            if preset.provider != default_provider or not offered or preset.model in offered
+        ),
+        presets[0],
     )
 
 
-async def resolve_llm_preparation_budget(session: AsyncSession) -> int:
+async def resolve_llm_preparation_budget(
+    session: AsyncSession, *, topic_id: int | None = None, chat_id: int | None = None
+) -> int:
     from precursor.backend.services.app_settings import resolve_llm_max_input_tokens
+    from precursor.backend.services.conversation_llm import saved_selection
+
+    selection = await saved_selection(session, topic_id=topic_id, chat_id=chat_id)
+    if selection is not None:
+        if selection.category:
+            categories = await resolve_model_fallbacks(session)
+            presets = selected_category_presets(categories, selection.category)
+            if presets:
+                return max(preset.context_tokens for preset in presets)
+        return selection.context_tokens
 
     preset = await preview_llm_category_preset(session)
     return (
@@ -89,19 +126,19 @@ async def resolve_llm_preparation_budget(session: AsyncSession) -> int:
     )
 
 
-def category_presets(
+def matching_category(
     categories: ModelCategories,
     selection: ModelSelection | ModelPreset,
     *,
     agents: bool = False,
-) -> list[ModelPreset]:
-    # Exact configuration wins when the same model occupies multiple tiers.
-    matches: list[list[ModelPreset]] = []
-    model_matches: list[list[ModelPreset]] = []
-    for name in CATEGORY_NAMES:
-        presets: list[ModelPreset] = getattr(categories, name)
+) -> ModelCategoryDef | None:
+    # Exact configuration wins when the same model occupies multiple categories.
+    matches: list[ModelCategoryDef] = []
+    model_matches: list[ModelCategoryDef] = []
+    for category in categories.categories:
+        presets = category.presets
         if any(p.model == selection.model for p in presets):
-            model_matches.append(presets)
+            model_matches.append(category)
         if any(
             p.model == selection.model
             and p.reasoning_effort == selection.reasoning_effort
@@ -112,13 +149,23 @@ def category_presets(
             )
             for p in presets
         ):
-            matches.append(presets)
+            matches.append(category)
     if len(matches) == 1:
         return matches[0]
     if not matches and len(model_matches) == 1:
         return model_matches[0]
     # Never guess a category for an ambiguous model or uncategorised selection.
-    return []
+    return None
+
+
+def category_presets(
+    categories: ModelCategories,
+    selection: ModelSelection | ModelPreset,
+    *,
+    agents: bool = False,
+) -> list[ModelPreset]:
+    found = matching_category(categories, selection, agents=agents)
+    return list(found.presets) if found is not None else []
 
 
 def is_model_rejection(error: BaseException | str) -> bool:

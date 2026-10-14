@@ -86,6 +86,7 @@ async def create_side_chat(
         title=PLACEHOLDER_TITLE,
         slug=await allocate_unique_slug(session, uuid4().hex, Chat),
         role_id=topic.role_id,
+        llm_selection=topic.llm_selection,
         autoname_pending=True,
         parent_topic_id=topic.id,
         parent_message_id=message_id,

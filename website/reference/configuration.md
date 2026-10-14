@@ -23,6 +23,16 @@ as removable bubbles on the same endpoint, sharing its key and API version. The 
 backward compatibility and stores multiple names separated by commas.
 See [Connecting a model](/guide/configuration#connecting-a-model).
 
+Chats/topics store an optional `llm_selection` alongside their metadata:
+`provider`, `model` or `category`, `reasoning_effort` and `context_tokens`
+(1,000-5,000,000). Null means use global defaults. These are conversation
+preferences, not credentials or environment variables.
+
+`llm_provider` remains the global default and `llm_providers` remains the map of
+saved provider configurations. Editing a configuration no longer selects it as
+the default. Explicit conversation selections never fall back to Mock or switch
+providers; missing configuration is an error. Agents/workflows stay Copilot-only.
+
 ## Server
 
 | Variable | Default | Description |
@@ -103,14 +113,18 @@ Model** — not via the environment. The GitHub providers fall back to your
 `gh auth login` session when no token is saved. See
 [Configuration → Connecting a model](/guide/configuration#connecting-a-model).
 
-`model_fallbacks` is an optional runtime-only setting (default `{}`), edited in
-**Settings -> Model -> Model alternatives**. It maps provider ids and the
-separate `agents` scope to `efficiency`, `balanced`, and `intelligence` lists.
-Each ordered preset has `model`, `reasoning_effort` (default `""`),
+Ollama requires an explicitly saved `llm_providers.ollama.base_url`, such as
+`http://localhost:11434/v1`, to be configured and included in conversation model
+menus. The Base URL placeholder is a suggestion, not a saved setting.
+
+`model_fallbacks` is an optional runtime-only setting (default
+`{"categories": []}`), edited in **Settings -> Presets**. It is a list of
+user-defined categories, each with ordered presets that carry their own
+`provider` (a provider id, or `agents`). Each preset has `model`, `reasoning_effort` (default `""`),
 `context_tokens` (default `128000`, range 1,000-5,000,000) and `context_tier`
 (`default` or `long_context`, default `default`). Chat uses the token budget;
 Agents/Workflows use the context tier. Each category accepts at most twelve
-presets; duplicate effective presets, unknown scopes and `auto` are rejected.
+presets, with at most 24 categories; duplicate effective presets, unknown scopes and `auto` are rejected.
 See [Model alternatives](/guide/configuration#optional-model-alternatives)
 for matching and retry rules. There is no environment variable or DB migration.
 
