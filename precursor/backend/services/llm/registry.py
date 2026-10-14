@@ -106,9 +106,12 @@ PROVIDERS: dict[str, ProviderSpec] = {
             ),
             ProviderField(
                 name="deployment",
-                label="Deployment name",
-                placeholder="my-gpt-4o (used as the model id)",
-                help="Used as the model id; also fill the Model field with it.",
+                label="Deployment names",
+                placeholder="my-gpt-4o, my-gpt-4o-mini",
+                help=(
+                    "Apply & refresh models, then select one in the composer. "
+                    "All deployments share this endpoint; names are not verified against Azure."
+                ),
             ),
             ProviderField(
                 name="api_version",

@@ -17,6 +17,12 @@ directory, ticker cadences.
 
 Copy `.env.example` to `.env` and uncomment only what you want to override.
 
+Azure AI Foundry's runtime **Deployment names** setting adds names individually
+as removable bubbles on the same endpoint, sharing its key and API version. The persisted
+`llm_providers.azure_foundry.deployment` string also accepts a single name for
+backward compatibility and stores multiple names separated by commas.
+See [Connecting a model](/guide/configuration#connecting-a-model).
+
 ## Server
 
 | Variable | Default | Description |
