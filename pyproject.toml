@@ -70,6 +70,9 @@ dependencies = [
     "python-multipart>=0.0.32",
     "pypdf>=6.13",
     "pyyaml>=6.0",
+    # Windows ships no IANA time-zone database, so ``zoneinfo`` (used by the
+    # ``get_datetime`` / ``convert_timezone`` MCP tools) needs this package there.
+    "tzdata>=2024.1; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]
