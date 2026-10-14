@@ -18,7 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
-from precursor.backend.config import DEFINITIONS_WORKSPACE_SLUG, get_settings
+from precursor.backend.config import get_settings
 from precursor.backend.db import get_session
 from precursor.backend.models import Workspace
 from precursor.backend.schemas import (
@@ -53,11 +53,20 @@ from precursor.backend.services.definitions import home as definitions_home
 from precursor.backend.services.definitions import overlay as definition_overlay
 from precursor.backend.services.definitions.loader import kind_for
 from precursor.backend.services.github_auth import resolve_github_token
-from precursor.backend.services.slugs import slugify
 from precursor.backend.services.workspace_chat import (
     build_workspace_system_prompt,
     run_workspace_stream,
     workspace_history,
+)
+from precursor.backend.services.workspaces import (
+    WorkspaceError,
+)
+from precursor.backend.services.workspaces import (
+    browse_root as browse_root,
+)
+from precursor.backend.services.workspaces import create_workspace as create_workspace_row
+from precursor.backend.services.workspaces import (
+    workspace_root as workspace_root,
 )
 
 logger = logging.getLogger(__name__)
@@ -69,19 +78,6 @@ def _holds_definitions(root: Path) -> bool:
     defs = Path(get_settings().definitions_dir).resolve()
     here = root.resolve()
     return defs == here or here in defs.parents or defs in here.parents
-
-
-def workspace_root(ws: Workspace) -> Path:
-    """Repository working-copy root on disk."""
-    return Path(get_settings().workspaces_dir) / ws.slug
-
-
-def browse_root(ws: Workspace) -> Path:
-    """File-browser root (repo root, or the configured subdir within it)."""
-    root = workspace_root(ws)
-    if ws.subdir:
-        return root / ws.subdir.strip("/")
-    return root
 
 
 async def get_workspace_by_slug(slug: str, session: AsyncSession) -> Workspace | None:
@@ -108,22 +104,6 @@ async def _get_git_workspace(workspace_id: int, session: AsyncSession) -> Worksp
     return ws
 
 
-async def _allocate_slug(session: AsyncSession, base: str) -> str:
-    base = base or "workspace"
-    candidate = base
-    n = 2
-    while True:
-        existing = (
-            await session.execute(select(Workspace.id).where(Workspace.slug == candidate))
-        ).first()
-        # The built-in definitions workspace's slug is kept for it, even while
-        # it doesn't exist yet.
-        if existing is None and candidate != DEFINITIONS_WORKSPACE_SLUG:
-            return candidate
-        candidate = f"{base}-{n}"
-        n += 1
-
-
 # --------------------------------------------------------------------------
 # Workspace CRUD
 # --------------------------------------------------------------------------
@@ -148,52 +128,18 @@ async def create_workspace(
     payload: WorkspaceCreate,
     session: AsyncSession = Depends(get_session),
 ) -> Workspace:
-    is_local = payload.kind == "local"
-    if not is_local and not (payload.repo_url or "").strip():
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            "A repository URL is required for a git workspace.",
+    try:
+        return await create_workspace_row(
+            session,
+            name=payload.name,
+            kind=payload.kind,
+            repo_url=payload.repo_url,
+            branch=payload.branch,
+            subdir=payload.subdir,
+            slug=payload.slug,
         )
-    if not is_local and not git.git_available():
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            "git is not installed on the server — install it to use git workspaces.",
-        )
-
-    slug = slugify(payload.slug or payload.name)
-    slug = await _allocate_slug(session, slug)
-
-    ws = Workspace(
-        name=payload.name,
-        slug=slug,
-        kind="local" if is_local else "git",
-        repo_url=None if is_local else (payload.repo_url or "").strip(),
-        branch=payload.branch.strip() or "main",
-        subdir=(payload.subdir or "").strip() or None,
-    )
-    session.add(ws)
-    await session.commit()
-    await session.refresh(ws)
-
-    dest = workspace_root(ws)
-    if is_local:
-        # A local workspace is just an empty folder we own under workspaces_dir.
-        dest.mkdir(parents=True, exist_ok=True)
-    else:
-        # Clone inline. On failure, keep the row so the user can retry via re-clone.
-        token = await resolve_github_token(session)
-        try:
-            if dest.exists():
-                shutil.rmtree(dest, ignore_errors=True)
-            await git.clone(ws.repo_url or "", dest, ws.branch, token)
-        except git.GitError as exc:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
-
-    ws.cloned_at = datetime.now(UTC)
-    ws.last_synced_at = ws.cloned_at
-    await session.commit()
-    await session.refresh(ws)
-    return ws
+    except WorkspaceError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
 
 
 @router.patch("/{workspace_id}", response_model=WorkspaceRead)

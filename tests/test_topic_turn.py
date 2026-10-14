@@ -195,8 +195,9 @@ async def test_persists_literal_prompt_but_sends_the_expanded_one(
     assert system.role == "system"
     assert "Topic title: Scheduled" in system.content
     assert [(m.role, m.content) for m in history] == [("user", "Translate to English: bravo")]
-    # A programmatic turn never offers Precursor's own MCP server to itself.
-    assert requested == [["fetch"]]
+    # The server is attached for its workspace tools; the rest of it is filtered
+    # out per tool (see test_precursor_workspace_tools).
+    assert requested == [["precursor", "fetch"]]
 
 
 async def test_clear_context_starts_from_an_empty_transcript(monkeypatch, enabled_servers) -> None:

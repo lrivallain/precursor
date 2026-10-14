@@ -2233,6 +2233,22 @@ const EXPOSE_SECTIONS: ReadonlyArray<{
     hint: "List, set and cancel one-shot topic reminders.",
     danger: true,
   },
+  {
+    key: "workspaces",
+    label: "Workspaces",
+    hint: "List workspaces and read their files.",
+  },
+  {
+    key: "workspaces_write",
+    label: "Edit workspaces",
+    hint: "Let callers create workspaces (local or git clone) and write files in them. Agents still ask before each write.",
+    danger: true,
+  },
+  {
+    key: "tools",
+    label: "Basic tools",
+    hint: "Small helpers that read none of your data: date and time, calculator, unit conversion, UUIDs, hashing, text counts.",
+  },
 ];
 
 const GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -2398,14 +2414,13 @@ function McpExposeCard({
 }) {
   const [open, setOpen] = useState(false);
   const anyOn = EXPOSE_SECTIONS.some((s) => expose[s.key]);
-  const anyWriteOn =
-    expose.memory_write ||
-    expose.agent_state ||
-    expose.workflow_state ||
-    expose.notes ||
-    expose.post_message ||
-    expose.schedules ||
-    expose.reminders;
+  const allOn = EXPOSE_SECTIONS.every((s) => expose[s.key]);
+  const anyWriteOn = EXPOSE_SECTIONS.some((s) => s.danger && expose[s.key]);
+  const setAll = (on: boolean) =>
+    setExpose({
+      ...expose,
+      ...Object.fromEntries(EXPOSE_SECTIONS.map((s) => [s.key, on])),
+    });
   return (
     <div className="border border-border rounded mb-4">
       <button
@@ -2429,6 +2444,24 @@ function McpExposeCard({
             flip the <span className="font-mono">precursor</span> server below
             for the in-app agent to use it.
           </p>
+          <div className="flex items-center gap-3 text-[11px]">
+            <button
+              type="button"
+              onClick={() => setAll(true)}
+              disabled={allOn}
+              className="text-accent hover:underline disabled:opacity-40 disabled:no-underline"
+            >
+              Select all
+            </button>
+            <button
+              type="button"
+              onClick={() => setAll(false)}
+              disabled={!anyOn}
+              className="text-accent hover:underline disabled:opacity-40 disabled:no-underline"
+            >
+              Unselect all
+            </button>
+          </div>
           {EXPOSE_SECTIONS.map((s) => (
             <label key={s.key} className="flex items-start gap-2 cursor-pointer">
               <input
@@ -2453,7 +2486,7 @@ function McpExposeCard({
           {anyWriteOn && (
             <div className="text-[11px] rounded border border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300 px-3 py-2">
               Write capabilities let a caller change this Precursor instance
-              (post messages, manage schedules). Only enable for trusted hosts.
+              (post messages, manage schedules, create workspaces and write files). Only enable for trusted hosts.
             </div>
           )}
           {anyOn && !precursorEnabled && (

@@ -162,10 +162,10 @@ async def test_a_failed_write_carries_no_link(
 
 
 @pytest.mark.asyncio
-async def test_workspace_fs_write_result_links_to_the_file(
+async def test_workspace_write_result_links_to_the_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from precursor.backend.services.mcp import workspace_fs_server as srv
+    from precursor.backend.services.mcp import precursor_server as srv
 
     class _WS:
         slug = "notes"
@@ -173,12 +173,11 @@ async def test_workspace_fs_write_result_links_to_the_file(
 
     root = tmp_path / "notes"
     root.mkdir()
-    monkeypatch.setattr(srv, "_load_workspace", _stub_workspace(_WS()))
-    monkeypatch.setattr(srv, "_browse_root", lambda ws: root)
+    _stub_precursor_workspace(srv, monkeypatch, _WS(), root)
 
-    written = await srv.write_file(workspace_id=1, path="docs/plan.md", content="# Plan")
-    created = await srv.create_file(workspace_id=1, path="docs/new.md", content="x")
-    folder = await srv.create_folder(workspace_id=1, path="docs/sub")
+    written = await srv.write_workspace_file(workspace_id=1, path="docs/plan.md", content="# Plan")
+    created = await srv.create_workspace_file(workspace_id=1, path="docs/new.md", content="x")
+    folder = await srv.create_workspace_folder(workspace_id=1, path="docs/sub")
 
     assert written["url"] == "/ws/notes/docs/plan.md"
     assert created["url"] == "/ws/notes/docs/new.md"
@@ -191,7 +190,7 @@ async def test_read_tools_also_link_to_the_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from precursor.backend.services.mcp import drawio_server as drawio
-    from precursor.backend.services.mcp import workspace_fs_server as wsfs
+    from precursor.backend.services.mcp import precursor_server as wsfs
 
     class _WS:
         slug = "notes"
@@ -201,11 +200,11 @@ async def test_read_tools_also_link_to_the_file(
     (root / "docs").mkdir(parents=True)
     (root / "docs" / "a.md").write_text("# A", encoding="utf-8")
     (root / "docs" / "d.drawio").write_text("<mxfile />", encoding="utf-8")
-    for srv in (drawio, wsfs):
-        monkeypatch.setattr(srv, "_load_workspace", _stub_workspace(_WS()))
-        monkeypatch.setattr(srv, "_browse_root", lambda ws: root)
+    monkeypatch.setattr(drawio, "_load_workspace", _stub_workspace(_WS()))
+    monkeypatch.setattr(drawio, "_browse_root", lambda ws: root)
+    _stub_precursor_workspace(wsfs, monkeypatch, _WS(), root)
 
-    read = await wsfs.read_file(workspace_id=1, path="docs/a.md")
+    read = await wsfs.read_workspace_file(workspace_id=1, path="docs/a.md")
     diagram = await drawio.read_diagram(workspace_id=1, path="docs/d.drawio")
 
     assert read["content"] == "# A"
@@ -218,7 +217,7 @@ async def test_read_tools_also_link_to_the_file(
 async def test_a_failed_read_carries_no_link(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from precursor.backend.services.mcp import workspace_fs_server as wsfs
+    from precursor.backend.services.mcp import precursor_server as wsfs
 
     class _WS:
         slug = "notes"
@@ -226,11 +225,10 @@ async def test_a_failed_read_carries_no_link(
 
     root = tmp_path / "notes"
     (root / "sub").mkdir(parents=True)
-    monkeypatch.setattr(wsfs, "_load_workspace", _stub_workspace(_WS()))
-    monkeypatch.setattr(wsfs, "_browse_root", lambda ws: root)
+    _stub_precursor_workspace(wsfs, monkeypatch, _WS(), root)
 
-    missing = await wsfs.read_file(workspace_id=1, path="nope.md")
-    directory = await wsfs.read_file(workspace_id=1, path="sub")
+    missing = await wsfs.read_workspace_file(workspace_id=1, path="nope.md")
+    directory = await wsfs.read_workspace_file(workspace_id=1, path="sub")
 
     assert "url" not in missing
     assert "url" not in directory
@@ -286,3 +284,12 @@ def _stub_workspace(ws: object):
         return ws
 
     return _load
+
+
+def _stub_precursor_workspace(srv, monkeypatch: pytest.MonkeyPatch, ws: object, root) -> None:
+    async def _open(_section: str) -> None:
+        return None
+
+    monkeypatch.setattr(srv, "_load_workspace", _stub_workspace(ws))
+    monkeypatch.setattr(srv, "browse_root", lambda _ws: root)
+    monkeypatch.setattr(srv, "_workspace_gate", _open)

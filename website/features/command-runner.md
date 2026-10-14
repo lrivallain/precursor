@@ -38,7 +38,7 @@ reason not to, and never expose Precursor to a network with the jail disabled.
 ## How it fits together
 
 - The runner pairs naturally with [workspaces](/features/workspaces): the
-  assistant can edit files via `workspace-fs` and then run tests or a build via
+  assistant can edit files via the `precursor` workspace tools and then run tests or a build via
   `cmd-runner`, all scoped to the workspace.
 - Scheduled topics can invoke commands too — see the
   [scheduler](/features/scheduler).

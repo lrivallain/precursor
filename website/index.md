@@ -84,7 +84,7 @@ features:
     title: MCP, both ways
     details: >-
       Precursor is an MCP server (it exposes your conversations) and an MCP
-      client (it attaches tool servers per turn) — GitHub, fetch, workspace-fs,
+      client (it attaches tool servers per turn) — GitHub, fetch, workspaces,
       a command runner, WorkIQ, and your own.
     link: /features/mcp
     linkText: About MCP

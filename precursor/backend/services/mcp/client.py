@@ -21,7 +21,7 @@ import os
 import re
 import shutil
 import sys
-from collections.abc import AsyncIterator, Callable, Iterable
+from collections.abc import AsyncIterator, Callable, Collection, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -415,20 +415,10 @@ BUILTIN_CATALOG: tuple[_BuiltinSpec, ...] = (
         command=sys.executable,
         args=("-m", "precursor.backend.services.mcp.fetch_server"),
     ),
-    # Workspace filesystem MCP — in-tree stdio subprocess exposing sandboxed
-    # read/write tools over Workspace working trees. Needs the app's DB + config
-    # to resolve a workspace to its on-disk path, so forward the environment.
-    _BuiltinSpec(
-        "workspace-fs",
-        "stdio",
-        command=sys.executable,
-        args=("-m", "precursor.backend.services.mcp.workspace_fs_server"),
-        forward_env=True,
-    ),
     # draw.io MCP — in-tree stdio subprocess that authors native ``.drawio``
     # files (mxGraph XML) into a Workspace working tree, with server-side
     # layered layout so the model describes a graph instead of guessing
-    # coordinates. Shares workspace-fs's sandbox, so it needs the app's DB +
+    # coordinates. Shares the ``precursor`` workspace tools' sandbox, so it needs the app's DB +
     # config to resolve a workspace to its on-disk path.
     _BuiltinSpec(
         "drawio",
@@ -459,6 +449,37 @@ BUILTIN_CATALOG: tuple[_BuiltinSpec, ...] = (
         forward_env=True,
     ),
 )
+
+
+# Display order of the built-ins (Settings lists servers in this order); the
+# Agent 365 ``workiq-*`` servers follow ``workiq``. Anything not named here — a
+# future built-in — sorts after these but before plugin and user servers.
+_BUILTIN_DISPLAY_ORDER: tuple[str, ...] = (
+    "precursor",
+    "cmd-runner",
+    "fetch",
+    "github",
+    "playwright",
+    "workiq",
+    "workiq-teams",
+    "workiq-user",
+    "workiq-planner",
+    "workiq-word",
+    "workiq-excel",
+    "drawio",
+)
+
+
+def _display_rank(entry: MCPServerEntry) -> int:
+    # Plugin entries are flagged built-in too, so check them first.
+    if entry.plugin_id is not None:
+        return len(_BUILTIN_DISPLAY_ORDER) + 1
+    if not entry.builtin:
+        return len(_BUILTIN_DISPLAY_ORDER) + 2
+    try:
+        return _BUILTIN_DISPLAY_ORDER.index(entry.name)
+    except ValueError:
+        return len(_BUILTIN_DISPLAY_ORDER)
 
 
 class MCPClientManager:
@@ -530,7 +551,8 @@ class MCPClientManager:
         return self._servers.get(name)
 
     def list_entries(self) -> list[MCPServerEntry]:
-        return list(self._servers.values())
+        # Stable sort: servers in the same group keep their registration order.
+        return sorted(self._servers.values(), key=_display_rank)
 
     def auth_blocked_servers(self, names: list[str]) -> list[str]:
         """Subset of ``names`` currently parked in the ``needs_auth`` state,
@@ -1415,6 +1437,14 @@ class ActiveTools:
     # had no live session when the turn began. Calling one of their tools
     # triggers a lazy connect (and, if needed, a sign-in prompt).
     advertised_from_cache: set[str] = field(default_factory=set)
+    # server -> the only raw tool names it may offer this turn (see
+    # ``restrict_server_tools``); survives a ``_resync``.
+    tool_allowlist: dict[str, frozenset[str]] = field(default_factory=dict)
+
+    def restrict_server_tools(self, server: str, allowed: Collection[str]) -> None:
+        """Keep only ``allowed`` raw tool names of ``server`` for this turn."""
+        self.tool_allowlist[server] = frozenset(allowed)
+        self._resync(server, [t for t in self.tools if t.server == server])
 
     async def ensure_server(self, server: str) -> _ServerWorker:
         """Return a live worker for ``server``, connecting on demand.
@@ -1479,11 +1509,14 @@ class ActiveTools:
         ``tool_to_server`` for the whole turn, so rebinding it would leave them
         routing against the stale mapping.
         """
+        allowed = self.tool_allowlist.get(server)
         self.tools[:] = [t for t in self.tools if t.server != server]
         for qualified, route in list(self.tool_to_server.items()):
             if route[0] == server:
                 del self.tool_to_server[qualified]
         for tool in tools:
+            if allowed is not None and tool.name not in allowed:
+                continue
             self.tools.append(tool)
             self.tool_to_server[tool.qualified_name] = (server, tool.name)
 

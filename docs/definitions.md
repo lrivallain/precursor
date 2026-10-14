@@ -572,7 +572,7 @@ What counts:
 - **A row linked before this existed** is compared with its database columns —
   the values last set in the app. A workflow's steps can't be vouched for that
   way, so such a workflow is reviewed once.
-- **The assistant's file tools** (`workspace-fs`, `drawio`) can't write
+- **The assistant's file tools** (the `precursor` workspace tools, `drawio`) can't write
   anywhere under the definitions folder. The command runner can still write in
   a workspace it's given: a permission change it makes is caught by the review,
   but a rewritten prompt is not — don't give it the definitions workspace.

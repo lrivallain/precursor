@@ -15,6 +15,24 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **`create_workspace` over MCP, and workspace tools in the `precursor` server.**
+  The standalone `workspace-fs` server is folded into the built-in `precursor`
+  server as two new opt-in sections: **Workspaces** (`list_workspaces`,
+  `list_workspace_files`, `read_workspace_file`) and **Edit workspaces**
+  (`create_workspace` for an empty local workspace or a git clone,
+  `create_workspace_file`, `write_workspace_file`, `create_workspace_folder`).
+  Both stay opt-in for Precursor's own agents, and agents still get a permission
+  prompt before each write.
+- **Basic tools section** in Precursor capabilities: stateless helpers that read
+  none of your data. `get_datetime` and `convert_timezone` (IANA zones),
+  `date_math` (shift a date or measure a gap, with business days), `calculate`
+  (safe arithmetic and math functions), `convert_units`, `generate_uuid` (v4/v7),
+  `random_value` (secure tokens and integers), `hash_or_encode` (hashes, base64,
+  URL, hex, HTML), `count_text` (words, sentences, estimated tokens) and
+  `get_system_info` (OS, Python, locale, version; never host or user names).
+- **Select all / Unselect all** for the Settings → MCP → Precursor capabilities
+  section list.
+
 - **Closing Settings with unsaved changes asks for confirmation** (Esc, the close button, Cancel or a click outside).
 - **Disable the Mock provider** via Settings → Model → Configure provider → Mock: it disappears from provider lists and unconfigured providers fail visibly instead of answering with canned replies.
 - **Provider shown with the model on each reply**, and a **Global default model** selector next to the global default provider in Settings → Model.
@@ -283,6 +301,11 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Fixed
 
+- **The `precursor` MCP server listed every tool even with no capability
+  exposed.** `tools/list` now advertises only the exposed sections (just
+  `precursor_info` when none is on), so the tool count in Settings and the tools
+  a chat offers the model follow the Precursor capabilities toggles; saving them
+  reloads the server's tool list.
 - **Images and PDFs open in a workspace.** Opening a picture (PNG, JPEG, GIF,
   WebP, BMP, ICO, AVIF) in the Files browser showed a "Not a text file" error;
   it's now displayed, scaled to fit, on a checkerboard backdrop so transparency
@@ -411,6 +434,14 @@ are the per-version history; releasing does not rewrite this file.
   receipt is now the signal, on every platform.
 
 ### Changed
+
+- **MCP servers are listed in a fixed order.** Settings → MCP now shows
+  `precursor`, `cmd-runner`, `fetch`, `github`, `playwright`, the `workiq*`
+  servers and `drawio`, then plugin-contributed servers, then your own.
+- **Breaking:** the `workspace-fs` MCP server is removed. A migration carries an
+  existing `workspace-fs` enablement over to `precursor` plus the two workspace
+  sections, and a `workspace-fs` agent scope now resolves to `precursor` (so
+  that step sees the rest of the server's enabled sections too).
 
 - **Agents stop archiving streaming fragments.** Every token of an agent's reply
   and thinking was written to `agent_events` as its own row and commit, with its

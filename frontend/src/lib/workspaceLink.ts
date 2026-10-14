@@ -1,8 +1,8 @@
 /**
  * Deep links to a workspace file, surfaced from an MCP tool call.
  *
- * The file MCP servers (`drawio`, `workspace-fs`) annotate a successful read or
- * write with the workspace + path (see `services/mcp/workspace_links.py`). The
+ * The file MCP servers (`drawio`, and the `precursor` workspace tools) annotate
+ * a successful read or write with the workspace + path (see `services/mcp/workspace_links.py`). The
  * backend lifts that into the tool call's *metadata* — deliberately not read out
  * of the result body, which for a read embeds the whole file (up to 2 MB for a
  * diagram) and would otherwise have to be JSON-parsed on every render just to

@@ -194,7 +194,7 @@ Every file operation is routed through `safe_join`, which:
 - rejects path traversal outside the workspace root, and
 - blocks access to `.git`.
 
-The same sandbox backs the **`workspace-fs`** and **`drawio`**
+The same sandbox backs the workspace tools of the **`precursor`** and the **`drawio`**
 [MCP servers](/features/mcp), so when the assistant reads, edits or diagrams
 files during a turn, it stays inside the jail.
 
@@ -202,7 +202,7 @@ files during a turn, it stays inside the jail.
 
 From the Files section you can browse the tree, open files, and view **git
 diffs** for changes. Combined with the [command runner](/features/command-runner)
-and the `workspace-fs` MCP tools, this lets the assistant make and review changes
+and the workspace tools of the `precursor` MCP server, this lets the assistant make and review changes
 to a repository as part of a conversation — while everything stays confined to the
 workspace root.
 
@@ -268,7 +268,7 @@ way: what already streamed is kept, and a tool call still running settles as
 ## Jumping from a conversation to the file
 
 When the assistant touches a file in a workspace — a diagram via the
-[`drawio` MCP server](/features/mcp), or any file via `workspace-fs` — the tool
+[`drawio` MCP server](/features/mcp), or any file via the `precursor` workspace tools — the tool
 call in the transcript carries an **Open** chip naming it. That holds in a chat,
 a topic, and the workspace's own assistant alike. One click switches to the
 Files section with that file already open, so a

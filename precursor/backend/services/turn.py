@@ -47,6 +47,7 @@ from precursor.backend.services.turn_engine import (
     persist_tool_result,
     run_tool_loop,
 )
+from precursor.backend.services.workspaces import WORKSPACE_READ_TOOLS, WORKSPACE_WRITE_TOOLS
 
 logger = logging.getLogger(__name__)
 
@@ -102,16 +103,16 @@ async def _run(
 
         system_prompt = await build_system_context(session, topic)
         history = await snapshot_history(session, "topic", topic_id, prompt_override=llm_prompt)
-        # Never let a programmatically-driven turn (scheduler / MCP post_message)
-        # re-expose Precursor's own MCP server to itself — that would let a
-        # post_message-triggered turn recursively call post_message.
-        settings = await resolve_turn_settings(
-            session, topic_id=topic_id, exclude_servers={"precursor"}
-        )
+        settings = await resolve_turn_settings(session, topic_id=topic_id)
 
     async with manager.acquired(
         settings.enabled_servers, github_token=settings.github_token, advertise_cached=True
     ) as active:
+        # Never let a programmatically-driven turn (scheduler / MCP post_message)
+        # re-expose Precursor's own MCP server to itself — that would let a
+        # post_message-triggered turn recursively call post_message. Only the
+        # workspace file tools stay, as they did when they were a separate server.
+        active.restrict_server_tools("precursor", WORKSPACE_READ_TOOLS | WORKSPACE_WRITE_TOOLS)
         for server_name, err in active.unavailable:
             logger.warning("Scheduled run: MCP server %s unavailable: %s", server_name, err)
 

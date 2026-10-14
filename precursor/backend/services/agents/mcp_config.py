@@ -146,7 +146,7 @@ class MCPConfigBuilder:
         """SDK configs for every catalog MCP server the user has *enabled*.
 
         Mirrors the chat/topics surface: both built-in servers (``github``,
-        ``fetch``, ``workspace-fs``, …) and user-defined ones are attached when
+        ``fetch``, ``drawio``, …) and user-defined ones are attached when
         their ``mcp_enabled`` toggle is on, so an agent can call the same tools.
         ``precursor`` is excluded here — it's attached separately with full
         access in :meth:`precursor_mcp_config`.

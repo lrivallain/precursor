@@ -318,7 +318,7 @@ def logging_is_configured() -> bool:
 def configure_subprocess_logging() -> None:
     """Apply the shared config in a stdio MCP subprocess.
 
-    The in-tree MCP servers (fetch / workspace-fs / cmd-runner / precursor) run
+    The in-tree MCP servers (fetch / drawio / cmd-runner / precursor) run
     as ``python -m …`` subprocesses; building an MCPServer installs a plain root
     StreamHandler, so without this their ``mcp.server`` logs print in a
     different, timestamp-less format. Calling this in each ``main()`` replaces

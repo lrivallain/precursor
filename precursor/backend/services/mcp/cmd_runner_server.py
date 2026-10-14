@@ -1,6 +1,6 @@
 """Built-in MCP server: local command runner (sandboxed).
 
-Runs as a stdio subprocess (like ``fetch_server`` / ``workspace_fs_server``).
+Runs as a stdio subprocess (like ``fetch_server``).
 Executes ``bash`` / ``python`` / ``node`` commands either inside a throwaway
 Docker container (the default "jail") or, when the jail is disabled, directly on
 the host with full local disk access. The execution backend lives in
