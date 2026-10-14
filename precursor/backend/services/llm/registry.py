@@ -109,9 +109,8 @@ PROVIDERS: dict[str, ProviderSpec] = {
                 label="Deployment names",
                 placeholder="my-gpt-4o, my-gpt-4o-mini",
                 help=(
-                    "Comma-separated deployment names on this endpoint. "
                     "Apply & refresh models, then select one in the composer. "
-                    "The first is the default; names are not verified against Azure."
+                    "All deployments share this endpoint; names are not verified against Azure."
                 ),
             ),
             ProviderField(

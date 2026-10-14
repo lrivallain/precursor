@@ -841,6 +841,35 @@ const scenes = {
     },
   },
 
+  "foundry-models": {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await page.route("**/api/settings", async (route) => {
+        if (route.request().method() !== "GET") return route.fallback();
+        const response = await route.fetch();
+        const settings = await response.json();
+        await route.fulfill({ response, json: {
+          ...settings, llm_provider: "azure_foundry", llm_model: "my-gpt-4o",
+          llm_providers: { azure_foundry: {
+            endpoint: "https://demo.openai.azure.com", deployment: "my-gpt-4o",
+            api_version: "2024-10-21",
+          } },
+          llm_providers_present: { azure_foundry: { key: true } },
+        } });
+      });
+      await page.route("**/api/llm/models*", (route) => route.fulfill({ json: [
+        { id: "my-gpt-4o", name: "my-gpt-4o", publisher: "Azure", catalog_provider: "azure_foundry" },
+      ] }));
+      await page.goto(`${BASE}/`, { waitUntil: "networkidle" });
+      await openSettings(page, "Model");
+      await page.getByRole("textbox", { name: "Deployment names", exact: true }).fill("my-gpt-4o-mini");
+      await page.getByRole("button", { name: "Add model", exact: true }).click();
+      await page.locator('[data-llm-provider-config="azure_foundry"]').scrollIntoViewIfNeeded();
+      await page.mouse.move(0, 0);
+      return clipOf(page, '[data-llm-provider-config="azure_foundry"]', 12);
+    },
+  },
+
   "model-alternatives": {
     viewport: { width: 1440, height: 1000 },
     async go(page) {

@@ -56,7 +56,7 @@ async def test_model_catalog_api_exposes_each_deployment(
     spec = next(spec for spec in specs if spec.id == "azure_foundry")
     deployment = next(field for field in spec.fields if field.name == "deployment")
     assert deployment.label == "Deployment names"
-    assert "Comma-separated" in deployment.help
+    assert "Apply & refresh models" in deployment.help
 
 
 @pytest.mark.parametrize(

@@ -16,7 +16,8 @@ are the per-version history; releasing does not rewrite this file.
 ### Added
 
 - **Multiple Azure AI Foundry deployments.** Settings -> Model accepts
-  comma-separated deployment names on one endpoint. Each is available in the
+  adding deployment names individually as removable bubbles on one endpoint.
+  Each is available in the
   composer model picker and model alternatives, with the first as the default.
   Existing single-deployment configurations remain compatible.
 

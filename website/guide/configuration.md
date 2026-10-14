@@ -31,15 +31,19 @@ you're ready.
 
 ### Which model gets used
 
-For **Azure AI Foundry**, enter a comma-separated list in **Deployment names**
-(for example `my-gpt-4o, my-gpt-4o-mini`). All names must belong to the configured
-endpoint and use its shared API key and API version. Click **Apply & refresh
+For **Azure AI Foundry**, add deployments one at a time in **Deployment names**:
+enter a name such as `my-gpt-4o`, then press **Enter** or click **Add model**.
+Each added model appears as a small bubble; use its remove button to delete it
+from the draft. Duplicate names are rejected. All names must belong to the
+configured endpoint and use its shared API key and API version. Click **Apply & refresh
 models**, then choose a deployment in the composer model picker or use it in
 model alternatives. The first name is the default when no model is selected.
 Existing single-name configurations continue to work. These are deployment
 names, not underlying model catalogue names: Precursor does not discover or
 verify them against Azure, and incorrect names fail when used. Manual model-id
 entry remains available.
+
+<Screenshot src="/screenshots/foundry-models.png" alt="Azure AI Foundry settings with removable model bubbles and an Add model input" caption="Add deployment names individually, then apply the configuration to populate the model picker." />
 
 Precursor pins **no** model id of its own. Until you choose one in
 **Settings → Model**, the chat model is the first entry in the catalogue the

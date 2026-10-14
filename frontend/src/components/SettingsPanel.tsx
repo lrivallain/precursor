@@ -52,6 +52,7 @@ import type {
 } from "../lib/types";
 import { useConfirm } from "./ConfirmDialog";
 import { Select } from "./Select";
+import { DeploymentNamesInput } from "./DeploymentNamesInput";
 import { SidebarTabs } from "./SidebarTabs";
 import { SkillsTab } from "./SkillsTab";
 import { RolesTab } from "./RolesTab";
@@ -1009,34 +1010,48 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
                   const present =
                     settings?.llm_providers_present?.[provider] ?? {};
                   return (
-                    <div className="mt-3 space-y-3 p-3 rounded border border-border bg-surface">
+                    <div data-llm-provider-config={provider} className="mt-3 space-y-3 p-3 rounded border border-border bg-surface">
                       {activeSpec.fields.map((f) => (
                         <div key={f.name}>
-                          <label className="block text-xs text-muted mb-1">
-                            {f.label}
-                            {f.secret && present[f.name] && (
-                              <span className="text-green-500"> (configured)</span>
-                            )}
-                          </label>
-                          <input
-                            type={f.secret ? "password" : "text"}
-                            value={cfg[f.name] ?? ""}
-                            onChange={(e) =>
-                              setProviderConfig((prev) => ({
-                                ...prev,
-                                [provider]: {
-                                  ...(prev[provider] ?? {}),
-                                  [f.name]: e.target.value,
-                                },
-                              }))
-                            }
-                            placeholder={
-                              f.secret && present[f.name]
-                                ? "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022"
-                                : f.placeholder
-                            }
-                            className="w-full bg-bg border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
-                          />
+                          {provider === "azure_foundry" && f.name === "deployment" ? (
+                            <DeploymentNamesInput
+                              value={cfg[f.name] ?? ""}
+                              onChange={(value) =>
+                                setProviderConfig((prev) => ({
+                                  ...prev,
+                                  [provider]: { ...(prev[provider] ?? {}), [f.name]: value },
+                                }))
+                              }
+                            />
+                          ) : (
+                            <>
+                              <label className="block text-xs text-muted mb-1">
+                                {f.label}
+                                {f.secret && present[f.name] && (
+                                  <span className="text-green-500"> (configured)</span>
+                                )}
+                              </label>
+                              <input
+                                type={f.secret ? "password" : "text"}
+                                value={cfg[f.name] ?? ""}
+                                onChange={(e) =>
+                                  setProviderConfig((prev) => ({
+                                    ...prev,
+                                    [provider]: {
+                                      ...(prev[provider] ?? {}),
+                                      [f.name]: e.target.value,
+                                    },
+                                  }))
+                                }
+                                placeholder={
+                                  f.secret && present[f.name]
+                                    ? "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022"
+                                    : f.placeholder
+                                }
+                                className="w-full bg-bg border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
+                              />
+                            </>
+                          )}
                           {f.help && (
                             <p className="text-[11px] text-muted mt-1">{f.help}</p>
                           )}
