@@ -19,7 +19,7 @@ are stored in the local database and **never echoed back** by the API — only a
 | Provider | What it is | Credential |
 | --- | --- | --- |
 | **GitHub Copilot** *(default)* | The Copilot model catalogue (Claude, Gemini, GPT, …), OpenAI-compatible at `api.githubcopilot.com` | a `gho_*` token |
-| **Azure AI Foundry** | Azure OpenAI / AI Foundry deployments | endpoint + key + deployment |
+| **Azure AI Foundry** | Azure OpenAI / AI Foundry deployments | endpoint + key + deployment names |
 | **OpenAI-compatible** | OpenAI, Mistral, Hugging Face, Ollama, or any compatible gateway | base URL + key |
 | **Mock** | A deterministic streamed reply for offline development | *(none — automatic fallback)* |
 
@@ -30,6 +30,16 @@ you're ready.
 :::
 
 ### Which model gets used
+
+For **Azure AI Foundry**, enter a comma-separated list in **Deployment names**
+(for example `my-gpt-4o, my-gpt-4o-mini`). All names must belong to the configured
+endpoint and use its shared API key and API version. Click **Apply & refresh
+models**, then choose a deployment in the composer model picker or use it in
+model alternatives. The first name is the default when no model is selected.
+Existing single-name configurations continue to work. These are deployment
+names, not underlying model catalogue names: Precursor does not discover or
+verify them against Azure, and incorrect names fail when used. Manual model-id
+entry remains available.
 
 Precursor pins **no** model id of its own. Until you choose one in
 **Settings → Model**, the chat model is the first entry in the catalogue the

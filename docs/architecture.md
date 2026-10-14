@@ -251,7 +251,10 @@ back to the mock when credentials are missing. Shipped providers:
   code is retried while the stream is being opened (before any token is
   yielded) rather than surfaced as a failure.
 - `AzureFoundryProvider` — Azure OpenAI / AI Foundry deployments via
-  `AsyncAzureOpenAI` (endpoint + key + deployment).
+  `AsyncAzureOpenAI` (endpoint + key + comma-separated deployment names).
+  Its configured names populate the model picker without remote discovery;
+  requests use the selected deployment, or the first configured name when
+  no model is supplied.
 - `OpenAICompatibleProvider` — OpenAI, Mistral, Hugging Face, Ollama, and any
   OpenAI-compatible gateway (base URL + key).
 - `MockProvider` — deterministic streamed reply, used automatically when no

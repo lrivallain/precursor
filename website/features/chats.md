@@ -27,6 +27,10 @@ for a **topic** when the conversation is part of ongoing work you'll return to.
 
 Chats share the same conversation experience as topics:
 
+- **Multiple Azure AI Foundry deployments** in the model picker: configure
+  comma-separated deployment names on one endpoint in
+  [Settings -> Model](/guide/configuration#which-model-gets-used), then select
+  the deployment for your conversation.
 - **Streaming** replies over Server-Sent Events with live markdown rendering.
 - **The model's thinking** in a collapsed area above its reply, previewing the
   step it is on while it works — see
