@@ -480,7 +480,10 @@ carries a `path` — the ancestor slugs joined root-first with `/` — so a call
 never has to walk `parent_id` upward with a chain of `get_topic` round trips.
 
 Every tool is gated by a per-section **`mcp_expose`** toggle — **off by default**,
-because exposing conversation history outbound is opt-in.
+because exposing conversation history outbound is opt-in. The server only
+*advertises* the tools of exposed sections (with nothing exposed, just
+`precursor_info`), so the tool count on the `precursor` card in Settings follows
+the toggles; saving them reloads that server's tool list.
 
 Two transports serve the same tools:
 

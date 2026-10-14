@@ -24,9 +24,15 @@ from precursor.backend.services.app_settings import MCP_EXPOSE_SECTIONS
 _TOOLS_BY_SECTION: dict[str, list[str]] = {
     "topics": ["list_topics", "get_topic"],
     "messages": ["list_messages"],
+    "chats": ["list_chats", "get_chat", "list_chat_messages"],
+    "agents": ["list_agents", "get_agent"],
+    "live": ["list_live_sessions", "get_live_session"],
     "search": ["search"],
+    "iq": ["retrieve"],
+    "iq_ask": ["ask"],
     "skills": ["list_skills", "get_skill"],
     "memory": ["list_memories"],
+    "memory_write": ["store_memory", "update_memory"],
     "agent_state": ["state_list", "state_get", "state_set", "state_delete"],
     "workflow_state": [
         "workflow_state_list",
@@ -35,6 +41,7 @@ _TOOLS_BY_SECTION: dict[str, list[str]] = {
         "workflow_state_delete",
     ],
     "notes": ["append_note"],
+    "side_chats": ["create_side_chat"],
     "post_message": ["post_message"],
     "schedules": [
         "list_schedules",
@@ -56,6 +63,12 @@ _TOOLS_BY_SECTION: dict[str, list[str]] = {
         "write_workspace_file",
         "create_workspace_folder",
     ],
+}
+
+# Tool name -> the section whose toggle gates it. ``precursor_info`` is absent on
+# purpose: it carries no data and is always advertised.
+TOOL_SECTIONS: dict[str, str] = {
+    name: section for section, names in _TOOLS_BY_SECTION.items() for name in names
 }
 
 

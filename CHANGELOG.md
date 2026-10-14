@@ -271,6 +271,11 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Fixed
 
+- **The `precursor` MCP server listed every tool even with no capability
+  exposed.** `tools/list` now advertises only the exposed sections (just
+  `precursor_info` when none is on), so the tool count in Settings and the tools
+  a chat offers the model follow the Precursor capabilities toggles; saving them
+  reloads the server's tool list.
 - **Images and PDFs open in a workspace.** Opening a picture (PNG, JPEG, GIF,
   WebP, BMP, ICO, AVIF) in the Files browser showed a "Not a text file" error;
   it's now displayed, scaled to fit, on a checkerboard backdrop so transparency

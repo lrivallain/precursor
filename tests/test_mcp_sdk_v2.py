@@ -33,7 +33,8 @@ from mcp.server.mcpserver import MCPServer
 from mcp.types import INTERNAL_ERROR, INVALID_PARAMS, INVALID_REQUEST, CallToolResult
 
 from precursor.backend.config import get_settings
-from precursor.backend.db import init_db
+from precursor.backend.db import SessionLocal, init_db
+from precursor.backend.models import AppSetting
 from precursor.backend.services.mcp.client import (
     BUILTIN_CATALOG,
     MCPClientManager,
@@ -77,10 +78,23 @@ def test_builtin_stdio_server_module_builds_an_mcp_server(module_name: str) -> N
 # --------------------------------------------------------------------------
 
 
+async def _expose_topics() -> None:
+    """``tools/list`` only advertises exposed sections, so opt ``topics`` in."""
+    async with SessionLocal() as session:
+        value = json.dumps({"topics": True})
+        row = await session.get(AppSetting, "mcp_expose")
+        if row is None:
+            session.add(AppSetting(key="mcp_expose", value=value))
+        else:
+            row.value = value
+        await session.commit()
+
+
 async def test_stdio_builtin_lists_calls_recycles_and_closes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     await init_db()
+    await _expose_topics()
     manager = MCPClientManager()
     entry = manager.get("precursor")
     assert entry is not None and entry.transport == "stdio"
@@ -174,6 +188,7 @@ async def test_streamable_http_lists_calls_and_reconnects(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     await init_db()
+    await _expose_topics()
     async with _serve_app(monkeypatch) as (origin, _app):
         await _set_http_enabled(origin, True)
         manager = MCPClientManager()

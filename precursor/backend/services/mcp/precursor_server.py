@@ -97,6 +97,7 @@ from precursor.backend.services.collections import (
 )
 from precursor.backend.services.links import app_base_url
 from precursor.backend.services.links import topic_paths as _topic_paths
+from precursor.backend.services.mcp.server import TOOL_SECTIONS
 from precursor.backend.services.mcp.workspace_links import with_open_link
 from precursor.backend.services.slugs import allocate_unique_slug, slugify
 from precursor.backend.services.workspaces import WorkspaceError, browse_root
@@ -161,9 +162,23 @@ _registrar = _ToolRegistrar()
 mcp = _registrar
 
 
+class _GatedMCPServer(MCPServer):
+    """An ``MCPServer`` whose ``tools/list`` only advertises exposed tools.
+
+    Calls were already refused per section, but a client still saw (and a model
+    still paid context for) every tool with nothing exposed. Listing the same
+    gate keeps the advertised surface in step with Settings.
+    """
+
+    async def list_tools(self) -> list[Any]:
+        tools = await super().list_tools()
+        visible = await _exposed_sections()
+        return [t for t in tools if _tool_visible(t.name, visible)]
+
+
 def build_mcp() -> MCPServer:
     """Build a fresh MCPServer 'precursor' server with all tools registered."""
-    server = MCPServer("precursor")
+    server = _GatedMCPServer("precursor")
     for fn in _registrar.tools:
         server.tool()(fn)
     return server
@@ -190,6 +205,10 @@ _GATED = (
 )
 
 
+# Sections that always honour their toggle, even for Precursor's own agents.
+_STRICT_SECTIONS = frozenset({"workspaces", "workspaces_write"})
+
+
 def _now() -> datetime:
     return datetime.now(UTC)
 
@@ -208,6 +227,22 @@ async def _section_enabled(section: str, *, strict: bool = False) -> bool:
     async with SessionLocal() as session:
         expose = await resolve_mcp_expose(session)
     return bool(expose.get(section))
+
+
+async def _exposed_sections() -> set[str]:
+    """Sections whose tools this caller may see right now (see ``_section_enabled``)."""
+    async with SessionLocal() as session:
+        expose = await resolve_mcp_expose(session)
+    on = {s for s, enabled in expose.items() if enabled}
+    if os.environ.get("PRECURSOR_MCP_FULL_ACCESS") == "1":
+        on |= set(MCP_EXPOSE_SECTIONS) - _STRICT_SECTIONS
+    return on
+
+
+def _tool_visible(name: str, exposed: set[str]) -> bool:
+    section = TOOL_SECTIONS.get(name)
+    # A tool with no gating section (``precursor_info``) is always advertised.
+    return section is None or section in exposed
 
 
 def _topic_dict(

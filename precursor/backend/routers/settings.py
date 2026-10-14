@@ -53,7 +53,11 @@ from precursor.backend.services.app_settings import (
 )
 from precursor.backend.services.backup import resolve_backup_status, run_backup
 from precursor.backend.services.cmd_runner import docker_available
-from precursor.backend.services.github_auth import github_token_source, invalidate_gh_cli_token
+from precursor.backend.services.github_auth import (
+    github_token_source,
+    invalidate_gh_cli_token,
+    resolve_github_token,
+)
 from precursor.backend.services.mcp.precursor_server import (
     http_endpoint_url,
     is_loopback_host,
@@ -384,6 +388,23 @@ async def update_settings(
             await configure_agent365_servers()
         except Exception:
             logger.exception("Agent 365 reconfigure failed after settings update")
+
+    # The precursor server advertises only the exposed sections, so its cached
+    # tool list is stale now: restart its session and re-list so the count in
+    # Settings (and the tools a chat offers the model) follow the toggles.
+    if "mcp_expose" in data:
+        from precursor.backend.routers.mcp import _load_enabled
+        from precursor.backend.services.mcp.client import get_mcp_client_manager
+
+        try:
+            mcp_manager = get_mcp_client_manager()
+            await mcp_manager.retire_worker("precursor")
+            if (await _load_enabled(session)).get("precursor", False):
+                await mcp_manager.probe(
+                    "precursor", github_token=await resolve_github_token(session)
+                )
+        except Exception:
+            logger.exception("Precursor MCP tool refresh failed after settings update")
 
     # Re-point the built-in Playwright server at the chosen browser channel so it
     # takes effect without a restart (retiring the warm worker, if any).

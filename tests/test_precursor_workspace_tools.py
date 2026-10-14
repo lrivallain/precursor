@@ -257,3 +257,32 @@ def test_servers_list_precursor_first_then_plugins_then_custom() -> None:
         "workiq-excel",
     ]
     assert names[-3:] == ["drawio", "demo__srv", "zz-custom"]
+
+
+def test_every_registered_tool_has_a_gating_section_except_info() -> None:
+    from precursor.backend.services.mcp.server import TOOL_SECTIONS
+
+    registered = {fn.__name__ for fn in ps._registrar.tools}
+    assert registered - set(TOOL_SECTIONS) == {"precursor_info"}
+    assert set(TOOL_SECTIONS) <= registered
+    assert set(TOOL_SECTIONS.values()) <= set(MCP_EXPOSE_SECTIONS)
+
+
+async def test_tools_list_follows_the_exposed_sections(monkeypatch) -> None:
+    monkeypatch.delenv("PRECURSOR_MCP_FULL_ACCESS", raising=False)
+    server = ps.build_mcp()
+
+    await _set_expose({})
+    assert {t.name for t in await server.list_tools()} == {"precursor_info"}
+
+    await _set_expose({"topics": True, "workspaces_write": True})
+    names = {t.name for t in await server.list_tools()}
+    assert names == {"precursor_info", "list_topics", "get_topic", *WORKSPACE_WRITE_TOOLS}
+
+
+async def test_full_access_lists_everything_but_the_strict_sections(monkeypatch) -> None:
+    monkeypatch.setenv("PRECURSOR_MCP_FULL_ACCESS", "1")
+    await _set_expose({})
+    names = {t.name for t in await ps.build_mcp().list_tools()}
+    assert "list_topics" in names and "post_message" in names
+    assert not names & (WORKSPACE_READ_TOOLS | WORKSPACE_WRITE_TOOLS)
