@@ -83,6 +83,8 @@ from precursor.backend.services.definitions.writer import preferred_step_keys
 ACTIVE = overlay.ACTIVE_WORKFLOW_STATUSES
 # What the switch to files did, for the wizard: ``{"at", "snapshot", …}``.
 MIGRATED_SETTING_KEY = "definitions_migrated"
+# Set once the role rows were filed on an install that was already in files mode.
+ROLES_FILED_SETTING_KEY = "definitions_roles_filed"
 
 
 # --- Planning ---------------------------------------------------------------
@@ -368,6 +370,31 @@ async def adopt_files_if_fresh(session: AsyncSession) -> bool:
     return True
 
 
+async def _mark_roles_filed(session: AsyncSession, filed: bool) -> None:
+    row = await session.get(AppSetting, ROLES_FILED_SETTING_KEY)
+    if filed and row is None:
+        session.add(AppSetting(key=ROLES_FILED_SETTING_KEY, value=json.dumps(True)))
+    elif not filed and row is not None:
+        await session.delete(row)
+
+
+async def backfill_role_files(session: AsyncSession) -> int:
+    """File the role rows of an install that reached files mode before roles did.
+
+    Such an install migrated its agents and workflows when roles were still table
+    rows, so none has a file and every role would read as missing. Runs once, and
+    never overwrites a file.
+    """
+    if not overlay.files_mode():
+        return 0
+    if await session.get(AppSetting, ROLES_FILED_SETTING_KEY) is not None:
+        return 0
+    written = await roles_service.export_to_files(session)
+    await _mark_roles_filed(session, True)
+    await session.commit()
+    return written
+
+
 async def preview(session: AsyncSession) -> MigrationPreview:
     migrated = await _read_record(session, MIGRATED_SETTING_KEY)
     migrated_record = MigrationRecord(**migrated) if migrated else None
@@ -636,6 +663,7 @@ async def migrate(session: AsyncSession, *, acknowledge: bool = False) -> Migrat
     )
     workflows = (await session.execute(select(Workflow))).scalars().all()
     await _accept_all(session, check.dset, [*agents, *workflows])
+    await _mark_roles_filed(session, True)
     await _write_record(
         session,
         MIGRATED_SETTING_KEY,
@@ -763,6 +791,8 @@ async def revert(session: AsyncSession) -> RevertResult:
         result.workflows += 1
 
     await _write_record(session, MIGRATED_SETTING_KEY, None)
+    # Roles edited in the table from here on need filing if files mode returns.
+    await _mark_roles_filed(session, False)
     await session.commit()
     await overlay.persist_source(session, "database")
     with overlay._lock:

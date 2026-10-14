@@ -72,7 +72,10 @@ from precursor.backend.routers import (
     workspaces,
 )
 from precursor.backend.services.definitions import overlay as definition_overlay
-from precursor.backend.services.definitions.migration import adopt_files_if_fresh
+from precursor.backend.services.definitions.migration import (
+    adopt_files_if_fresh,
+    backfill_role_files,
+)
 from precursor.backend.services.llm import ProviderConfigurationError
 from precursor.backend.services.llm.one_shot import LLMCallFailed
 from precursor.backend.services.roles import ensure_default_role_file
@@ -88,6 +91,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await definition_overlay.refresh_source(session)
         # A new install starts in files mode: nothing to migrate.
         await adopt_files_if_fresh(session)
+        # An install already in files mode before roles became files.
+        await backfill_role_files(session)
         # Files mode: roles live in the folder, where the default must exist.
         ensure_default_role_file()
         from precursor.backend.services.app_settings import resolve_agents_enabled

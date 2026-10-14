@@ -788,6 +788,50 @@ async def test_an_install_with_a_custom_role_keeps_the_wizard(
     assert await _adopt(monkeypatch, [custom]) is False
 
 
+async def _add_role_row(name: str, prompt: str) -> None:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import Role
+
+    async with SessionLocal() as session:
+        session.add(Role(name=name, system_prompt=prompt))
+        await session.commit()
+
+
+async def _backfill() -> int:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.services.definitions import migration
+
+    async with SessionLocal() as session:
+        return await migration.backfill_role_files(session)
+
+
+async def test_roles_of_an_install_already_in_files_mode_get_files(env: Path) -> None:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.services.definitions import overlay
+
+    name = f"Persona {_uid()}"
+    await _add_role_row(name, "Keep me.")
+    async with SessionLocal() as session:
+        await overlay.persist_source(session, "files")
+
+    assert await _backfill() >= 1
+    names = {defn.name: defn.prompt for _, defn in overlay.current_definitions().roles()}
+    assert names[name].strip() == "Keep me."
+
+    # Once: a role file deleted by hand afterwards stays deleted.
+    path = next(f.path for f, d in overlay.current_definitions().roles() if d.name == name)
+    (env / path).unlink()
+    overlay.invalidate()
+    assert await _backfill() == 0
+    assert name not in {d.name for _, d in overlay.current_definitions().roles()}
+
+
+async def test_backfilling_role_files_does_nothing_in_database_mode(env: Path) -> None:
+    await _add_role_row(f"Persona {_uid()}", "Stay in the table.")
+    assert await _backfill() == 0
+    assert not (env / "roles").exists()
+
+
 async def test_a_chosen_source_is_never_overridden(
     env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

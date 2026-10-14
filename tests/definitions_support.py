@@ -15,6 +15,7 @@ _SETTINGS = (
     "definitions_source",
     "definitions_migrated",
     "definitions_finalized",
+    "definitions_roles_filed",
 )
 
 
