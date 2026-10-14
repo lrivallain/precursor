@@ -172,7 +172,10 @@ prompt: |
   folder in files mode has none.
 - An install that was already in files mode before roles became files has its
   role rows written out as files on the first start (once, never over an
-  existing file).
+  existing file). Migrating records that this is done, and reverting to the
+  database clears it, so roles edited in the table meanwhile are filed again if
+  files mode returns. In that middle stage (files mode, database not yet cleaned
+  up) reverting and cleaning up both keep every role.
 - A prompt is content, not a permission: editing a role file never waits for
   review.
 - **Files mode:** the role list comes from the files; **Settings → Roles**

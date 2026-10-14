@@ -370,6 +370,14 @@ async def adopt_files_if_fresh(session: AsyncSession) -> bool:
     return True
 
 
+async def _mark_roles_filed(session: AsyncSession, filed: bool) -> None:
+    row = await session.get(AppSetting, ROLES_FILED_SETTING_KEY)
+    if filed and row is None:
+        session.add(AppSetting(key=ROLES_FILED_SETTING_KEY, value=json.dumps(True)))
+    elif not filed and row is not None:
+        await session.delete(row)
+
+
 async def backfill_role_files(session: AsyncSession) -> int:
     """File the role rows of an install that reached files mode before roles did.
 
@@ -382,7 +390,7 @@ async def backfill_role_files(session: AsyncSession) -> int:
     if await session.get(AppSetting, ROLES_FILED_SETTING_KEY) is not None:
         return 0
     written = await roles_service.export_to_files(session)
-    session.add(AppSetting(key=ROLES_FILED_SETTING_KEY, value=json.dumps(True)))
+    await _mark_roles_filed(session, True)
     await session.commit()
     return written
 
@@ -655,6 +663,7 @@ async def migrate(session: AsyncSession, *, acknowledge: bool = False) -> Migrat
     )
     workflows = (await session.execute(select(Workflow))).scalars().all()
     await _accept_all(session, check.dset, [*agents, *workflows])
+    await _mark_roles_filed(session, True)
     await _write_record(
         session,
         MIGRATED_SETTING_KEY,
@@ -782,6 +791,8 @@ async def revert(session: AsyncSession) -> RevertResult:
         result.workflows += 1
 
     await _write_record(session, MIGRATED_SETTING_KEY, None)
+    # Roles edited in the table from here on need filing if files mode returns.
+    await _mark_roles_filed(session, False)
     await session.commit()
     await overlay.persist_source(session, "database")
     with overlay._lock:

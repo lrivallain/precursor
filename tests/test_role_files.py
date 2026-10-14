@@ -218,6 +218,14 @@ async def _role_prompt(name: str) -> str | None:
         return None if row is None else row.system_prompt
 
 
+async def _roles_filed_marker() -> bool:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AppSetting
+
+    async with SessionLocal() as session:
+        return await session.get(AppSetting, "definitions_roles_filed") is not None
+
+
 async def test_migrating_writes_the_roles_and_reverting_brings_them_back(
     database_mode: Path,
 ) -> None:
@@ -234,6 +242,8 @@ async def test_migrating_writes_the_roles_and_reverting_brings_them_back(
         by_name = {f["name"]: f for f in files}
         assert by_name[name]["prompt"].strip() == "Original."
         assert "default" in by_name
+        # Filed by the migration itself, so a restart won't file them again.
+        assert await _roles_filed_marker() is True
 
         # Edited as a file, the new prompt is what reverting hands back.
         path = next(p for p in (database_mode / "roles").glob("*.yaml") if name in p.read_text())
@@ -245,6 +255,44 @@ async def test_migrating_writes_the_roles_and_reverting_brings_them_back(
         assert reverted.status_code == 200, reverted.text
         assert reverted.json()["roles"] >= 1
     assert await _role_prompt(name) == "Edited as a file."
+    # Back on the table: roles edited there must be filed if files mode returns.
+    assert await _roles_filed_marker() is False
+
+
+async def test_an_install_migrated_before_roles_were_files_can_still_revert(
+    database_mode: Path,
+) -> None:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.services.definitions import migration, overlay
+
+    name = f"Persona {_uid()}"
+    await _add_role(name, "Held in the table.")
+    async with SessionLocal() as session:
+        await overlay.persist_source(session, "files")
+    with TestClient(create_app()) as client:
+        assert client.get("/api/definitions/migration").json()["stage"] == "files"
+        async with SessionLocal() as session:
+            assert await migration.backfill_role_files(session) >= 1
+
+        reverted = client.post("/api/definitions/revert")
+        assert reverted.status_code == 200, reverted.text
+    assert (await _role_prompt(name) or "").strip() == "Held in the table."
+
+
+async def test_an_install_migrated_before_roles_were_files_can_still_clean_up(
+    database_mode: Path,
+) -> None:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.services.definitions import overlay
+
+    name = f"Persona {_uid()}"
+    await _add_role(name, "Held in the table.")
+    async with SessionLocal() as session:
+        await overlay.persist_source(session, "files")
+    with TestClient(create_app()) as client:
+        cleaned = client.post("/api/definitions/finalize", json={"confirm": True})
+        assert cleaned.status_code == 200, cleaned.text
+    assert any(name in p.read_text() for p in (database_mode / "roles").glob("*.yaml"))
 
 
 async def test_cleaning_up_blanks_the_role_prompts_in_the_table(database_mode: Path) -> None:
