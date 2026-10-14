@@ -286,6 +286,7 @@ async def unarchive_chat(
 async def promote_chat_to_topic(
     chat_id: int,
     collection_id: int | None = None,
+    parent_id: int | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> Topic:
     """Promote a flat chat into a full topic.
@@ -301,14 +302,19 @@ async def promote_chat_to_topic(
     A side chat becomes a sub-topic of the topic it was started from, in that
     topic's collection: a subtree never spans collections, so ``collection_id``
     is ignored then.
+
+    For any other chat the caller may pick ``parent_id`` (a topic to nest under;
+    omitted means top level). The topic then lands in the parent's collection, so
+    ``collection_id`` only applies to top-level promotions.
     """
     chat = await session.get(Chat, chat_id)
     if not chat:
         raise HTTPException(status_code=404, detail="Chat not found")
 
-    parent = (
-        await session.get(Topic, chat.parent_topic_id) if chat.parent_topic_id is not None else None
-    )
+    parent_ref = chat.parent_topic_id if chat.parent_topic_id is not None else parent_id
+    parent = await session.get(Topic, parent_ref) if parent_ref is not None else None
+    if parent_ref is not None and parent is None and chat.parent_topic_id is None:
+        raise HTTPException(status_code=404, detail="Parent topic not found")
     resolved_collection_id = (
         parent.collection_id
         if parent is not None and parent.collection_id is not None

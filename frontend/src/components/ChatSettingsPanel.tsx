@@ -5,6 +5,7 @@ import { clearConversation } from "../lib/useConversation";
 import type { Chat, Topic } from "../lib/types";
 import { useConfirm } from "./ConfirmDialog";
 import { RefineTextarea } from "./RefineTextarea";
+import { PromoteChatDialog } from "./PromoteChatDialog";
 
 interface Props {
   chat: Chat;
@@ -45,6 +46,7 @@ export function ChatSettingsPanel({
   const [archiving, setArchiving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [promoting, setPromoting] = useState(false);
+  const [promoteOpen, setPromoteOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function save(): Promise<void> {
@@ -68,25 +70,15 @@ export function ChatSettingsPanel({
     }
   }
 
-  async function promote(): Promise<void> {
-    if (
-      !(await confirmAction({
-        message:
-          chat.parent_topic_title
-            ? `Promote this chat to a sub-topic of "${chat.parent_topic_title}"? It moves out of Chats and gains the topic tree + GitHub features. The transcript is kept.`
-            : "Promote this chat to a full topic? It moves out of Chats and gains the topic tree + GitHub features. The transcript is kept.",
-        confirmLabel: "Promote chat",
-        variant: "warning",
-      }))
-    )
-      return;
+  async function promote(target: number | null, parentId: number | null): Promise<void> {
     setPromoting(true);
     setError(null);
     try {
-      onPromoted(await api.chats.promote(chat.id, collectionId));
+      onPromoted(await api.chats.promote(chat.id, target, parentId));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setPromoting(false);
+      setPromoteOpen(false);
     }
   }
 
@@ -223,7 +215,7 @@ export function ChatSettingsPanel({
             <section className="pt-2 border-t border-border space-y-3">
               <div>
                 <button
-                  onClick={() => void promote()}
+                  onClick={() => setPromoteOpen(true)}
                   disabled={promoting}
                   className="flex items-center gap-2 text-sm text-accent hover:opacity-80 disabled:opacity-50"
                 >
@@ -296,6 +288,15 @@ export function ChatSettingsPanel({
           </button>
         </footer>
       </div>
+      {promoteOpen && (
+        <PromoteChatDialog
+          chat={chat}
+          collectionId={collectionId}
+          busy={promoting}
+          onCancel={() => setPromoteOpen(false)}
+          onConfirm={(c, p) => void promote(c, p)}
+        />
+      )}
     </div>
   );
 }

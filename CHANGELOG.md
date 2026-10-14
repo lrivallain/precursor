@@ -15,6 +15,9 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **Pick where a promoted chat lands.** The "Promote to topic" confirmation now
+  offers a target collection and parent topic (or top level); the API takes
+  `parent_id` alongside `collection_id`.
 - **Multiple Azure AI Foundry deployments.** Settings -> Model accepts
   adding deployment names individually as removable bubbles on one endpoint.
   Each is available in the
