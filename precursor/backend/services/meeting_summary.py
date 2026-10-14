@@ -179,6 +179,7 @@ async def generate_summary(
     # No ``model=``: the recap uses the default chat model, not the fast one.
     result = await complete_once(
         session,
+        use_conversation_selection=False,
         system=system,
         user="\n".join(user_parts),
         usage_source="/live-summary",
@@ -235,6 +236,7 @@ async def generate_summary_from_transcript(
 
     result = await complete_once(
         session,
+        use_conversation_selection=False,
         system=system,
         user="\n".join(user_parts),
         usage_source="/live-summary-transcript",
@@ -298,6 +300,7 @@ async def summarize_topic_conversation(
 
     result = await complete_once(
         session,
+        use_conversation_selection=False,
         system=system,
         user="\n\n".join(parts)[-16000:],
         usage_source="/live-topic-context",

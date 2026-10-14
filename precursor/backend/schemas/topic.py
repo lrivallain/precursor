@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import ConfigDict, Field
 
+from precursor.backend.schemas.conversation_llm import ConversationLLMFields
 from precursor.backend.schemas.schedule import ScheduleSummary
 
 
-class TopicBase(BaseModel):
+class TopicBase(ConversationLLMFields):
     title: str = Field(min_length=1, max_length=255)
     description: str | None = None
     parent_id: int | None = None
@@ -31,7 +32,7 @@ class TopicCreate(TopicBase):
     create_linked_issue: bool = False
 
 
-class TopicUpdate(BaseModel):
+class TopicUpdate(ConversationLLMFields):
     title: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = None
     parent_id: int | None = None

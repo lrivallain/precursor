@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
-from precursor.backend.schemas.model_fallback import ModelCategories, ModelCategory, ModelPreset
+from precursor.backend.schemas.model_fallback import ModelCategories, ModelCategoryId, ModelPreset
 
 Theme = Literal["light", "dark", "system"]
 # Reading font applied app-wide, incl. dyslexia/low-vision-friendly options —
@@ -21,13 +21,13 @@ class SettingsPayload(BaseModel):
     theme: Theme | None = None
     font_family: FontFamily | None = None
     llm_model: str | None = None
-    llm_model_category: ModelCategory | None = None
+    llm_model_category: ModelCategoryId | None = None
     # Reasoning effort hint for reasoning-capable models: "" (auto/off — the
     # param is omitted), "low", "medium", or "high".
     llm_reasoning_effort: str | None = None
     # Active LLM provider id (see services/llm/registry.py).
     llm_provider: str | None = None
-    model_fallbacks: dict[str, ModelCategories] | None = None
+    model_fallbacks: ModelCategories | None = None
     # Per-provider config maps, e.g. {"azure_foundry": {"endpoint": ..., "key": ...}}.
     # Merged into the stored config; secret fields are accepted here but never
     # echoed back. An empty-string value clears that field.
@@ -64,6 +64,7 @@ class SettingsPayload(BaseModel):
     # Auto-naming a placeholder-titled chat from its first message, and the
     # model that does it ("" falls back to the chat model).
     chat_autoname_enabled: bool | None = None
+    mock_provider_enabled: bool | None = None
     chat_autoname_model: str | None = None
     # Map of Precursor capability section -> exposed over the built-in MCP server.
     mcp_expose: dict[str, bool] | None = None
@@ -117,7 +118,7 @@ class SettingsPayload(BaseModel):
     # Agents mode (Copilot SDK). Opt-in; download/runtime gated by availability.
     agents_enabled: bool | None = None
     agents_default_model: str | None = None
-    agents_model_category: ModelCategory | None = None
+    agents_model_category: ModelCategoryId | None = None
     agents_reasoning_effort: str | None = None
     agents_context_tier: str | None = None
     agents_file_change_tracking: bool | None = None
@@ -135,29 +136,6 @@ class SettingsPayload(BaseModel):
     backup_dir: str | None = None
     backup_retention: int | None = None
 
-    @field_validator("model_fallbacks")
-    @classmethod
-    def known_fallback_scopes(
-        cls, value: dict[str, ModelCategories] | None
-    ) -> dict[str, ModelCategories] | None:
-        from precursor.backend.services.llm.registry import PROVIDERS
-
-        if value is not None and set(value) - (set(PROVIDERS) | {"agents"}):
-            raise ValueError("Fallback scope must be a provider id or agents")
-        for scope, categories in (value or {}).items():
-            seen: set[tuple[str, str, str | int]] = set()
-            for presets in (categories.efficiency, categories.balanced, categories.intelligence):
-                for preset in presets:
-                    signature = (
-                        preset.model,
-                        preset.reasoning_effort,
-                        preset.context_tier if scope == "agents" else preset.context_tokens,
-                    )
-                    if signature in seen:
-                        raise ValueError(f"Duplicate effective preset in {scope}")
-                    seen.add(signature)
-        return value
-
 
 class SettingsRead(BaseModel):
     theme: Theme = "system"
@@ -165,7 +143,7 @@ class SettingsRead(BaseModel):
     # "" until resolved against the provider catalogue — no id is pinned here
     # because a literal is only correct until the provider retires it.
     llm_model: str = ""
-    llm_model_category: ModelCategory | None = None
+    llm_model_category: ModelCategoryId | None = None
     llm_category_preset: ModelPreset | None = None
     # "" => auto/off (no reasoning_effort sent); otherwise low|medium|high.
     llm_reasoning_effort: str = ""
@@ -186,7 +164,7 @@ class SettingsRead(BaseModel):
     # Active LLM provider id + per-provider public config (secrets redacted) and
     # a per-provider secret-presence map.
     llm_provider: str = "github_copilot"
-    model_fallbacks: dict[str, ModelCategories] = Field(default_factory=dict)
+    model_fallbacks: ModelCategories = Field(default_factory=ModelCategories)
     llm_providers: dict[str, dict[str, str]] = Field(default_factory=dict)
     llm_providers_present: dict[str, dict[str, bool]] = Field(default_factory=dict)
     # Azure AI Speech: configured endpoint + language (never echoes the key) and
@@ -202,6 +180,7 @@ class SettingsRead(BaseModel):
     # Auto-naming a placeholder-titled chat from its first message. Empty model
     # resolves to the default chat model.
     chat_autoname_enabled: bool = True
+    mock_provider_enabled: bool = True
     chat_autoname_model: str = ""
     # Which Precursor capability sections the built-in MCP server exposes.
     mcp_expose: dict[str, bool] = Field(default_factory=dict)
@@ -266,7 +245,7 @@ class SettingsRead(BaseModel):
     # "auto" lets the agent runtime pick a current model, matching
     # DEFAULT_AGENTS_MODEL — a pinned id would fail once the SDK rotates it out.
     agents_default_model: str = "auto"
-    agents_model_category: ModelCategory | None = None
+    agents_model_category: ModelCategoryId | None = None
     # Reasoning effort + context tier applied to new agent sessions. "" effort
     # and "default" tier leave the SDK defaults unchanged.
     agents_reasoning_effort: str = ""

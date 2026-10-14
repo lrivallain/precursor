@@ -11,6 +11,22 @@ body, comments, and labels become live context on every turn.
 
 <Screenshot src="/screenshots/topics.png" alt="An onboarding topic beside the collection picker and topic tree" caption="A persistent conversation beside its topic tree, with collections keeping related work together." />
 
+## Provider per topic
+
+The composer's single model picker lists all configured providers' models and
+presets, grouped by provider. Choosing one saves its provider automatically,
+alongside reasoning effort and context size, independently of other conversations.
+Use GitHub Copilot for one
+topic and Azure AI Foundry for another without changing the global default.
+**Use global default** clears the override.
+
+Replies, retries, compaction, summaries, naming and scheduled/MCP-driven turns
+use the same selection. Side chats copy it and promotion preserves it; ordinary
+child topics start on the global default. An unconfigured explicit provider
+shows an error rather than returning a Mock reply or switching providers.
+See [configuration](/guide/configuration#which-model-gets-used); agents and
+workflows remain Copilot SDK-only.
+
 ## Issue-linked context
 
 Link a topic to a GitHub issue — paste a URL or number, or create a new issue

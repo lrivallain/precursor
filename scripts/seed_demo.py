@@ -869,6 +869,8 @@ async def seed() -> None:
     async with SessionLocal() as s:
         # Screenshots render archived fixtures, never a real Copilot session.
         await s.merge(AppSetting(key="agents_enabled", value="false"))
+        await s.merge(AppSetting(key="llm_provider", value='"mock"'))
+        await s.merge(AppSetting(key="llm_model", value='"mock"'))
 
         # ---------------- roles ----------------
         # The built-in `default` role is seeded by a migration; only add extras.

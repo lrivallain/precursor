@@ -52,7 +52,8 @@ async def test_model_catalog_api_exposes_each_deployment(
     models = await llm_router.list_models(provider="azure_foundry", session=SimpleNamespace())
     assert [model.id for model in models] == ["fast", "smart"]
     assert all(model.catalog_provider == "azure_foundry" for model in models)
-    specs = await llm_router.list_providers()
+    monkeypatch.setattr(llm_router, "resolve_mock_provider_enabled", AsyncMock(return_value=True))
+    specs = await llm_router.list_providers(session=SimpleNamespace())
     spec = next(spec for spec in specs if spec.id == "azure_foundry")
     deployment = next(field for field in spec.fields if field.name == "deployment")
     assert deployment.label == "Deployment names"

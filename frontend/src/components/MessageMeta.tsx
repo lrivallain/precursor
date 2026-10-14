@@ -1,4 +1,5 @@
 import { Clock, Cpu, Timer } from "lucide-react";
+import { useProviderLabel } from "../lib/providerLabels";
 
 /**
  * Subtle metadata line shown under a message: the timestamp, and — when the
@@ -12,6 +13,7 @@ import { Clock, Cpu, Timer } from "lucide-react";
 export function MessageMeta({
   createdAt,
   model,
+  provider,
   elapsedMs,
   align = "start",
   hoverGroup = "default",
@@ -19,6 +21,8 @@ export function MessageMeta({
   createdAt?: string | null;
   // Assistant turns only: the LLM model id that produced the answer.
   model?: string | null;
+  // Assistant turns only: id of the provider that served it.
+  provider?: string | null;
   // Assistant turns only: wall-clock generation time in milliseconds.
   elapsedMs?: number | null;
   align?: "start" | "end";
@@ -26,6 +30,7 @@ export function MessageMeta({
   // `group`; `AgentView` nodes use a scoped `group/node`.
   hoverGroup?: "default" | "node";
 }) {
+  const providerLabel = useProviderLabel(model ? provider : null);
   const time = formatTimestamp(createdAt);
   const hasModelInfo = model || elapsedMs != null;
   if (!time && !hasModelInfo) return null;
@@ -40,10 +45,10 @@ export function MessageMeta({
       {model && (
         <span
           className="inline-flex max-w-[16rem] items-center gap-1 rounded-full border border-border bg-bg/60 px-1.5 py-0.5 font-medium text-text/70"
-          title={`Model: ${model}`}
+          title={providerLabel ? `${providerLabel} · ${model}` : `Model: ${model}`}
         >
           <Cpu size={10} className="shrink-0 text-accent/70" />
-          <span className="truncate">{model}</span>
+          <span className="truncate">{providerLabel ? `${providerLabel} · ${model}` : model}</span>
         </span>
       )}
       {elapsedMs != null && (

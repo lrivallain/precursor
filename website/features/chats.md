@@ -27,6 +27,12 @@ for a **topic** when the conversation is part of ongoing work you'll return to.
 
 Chats share the same conversation experience as topics:
 
+- **Providers side by side**: configure GitHub Copilot and Azure AI Foundry once,
+  then choose a model or preset from one picker, grouped by configured provider.
+  Its provider is saved automatically alongside effort and context size.
+  **Use global default** in the same menu resets the whole selection. Replies, retries,
+  compaction, naming and notes follow it; agents remain Copilot-only.
+  See [model selection](/guide/configuration#which-model-gets-used).
 - **Multiple Azure AI Foundry deployments** in the model picker: configure
   individual deployment names as removable bubbles on one endpoint in
   [Settings -> Model](/guide/configuration#which-model-gets-used), then select
@@ -50,8 +56,8 @@ Chats share the same conversation experience as topics:
 - **`/compact`** summarises a long chat to free the model's context window —
   see [context compression](/features/context-compression).
 - **Optional model alternatives** recover missing-model or rejected-effort/context
-  requests using ordered presets in the same Efficiency, Balanced or Intelligence
-  category. Configure them in [Settings -> Model](/guide/configuration#optional-model-alternatives);
+  requests using ordered presets, which may span providers, in the same
+  category. Configure them in [Settings -> Presets](/guide/configuration#optional-model-alternatives);
   nothing changes until configured, and retries never replay already-streamed output.
 - **Preset profiles in the model dropdown**: pick **Presets -> Efficiency,
   Balanced or Intelligence** to let the engine choose from that category's
@@ -201,3 +207,7 @@ chat started from a reply keeps its quoted reply: the new topic shows it above
 its transcript and gives it to the model on every turn, as the chat did. A
 side chat whose topic was deleted becomes a top-level topic, like any other
 promoted chat.
+
+Promoting an ordinary chat asks, in the confirmation dialog, for the **target collection** and the
+**parent topic** (or top level) before promoting; the topic lands in the
+parent's collection.

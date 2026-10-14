@@ -98,6 +98,8 @@ async def resolve_turn_settings(
     *,
     model_override: str | None = None,
     exclude_servers: Collection[str] = (),
+    topic_id: int | None = None,
+    chat_id: int | None = None,
 ) -> TurnSettings:
     """Resolve every setting a turn needs from the app settings.
 
@@ -106,6 +108,21 @@ async def resolve_turn_settings(
     from the enabled set for this turn only.
     """
     enabled = [s for s in await load_enabled_mcp_servers(session) if s not in exclude_servers]
+    from precursor.backend.services.conversation_llm import resolve_selection, saved_selection
+
+    selection = await saved_selection(session, topic_id=topic_id, chat_id=chat_id)
+    if selection is not None:
+        resolved = await resolve_selection(session, selection, model_override=model_override)
+        return TurnSettings(
+            model=resolved.model,
+            reasoning_effort=resolved.reasoning_effort,
+            max_tool_rounds=await resolve_max_tool_rounds(session),
+            max_input_tokens=resolved.context_tokens,
+            max_tool_result_tokens=await resolve_llm_max_tool_result_tokens(session),
+            provider=resolved.provider,
+            github_token=await resolve_github_token(session),
+            enabled_servers=enabled,
+        )
     category = await resolve_model_category(session) if not model_override else None
     provider = (
         await get_llm_provider(session, model_category=category)
@@ -114,9 +131,7 @@ async def resolve_turn_settings(
     )
     max_input_tokens = await resolve_llm_max_input_tokens(session)
     if category is not None:
-        from precursor.backend.services.app_settings import resolve_llm_provider
-
-        categories = await resolve_model_fallbacks(session, await resolve_llm_provider(session))
+        categories = await resolve_model_fallbacks(session)
         presets = selected_category_presets(categories, category)
         if presets:
             # Retain enough history for any candidate; the wrapper applies the

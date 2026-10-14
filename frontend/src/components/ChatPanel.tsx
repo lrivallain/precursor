@@ -802,7 +802,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
             focusToken={composerFocusToken}
             toolbarStart={
               <>
-                <ComposerModelControls />
+                <ComposerModelControls conversation={{ kind: "topic", id: topic.id, selection: topic.llm_selection, onUpdated: onTopicUpdated }} />
                 <RoleSelector
                   value={topic.role_id ?? null}
                   onChange={(roleId) => void onSetRole?.(roleId)}
@@ -822,6 +822,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
           messages={conv.messages}
           kind="topic"
           containerId={topic.id}
+          selection={topic.llm_selection}
           streaming={streaming}
           compaction={conv.compaction}
           reminder={{

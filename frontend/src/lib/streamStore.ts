@@ -47,6 +47,7 @@ interface Session {
   pendingUsage: UsageReport | null;
   // Usage of the most recent completed round.
   lastUsage: UsageReport | null;
+  requestError: string | null;
 }
 
 type Listener = () => void;
@@ -106,6 +107,10 @@ class StreamStore {
 
   lastUsage(key: string): UsageReport | null {
     return this.sessions.get(key)?.lastUsage ?? null;
+  }
+
+  requestError(key: string): string | null {
+    return this.sessions.get(key)?.requestError ?? null;
   }
 
   /** Streaming conversation ids of a given kind (local + remote). */
@@ -231,6 +236,7 @@ class StreamStore {
       abort: controller,
       pendingUsage: null,
       lastUsage: null,
+      requestError: null,
     };
     this.sessions.set(key, session);
     this.notify();
@@ -249,6 +255,13 @@ class StreamStore {
       ok = false;
       if ((err as Error).name !== "AbortError") {
         console.error(err);
+        const message = err instanceof Error ? err.message : String(err);
+        const failed = this.sessions.get(key);
+        if (failed) failed.requestError = message;
+        this.handleEvent(key, {
+          event: "error",
+          data: JSON.stringify({ message }),
+        });
       }
     } finally {
       const cur = this.sessions.get(key);
@@ -417,6 +430,7 @@ class StreamStore {
         prompt_tokens: usage?.prompt_tokens ?? null,
         completion_tokens: usage?.completion_tokens ?? null,
         model: (payload.model as string | null) ?? null,
+        provider: (payload.provider as string | null) ?? null,
         elapsed_ms: (payload.elapsed_ms as number | null) ?? null,
         created_at: now,
       });

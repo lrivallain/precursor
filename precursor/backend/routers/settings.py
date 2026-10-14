@@ -14,6 +14,7 @@ from precursor.backend.config import get_settings
 from precursor.backend.db import get_session
 from precursor.backend.models import AppSetting
 from precursor.backend.schemas import SettingsPayload, SettingsRead
+from precursor.backend.schemas.model_fallback import ModelCategories, normalize_stored_categories
 from precursor.backend.services.agents.manager import get_agent_manager
 from precursor.backend.services.agents.runtime import agents_available
 from precursor.backend.services.app_settings import (
@@ -67,6 +68,7 @@ from precursor.backend.services.model_fallbacks import (
     preview_llm_category_preset,
     resolve_model_category,
     resolve_model_fallbacks,
+    scoped_categories,
     selected_category_presets,
 )
 from precursor.backend.services.openai_proxy import (
@@ -119,7 +121,7 @@ def _as_read(
         # Resolved, not raw: nothing is stored on a fresh install and a stored
         # id may have been retired, so this is what a turn would actually use.
         llm_model=llm_model,
-        model_fallbacks=data.get("model_fallbacks") or {},
+        model_fallbacks=normalize_stored_categories(data.get("model_fallbacks")),
         llm_reasoning_effort=data.get("llm_reasoning_effort", DEFAULT_LLM_REASONING_EFFORT),
         github_repo=data.get("github_repo", DEFAULT_GITHUB_REPO),
         issue_context_ttl_minutes=data.get(
@@ -143,6 +145,7 @@ def _as_read(
         chat_autoname_enabled=bool(
             data.get("chat_autoname_enabled", DEFAULT_CHAT_AUTONAME_ENABLED)
         ),
+        mock_provider_enabled=bool(data.get("mock_provider_enabled", True)),
         chat_autoname_model=str(data.get("chat_autoname_model", "") or ""),
         docker_available=docker_ok,
         **system,
@@ -265,25 +268,26 @@ async def update_settings(
     ):
         if model_key in data and category_key not in data:
             data[category_key] = None
-    for category_key, scope in (
-        ("llm_model_category", data.get("llm_provider") or await resolve_llm_provider(session)),
-        ("agents_model_category", "agents"),
-    ):
+    for category_key, scope in (("llm_model_category", "llm"), ("agents_model_category", "agents")):
+        if "model_fallbacks" in data:
+            categories = scoped_categories(
+                ModelCategories.model_validate(data["model_fallbacks"]), scope
+            )
+        else:
+            categories = await resolve_model_fallbacks(session, scope)
         selected = data.get(category_key)
-        if selected is None:
-            continue
-        from precursor.backend.schemas.model_fallback import ModelCategories
-
-        categories = (
-            ModelCategories.model_validate((data["model_fallbacks"] or {}).get(scope, {}))
-            if "model_fallbacks" in data
-            else await resolve_model_fallbacks(session, scope)
-        )
-        if not selected_category_presets(categories, selected):
+        if selected is not None and not selected_category_presets(categories, selected):
             raise HTTPException(
                 status_code=422,
-                detail=f"No presets are configured for {scope}/{selected.value}.",
+                detail=f"No presets are configured for the {selected!r} category.",
             )
+        # Deleting or emptying a category must not leave a dangling selection.
+        if selected is None and category_key not in data and "model_fallbacks" in data:
+            saved_category = await resolve_model_category(session, agents=scope == "agents")
+            if saved_category is not None and not selected_category_presets(
+                categories, saved_category
+            ):
+                data[category_key] = None
 
     # Merge api_keys instead of replacing — clients may PATCH a single key.
     if "api_keys" in data:

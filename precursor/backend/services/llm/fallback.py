@@ -6,7 +6,7 @@ import logging
 from collections.abc import AsyncIterator, Mapping, Sequence
 from typing import Any
 
-from precursor.backend.schemas.model_fallback import ModelCategories, ModelCategory, ModelPreset
+from precursor.backend.schemas.model_fallback import ModelCategories, ModelPreset
 from precursor.backend.services.llm.base import (
     ChatMessage,
     LLMError,
@@ -18,8 +18,9 @@ from precursor.backend.services.llm.base import (
 )
 from precursor.backend.services.model_fallbacks import (
     ModelSelection,
-    category_presets,
     is_model_rejection,
+    matching_category,
+    scoped_categories,
     selected_category_presets,
 )
 
@@ -33,19 +34,25 @@ class CategoryFallbackProvider:
         categories: ModelCategories,
         context_tokens: int,
         *,
-        selected_category: ModelCategory | None = None,
-        category_provider_ready: bool = True,
+        provider_id: str = "",
+        selected_category: str | None = None,
+        providers: Mapping[str, LLMProvider | LLMError] | None = None,
     ) -> None:
         self._provider = provider
         self._categories = categories
         self._context_tokens = context_tokens
+        self._provider_id = provider_id or provider.name
         self._selected_category = selected_category
-        self._category_provider_ready = category_provider_ready
+        # Every provider a preset may name, built up front: the request-scoped
+        # session that read the credentials is gone once the stream runs.
+        self._providers: dict[str, LLMProvider | LLMError] = (
+            dict(providers) if providers is not None else {self._provider_id: provider}
+        )
         self._chosen: dict[tuple[str, str], ModelPreset | ModelSelection] = {}
-        self._catalog: list[LLMModel] | None = None
-        self._catalog_loaded = False
+        self._catalogs: dict[str, list[LLMModel] | None] = {}
         self.name = provider.name
         self.effective_model: str | None = None
+        self.effective_provider: str | None = None
 
     def __getattr__(self, name: str) -> Any:
         # Optional provider capabilities (notably embeddings) stay untouched.
@@ -78,13 +85,9 @@ class CategoryFallbackProvider:
     ) -> AsyncIterator[ProviderEvent]:
         from precursor.backend.services.context_budget import trim_messages
 
-        if self._selected_category is not None and not self._category_provider_ready:
-            raise LLMError(
-                "The selected category's model provider is not configured. "
-                "Check credentials in Settings > Model."
-            )
         selection = ModelSelection(
             model=model,
+            provider=self._provider_id,
             reasoning_effort=reasoning_effort or "",
             context_tokens=self._context_tokens,
         )
@@ -93,17 +96,21 @@ class CategoryFallbackProvider:
             if not presets:
                 raise LLMError(
                     f"No presets are configured for the selected category "
-                    f"{self._selected_category.value!r}. Update Settings > Model > Manage presets."
+                    f"{self._selected_category!r}. Update Settings > Presets."
                 )
-            key = (f"category:{self._selected_category.value}", "")
+            key = (f"category:{self._selected_category}", "")
             initial = self._chosen.get(key, presets[0])
         else:
-            presets = category_presets(self._categories, selection)
+            matched = matching_category(
+                scoped_categories(self._categories, self._provider_id), selection
+            )
+            full = self._categories.get(matched.id) if matched is not None else None
+            presets = list(full.presets) if full is not None else []
             key = (model, reasoning_effort or "")
             initial = self._chosen.get(key, selection)
 
-        def signature(p: ModelSelection | ModelPreset) -> tuple[str, str, int]:
-            return p.model, p.reasoning_effort, p.context_tokens
+        def signature(p: ModelSelection | ModelPreset) -> tuple[str, str, str, int]:
+            return p.provider, p.model, p.reasoning_effort, p.context_tokens
 
         candidates: list[ModelSelection | ModelPreset] = [initial]
         seen = {signature(initial)}
@@ -111,22 +118,24 @@ class CategoryFallbackProvider:
             if signature(p) not in seen:
                 seen.add(signature(p))
                 candidates.append(p)
-        if presets and not self._catalog_loaded:
-            self._catalog_loaded = True
-            try:
-                self._catalog = await self.list_models()
-            except Exception as exc:
-                logger.warning("Fallback catalogue unavailable for %s: %s", self.name, exc)
-        offered = {m.id for m in self._catalog or []}
         last: BaseException | None = None
         for preset in candidates:
-            if presets and offered and preset.model not in offered:
-                last = LLMError(f"Model {preset.model!r} is no longer offered by {self.name}")
+            target = self._providers.get(preset.provider or self._provider_id)
+            if target is None or isinstance(target, LLMError):
+                last = target or LLMError(f"Provider {preset.provider!r} is not configured")
+                if not presets:
+                    raise last
+                continue
+            catalog = await self._catalog_for(preset.provider or self._provider_id, target, presets)
+            if presets and catalog and preset.model not in {m.id for m in catalog}:
+                last = LLMError(
+                    f"Model {preset.model!r} is no longer offered by {preset.provider or self.name}"
+                )
                 continue
             replacement = self._selected_category is not None or signature(preset) != signature(
                 selection
             )
-            advertised = next((m for m in self._catalog or [] if m.id == preset.model), None)
+            advertised = next((m for m in catalog or [] if m.id == preset.model), None)
             context_tokens = min(
                 preset.context_tokens,
                 advertised.context_window
@@ -144,9 +153,10 @@ class CategoryFallbackProvider:
                     preset.context_tokens,
                 )
             self.effective_model = preset.model
+            self.effective_provider = preset.provider or self._provider_id
             yielded = False
             try:
-                async for event in self._provider.stream_chat_with_tools(
+                async for event in target.stream_chat_with_tools(
                     model=preset.model,
                     messages=(
                         trim_messages(
@@ -170,8 +180,21 @@ class CategoryFallbackProvider:
                     raise
                 logger.warning("%s: preset %s rejected: %s", self.name, preset.model, exc)
                 last = exc
-        target = self._selected_category.value if self._selected_category is not None else model
+        label = self._selected_category if self._selected_category is not None else model
         raise LLMError(
-            f"No working model preset remains in this category for {target!r}. "
-            f"Update Settings > Model > Model alternatives. Last rejection: {last}"
+            f"No working model preset remains in this category for {label!r}. "
+            f"Update Settings > Presets. Last problem: {last}"
         ) from last
+
+    async def _catalog_for(
+        self, provider_id: str, target: LLMProvider, presets: Sequence[ModelPreset]
+    ) -> list[LLMModel] | None:
+        if not presets:
+            return None
+        if provider_id not in self._catalogs:
+            try:
+                self._catalogs[provider_id] = await target.list_models()
+            except Exception as exc:
+                logger.warning("Fallback catalogue unavailable for %s: %s", provider_id, exc)
+                self._catalogs[provider_id] = None
+        return self._catalogs[provider_id]

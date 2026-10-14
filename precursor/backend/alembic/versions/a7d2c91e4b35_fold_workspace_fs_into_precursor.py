@@ -6,7 +6,7 @@ sections. An install that had it switched on keeps the same reach by turning on
 ``precursor`` and both sections; the stale ``workspace-fs`` key is dropped.
 
 Revision ID: a7d2c91e4b35
-Revises: 5ec9892c32b6
+Revises: a7c19e3b5d42
 Create Date: 2026-10-06 00:00:00.000000
 """
 
@@ -18,7 +18,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "a7d2c91e4b35"
-down_revision = "5ec9892c32b6"
+down_revision = "a7c19e3b5d42"
 branch_labels = None
 depends_on = None
 

@@ -311,7 +311,9 @@ export function useConversation({
         streamStore.hasSession(streamKey) &&
         !streamStore.isStreaming(streamKey)
       ) {
+        const error = streamStore.requestError(streamKey);
         streamStore.clear(streamKey);
+        if (error) systemNote(`Error: ${error}`);
       }
     })();
     return () => {
@@ -336,10 +338,12 @@ export function useConversation({
       return;
     }
     let cancelled = false;
+    const error = streamStore.requestError(streamKey);
     void (async () => {
       const msgs = await reloadMessages();
       if (cancelled || msgs === null) return;
       streamStore.clear(streamKey);
+      if (error) systemNote(`Error: ${error}`);
       onUpdated();
     })();
     return () => {

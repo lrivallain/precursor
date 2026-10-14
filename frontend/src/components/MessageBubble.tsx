@@ -52,6 +52,7 @@ interface Props {
   createdAt?: string;
   // For assistant turns: the LLM model id that produced the answer.
   model?: string | null;
+  provider?: string | null;
   // For assistant turns: wall-clock generation time in milliseconds.
   elapsedMs?: number | null;
   // For SYSTEM turns: force the failure styling even without an `Error: `
@@ -103,7 +104,7 @@ function matchSkillInvocation(
   return { skill, argument: (m[2] ?? "").trim() };
 }
 
-export function MessageBubble({ role, content, reasoning, pending, attachments, onDelete, onStop, collapsible, agentSessionId, createdAt, model, elapsedMs, isError, onRetry, highlighted, onRewindHere, onEditResend, revealActions, onStartSideChat, footer, quotableId, onEditReply, editor, edited }: Props) {
+export function MessageBubble({ role, content, reasoning, pending, attachments, onDelete, onStop, collapsible, agentSessionId, createdAt, model, provider, elapsedMs, isError, onRetry, highlighted, onRewindHere, onEditResend, revealActions, onStartSideChat, footer, quotableId, onEditReply, editor, edited }: Props) {
   const isUser = role === "user";
   const skills = useSkills();
   const skillInvocation =
@@ -505,6 +506,7 @@ export function MessageBubble({ role, content, reasoning, pending, attachments, 
           <MessageMeta
             createdAt={createdAt}
             model={role === "assistant" ? model : null}
+            provider={role === "assistant" ? provider : null}
             elapsedMs={role === "assistant" ? elapsedMs : null}
             align={isUser ? "end" : "start"}
           />

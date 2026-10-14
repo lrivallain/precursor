@@ -102,7 +102,7 @@ async function openSettings(page, tab) {
   await page.locator('[data-tooltip="Settings"]').first().click();
   await page.waitForSelector("text=Appearance", { timeout: 10000 });
   await sleep(500);
-  const byRole = page.getByRole("button", { name: tab, exact: true }).first();
+  const byRole = page.getByRole("dialog", { name: "Settings", exact: true }).getByRole("button", { name: tab, exact: true });
   if (await byRole.count()) await byRole.click().catch(() => {});
   else await page.locator(`text="${tab}"`).first().click().catch(() => {});
   await sleep(800);
@@ -285,6 +285,57 @@ const scenes = {
       await page.goto(`${BASE}/chats/regex-for-semver-tags`, { waitUntil: "networkidle" });
       await page.getByText("Regex for semver tags", { exact: true }).first().waitFor();
       return undefined;
+    },
+  },
+
+  "conversation-providers": {
+    viewport: { width: 1440, height: 900 },
+    async go(page) {
+      await page.route("**/api/settings", async (route) => {
+        const response = await route.fetch();
+        const settings = await response.json();
+        await route.fulfill({ response, json: {
+          ...settings, llm_provider: "github_copilot", llm_model: "gpt-4o",
+          github_token_source: "settings",
+          llm_providers: { azure_foundry: {
+            endpoint: "https://demo.openai.azure.com", deployment: "my-gpt-4o",
+          } },
+          llm_providers_present: { azure_foundry: { key: true } },
+        } });
+      });
+      await page.route("**/api/llm/models*", (route) => {
+        const provider = new URL(route.request().url()).searchParams.get("provider");
+        const models = provider === "azure_foundry"
+          ? [{ id: "my-gpt-4o", name: "my-gpt-4o", publisher: "Azure", catalog_provider: provider }]
+          : provider === "github_copilot"
+            ? [{ id: "gpt-4o", name: "GPT-4o", publisher: "OpenAI", catalog_provider: provider }]
+            : [];
+        return route.fulfill({ json: models });
+      });
+      await page.goto(`${BASE}/chats/regex-for-semver-tags`, { waitUntil: "networkidle" });
+      await page.getByRole("button", { name: "Model", exact: true }).click();
+      await page.getByRole("option", { name: "my-gpt-4o", exact: true }).waitFor();
+      await page.mouse.move(0, 0);
+      return clipOf(page, "main");
+    },
+  },
+
+  "provider-configuration": {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await scenes["conversation-providers"].go(page);
+      await page.getByRole("button", { name: "Model", exact: true }).click();
+      await openSettings(page, "Model");
+      const picker = page.getByRole("button", { name: "LLM provider", exact: true });
+      await picker.click();
+      await page.getByRole("option", { name: /^Azure AI Foundry/ }).click();
+      await picker.click();
+      const trigger = await picker.boundingBox();
+      const menu = await page.getByRole("listbox").boundingBox();
+      return {
+        x: trigger.x - 12, y: trigger.y - 32,
+        width: trigger.width + 24, height: menu.y + menu.height - trigger.y + 44,
+      };
     },
   },
 
@@ -870,9 +921,12 @@ const scenes = {
     },
   },
 
-  "model-alternatives": {
-    viewport: { width: 1440, height: 1000 },
+  presets: {
+    viewport: { width: 1440, height: 1500 },
     async go(page) {
+      const slot = (provider, model, effort, ctx, tier = "default") => ({
+        provider, model, reasoning_effort: effort, context_tokens: ctx, context_tier: tier,
+      });
       await page.route("**/api/settings", async (route) => {
         if (route.request().method() !== "GET") return route.fallback();
         const response = await route.fetch();
@@ -882,59 +936,56 @@ const scenes = {
           // Presence/catalogue fixtures only; the real demo remains Guest with no token.
           github_token_source: "settings",
           agents_enabled: true, agents_available: true, agents_runtime_started: true,
+          llm_provider: "github_copilot",
+          llm_providers: { ...settings.llm_providers, azure_foundry: { endpoint: "https://demo.openai.azure.com", deployment: "gpt-5-mini" } },
+          llm_providers_present: { ...settings.llm_providers_present, azure_foundry: { key: true } },
           llm_model: "claude-sonnet-5", llm_reasoning_effort: "medium", llm_max_input_tokens: 128000,
           llm_model_category: "balanced",
-          llm_category_preset: { model: "claude-sonnet-5", reasoning_effort: "medium", context_tokens: 128000, context_tier: "default" },
-          model_fallbacks: { github_copilot: {
-            efficiency: [
-              { model: "claude-haiku-4.5", reasoning_effort: "", context_tokens: 128000, context_tier: "default" },
-              { model: "gpt-5-mini", reasoning_effort: "low", context_tokens: 128000, context_tier: "default" },
-            ],
-            balanced: [
-              { model: "claude-sonnet-5", reasoning_effort: "medium", context_tokens: 128000, context_tier: "default" },
-            ],
-            intelligence: [
-              { model: "gpt-5.5", reasoning_effort: "high", context_tokens: 256000, context_tier: "default" },
-            ],
-          }, agents: {
-            efficiency: [{ model: "claude-haiku-4.5", reasoning_effort: "", context_tokens: 128000, context_tier: "default" }],
-            balanced: [{ model: "claude-sonnet-5", reasoning_effort: "medium", context_tokens: 128000, context_tier: "default" }],
-            intelligence: [{ model: "gpt-5.5", reasoning_effort: "high", context_tokens: 256000, context_tier: "long_context" }],
-          } },
+          llm_category_preset: slot("github_copilot", "claude-sonnet-5", "medium", 128000),
+          model_fallbacks: { categories: [
+            { id: "efficiency", label: "Efficiency", presets: [
+              slot("github_copilot", "claude-haiku-4.5", "", 128000),
+              slot("azure_foundry", "gpt-5-mini", "low", 128000),
+            ] },
+            { id: "balanced", label: "Balanced", presets: [
+              slot("github_copilot", "claude-sonnet-5", "medium", 128000),
+              slot("azure_foundry", "gpt-5.5", "medium", 128000),
+            ] },
+            { id: "deep-research", label: "Deep research", presets: [
+              slot("azure_foundry", "gpt-5.5", "high", 256000),
+              slot("agents", "gpt-5.5", "high", 128000, "long_context"),
+            ] },
+          ] },
         } });
       });
-      const catalogue = ["claude-haiku-4.5", "gpt-5-mini", "claude-sonnet-5", "gpt-5.5"].map((id) => ({
+      const catalogue = (provider, ids) => ids.map((id) => ({
         id, name: id, publisher: id.startsWith("claude") ? "Anthropic" : "OpenAI",
         context_window: 512000, supported_reasoning_efforts: ["low", "medium", "high", "max"],
-        catalog_provider: "github_copilot",
+        catalog_provider: provider,
       }));
-      await page.route("**/api/llm/models*", (route) => route.fulfill({ json: catalogue }));
-      await page.route("**/api/agents/models", (route) => route.fulfill({ json: catalogue }));
+      await page.route("**/api/llm/models*", (route) => {
+        const provider = new URL(route.request().url()).searchParams.get("provider") || "github_copilot";
+        return route.fulfill({ json: provider === "azure_foundry"
+          ? catalogue(provider, ["gpt-5-mini", "gpt-5.5"])
+          : catalogue(provider, ["claude-haiku-4.5", "claude-sonnet-5", "gpt-5.5"]) });
+      });
+      await page.route("**/api/agents/models", (route) => route.fulfill({ json: catalogue("agents", ["gpt-5.5", "claude-sonnet-5"]) }));
       await page.goto(`${BASE}/`, { waitUntil: "networkidle" });
-      await openSettings(page, "Model");
-      const card = page.locator("[data-model-fallback-settings]");
-      await card.scrollIntoViewIfNeeded();
-      await sleep(200);
-      return clipOf(page, "[data-model-fallback-settings]", 12);
-    },
-  },
-
-  "model-alternatives-editor": {
-    viewport: { width: 1440, height: 1000 },
-    async go(page) {
-      await scenes["model-alternatives"].go(page);
-      await page.getByRole("button", { name: "Manage presets", exact: true }).click();
-      await page.getByRole("dialog", { name: "Manage model alternatives", exact: true }).waitFor();
+      await openSettings(page, "Presets");
+      await page.locator("[data-presets-settings]").waitFor();
+      await sleep(600);
       await page.mouse.move(0, 0);
-      await sleep(350);
-      return clipOf(page, '[role="dialog"]:has([data-model-fallback-dialog])', 0);
+      const clip = await clipOf(page, "[data-presets-settings]", 12);
+      const footer = await page.getByRole("button", { name: "Cancel", exact: true }).first().boundingBox();
+      if (clip && footer) clip.height = Math.min(clip.height, Math.floor(footer.y - clip.y - 24));
+      return clip;
     },
   },
 
   "model-presets": {
     viewport: { width: 1440, height: 1000 },
     async go(page) {
-      await scenes["model-alternatives"].go(page);
+      await scenes.presets.go(page);
       await page.getByRole("button", { name: "Close", exact: true }).click();
       await page.goto(`${BASE}/chats/regex-for-semver-tags`, { waitUntil: "networkidle" });
       await page.getByRole("button", { name: "Model", exact: true }).click();

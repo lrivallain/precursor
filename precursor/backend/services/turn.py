@@ -103,7 +103,7 @@ async def _run(
 
         system_prompt = await build_system_context(session, topic)
         history = await snapshot_history(session, "topic", topic_id, prompt_override=llm_prompt)
-        settings = await resolve_turn_settings(session)
+        settings = await resolve_turn_settings(session, topic_id=topic_id)
 
     async with manager.acquired(
         settings.enabled_servers, github_token=settings.github_token, advertise_cached=True

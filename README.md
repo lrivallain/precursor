@@ -61,6 +61,9 @@ offline.
 - Multi-turn chat with **SSE streaming** and markdown rendering
 - Powered by **GitHub Copilot** (OpenAI-compatible) with a mock provider for
   offline development
+- **Providers side by side**: configure GitHub Copilot and Azure AI Foundry
+  together, then choose provider/model presets per chat or topic, independently
+  of the global default. Provider pickers show saved configuration status.
 - **MCP both ways**: Precursor exposes its conversations as an MCP server *and*
   attaches external MCP tool servers per topic
 - **OpenAI-compatible endpoint** (opt-in): point VS Code or any OpenAI client at

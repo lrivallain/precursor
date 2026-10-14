@@ -221,7 +221,7 @@ async def stream_chat(
         description=await skills_service.expand_references(session, chat.description or ""),
     )
 
-    settings = await resolve_turn_settings(session, model_override=payload.model)
+    settings = await resolve_turn_settings(session, chat_id=chat_id, model_override=payload.model)
     return EventSourceResponse(
         stream_turn(
             "chat",

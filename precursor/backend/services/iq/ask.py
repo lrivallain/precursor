@@ -68,6 +68,7 @@ async def ask(
         model = await resolve_iq_ask_model(session)
         out = await complete_once(
             session,
+            use_conversation_selection=False,
             system=_SYSTEM.format(today=today),
             user=f"Question: {question}\n\nSources:\n\n{found.markdown}",
             usage_source="/iq-ask",

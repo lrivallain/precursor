@@ -274,6 +274,11 @@ async def resolve_live_enabled(session: AsyncSession) -> bool:
     return await resolve(session, SettingSpec("live_enabled", _boolean, default=True))
 
 
+async def resolve_mock_provider_enabled(session: AsyncSession) -> bool:
+    """Whether the offline Mock provider is offered and used as a fallback."""
+    return await resolve(session, SettingSpec("mock_provider_enabled", _boolean, default=True))
+
+
 async def resolve_chat_autoname_enabled(session: AsyncSession) -> bool:
     """Whether a placeholder-titled chat is named from its first message.
 

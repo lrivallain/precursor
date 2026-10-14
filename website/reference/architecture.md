@@ -95,6 +95,10 @@ instance comes up on doesn't depend on the caller's working directory.
    snapshots history and resolves the turn's model and MCP settings; the router
    adds a system prompt that includes the linked GitHub issue body + most-recent
    comments + labels, plus any attached skills / memory.
+   The effective provider/model/category, effort and budget come from the
+   conversation's saved `llm_selection`, otherwise global defaults, and are
+   snapshotted before streaming. Explicit providers fail visibly when
+   unconfigured rather than substituting Mock.
 3. Enabled [MCP tool servers](/features/mcp) are opened for the turn; their tools
    are advertised to the provider. A server that can't be reached (a lapsed
    credential, say) still contributes its **stored** catalogue, so the turn is
@@ -221,6 +225,15 @@ collection's, then the global `github_repo` setting.
 
 ## LLM provider abstraction
 
+Chat/topic preferences are nullable JSON-encoded `llm_selection` records.
+The shared turn and one-shot resolvers honor them for replies, retries,
+compaction, summaries, notes, naming and scheduled/MCP topic turns. Model
+catalogues and frontend caches are provider-scoped, including models with the
+same ID. Side chats copy overrides and promotion preserves them.
+Live/IQ one-shots explicitly opt out, and agents, workflows, workspace chat and
+the OpenAI relay retain their existing global/runtime selection. Credentials
+remain in the write-only provider configuration, separate from conversations.
+
 `services/llm/base.py` defines a small protocol — two streaming methods (plain
 text and a tool-capable event stream) plus `list_models()`. Providers are declared
 in `services/llm/registry.py`; `get_llm_provider(session)` reads the active
@@ -239,11 +252,11 @@ topic or chat it belongs to. Failures raise `LLMCallFailed`; if a router doesn't
 catch it, `create_app` maps it to a `502`. Prompts, output clean-up and
 fallbacks stay with each feature.
 
-**Optional category recovery.** The `model_fallbacks` runtime setting maps
-provider ids and the independent `agents` scope to ordered Efficiency,
-Balanced and Intelligence presets. Shared category matching and rejection
-classification live in `services/model_fallbacks.py`. Configured providers
-are decorated by `services/llm/fallback.py`, which retries recognised
+**Optional category recovery.** The `model_fallbacks` runtime setting holds
+user-defined categories of ordered presets; each preset names its own provider
+(or `agents` for the Copilot SDK), so one category can span providers. Shared category matching and rejection
+classification live in `services/model_fallbacks.py`. A category selection
+builds a `services/llm/fallback.py` wrapper that serves each preset from its own provider, which retries recognised
 model/effort/context rejections before any event is yielded and re-budgets
 history for the replacement. Final/tool turns and one-shot results carry
 the actual model into persistence and usage accounting. SDK `ModelSelector`

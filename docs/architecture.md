@@ -116,6 +116,10 @@ detached background process, so Precursor can run without a terminal:
    attachments), snapshots history and resolves the turn's LLM/MCP settings; the
    router adds a system prompt that includes the linked GitHub issue body +
    most-recent comments + labels, plus any attached skills/memory.
+   `services/conversation_llm.py` resolves a saved chat/topic selection first,
+   otherwise global defaults. Provider, model/category, effort and budget are
+   snapshotted together; catalogues are cached by provider. Explicit provider
+   configuration errors fail visibly instead of substituting Mock.
 3. Enabled MCP tool servers are opened for the turn; their tools are advertised
    to the provider. `services/turn_engine.run_tool_loop` runs a **tool loop**:
    stream text, collect tool calls, execute them, append `tool` results, call
@@ -220,6 +224,15 @@ the mock provider. The resolved source is surfaced to the UI as
 
 ## LLM provider abstraction
 
+Chats and topics persist nullable, JSON-encoded `llm_selection` preferences.
+Their shared turn and one-shot services use those preferences for replies,
+retries, compaction, summaries, notes, naming and scheduled/MCP turns. Side chats
+copy the override; promotion preserves it. `complete_once` has an explicit
+`use_conversation_selection=False` opt-out for Live/IQ work attributed to a
+conversation. Agents remain on the independent Copilot SDK, while workspace chat
+and the OpenAI relay continue using app defaults. Credentials stay in the existing
+provider configuration map and never enter conversation read models.
+
 `services/llm/base.py` defines a small protocol — two streaming methods
 (plain text and a tool-capable event stream) plus `list_models()`:
 
@@ -290,9 +303,9 @@ topic or chat it belongs to. Failures raise `LLMCallFailed`; if a router doesn't
 catch it, `create_app` maps it to a `502`. Prompts, output clean-up and
 fallbacks stay with each feature.
 
-**Optional model alternatives.** `model_fallbacks` is an `AppSetting` map of
-provider scopes plus `agents`, each containing ordered Efficiency/Balanced/
-Intelligence presets. `services/model_fallbacks.py` matches the selected model,
+**Optional model alternatives.** `model_fallbacks` is an `AppSetting` holding
+user-defined categories of ordered presets; each preset names its provider (or
+`agents`), so categories can span providers. `services/model_fallbacks.py` matches the selected model,
 effort and context to a category without guessing ambiguous assignments.
 `get_llm_provider` decorates configured providers with
 `services/llm/fallback.CategoryFallbackProvider`: missing catalogue ids or
