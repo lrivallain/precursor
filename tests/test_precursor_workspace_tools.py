@@ -238,3 +238,22 @@ def test_migration_drops_a_disabled_workspace_fs_without_enabling_anything() -> 
 def test_migration_is_a_no_op_without_the_old_key() -> None:
     assert _run_fold({"mcp_enabled": {"fetch": True}}) == {"mcp_enabled": {"fetch": True}}
     assert _run_fold({}) == {}
+
+
+def test_servers_list_precursor_first_then_plugins_then_custom() -> None:
+    manager = MCPClientManager()
+    manager.register_user_entry(name="zz-custom", transport="streamable_http", url="http://x")
+    manager.register_plugin_entry(
+        plugin_id="demo", name="demo__srv", transport="streamable_http", url="http://y"
+    )
+    names = [e.name for e in manager.list_entries()]
+    assert names[:5] == ["precursor", "cmd-runner", "fetch", "github", "playwright"]
+    assert names[5:11] == [
+        "workiq",
+        "workiq-teams",
+        "workiq-user",
+        "workiq-planner",
+        "workiq-word",
+        "workiq-excel",
+    ]
+    assert names[-3:] == ["drawio", "demo__srv", "zz-custom"]

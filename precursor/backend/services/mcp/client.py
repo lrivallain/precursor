@@ -451,6 +451,37 @@ BUILTIN_CATALOG: tuple[_BuiltinSpec, ...] = (
 )
 
 
+# Display order of the built-ins (Settings lists servers in this order); the
+# Agent 365 ``workiq-*`` servers follow ``workiq``. Anything not named here — a
+# future built-in — sorts after these but before plugin and user servers.
+_BUILTIN_DISPLAY_ORDER: tuple[str, ...] = (
+    "precursor",
+    "cmd-runner",
+    "fetch",
+    "github",
+    "playwright",
+    "workiq",
+    "workiq-teams",
+    "workiq-user",
+    "workiq-planner",
+    "workiq-word",
+    "workiq-excel",
+    "drawio",
+)
+
+
+def _display_rank(entry: MCPServerEntry) -> int:
+    # Plugin entries are flagged built-in too, so check them first.
+    if entry.plugin_id is not None:
+        return len(_BUILTIN_DISPLAY_ORDER) + 1
+    if not entry.builtin:
+        return len(_BUILTIN_DISPLAY_ORDER) + 2
+    try:
+        return _BUILTIN_DISPLAY_ORDER.index(entry.name)
+    except ValueError:
+        return len(_BUILTIN_DISPLAY_ORDER)
+
+
 class MCPClientManager:
     """Registry of configured MCP servers + per-turn session opener."""
 
@@ -520,7 +551,8 @@ class MCPClientManager:
         return self._servers.get(name)
 
     def list_entries(self) -> list[MCPServerEntry]:
-        return list(self._servers.values())
+        # Stable sort: servers in the same group keep their registration order.
+        return sorted(self._servers.values(), key=_display_rank)
 
     def auth_blocked_servers(self, names: list[str]) -> list[str]:
         """Subset of ``names`` currently parked in the ``needs_auth`` state,

@@ -400,6 +400,9 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Changed
 
+- **MCP servers are listed in a fixed order.** Settings → MCP now shows
+  `precursor`, `cmd-runner`, `fetch`, `github`, `playwright`, the `workiq*`
+  servers and `drawio`, then plugin-contributed servers, then your own.
 - **Breaking:** the `workspace-fs` MCP server is removed. A migration carries an
   existing `workspace-fs` enablement over to `precursor` plus the two workspace
   sections, and a `workspace-fs` agent scope now resolves to `precursor` (so
