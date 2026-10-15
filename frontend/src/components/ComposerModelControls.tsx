@@ -329,7 +329,7 @@ function LlmModelControls({ conversation }: { conversation?: Parameters<typeof C
             description: provider.label,
           })) : undefined}
       />
-      {category && <span className={`text-[11px] ${activePreset ? "text-muted" : "text-amber-700 dark:text-amber-400"}`} data-tooltip={activePreset ? "The engine chooses an available model and its effort/context from the selected category" : "This category has no configured presets. Choose a direct model or configure it in Settings."}>{activePreset ? "Engine selects model" : "Category needs presets"}</span>}
+      {category && !activePreset && <span className="text-[11px] text-amber-700 dark:text-amber-400" data-tooltip="This category has no configured presets. Choose a direct model or configure it in Settings.">Category needs presets</span>}
       {!category && supportedEfforts.length > 0 && (
         <ComposerSelectMenu
           ariaLabel="Reasoning effort"

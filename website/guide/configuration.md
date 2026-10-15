@@ -159,7 +159,7 @@ request is rejected before output/actions, the engine tries the remaining
 presets in the same category. It never falls back to another category or the
 last direct model.
 
-The prompt shows the selected category and **Engine selects model**; individual
+The prompt shows the selected category; individual
 effort/context controls are hidden because those belong to the presets. Your
 last direct-model defaults remain stored. Choosing an ordinary catalogue model
 exits category mode and restores the direct selection controls.
