@@ -31,6 +31,17 @@ interface Props {
 }
 
 /**
+ * Whether the panel (and its slim bar) should exist at all. A topic with no
+ * generated brief shows nothing; the bar stays while the panel is expanded so
+ * "Generate summary" is reachable, and while an error needs to be seen.
+ */
+export function hasTopicSummaryBar(summary: TopicSummary | null, error: string | null): boolean {
+  if (error) return true;
+  if (!summary) return false;
+  return summary.visible || summary.content.trim().length > 0 || summary.suggestion != null;
+}
+
+/**
  * The topic's status brief: a collapsible area above the transcript holding
  * where the topic stands, its open actions and the information needed to act.
  *

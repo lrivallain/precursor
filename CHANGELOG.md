@@ -360,6 +360,11 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Fixed
 
+- **The collapsed Summary bar no longer shows on topics without a summary.** It
+  only appears once a brief exists; the header document icon and
+  `/show-summary` still open an empty panel to generate one. See
+  [Topic summary](website/features/topic-summary.md).
+
 - **The persona no longer claims the mock provider is in use.** The "GitHub not
   connected" tooltip dropped "using mock provider": other providers work
   without a GitHub account.

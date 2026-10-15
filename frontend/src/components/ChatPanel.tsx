@@ -29,7 +29,7 @@ import { ReminderModal } from "./ReminderModal";
 import { ReminderBanner } from "./ReminderBanner";
 import { useTopicSummary } from "../lib/useTopicSummary";
 import { subscribeTopicSummaryToggle } from "../lib/summaryOpen";
-import { TopicSummaryPanel } from "./TopicSummaryPanel";
+import { TopicSummaryPanel, hasTopicSummaryBar } from "./TopicSummaryPanel";
 import type {
   AgentSession,
   Message,
@@ -595,20 +595,22 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
             onDone={() => void reminders.runReminderClear(true)}
           />
         )}
-        <TopicSummaryPanel
-          key={topic.id}
-          topicId={topic.id}
-          summary={summary.summary}
-          busy={summary.busy}
-          error={summary.error}
-          refreshNotice={summary.refreshNotice}
-          onSave={summary.save}
-          onResolve={summary.resolve}
-          onRemove={summary.remove}
-          onRefresh={() => void summary.refresh()}
-          onToggleVisible={() => void summary.toggleVisible()}
-          onDismissError={summary.clearError}
-        />
+        {hasTopicSummaryBar(summary.summary, summary.error) && (
+          <TopicSummaryPanel
+            key={topic.id}
+            topicId={topic.id}
+            summary={summary.summary}
+            busy={summary.busy}
+            error={summary.error}
+            refreshNotice={summary.refreshNotice}
+            onSave={summary.save}
+            onResolve={summary.resolve}
+            onRemove={summary.remove}
+            onRefresh={() => void summary.refresh()}
+            onToggleVisible={() => void summary.toggleVisible()}
+            onDismissError={summary.clearError}
+          />
+        )}
         <div className="relative flex min-h-0 flex-1">
         <SelectionActions
           scrollRef={conv.scrollRef}
