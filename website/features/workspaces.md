@@ -282,8 +282,8 @@ shared link and Back all land on the same view; closing the panel removes it.
 
 Drag the panel's left edge to **resize** it (320–800 px, at most 65% of the
 window). The width is remembered per browser. On narrow screens the panel is a
-full-width overlay and has no handle. When the panel is narrow, the composer
-switches to its [compact mode](/features/chats#compact-composer).
+full-width overlay and has no handle. When the panel is too narrow for the
+composer's pickers, it switches to its [compact mode](/features/chats#compact-composer).
 
 ### Artifacts
 
