@@ -13,6 +13,7 @@ from precursor.backend.models.base import Base, TimestampMixin
 
 if TYPE_CHECKING:
     from precursor.backend.models.approval_rule import ApprovalRule
+    from precursor.backend.models.conversation_artifact import ConversationArtifact
     from precursor.backend.models.message import Message
     from precursor.backend.models.note_draft import NoteDraft
     from precursor.backend.models.reminder import Reminder
@@ -123,6 +124,11 @@ class Topic(Base, TimestampMixin):
     )
     approval_rules: Mapped[list[ApprovalRule]] = relationship(
         "ApprovalRule", cascade="all, delete-orphan", foreign_keys="ApprovalRule.topic_id"
+    )
+    artifacts: Mapped[list[ConversationArtifact]] = relationship(
+        "ConversationArtifact",
+        cascade="all, delete-orphan",
+        foreign_keys="ConversationArtifact.topic_id",
     )
 
     # Recurrence config + run state when the topic runs on a schedule. One-to-

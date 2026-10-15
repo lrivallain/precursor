@@ -22,6 +22,7 @@ from precursor.backend.schemas import (
     StoppedTurn,
     TurnIndexRead,
 )
+from precursor.backend.services.artifacts import workspace_turn_context
 from precursor.backend.services.compaction import (
     CompactionError,
     ContextEstimate,
@@ -180,6 +181,8 @@ async def stream_chat(
     user_msg, attachments = await persist_user_turn(session, "topic", topic_id, payload)
     # Snapshot history + system context now, before the session closes.
     system_prompt = await build_system_context(session, topic)
+    if payload.workspace_context is not None:
+        system_prompt += "\n\n" + await workspace_turn_context(session, payload.workspace_context)
     history = await snapshot_history(
         session, "topic", topic_id, prompt_override=payload.prompt_override
     )

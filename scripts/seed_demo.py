@@ -52,6 +52,7 @@ from precursor.backend.models.agent_run import AgentRun  # noqa: E402
 from precursor.backend.models.agent_session import AgentSession  # noqa: E402
 from precursor.backend.models.chat import Chat  # noqa: E402
 from precursor.backend.models.collection import Collection  # noqa: E402
+from precursor.backend.models.conversation_artifact import ConversationArtifact  # noqa: E402
 from precursor.backend.models.meeting import (  # noqa: E402
     MeetingInsight,
     MeetingSegment,
@@ -1724,16 +1725,57 @@ async def seed() -> None:
                 last_synced_at=ago(days=3),
             )
         )
-        s.add(
-            Workspace(
-                name="Team handbook",
-                slug="handbook",
-                kind="git",
-                repo_url=handbook_url,
-                branch="main",
-                cloned_at=ago(days=6),
-                last_synced_at=ago(hours=3),
-            )
+        handbook = Workspace(
+            name="Team handbook",
+            slug="handbook",
+            kind="git",
+            repo_url=handbook_url,
+            branch="main",
+            cloned_at=ago(days=6),
+            last_synced_at=ago(hours=3),
+        )
+        s.add(handbook)
+        await s.flush()
+
+        # Chats that attach handbook files: they fill the workspace's
+        # "continue a discussion" list and show an Artifacts section.
+        c_oncall = Chat(title="Tighten the on-call handoff", slug="tighten-the-on-call-handoff")
+        c_release = Chat(title="Release notes wording", slug="release-notes-wording")
+        s.add_all([c_oncall, c_release])
+        await s.flush()
+        s.add_all(
+            [
+                Message(
+                    chat_id=c_oncall.id,
+                    role=MessageRole.USER,
+                    content="Make the on-call handoff steps shorter.",
+                    created_at=ago(hours=2),
+                ),
+                Message(
+                    chat_id=c_oncall.id,
+                    role=MessageRole.ASSISTANT,
+                    content="I trimmed the handoff to three steps in `on-call.md`.",
+                    created_at=ago(hours=2),
+                ),
+                ConversationArtifact(
+                    chat_id=c_oncall.id,
+                    workspace_id=handbook.id,
+                    path="on-call.md",
+                    source="assistant",
+                ),
+                ConversationArtifact(
+                    chat_id=c_oncall.id,
+                    workspace_id=handbook.id,
+                    path="incident-review.md",
+                    source="manual",
+                ),
+                ConversationArtifact(
+                    chat_id=c_release.id,
+                    workspace_id=handbook.id,
+                    path="releases.md",
+                    source="opened",
+                ),
+            ]
         )
 
         await s.commit()

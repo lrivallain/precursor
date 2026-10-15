@@ -451,6 +451,34 @@ const scenes = {
     },
   },
 
+  // The Discuss picker beside an open file: a new chat, the discussions that
+  // already attach handbook files, and a search over every other chat/topic.
+  "workspaces-discussion": {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await page.goto(`${BASE}/ws/handbook/on-call.md`, { waitUntil: "networkidle" });
+      await page.getByRole("button", { name: "Discuss", exact: true }).click();
+      await page.getByText("Tighten the on-call handoff").first().waitFor();
+      await page.mouse.move(700, 900);
+      await sleep(500);
+      return undefined;
+    },
+  },
+
+  // A chat's right-hand area with its workspace artifacts under the reminder.
+  "chat-artifacts": {
+    viewport: { width: 1440, height: 900 },
+    async go(page) {
+      await page.goto(`${BASE}/chats/tighten-the-on-call-handoff`, { waitUntil: "networkidle" });
+      const rail = page.getByRole("button", { name: "Show artifacts" });
+      if (await rail.count()) await rail.click();
+      await page.getByText("incident-review.md").first().waitFor();
+      await page.mouse.move(700, 600);
+      await sleep(500);
+      return undefined;
+    },
+  },
+
   // A workflow definition whose first step names a missing agent file: the
   // check's finding, underlined, with its hover and the list below.
   "workspaces-definitions": {
@@ -479,8 +507,6 @@ const scenes = {
         localStorage.setItem("precursor:workspace:leftTab", "changes"),
       );
       await page.goto(`${BASE}/ws/handbook`, { waitUntil: "networkidle" });
-      // The diff gets the assistant's width, to show side by side.
-      await page.getByRole("button", { name: "Hide assistant" }).click();
       const changes = page.getByLabel("Changes", { exact: true });
       await changes.getByRole("button", { name: /^on-call\.md,/ }).click();
       await page.locator(".monaco-diff-editor .view-line", { hasText: "error budget" }).first().waitFor();
@@ -501,7 +527,6 @@ const scenes = {
         localStorage.setItem("precursor:workspace:leftTab", "history"),
       );
       await page.goto(`${BASE}/ws/handbook`, { waitUntil: "networkidle" });
-      await page.getByRole("button", { name: "Hide assistant" }).click();
       const history = page.getByLabel("History", { exact: true });
       await history.getByRole("button", { name: /Page owners sooner/ }).click();
       await history.getByRole("button", { name: /^on-call\.md,/ }).click();
@@ -537,7 +562,6 @@ const scenes = {
         localStorage.setItem("precursor:workspace:leftTab", "changes"),
       );
       await page.goto(`${BASE}/ws/runbooks`, { waitUntil: "networkidle" });
-      await page.getByRole("button", { name: "Hide assistant" }).click();
       const banner = page.getByText("Merge in progress");
       if (!(await banner.isVisible())) {
         await page.getByRole("button", { name: "Pull" }).click();

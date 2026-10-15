@@ -7,6 +7,7 @@
 
 import { CLIENT_ID } from "./clientId";
 import { httpError } from "./api";
+import type { WorkspaceTurnContext } from "./types";
 
 export interface SSEEvent {
   event: string;
@@ -53,6 +54,8 @@ export interface ChatStreamBody {
   attachment_ids?: number[];
   note_attachment_ids?: number[];
   retry_message_id?: number;
+  /** Held from the workspace panel: the open file rides in this turn's prompt only. */
+  workspace_context?: WorkspaceTurnContext;
 }
 
 export function streamChat(
@@ -61,24 +64,6 @@ export function streamChat(
   opts: StreamChatOptions,
 ): Promise<void> {
   return postSSE(`/api/topics/${topicId}/messages/stream`, body, opts);
-}
-
-/**
- * POST to a Workspace's ephemeral chat endpoint and stream the reply.
- * History is supplied by the caller (workspace chat is not server-persisted).
- */
-export function streamWorkspaceChat(
-  workspaceId: number,
-  body: {
-    content: string;
-    history: { role: "user" | "assistant"; content: string }[];
-    path?: string | null;
-    model?: string;
-    prompt_override?: string;
-  },
-  opts: StreamChatOptions,
-): Promise<void> {
-  return postSSE(`/api/workspaces/${workspaceId}/chat/stream`, body, opts);
 }
 
 /**

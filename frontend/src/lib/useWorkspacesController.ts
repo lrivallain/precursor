@@ -2,7 +2,13 @@ import { useCallback, useEffect, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { SidebarMode } from "../components/Sidebar";
 import { api } from "./api";
-import { navigate, parseWsRoute, workspaceUrl, type WsRoute } from "./routes";
+import {
+  navigate,
+  parseWsRoute,
+  workspaceUrl,
+  type WsDiscussionRef,
+  type WsRoute,
+} from "./routes";
 import type { Workspace } from "./types";
 import { subscribeOpenWorkspaceFile, workspaceFileUrl } from "./workspaceLink";
 
@@ -27,13 +33,17 @@ export interface WorkspacesController {
   workspaceInitialPath: string | null;
   loadWorkspaces: () => Promise<Workspace[]>;
   handleSelectWorkspace: (ws: Workspace) => void;
-  navigateWorkspace: (slug: string | null, filePath: string | null) => void;
+  /** `discussion` undefined keeps the open one while the workspace stays the same. */
+  navigateWorkspace: (
+    slug: string | null,
+    filePath: string | null,
+    discussion?: WsDiscussionRef | null,
+  ) => void;
   // Stable: once-registered listeners (App's `syncFromUrl`, the agents
   // controller's `precursor:open-agent`) hold the first render's copy.
   closeRoute: () => void;
   syncFromRoute: () => void;
   startNew: () => void;
-  setRoleForActive: (roleName: string | null) => Promise<void>;
 }
 
 export function useWorkspacesController(
@@ -50,14 +60,20 @@ export function useWorkspacesController(
   // A fresh object per call, as each inline reset used to build: sharing one
   // constant would let React bail out of re-renders these used to trigger.
   const closeRoute = useCallback((): void => {
-    setWsRoute({ open: false, slug: null, path: null });
+    setWsRoute({ open: false, slug: null, path: null, discussion: null });
   }, []);
 
   // Reflect the active workspace + open file in the URL so a reload returns to
   // the same place. replaceState keeps it as a single history entry.
-  function navigateWorkspace(slug: string | null, filePath: string | null): void {
-    navigate(workspaceUrl(slug, filePath), { replace: true });
-    setWsRoute({ open: true, slug, path: filePath });
+  function navigateWorkspace(
+    slug: string | null,
+    filePath: string | null,
+    discussion?: WsDiscussionRef | null,
+  ): void {
+    const next =
+      discussion !== undefined ? discussion : slug === wsRoute.slug ? wsRoute.discussion : null;
+    navigate(workspaceUrl(slug, filePath, next), { replace: true });
+    setWsRoute({ open: true, slug, path: filePath, discussion: next });
   }
 
   const activeWorkspace =
@@ -99,9 +115,9 @@ export function useWorkspacesController(
   // loaded and an active workspace already picked. pushState (not replace) so
   // Back returns to the discussion.
   useEffect(() => {
-    return subscribeOpenWorkspaceFile(({ slug, path }) => {
+    return subscribeOpenWorkspaceFile(({ slug, path, discussion }) => {
       void (async () => {
-        const url = workspaceFileUrl(slug, path);
+        const url = workspaceFileUrl(slug, path, discussion);
         if (url === null) return;
         const list = workspaces ?? (await loadWorkspaces());
         // A workspace made since the list was loaded (e.g. the built-in
@@ -112,7 +128,7 @@ export function useWorkspacesController(
         if (!target) return;
         setActiveWorkspaceId(target.id);
         navigate(url);
-        setWsRoute({ open: true, slug, path });
+        setWsRoute({ open: true, slug, path, discussion });
         setSidebarMode("workspaces");
       })();
     });
@@ -130,17 +146,6 @@ export function useWorkspacesController(
     setCreateWorkspaceOpen(true);
   }
 
-  // The workspaces branch of App's shared role persistence (`setRoleForActive`).
-  async function setRoleForActive(roleName: string | null): Promise<void> {
-    if (!activeWorkspace) return;
-    const updated = await api.workspaces.update(activeWorkspace.id, {
-      role: roleName,
-    });
-    setWorkspaces((prev) =>
-      prev ? prev.map((w) => (w.id === updated.id ? updated : w)) : prev,
-    );
-  }
-
   return {
     workspaces,
     activeWorkspaceId,
@@ -156,6 +161,5 @@ export function useWorkspacesController(
     closeRoute,
     syncFromRoute,
     startNew,
-    setRoleForActive,
   };
 }

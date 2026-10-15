@@ -29,6 +29,13 @@ from precursor.backend.models.collection import (
     DEFAULT_COLLECTION_NAME,
     Collection,
 )
+from precursor.backend.models.conversation_artifact import (
+    ARTIFACT_SOURCE_ASSISTANT,
+    ARTIFACT_SOURCE_MANUAL,
+    ARTIFACT_SOURCE_OPENED,
+    ARTIFACT_SOURCES,
+    ConversationArtifact,
+)
 from precursor.backend.models.iq import IQChunk, IQDirty
 from precursor.backend.models.issue_context import IssueContextCache
 from precursor.backend.models.mcp_server import MCPServer
@@ -74,6 +81,10 @@ __all__ = [
     "AGENT_STATE_MAX_KEYS",
     "AGENT_STATE_MAX_VALUE",
     "AGENT_TRIGGER_TYPES",
+    "ARTIFACT_SOURCES",
+    "ARTIFACT_SOURCE_ASSISTANT",
+    "ARTIFACT_SOURCE_MANUAL",
+    "ARTIFACT_SOURCE_OPENED",
     "COLLECTION_ACCENTS",
     "DEFAULT_COLLECTION_ACCENT",
     "DEFAULT_COLLECTION_NAME",
@@ -96,6 +107,7 @@ __all__ = [
     "Base",
     "Chat",
     "Collection",
+    "ConversationArtifact",
     "IQChunk",
     "IQDirty",
     "IssueContextCache",

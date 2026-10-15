@@ -2340,7 +2340,6 @@ export interface Workspace {
   subdir: string | null;
   cloned_at: string | null;
   last_synced_at: string | null;
-  role: string | null;
   /** Holds the definition files (the built-in "Definitions" workspace). */
   hosts_definitions?: boolean;
   created_at: string;
@@ -2354,10 +2353,6 @@ export interface WorkspaceCreate {
   branch?: string;
   subdir?: string | null;
   slug?: string | null;
-}
-
-export interface WorkspaceUpdate {
-  role?: string | null;
 }
 
 export interface WorkspaceFileNode {
@@ -2592,9 +2587,39 @@ export interface CompactResult {
   error: string | null;
 }
 
-export interface WorkspaceChatMessage {
-  role: "user" | "assistant";
-  content: string;
+/** A workspace file attached to a topic or chat. */
+export interface ConversationArtifact {
+  id: number;
+  workspace_id: number;
+  workspace_slug: string;
+  workspace_name: string;
+  path: string;
+  /** How it got attached: the assistant wrote it, the user attached it, or a discussion was opened on it. */
+  source: "assistant" | "manual" | "opened";
+  /** False once the file was renamed or deleted outside the app. */
+  exists: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+/** A topic or chat attaching files of one workspace ("continue discussion"). */
+export interface WorkspaceDiscussion {
+  kind: "chat" | "topic";
+  id: number;
+  title: string;
+  slug: string;
+  /** Topics only: the permalink id used in the workspace URL. */
+  public_id: string | null;
+  updated_at: string;
+  paths: string[];
+  /** One of the paths is the file the list was asked about. */
+  has_file: boolean;
+}
+
+/** Where a turn is held from: the workspace (and file) being viewed. */
+export interface WorkspaceTurnContext {
+  workspace_id: number;
+  path?: string | null;
 }
 
 // ---- Live meeting assistant --------------------------------------------

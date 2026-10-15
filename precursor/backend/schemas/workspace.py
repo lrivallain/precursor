@@ -31,17 +31,11 @@ class WorkspaceRead(BaseModel):
     subdir: str | None = None
     cloned_at: datetime | None = None
     last_synced_at: datetime | None = None
-    role: str | None = None
     # Holds the agent and workflow definition files (the built-in "Agents &
     # workflows" workspace, or the one PRECURSOR_DEFINITIONS_WORKSPACE names).
     hosts_definitions: bool = False
     created_at: datetime
     updated_at: datetime
-
-
-class WorkspaceUpdate(BaseModel):
-    # Currently only the assigned Assistant Role is mutable post-creation.
-    role: str | None = None
 
 
 class FileNode(BaseModel):
@@ -225,21 +219,3 @@ class GitActionResult(BaseModel):
     needs_manual_merge: bool = False
     local_path: str | None = None
     status: GitStatus | None = None
-
-
-class WorkspaceChatMessage(BaseModel):
-    role: Literal["user", "assistant"]
-    content: str
-
-
-class WorkspaceChatRequest(BaseModel):
-    # Latest user turn.
-    content: str = Field(min_length=1)
-    # Prior turns kept client-side (workspace chat is ephemeral, not stored).
-    history: list[WorkspaceChatMessage] = Field(default_factory=list)
-    # File the user is authoring; its content is injected as context.
-    path: str | None = None
-    model: str | None = None
-    # When set (skill invocation), the LLM receives this as the last user turn
-    # instead of `content`; the UI still shows the literal `content`.
-    prompt_override: str | None = None

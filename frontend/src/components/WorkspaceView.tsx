@@ -36,7 +36,8 @@ import { useIsNarrow } from "../lib/useMediaQuery";
 import { useConfirm } from "./ConfirmDialog";
 import { Markdown } from "./Markdown";
 import { ResizeHandle } from "./ResizeHandle";
-import { WorkspaceChat } from "./WorkspaceChat";
+import { DiscussButton, WorkspaceDiscussionPanel } from "./WorkspaceDiscussion";
+import type { WsDiscussionRef } from "../lib/routes";
 import { FileTree } from "./FileTree";
 import { ChangesPanel, GitDiffPane, discardPrompt } from "./GitChanges";
 import type { DiffTarget } from "./GitChanges";
@@ -196,18 +197,38 @@ export function WorkspaceView({
   initialPath,
   onPathChange,
   onDeleted,
-  onSetRole,
+  discussion,
+  onDiscussionChange,
 }: {
   workspace: Workspace;
   initialPath: string | null;
   onPathChange: (path: string | null) => void;
   onDeleted: () => void;
-  onSetRole?: (roleName: string | null) => Promise<void>;
+  /** The chat or topic the URL has open beside the files, if any. */
+  discussion: WsDiscussionRef | null;
+  onDiscussionChange: (discussion: WsDiscussionRef | null, path: string | null) => void;
 }) {
   const confirmAction = useConfirm();
   const area = workspace;
   const [files, setFiles] = useState<WorkspaceFileNode[]>([]);
   const [activePath, setActivePath] = useState<string | null>(null);
+  // The picker shows before a discussion is chosen, so the panel can be open
+  // while the URL names nothing yet.
+  const [discussOpen, setDiscussOpen] = useState(false);
+  const discussionShown = discussOpen || discussion !== null;
+  const discussButton = (
+    <DiscussButton
+      active={discussionShown}
+      onClick={() => {
+        if (discussionShown) {
+          setDiscussOpen(false);
+          onDiscussionChange(null, activePath);
+        } else {
+          setDiscussOpen(true);
+        }
+      }}
+    />
+  );
   const [content, setContent] = useState("");
   const [savedContent, setSavedContent] = useState("");
   // Bumped on every save, so views of the file on disk (the definition check) refresh.
@@ -855,10 +876,12 @@ export function WorkspaceView({
           onDeleted={onDeleted}
           onError={setError}
           rootPath={rootPath}
+          discuss={discussButton}
         />
       ) : (
         <LocalWorkspaceBar
           area={area}
+          discuss={discussButton}
           onDeleted={onDeleted}
           onError={setError}
           rootPath={rootPath}
@@ -940,7 +963,7 @@ export function WorkspaceView({
         </div>
       )}
 
-      <div className="flex-1 min-h-0 flex">
+      <div className="relative flex-1 min-h-0 flex">
         {/* Hidden rather than unmounted on a phone while a file or diff is
             open, so the commit message, the expanded commit and the scroll
             position are still there on the way back. */}
@@ -1318,7 +1341,18 @@ export function WorkspaceView({
         </section>
         )}
 
-        <WorkspaceChat area={area} activePath={activePath} onSetRole={onSetRole} />
+        {discussionShown && (
+          <WorkspaceDiscussionPanel
+            workspace={area}
+            activePath={activePath}
+            discussion={discussion}
+            onSelect={(next) => onDiscussionChange(next, activePath)}
+            onClose={() => {
+              setDiscussOpen(false);
+              onDiscussionChange(null, activePath);
+            }}
+          />
+        )}
       </div>
     </div>
   );
@@ -1340,11 +1374,13 @@ function statusMap(status: GitStatus | null): Map<string, string> {
 
 function LocalWorkspaceBar({
   area,
+  discuss,
   onDeleted,
   onError,
   rootPath,
 }: {
   area: Workspace;
+  discuss: ReactNode;
   onDeleted: () => void;
   onError: (msg: string | null) => void;
   rootPath: string | null;
@@ -1422,6 +1458,7 @@ function LocalWorkspaceBar({
         />
       )}
       <div className="flex-1" />
+      {discuss}
       {/* Its folder holds every agent and workflow declaration. */}
       {!area.hosts_definitions && (
         <button
@@ -1453,6 +1490,7 @@ function GitBar({
   onCreateBranch,
   onConflict,
   onShowChanges,
+  discuss,
   onDeleted,
   onError,
   rootPath,
@@ -1469,6 +1507,7 @@ function GitBar({
   onConflict: (conflict: { detail: string; path: string } | null) => void;
   /** Show the Changes list (the review and commit). */
   onShowChanges: () => void;
+  discuss: ReactNode;
   onDeleted: () => void;
   onError: (msg: string | null) => void;
   rootPath: string | null;
@@ -1625,6 +1664,7 @@ function GitBar({
         )}
 
         <div className="flex-1" />
+        {discuss}
 
         <button
           className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded border border-border hover:bg-surface text-xs disabled:opacity-50"

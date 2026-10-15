@@ -2,7 +2,7 @@ import { useSyncExternalStore } from "react";
 import { mcpAuthStore } from "./mcpAuth";
 import { resumeConversation, streamChat, streamChatSession, type ChatStreamBody } from "./sse";
 import { parseToolMeta, STOPPED_TOOL_RESULT } from "./toolMeta";
-import type { Attachment, Message, ToolApproval } from "./types";
+import type { Attachment, Message, ToolApproval, WorkspaceTurnContext } from "./types";
 
 export interface UsageReport {
   prompt_tokens: number;
@@ -188,11 +188,13 @@ class StreamStore {
     promptOverride?: string,
     attachments?: Attachment[],
     noteAttachmentIds?: number[],
+    workspaceContext?: WorkspaceTurnContext,
   ): Promise<void> {
     return this.run(
       key,
       {
         content,
+        ...(workspaceContext ? { workspace_context: workspaceContext } : {}),
         ...(promptOverride ? { prompt_override: promptOverride } : {}),
         ...(attachments && attachments.length
           ? { attachment_ids: attachments.map((a) => a.id) }
@@ -217,8 +219,18 @@ class StreamStore {
     messageId: number,
     content: string,
     attachments?: Attachment[],
+    workspaceContext?: WorkspaceTurnContext,
   ): Promise<void> {
-    return this.run(key, { content, retry_message_id: messageId }, content, attachments);
+    return this.run(
+      key,
+      {
+        content,
+        retry_message_id: messageId,
+        ...(workspaceContext ? { workspace_context: workspaceContext } : {}),
+      },
+      content,
+      attachments,
+    );
   }
 
   private async run(

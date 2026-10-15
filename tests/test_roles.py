@@ -74,7 +74,7 @@ def test_assign_role_to_topic_and_revert_on_delete() -> None:
         assert refreshed["role"] is None
 
 
-def test_assign_role_to_chat_and_workspace() -> None:
+def test_assign_role_to_chat() -> None:
     app = create_app()
     with TestClient(app) as client:
         role = client.post(
@@ -83,11 +83,6 @@ def test_assign_role_to_chat_and_workspace() -> None:
 
         chat = client.post("/api/chats", json={"title": "Notes"}).json()
         r = client.patch(f"/api/chats/{chat['id']}", json={"role": role["name"]})
-        assert r.status_code == 200
-        assert r.json()["role"] == role["name"]
-
-        ws = client.post("/api/workspaces", json={"name": "Docs", "kind": "local"}).json()
-        r = client.patch(f"/api/workspaces/{ws['id']}", json={"role": role["name"]})
         assert r.status_code == 200
         assert r.json()["role"] == role["name"]
 

@@ -633,8 +633,6 @@ export default function App() {
       await topicsCtl.setRoleForActive(roleName);
     } else if (sidebarMode === "chats" && activeChat) {
       await chatsCtl.setRoleForActive(roleName);
-    } else if (sidebarMode === "workspaces" && wsCtl.activeWorkspace) {
-      await wsCtl.setRoleForActive(roleName);
     } else if (sidebarMode === "agents" && agentsCtl.activeAgent) {
       const updated = await api.agents.update(agentsCtl.activeAgent.id, { role: roleName });
       agentsCtl.setAgents((prev) =>
@@ -861,7 +859,7 @@ export default function App() {
               onSetRole={setRoleForActive}
             />
           ) : sidebarMode === "workspaces" ? (
-            <WorkspacesMain controller={wsCtl} onSetRole={setRoleForActive} />
+            <WorkspacesMain controller={wsCtl} />
           ) : sidebarMode === "live" ? (
             <LiveMain controller={liveCtl} tree={tree} collections={collections} />
           ) : activeSection ? (

@@ -162,11 +162,12 @@ import type {
   WorkflowStepRejectPolicy,
   WorkflowSummary,
   WorkflowUpdate,
+  ConversationArtifact,
   Workspace,
+  WorkspaceDiscussion,
   WorkspaceCreate,
   WorkspaceFileContent,
   WorkspaceFileNode,
-  WorkspaceUpdate,
 } from "./types";
 import { CLIENT_ID } from "./clientId";
 
@@ -1592,6 +1593,31 @@ export const api = {
       }),
   },
 
+  artifacts: {
+    // Workspace files attached to a topic or chat.
+    list: (kind: ReminderContainer, id: number) =>
+      request<ConversationArtifact[]>(`/api/${kind === "topic" ? "topics" : "chats"}/${id}/artifacts`),
+    attach: (
+      kind: ReminderContainer,
+      id: number,
+      data: { workspace_id: number; path: string; source?: "manual" | "opened" },
+    ) =>
+      request<ConversationArtifact>(
+        `/api/${kind === "topic" ? "topics" : "chats"}/${id}/artifacts`,
+        { method: "POST", body: JSON.stringify(data) },
+      ),
+    detach: (kind: ReminderContainer, id: number, artifactId: number) =>
+      request<void>(
+        `/api/${kind === "topic" ? "topics" : "chats"}/${id}/artifacts/${artifactId}`,
+        { method: "DELETE" },
+      ),
+    // Topics and chats attaching files of a workspace; the ones on `path` lead.
+    discussions: (workspaceId: number, path?: string | null) =>
+      request<WorkspaceDiscussion[]>(
+        `/api/workspaces/${workspaceId}/discussions${path ? `?path=${encodeURIComponent(path)}` : ""}`,
+      ),
+  },
+
   workspaces: {
     // Workspaces
     list: () => request<Workspace[]>(`/api/workspaces`),
@@ -1602,11 +1628,6 @@ export const api = {
       }),
     remove: (id: number) =>
       request<void>(`/api/workspaces/${id}`, { method: "DELETE" }),
-    update: (id: number, data: WorkspaceUpdate) =>
-      request<Workspace>(`/api/workspaces/${id}`, {
-        method: "PATCH",
-        body: JSON.stringify(data),
-      }),
     listFiles: (workspaceId: number) =>
       request<WorkspaceFileNode[]>(`/api/workspaces/${workspaceId}/files`),
     readFile: (workspaceId: number, path: string) =>

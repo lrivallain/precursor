@@ -50,12 +50,13 @@ def with_open_link(result: dict[str, Any], slug: str, path: str) -> dict[str, An
     return {**result, "workspace_slug": slug, "url": url}
 
 
-def link_from_result(payload: Any) -> dict[str, str] | None:
+def link_from_result(payload: Any) -> dict[str, Any] | None:
     """Pull the workspace file a tool result points at, for the UI's link.
 
     Reads the MCP result's ``structured_content`` — the dict the tool returned —
     so a read result's file contents are never parsed just to find a link.
-    Returns only ``slug``/``path``: the caller rebuilds the URL itself rather
+    Returns only ``slug``/``path`` (plus ``written`` for a create/write, which is
+    how a change is told from a read): the caller rebuilds the URL itself rather
     than trusting a ``url`` string from what may be a third-party MCP server.
     """
     structured = getattr(payload, "structured_content", None)
@@ -67,4 +68,7 @@ def link_from_result(payload: Any) -> dict[str, str] | None:
         return None
     if workspace_file_url(slug, path) is None:
         return None
-    return {"slug": slug, "path": path}
+    link: dict[str, Any] = {"slug": slug, "path": path}
+    if structured.get("written") is True or structured.get("created") is True:
+        link["written"] = True
+    return link

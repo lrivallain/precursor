@@ -34,6 +34,7 @@ from precursor.backend.services import memories as memory_service
 from precursor.backend.services import side_chats
 from precursor.backend.services import skills as skills_service
 from precursor.backend.services.app_settings import DEFAULT_LLM_MAX_ATTACHMENT_CHARS
+from precursor.backend.services.artifacts import artifacts_prompt, record_written_file
 from precursor.backend.services.attachment_extraction import (
     attachments_to_image_urls,
     attachments_to_text_context,
@@ -134,6 +135,9 @@ async def build_system_context(session: AsyncSession, topic: Topic) -> str:
                 parts.append(f"Issue body:\n{issue['body']}")
             for c in list(reversed(comments))[:10]:
                 parts.append(f"Comment by {c['user']} @ {c['updated_at']}:\n{c['body']}")
+    artifacts_block = await artifacts_prompt(session, "topic", topic.id)
+    if artifacts_block:
+        parts.append(artifacts_block)
     parts.append(SUGGESTIONS_INSTRUCTION)
     return "\n\n".join(parts)
 
@@ -177,6 +181,10 @@ async def build_chat_system_context(session: AsyncSession, chat: Chat) -> str:
     grounding = await live_chat_grounding(session, chat.id)
     if grounding:
         parts.append(grounding)
+
+    artifacts_block = await artifacts_prompt(session, "chat", chat.id)
+    if artifacts_block:
+        parts.append(artifacts_block)
 
     parts.append(SUGGESTIONS_INSTRUCTION)
     return "\n\n".join(parts)
@@ -548,10 +556,11 @@ class ToolResultTurn:
     call: Any
     result_text: str
     is_error: bool
-    # ``{"slug", "path"}`` when the tool touched a workspace file, so the UI can
+    # ``{"slug", "path"}`` (+ ``written`` for a change) when the tool touched a
+    # workspace file, so the UI can
     # offer a link to it without parsing ``result_text`` — which for a read
     # embeds the whole file. None for every other tool.
-    link: dict[str, str] | None = None
+    link: dict[str, Any] | None = None
 
 
 @dataclass(slots=True)
@@ -577,7 +586,7 @@ class ToolCallOutcome:
     result_text: str
     is_error: bool
     # ``{"slug", "path"}`` when the tool touched a workspace file. None otherwise.
-    link: dict[str, str] | None = None
+    link: dict[str, Any] | None = None
 
 
 async def call_tool_with_auth_retry(
@@ -1041,6 +1050,8 @@ async def persist_tool_result(kind: ContainerKind, container_id: int, ev: ToolRe
         await ws.refresh(tool_msg)
         tool_msg_id = tool_msg.id
     await publish_container_changed(kind, container_id)
+    # A file the assistant wrote becomes an artifact of this conversation.
+    await record_written_file(kind, container_id, ev.link)
     return tool_msg_id
 
 

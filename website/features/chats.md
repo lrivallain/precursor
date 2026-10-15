@@ -219,3 +219,13 @@ promoted chat.
 Promoting an ordinary chat asks, in the confirmation dialog, for the **target collection** and the
 **parent topic** (or top level) before promoting; the topic lands in the
 parent's collection.
+
+## Artifacts and workspaces
+
+A chat — like a topic — keeps the [workspace files](/features/workspaces#artifacts)
+it created or you attached as **Artifacts** in the stats area on the right. Click
+one to open the workspace on that file with the chat beside it. A chat started
+from a workspace's **Discuss** button is an ordinary chat and appears in this
+list.
+
+<Screenshot src="/screenshots/chat-artifacts.png" alt="A chat whose stats area lists two workspace files under Artifacts" caption="The Artifacts section sits under the reminder in the chat's stats area." />

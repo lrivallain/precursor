@@ -75,7 +75,7 @@ never switches to Mock or another provider. The automatic offline fallback still
 applies to conversations using the global default. Provider-local model
 alternatives and retirement handling remain available.
 
-Agents and workflows stay on the **Copilot SDK**. Live, IQ, workspace chat and
+Agents and workflows stay on the **Copilot SDK**. Live, IQ and
 the OpenAI-compatible endpoint retain their global defaults. Each provider still
 has one saved configuration: multiple named Azure endpoints/accounts are not
 supported.
