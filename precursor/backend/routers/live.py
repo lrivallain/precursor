@@ -44,6 +44,7 @@ from precursor.backend.schemas import (
     ContextNoteAdd,
     ContextNotesUpdate,
     LinkMeetingRequest,
+    LiveSuggestRequest,
     MeetingAnalyzeResult,
     MeetingAskRequest,
     MeetingAttachmentRead,
@@ -63,6 +64,7 @@ from precursor.backend.schemas import (
     MeetingTranscriptPart,
     MeetingTranscriptSummaryRequest,
     MeetingTranscriptSummaryResult,
+    SpeakerMeRequest,
     SpeakerRenameRequest,
     SummaryLanguage,
     SummaryTemplateCatalog,
@@ -95,6 +97,7 @@ from precursor.backend.services.events import publish_meeting_changed, publish_m
 from precursor.backend.services.github_auth import resolve_github_token
 from precursor.backend.services.github_client import GitHubClient
 from precursor.backend.services.image_uploads import read_validated_attachment
+from precursor.backend.services.live_suggest import prepare_suggestion, stream_suggestion
 from precursor.backend.services.llm import get_llm_provider
 from precursor.backend.services.llm.base import ChatMessage, TextDeltaEvent, UsageEvent
 from precursor.backend.services.meeting_agenda import fetch_agenda, fetch_event_body
@@ -129,7 +132,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/live", tags=["live"])
 
 # Optional Live features a session can enable (gates tabs + background work).
-VALID_FEATURES = frozenset({"insights", "notes", "assistant", "proactive", "translation"})
+VALID_FEATURES = frozenset(
+    {"insights", "notes", "assistant", "proactive", "translation", "answers"}
+)
 
 
 async def _allocate_slug(session: AsyncSession, base: str) -> str:
@@ -494,6 +499,26 @@ async def rename_speaker(
     return ms
 
 
+@router.post("/{session_id}/speakers/me", response_model=MeetingSessionRead)
+async def mark_speaker_me(
+    session_id: int,
+    payload: SpeakerMeRequest,
+    session: AsyncSession = Depends(get_session),
+) -> MeetingSession:
+    """Mark (or unmark) a diarization label as the user's own voice, so suggested
+    answers skip questions the user asks themselves."""
+    ms = await _get_session_or_404(session_id, session)
+    label = payload.label.strip()
+    labels = [x for x in ms.me_labels if x != label]
+    if payload.me:
+        labels.append(label)
+    ms.me_labels_json = json.dumps(labels, ensure_ascii=False)
+    await session.commit()
+    await session.refresh(ms)
+    await publish_meeting_changed(ms.id)
+    return ms
+
+
 @router.put("/{session_id}/attendees", response_model=MeetingSessionRead)
 async def set_attendees(
     session_id: int,
@@ -796,6 +821,28 @@ async def ask(
             yield {"event": "error", "data": json.dumps({"message": str(exc)})}
 
     return EventSourceResponse(event_stream())
+
+
+@router.post("/{session_id}/suggest")
+async def suggest_answer(
+    session_id: int,
+    payload: LiveSuggestRequest,
+    session: AsyncSession = Depends(get_session),
+) -> EventSourceResponse:
+    """Stream a suggested answer to a question heard from another participant.
+
+    SSE ``token`` frames, then ``done`` (the exchange was saved to the session's
+    chat) or ``none`` (the model judged nothing needs answering). Opt-in per
+    session through the ``answers`` feature.
+    """
+    ms = await _get_session_or_404(session_id, session)
+    if "answers" not in ms.features:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Suggested answers are not enabled")
+    chat = await ensure_chat(session_id, session)
+    plan = await prepare_suggestion(
+        session, ms, payload.question.strip(), payload.speaker_label, chat.id
+    )
+    return EventSourceResponse(stream_suggestion(plan, payload.question.strip()))
 
 
 @router.post("/{session_id}/translate", response_model=TranslateResult)

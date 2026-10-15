@@ -73,6 +73,14 @@ box; answers stream from the transcript plus the attached topic. **Click a
 speaker label** in the transcript to rename it (`Guest-2` → `Thomas`) — the name
 applies to every past and future phrase from that voice.
 
+Enable **Suggested answers** for a session and the assistant streams a short,
+first-person reply in a card above the transcript whenever someone else asks a
+question (detected client-side, answered by one fast-model call that returns
+`[[NONE]]` for non-questions). Mark your own voice with **This is me** on its
+speaker label so it is never answered. Each finished suggestion is saved to the
+session chat as a `live_question` / `live_suggestion` message pair. See
+[Suggested answers](../website/features/live-sessions.md#suggested-answers).
+
 The **Summary** tab generates an editable markdown recap — including an
 **Attendees** list (seeded from renamed speakers and any linked meeting's
 invitees) — which you can **post into the linked topic** as a message. The

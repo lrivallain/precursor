@@ -44,6 +44,7 @@ import { LiveChatSection } from "./LiveChatSection";
 import { TranslationSection } from "./TranslationSection";
 import { FeaturePicker, type FeatureOption } from "./FeaturePicker";
 import { SpeakerNamePicker } from "./SpeakerNamePicker";
+import { useLiveSuggestions } from "../lib/useLiveSuggestions";
 import { TranscriptPartPicker } from "./TranscriptPartPicker";
 import { Markdown } from "./Markdown";
 import { HighlightedText } from "../lib/searchHighlight";
@@ -99,6 +100,11 @@ const FEATURE_OPTIONS: FeatureOption[] = [
   },
   { id: "notes", label: "Notes", description: "Your Markdown scratch pad" },
   { id: "assistant", label: "Assistant", description: "A grounded chat about the meeting" },
+  {
+    id: "answers",
+    label: "Suggested answers",
+    description: "Drafts a reply when someone else asks a question",
+  },
   { id: "translation", label: "Translation", description: "Live transcript translation" },
 ];
 
@@ -285,7 +291,9 @@ export function LiveView({
     try {
       const updated = await api.meetings.setFeatures(session.id, next);
       onUpdated(updated);
-      if (next.includes("assistant") && !chat) void startAssistant();
+      if ((next.includes("assistant") || next.includes("answers")) && !chat) {
+        void startAssistant();
+      }
     } catch {
       /* non-fatal */
     }
@@ -355,6 +363,15 @@ export function LiveView({
   const notesOn = features.includes("notes");
   const assistantOn = features.includes("assistant");
   const translationOn = features.includes("translation");
+  const answersOn = features.includes("answers");
+  const meLabels = session.me_labels ?? [];
+  const {
+    suggestion: liveSuggestion,
+    push: pushSuggestion,
+    dismiss: dismissSuggestion,
+    unseen: unseenSuggestions,
+    clearUnseen: clearUnseenSuggestions,
+  } = useLiveSuggestions({ sessionId: session.id, enabled: answersOn && !isEnded, meLabels });
 
   const allTopics = useMemo(() => flattenTopicNodes(topics), [topics]);
   const linkedTopic = useMemo(
@@ -370,6 +387,7 @@ export function LiveView({
     (seg: { text: string; speakerLabel: string | null; offsetMs: number }) => {
       // Scope the raw diarization label to the current recording run.
       const scopedLabel = seg.speakerLabel ? `${runRef.current}:${seg.speakerLabel}` : null;
+      pushSuggestion(seg.text, scopedLabel);
       void (async () => {
         try {
           const saved = await api.meetings.appendSegment(session.id, {
@@ -393,7 +411,7 @@ export function LiveView({
         }
       })();
     },
-    [session.id],
+    [session.id, pushSuggestion],
   );
 
   // A transparent reconnect (Azure ~20-min 1006 drop, recovered without a hard
@@ -891,6 +909,20 @@ export function LiveView({
     }
   }
 
+  async function toggleMe(rawLabel: string): Promise<void> {
+    setEditingSegId(null);
+    try {
+      const updated = await api.meetings.markSpeakerMe(
+        session.id,
+        rawLabel,
+        !meLabels.includes(rawLabel),
+      );
+      onUpdated(updated);
+    } catch {
+      // Non-fatal — the toggle simply doesn't change.
+    }
+  }
+
   async function commitRename(rawLabel: string, value: string): Promise<void> {
     setEditingSegId(null);
     try {
@@ -1134,6 +1166,71 @@ export function LiveView({
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border px-4 py-2">
         {recordControls}
       </div>
+      {liveSuggestion && (
+        <div className="border-b border-border bg-accent/5 px-4 py-2" aria-live="polite">
+          <div className="mx-auto max-w-3xl">
+            <div className="flex items-start gap-2 text-[12px]">
+              <Lightbulb size={13} className="mt-0.5 shrink-0 text-accent" aria-hidden="true" />
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-muted">
+                  <span className="font-medium text-text">
+                    {displayName(liveSuggestion.speakerLabel) ?? "Someone"}
+                  </span>{" "}
+                  asked: <span className="italic">{liveSuggestion.question}</span>
+                </p>
+                <p className="mt-1 whitespace-pre-wrap text-sm text-text">
+                  {liveSuggestion.text || (
+                    <span className="inline-flex items-center gap-1 text-muted">
+                      <Loader2 size={12} className="animate-spin" aria-hidden="true" />
+                      Thinking of an answer…
+                    </span>
+                  )}
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-1">
+                {liveSuggestion.status === "done" && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void navigator.clipboard?.writeText(liveSuggestion.text);
+                      }}
+                      className="rounded px-1.5 py-0.5 text-[11px] text-muted hover:bg-surface hover:text-text"
+                    >
+                      Copy
+                    </button>
+                    {chat && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          clearUnseenSuggestions();
+                          focusTab("assistant");
+                        }}
+                        data-tooltip="Continue in the Assistant chat"
+                        className="rounded px-1.5 py-0.5 text-[11px] text-muted hover:bg-surface hover:text-text"
+                      >
+                        Dig deeper
+                      </button>
+                    )}
+                  </>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    clearUnseenSuggestions();
+                    dismissSuggestion();
+                  }}
+                  aria-label="Dismiss suggestion"
+                  data-tooltip="Dismiss"
+                  className="rounded p-0.5 text-muted hover:bg-surface hover:text-text"
+                >
+                  <X size={13} aria-hidden="true" />
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       <div ref={transcriptRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
       {segments.length === 0 && !interim ? (
         <div className="flex h-full flex-col items-center justify-center text-center text-sm text-muted">
@@ -1180,6 +1277,10 @@ export function LiveView({
                           void commitRename(seg.speaker_label as string, name)
                         }
                         onCancel={() => setEditingSegId(null)}
+                        isMe={meLabels.includes(seg.speaker_label)}
+                        onToggleMe={
+                          answersOn ? () => void toggleMe(seg.speaker_label as string) : undefined
+                        }
                       />
                     ) : (
                       <button
@@ -1191,6 +1292,9 @@ export function LiveView({
                         )}`}
                       >
                         {displayName(seg.speaker_label)}
+                        {answersOn && meLabels.includes(seg.speaker_label) && (
+                          <span className="ml-1 text-[10px] font-normal text-muted">(me)</span>
+                        )}
                       </button>
                     ))}
                   <span className="text-text">
@@ -1409,7 +1513,9 @@ export function LiveView({
           },
         ]
       : []),
-    ...(assistantOn && chat ? [{ id: "assistant", label: "Assistant" }] : []),
+    ...((assistantOn || answersOn) && chat
+      ? [{ id: "assistant", label: "Assistant", badge: unseenSuggestions || null }]
+      : []),
     ...(translationOn ? [{ id: "translation", label: "Translation" }] : []),
     ...(notesOn ? [{ id: "notes", label: notes.trim() ? "Notes ●" : "Notes" }] : []),
     { id: "summary", label: hasSummary ? "Summary ●" : "Summary" },

@@ -1429,3 +1429,102 @@ def test_parse_insights_help_and_suggestion() -> None:
     assert _parse_insights('```json\n{"insights": []}\n```') == ([], False, "")
     # Non-JSON → empty.
     assert _parse_insights("nothing here") == ([], False, "")
+
+
+def test_mark_speaker_me_roundtrip() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        sid = client.post("/api/live", json={"title": "Me"}).json()["id"]
+        assert client.get(f"/api/live/{sid}").json()["me_labels"] == []
+        r = client.post(f"/api/live/{sid}/speakers/me", json={"label": "1:Guest-1"})
+        assert r.status_code == 200
+        assert r.json()["me_labels"] == ["1:Guest-1"]
+        # Idempotent, and several labels may be the user (one per run).
+        client.post(f"/api/live/{sid}/speakers/me", json={"label": "1:Guest-1"})
+        r = client.post(f"/api/live/{sid}/speakers/me", json={"label": "2:Guest-1"})
+        assert r.json()["me_labels"] == ["1:Guest-1", "2:Guest-1"]
+        r = client.post(f"/api/live/{sid}/speakers/me", json={"label": "1:Guest-1", "me": False})
+        assert r.json()["me_labels"] == ["2:Guest-1"]
+
+
+class _SuggestProvider:
+    name = "fake"
+
+    def __init__(self, chunks: list[str]) -> None:
+        self.chunks = chunks
+
+    async def stream_chat_with_tools(self, **_kwargs):  # type: ignore[no-untyped-def]
+        from precursor.backend.services.llm.base import TextDeltaEvent, UsageEvent
+
+        for chunk in self.chunks:
+            yield TextDeltaEvent(content=chunk)
+        yield UsageEvent(prompt_tokens=3, completion_tokens=2, total_tokens=5)
+
+
+def _suggest(client: TestClient, sid: int, question: str = "What is our SLA?") -> str:
+    with client.stream(
+        "POST",
+        f"/api/live/{sid}/suggest",
+        json={"question": question, "speaker_label": "1:Guest-2"},
+    ) as resp:
+        assert resp.status_code == 200
+        return "".join(resp.iter_text())
+
+
+def test_suggest_requires_answers_feature() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        sid = client.post("/api/live", json={"title": "Off"}).json()["id"]
+        r = client.post(f"/api/live/{sid}/suggest", json={"question": "Why?"})
+        assert r.status_code == 409
+
+
+def test_suggest_streams_and_persists_unattended_turn(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from precursor.backend.services import live_suggest
+
+    async def _prov(_session, **_kwargs):  # type: ignore[no-untyped-def]
+        return _SuggestProvider(["Our SLA is ", "99.9 percent."])
+
+    monkeypatch.setattr(live_suggest, "get_llm_provider", _prov)
+
+    app = create_app()
+    with TestClient(app) as client:
+        sid = client.post("/api/live", json={"title": "Sug"}).json()["id"]
+        client.patch(f"/api/live/{sid}", json={"features": ["answers"]})
+        client.post(f"/api/live/{sid}/segments", json={"text": "What is our SLA?"})
+        body = _suggest(client, sid)
+        assert "event: token" in body
+        assert "event: done" in body
+        assert "event: none" not in body
+
+        chat_id = client.get(f"/api/live/{sid}").json()["chat_id"]
+        assert chat_id is not None
+        msgs = client.get(f"/api/chats/{chat_id}/messages").json()
+        assert [(m["role"], m["kind"]) for m in msgs] == [
+            ("user", "live_question"),
+            ("assistant", "live_suggestion"),
+        ]
+        assert msgs[0]["content"] == "[Guest-2] What is our SLA?"
+        assert msgs[1]["content"] == "Our SLA is 99.9 percent."
+
+
+@pytest.mark.parametrize("chunks", [["[[NONE]]"], ["[[NO", "NE]]"], ["  [[NONE]]"]])
+def test_suggest_none_marker_suppresses_turn(monkeypatch, chunks) -> None:  # type: ignore[no-untyped-def]
+    from precursor.backend.services import live_suggest
+
+    async def _prov(_session, **_kwargs):  # type: ignore[no-untyped-def]
+        return _SuggestProvider(chunks)
+
+    monkeypatch.setattr(live_suggest, "get_llm_provider", _prov)
+
+    app = create_app()
+    with TestClient(app) as client:
+        sid = client.post("/api/live", json={"title": "None"}).json()["id"]
+        client.patch(f"/api/live/{sid}", json={"features": ["answers"]})
+        body = _suggest(client, sid, "Is it Friday yet?")
+        assert "event: none" in body
+        assert "event: token" not in body
+        assert "event: done" not in body
+
+        chat_id = client.get(f"/api/live/{sid}").json()["chat_id"]
+        assert client.get(f"/api/chats/{chat_id}/messages").json() == []

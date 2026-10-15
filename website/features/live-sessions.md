@@ -70,6 +70,9 @@ Summary · Context. Use the **Split** toggle to view two sections side by side.
   stacks up while the meeting runs.
 - **Ask assistant** — ask free-form questions; answers stream from the transcript
   plus the attached topic.
+- **Suggested answers** — turn on **Suggested answers** in the feature picker and
+  the assistant drafts a reply as soon as someone else asks a question, so you
+  have something to say to a hard one. See [Suggested answers](#suggested-answers).
 - **Speaker labels** — click a label in the transcript to rename it
   (`Guest-2` → `Thomas`); the name applies to every past and future phrase from
   that voice.
@@ -89,6 +92,34 @@ Summary · Context. Use the **Split** toggle to view two sections side by side.
   from your agenda** so its invitees flow into the summary's attendees. The
   agenda spans the last few days through today, so you can attach — or record
   from — a meeting that already happened.
+
+### Suggested answers
+
+An opt-in feature (**Suggested answers** in the feature picker, per session; it
+also starts the Assistant chat). While you record, each finished phrase is
+checked in the browser for a question — a trailing `?`, or an English/French
+interrogative opener — and consecutive phrases from one speaker are joined first,
+so a question split across phrases is read whole. Within about a second a card
+appears above the transcript and **streams** a short, first-person answer you can
+say aloud, with the question quoted above it. **Copy** it, **Dig deeper** in the
+Assistant chat, or dismiss it.
+
+- **It is fast on purpose.** One streaming call on the [fast model](#settings),
+  with only a short transcript tail, the latest insights, pinned notes, the
+  attached topic and the role persona. No tools, no separate "is this a
+  question?" call: the model answers `[[NONE]]` when the phrase doesn't need
+  you, and the card never shows.
+- **Your own voice is ignored.** Click a speaker label and choose **This is me**
+  (per recording run, since diarization labels restart on a resume). Phrases from
+  a *me* label never trigger a suggestion, and your speaking cancels one that is
+  pending or streaming.
+- **It's saved as an unattended turn.** A finished suggestion lands in the
+  session's Assistant chat as a *Question heard* line followed by the answer, so
+  you can ask follow-ups with the full context. The Assistant tab shows a count
+  of new ones; a cancelled or skipped suggestion leaves nothing behind.
+- **Guard rails.** A question is only asked once, at most one runs at a time
+  (a newer question replaces it), and there is a short cooldown and a per-minute
+  cap so a chatty meeting can't flood the model.
 
 ### Generating the summary
 

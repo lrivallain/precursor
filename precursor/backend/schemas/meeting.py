@@ -53,6 +53,7 @@ class MeetingSessionRead(BaseModel):
     role: str | None = None
     chat_id: int | None = None
     speaker_names: dict[str, str] = Field(default_factory=dict)
+    me_labels: list[str] = Field(default_factory=list)
     attendees: list[str] = Field(default_factory=list)
     context_notes: list[str] = Field(default_factory=list)
     notes: str = ""
@@ -74,6 +75,19 @@ class SpeakerRenameRequest(BaseModel):
     label: str = Field(min_length=1, max_length=64)
     # The chosen display name. Empty (or equal to the label) clears the mapping.
     name: str = Field(default="", max_length=64)
+
+
+class SpeakerMeRequest(BaseModel):
+    # The raw (run-scoped) diarization label to mark or unmark as the user.
+    label: str = Field(min_length=1, max_length=64)
+    me: bool = True
+
+
+class LiveSuggestRequest(BaseModel):
+    # The question text heard from another participant.
+    question: str = Field(min_length=1, max_length=2000)
+    # Raw diarization label of whoever asked it, for the persisted chat turn.
+    speaker_label: str | None = Field(default=None, max_length=64)
 
 
 class AttendeesUpdate(BaseModel):
