@@ -274,7 +274,9 @@ credits** and the next reset date.
 
 With no GitHub account, the persona shows the `X-Forwarded-User` request header
 when one is present — handy behind an OAuth proxy such as oauth2-proxy — as
-"Signed in via proxy". It is display only: Precursor does not use it to grant or
+"Signed in via proxy", with an initials avatar and a shield badge. When a GitHub
+account resolves too, it stays primary and the proxy user is noted as
+"via proxy". It is display only: Precursor does not use it to grant or
 deny access, so keep the proxy in charge of authentication.
 
 ### Several accounts signed in to `gh`

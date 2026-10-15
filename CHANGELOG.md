@@ -17,7 +17,8 @@ are the per-version history; releasing does not rewrite this file.
 
 - **The persona shows the proxy user.** With no GitHub account, the sidebar
   persona falls back to the `X-Forwarded-User` header (e.g. behind an OAuth
-  proxy) instead of "Guest". Display only; it grants no access.
+  proxy) instead of "Guest", shown with an initials avatar and a shield badge
+  so it reads as signed in. Display only; it grants no access.
 
 - **Tool approval policies for topics and chats.** Choose `manual`, `balanced`
   or `autonomous` per conversation from a shield pill in the composer (defaults
@@ -327,6 +328,10 @@ are the per-version history; releasing does not rewrite this file.
   restarts the app, replays the login entry, self-updates, and uninstalls.
 
 ### Fixed
+
+- **The persona no longer claims the mock provider is in use.** The "GitHub not
+  connected" tooltip dropped "using mock provider": other providers work
+  without a GitHub account.
 
 - **An install already in files mode lost its roles.** Installs that had
   migrated agents and workflows before roles became files kept their roles in

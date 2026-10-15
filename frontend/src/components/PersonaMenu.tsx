@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { Archive, Info, Settings as SettingsIcon, Sparkles, User } from "lucide-react";
+import {
+  Archive,
+  Info,
+  Settings as SettingsIcon,
+  ShieldCheck,
+  Sparkles,
+  User,
+} from "lucide-react";
 import { api } from "../lib/api";
 import type { CopilotQuota, Me } from "../lib/types";
 import { AboutModal } from "./AboutModal";
@@ -79,7 +86,7 @@ export function PersonaMenu({ collapsed = false, onOpenSettings, onOpenArchive }
   const proxyUser = me?.proxy_user ?? null;
   const label = me?.github?.name || me?.github?.login || proxyUser || "Guest";
   const sub = me?.github
-    ? `@${me.github.login}`
+    ? `@${me.github.login}${proxyUser ? " · via proxy" : ""}`
     : proxyUser
       ? "Signed in via proxy"
       : me?.github_token_source === "none"
@@ -87,7 +94,7 @@ export function PersonaMenu({ collapsed = false, onOpenSettings, onOpenArchive }
         : "Connecting…";
 
   // Three-state connectivity indicator surfaced next to the avatar.
-  // - "ok":   identity resolved → GitHub auth works and models are available
+  // - "ok":   identity resolved → GitHub auth works
   // - "warn": a token is configured but identity is not (yet) resolved
   // - "off":  no token at all
   const ghState: "ok" | "warn" | "off" = me?.github
@@ -101,12 +108,43 @@ export function PersonaMenu({ collapsed = false, onOpenSettings, onOpenArchive }
       : ghState === "warn"
         ? "bg-amber-500"
         : "bg-muted/60";
+  // A proxy-authenticated user is signed in even without GitHub, so the grey
+  // "off" dot would misread as "not connected": show a shield badge instead.
+  const proxyOnly = !me?.github && !!proxyUser;
+  const showShield = proxyOnly && ghState === "off";
   const ghTitle =
     ghState === "ok"
-      ? `GitHub connected (auth + models) — @${me?.github?.login}`
-      : ghState === "warn"
-        ? "GitHub token configured but identity unavailable"
-        : "GitHub not connected — using mock provider";
+      ? `GitHub connected — @${me?.github?.login}` +
+        (proxyUser ? `\nSigned in via proxy as ${proxyUser}` : "")
+      : proxyOnly
+        ? ghState === "warn"
+          ? `Signed in via proxy\nGitHub token configured but identity unavailable`
+          : "Signed in via proxy\nGitHub not connected"
+        : ghState === "warn"
+          ? "GitHub token configured but identity unavailable"
+          : "GitHub not connected";
+  const tooltip = `${label} — ${ghTitle}`;
+  const ariaLabel = `Open user menu — ${tooltip.replace(/\n/g, ". ")}`;
+  const avatar = (
+    <Avatar
+      url={me?.github?.avatar_url ?? null}
+      alt={label}
+      initials={proxyOnly ? initialsOf(proxyUser) : null}
+    />
+  );
+  const statusMark = showShield ? (
+    <span
+      aria-hidden="true"
+      className="absolute -bottom-1 -right-1 flex items-center justify-center w-3.5 h-3.5 rounded-full bg-accent text-bg ring-2 ring-bg"
+    >
+      <ShieldCheck size={9} strokeWidth={3} />
+    </span>
+  ) : (
+    <span
+      aria-hidden="true"
+      className={`absolute -bottom-0.5 -right-0.5 block w-2.5 h-2.5 rounded-full ring-2 ring-bg ${ghDotClass}`}
+    />
+  );
 
   function chooseArchive() {
     setMenuOpen(false);
@@ -124,17 +162,14 @@ export function PersonaMenu({ collapsed = false, onOpenSettings, onOpenArchive }
         <button
           type="button"
           onClick={() => setMenuOpen((v) => !v)}
-          data-tooltip={`${label} — ${ghTitle}`}
-          aria-label={`Open user menu — ${ghTitle}`}
+          data-tooltip={tooltip}
+          aria-label={ariaLabel}
           aria-haspopup="menu"
           aria-expanded={menuOpen}
           className="relative inline-block shrink-0 rounded-full hover:ring-2 hover:ring-accent/40 focus:outline-none focus:ring-2 focus:ring-accent/60"
         >
-          <Avatar url={me?.github?.avatar_url ?? null} alt={label} />
-          <span
-            aria-hidden="true"
-            className={`absolute -bottom-0.5 -right-0.5 block w-2.5 h-2.5 rounded-full ring-2 ring-bg ${ghDotClass}`}
-          />
+          {avatar}
+          {statusMark}
         </button>
         <button
           type="button"
@@ -165,18 +200,15 @@ export function PersonaMenu({ collapsed = false, onOpenSettings, onOpenArchive }
       <button
         type="button"
         onClick={() => setMenuOpen((v) => !v)}
-        data-tooltip={`${label} — ${ghTitle}`}
-        aria-label={`Open user menu — ${ghTitle}`}
+        data-tooltip={tooltip}
+        aria-label={ariaLabel}
         aria-haspopup="menu"
         aria-expanded={menuOpen}
         className="flex items-center gap-2 flex-1 min-w-0 px-2 py-1.5 rounded text-left hover:bg-surface focus:outline-none focus:bg-surface"
       >
         <span className="relative inline-block shrink-0">
-          <Avatar url={me?.github?.avatar_url ?? null} alt={label} />
-          <span
-            aria-hidden="true"
-            className={`absolute -bottom-0.5 -right-0.5 block w-2.5 h-2.5 rounded-full ring-2 ring-bg ${ghDotClass}`}
-          />
+          {avatar}
+          {statusMark}
         </span>
         <span className="min-w-0 flex-1">
           <span className="block text-sm truncate">{label}</span>
@@ -347,7 +379,24 @@ function formatResetDate(value: string | null): string | null {
   });
 }
 
-function Avatar({ url, alt }: { url: string | null; alt: string }) {
+// "jane.doe@corp.com" → "JD"; "jdoe" → "J". Keeps the proxy persona recognisable
+// without a photo.
+function initialsOf(name: string | null): string | null {
+  if (!name) return null;
+  const parts = name.split("@")[0].split(/[\s._-]+/).filter(Boolean);
+  const letters = parts.length > 1 ? parts[0][0] + parts[1][0] : (parts[0] ?? "").slice(0, 2);
+  return letters ? letters.toUpperCase() : null;
+}
+
+function Avatar({
+  url,
+  alt,
+  initials,
+}: {
+  url: string | null;
+  alt: string;
+  initials?: string | null;
+}) {
   if (url) {
     return (
       <img
@@ -355,6 +404,16 @@ function Avatar({ url, alt }: { url: string | null; alt: string }) {
         alt={alt}
         className="w-7 h-7 rounded-full border border-border shrink-0"
       />
+    );
+  }
+  if (initials) {
+    return (
+      <span
+        aria-hidden="true"
+        className="w-7 h-7 rounded-full bg-accent/15 border border-accent/40 flex items-center justify-center text-[11px] font-semibold text-accent shrink-0"
+      >
+        {initials}
+      </span>
     );
   }
   return (
