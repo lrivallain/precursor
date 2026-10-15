@@ -15,6 +15,10 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **The persona shows the proxy user.** With no GitHub account, the sidebar
+  persona falls back to the `X-Forwarded-User` header (e.g. behind an OAuth
+  proxy) instead of "Guest". Display only; it grants no access.
+
 - **Tool approval policies for topics and chats.** Choose `manual`, `balanced`
   or `autonomous` per conversation from a shield pill in the composer (defaults
   in Settings → Chat, `autonomous` so nothing changes until you opt in). Calls

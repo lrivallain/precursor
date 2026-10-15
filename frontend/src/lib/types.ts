@@ -2197,6 +2197,8 @@ export interface GitHubIdentity {
 export interface Me {
   github: GitHubIdentity | null;
   github_token_source: "env" | "gh-cli" | "settings" | "none";
+  // X-Forwarded-User from an authenticating reverse proxy (display only).
+  proxy_user: string | null;
 }
 
 // Copilot "AI credits" (premium interactions) allowance for the connected

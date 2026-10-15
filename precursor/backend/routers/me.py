@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 
 import httpx
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -56,6 +56,20 @@ class CopilotQuota(BaseModel):
 class Me(BaseModel):
     github: GitHubIdentity | None = None
     github_token_source: str = "none"
+    # Display-only name from an authenticating reverse proxy's X-Forwarded-User
+    # header; never used for access decisions.
+    proxy_user: str | None = None
+
+
+_PROXY_USER_MAX = 120
+
+
+def _proxy_user(request: Request) -> str | None:
+    raw = request.headers.get("x-forwarded-user")
+    if not raw:
+        return None
+    cleaned = "".join(ch for ch in raw if ch.isprintable()).strip()
+    return cleaned[:_PROXY_USER_MAX] or None
 
 
 def _normalize_quota(payload: dict[str, object]) -> CopilotQuota | None:
@@ -118,13 +132,14 @@ async def _fetch_copilot_quota(token: str) -> CopilotQuota | None:
 
 
 @router.get("", response_model=Me)
-async def get_me(session: AsyncSession = Depends(get_session)) -> Me:
+async def get_me(request: Request, session: AsyncSession = Depends(get_session)) -> Me:
     source = await github_token_source(session)
+    proxy_user = _proxy_user(request)
     token = await resolve_github_token(session)
     if not token:
-        return Me(github=None, github_token_source=source)
+        return Me(github=None, github_token_source=source, proxy_user=proxy_user)
     identity = await _fetch_identity(token)
-    return Me(github=identity, github_token_source=source)
+    return Me(github=identity, github_token_source=source, proxy_user=proxy_user)
 
 
 @router.get("/copilot", response_model=CopilotQuota | None)

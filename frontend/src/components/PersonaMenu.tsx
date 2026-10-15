@@ -25,7 +25,8 @@ export function PersonaMenu({ collapsed = false, onOpenSettings, onOpenArchive }
         if (!cancelled) setMe(m);
       })
       .catch(() => {
-        if (!cancelled) setMe({ github: null, github_token_source: "none" });
+        if (!cancelled)
+          setMe({ github: null, github_token_source: "none", proxy_user: null });
       });
     return () => {
       cancelled = true;
@@ -75,12 +76,15 @@ export function PersonaMenu({ collapsed = false, onOpenSettings, onOpenArchive }
     };
   }, [menuOpen, connected]);
 
-  const label = me?.github?.name || me?.github?.login || "Guest";
+  const proxyUser = me?.proxy_user ?? null;
+  const label = me?.github?.name || me?.github?.login || proxyUser || "Guest";
   const sub = me?.github
     ? `@${me.github.login}`
-    : me?.github_token_source === "none"
-      ? "Not connected"
-      : "Connecting…";
+    : proxyUser
+      ? "Signed in via proxy"
+      : me?.github_token_source === "none"
+        ? "Not connected"
+        : "Connecting…";
 
   // Three-state connectivity indicator surfaced next to the avatar.
   // - "ok":   identity resolved → GitHub auth works and models are available
