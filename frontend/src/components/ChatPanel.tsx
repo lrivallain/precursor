@@ -5,6 +5,7 @@ import { CommandDraftCard, type CommandDraftPayload } from "./CommandDraftCard";
 import { ConversationNotes, NotesConfirmModal } from "./ConversationNotes";
 import { TranscriptMessage, TranscriptTail, UndoDeleteToasts } from "./ConversationTranscript";
 import { Composer } from "./Composer";
+import { ComposerApprovalControl } from "./ComposerApprovalControl";
 import { ComposerModelControls } from "./ComposerModelControls";
 import { ChatStatsPanel } from "./ChatStatsPanel";
 import { useSideChats } from "./SideChatsSection";
@@ -805,6 +806,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
             toolbarStart={
               <>
                 <ComposerModelControls conversation={{ kind: "topic", id: topic.id, selection: topic.llm_selection, onUpdated: onTopicUpdated }} />
+                <ComposerApprovalControl kind="topic" id={topic.id} policy={topic.approval_policy} onUpdated={onTopicUpdated} />
                 <RoleSelector
                   value={topic.role ?? null}
                   onChange={(roleName) => void onSetRole?.(roleName)}

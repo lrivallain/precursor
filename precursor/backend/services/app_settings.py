@@ -926,12 +926,24 @@ CONVERSATION_APPROVAL_POLICIES = ("manual", "balanced", "autonomous")
 DEFAULT_CONVERSATION_APPROVAL_POLICY = "autonomous"
 
 
-async def resolve_conversation_approval_policy(session: AsyncSession) -> str:
-    """Default approval policy for chat and topic tool calls (DB override on the default)."""
+async def resolve_topic_approval_policy(session: AsyncSession) -> str:
+    """Default approval policy for topic tool calls (DB override on the default)."""
     return await resolve(
         session,
         SettingSpec(
-            "conversation_approval_policy",
+            "topic_approval_policy",
+            _str_in(CONVERSATION_APPROVAL_POLICIES),
+            default=DEFAULT_CONVERSATION_APPROVAL_POLICY,
+        ),
+    )
+
+
+async def resolve_chat_approval_policy(session: AsyncSession) -> str:
+    """Default approval policy for chat tool calls (DB override on the default)."""
+    return await resolve(
+        session,
+        SettingSpec(
+            "chat_approval_policy",
             _str_in(CONVERSATION_APPROVAL_POLICIES),
             default=DEFAULT_CONVERSATION_APPROVAL_POLICY,
         ),

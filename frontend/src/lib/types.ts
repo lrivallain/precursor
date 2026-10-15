@@ -42,7 +42,7 @@ export interface Topic {
   schedule: ScheduleSummary | null;
   /** Quoted reply the conversation started from (a promoted side chat's). */
   seed_content?: string | null;
-  /** Null inherits the global default (`conversation_approval_policy`). */
+  /** Null inherits the global default (`topic_approval_policy` / `chat_approval_policy`). */
   approval_policy?: ConversationApprovalPolicy | null;
 }
 
@@ -1654,7 +1654,8 @@ export interface Settings {
   agents_file_change_tracking: boolean;
   agents_approval_policy: AgentApprovalPolicy;
   /** Default tool approval policy for topics and chats without their own. */
-  conversation_approval_policy: ConversationApprovalPolicy;
+  topic_approval_policy: ConversationApprovalPolicy;
+  chat_approval_policy: ConversationApprovalPolicy;
   agents_system_prompt: string;
   agents_watchdog_timeout_seconds: number;
   // Workflow defaults: what a new step may draw on, and the stall watchdog a
@@ -1733,7 +1734,8 @@ export interface SettingsUpdate {
   agents_context_tier?: string;
   agents_file_change_tracking?: boolean;
   agents_approval_policy?: AgentApprovalPolicy;
-  conversation_approval_policy?: ConversationApprovalPolicy;
+  topic_approval_policy?: ConversationApprovalPolicy;
+  chat_approval_policy?: ConversationApprovalPolicy;
   agents_system_prompt?: string;
   agents_watchdog_timeout_seconds?: number;
   workflows_default_use_mcp?: boolean;

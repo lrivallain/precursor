@@ -16,8 +16,9 @@ are the per-version history; releasing does not rewrite this file.
 ### Added
 
 - **Tool approval policies for topics and chats.** Pick `manual`, `balanced` or
-  `autonomous` per conversation (global default in Settings → Chat, `autonomous`
-  so nothing changes until you opt in). Calls to MCP tools and Precursor's own
+  `autonomous` per conversation from a shield pill in the composer (separate
+  topic and chat defaults in Settings → Chat, both `autonomous` so nothing
+  changes until you opt in). Calls to MCP tools and Precursor's own
   writing tools that need a go-ahead park the turn and show inline Approve /
   Always allow here / Deny cards; the turn resumes once all are answered. The
   model can also ask first through a built-in `request_approval` intent.

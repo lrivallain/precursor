@@ -292,7 +292,8 @@ export function SettingsPanel({ onClose: closeNow, initialCategory, onCollection
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
   const [completionSoundEnabled, setCompletionSoundEnabled] = useState(false);
   const [maxToolRounds, setMaxToolRounds] = useState(15);
-  const [approvalPolicy, setApprovalPolicy] = useState<ConversationApprovalPolicy>("autonomous");
+  const [topicApprovalPolicy, setTopicApprovalPolicy] = useState<ConversationApprovalPolicy>("autonomous");
+  const [chatApprovalPolicy, setChatApprovalPolicy] = useState<ConversationApprovalPolicy>("autonomous");
   const [issueAssociationsEnabled, setIssueAssociationsEnabled] = useState(true);
   // Folder backup (DB + blobs + definitions) — editable prefs plus a manual "run now" action.
   const [backupEnabled, setBackupEnabled] = useState(false);
@@ -432,7 +433,8 @@ export function SettingsPanel({ onClose: closeNow, initialCategory, onCollection
       setNotificationsEnabled(s.notifications_enabled);
       setCompletionSoundEnabled(s.completion_sound_enabled);
       setMaxToolRounds(s.max_tool_rounds);
-      setApprovalPolicy(s.conversation_approval_policy ?? "autonomous");
+      setTopicApprovalPolicy(s.topic_approval_policy ?? "autonomous");
+      setChatApprovalPolicy(s.chat_approval_policy ?? "autonomous");
       setIssueAssociationsEnabled(s.issue_associations_enabled);
       setBackupEnabled(s.backup_enabled);
       setBackupDir(s.backup_dir);
@@ -531,7 +533,8 @@ export function SettingsPanel({ onClose: closeNow, initialCategory, onCollection
         notifications_enabled: notificationsEnabled,
         completion_sound_enabled: completionSoundEnabled,
         max_tool_rounds: maxToolRounds,
-        conversation_approval_policy: approvalPolicy,
+        topic_approval_policy: topicApprovalPolicy,
+        chat_approval_policy: chatApprovalPolicy,
         issue_associations_enabled: issueAssociationsEnabled,
         azure_speech_endpoint: azureEndpoint,
         azure_speech_language: azureLanguage,
@@ -745,7 +748,7 @@ export function SettingsPanel({ onClose: closeNow, initialCategory, onCollection
   const formSnapshot = JSON.stringify([
     theme, font, defaultProvider, defaultModel, mockEnabled, modelFallbacks, providerConfig,
     repo, githubToken, azureKey, azureEndpoint, azureLanguage, ttlMinutes, showChatStats,
-    notificationsEnabled, completionSoundEnabled, maxToolRounds, approvalPolicy, issueAssociationsEnabled,
+    notificationsEnabled, completionSoundEnabled, maxToolRounds, topicApprovalPolicy, chatApprovalPolicy, issueAssociationsEnabled,
     liveFastModel, liveReasoningEffort, liveEnabled, liveTranscriptRetentionDays,
     chatAutonameEnabled, chatAutonameModel, expose, httpEnabled, workiqTenant,
     playwrightBrowser, backupEnabled, backupDir, backupRetention, sys,
@@ -1024,22 +1027,40 @@ export function SettingsPanel({ onClose: closeNow, initialCategory, onCollection
                     cut runaway loops short. Range: 1–1000.
                   </p>
                   <label className="block text-xs text-muted mb-1 mt-4">
-                    Default tool approval policy
+                    Default tool approval — topics
                   </label>
                   <Select
                     fullWidth
                     size="sm"
-                    ariaLabel="Default tool approval policy"
-                    value={approvalPolicy}
-                    onChange={(v) => setApprovalPolicy(v as ConversationApprovalPolicy)}
+                    ariaLabel="Default tool approval policy for topics"
+                    value={topicApprovalPolicy}
+                    onChange={(v) => setTopicApprovalPolicy(v as ConversationApprovalPolicy)}
                     options={CONVERSATION_APPROVAL_POLICIES.map((p) => ({
                       value: p.value,
                       label: p.label,
                     }))}
                   />
                   <p className="text-[11px] text-muted mt-1">
-                    {CONVERSATION_APPROVAL_POLICIES.find((p) => p.value === approvalPolicy)?.hint}{" "}
-                    Each topic and chat can override this in its settings.
+                    {CONVERSATION_APPROVAL_POLICIES.find((p) => p.value === topicApprovalPolicy)?.hint}
+                     Each topic can change it from the shield pill in its composer.
+                  </p>
+                  <label className="block text-xs text-muted mb-1 mt-4">
+                    Default tool approval — chats
+                  </label>
+                  <Select
+                    fullWidth
+                    size="sm"
+                    ariaLabel="Default tool approval policy for chats"
+                    value={chatApprovalPolicy}
+                    onChange={(v) => setChatApprovalPolicy(v as ConversationApprovalPolicy)}
+                    options={CONVERSATION_APPROVAL_POLICIES.map((p) => ({
+                      value: p.value,
+                      label: p.label,
+                    }))}
+                  />
+                  <p className="text-[11px] text-muted mt-1">
+                    {CONVERSATION_APPROVAL_POLICIES.find((p) => p.value === chatApprovalPolicy)?.hint}
+                     Each chat can change it from the shield pill in its composer.
                   </p>
                 </section>
               </>

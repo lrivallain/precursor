@@ -1,7 +1,7 @@
 """conversation approval policies and parked tool approvals
 
 Adds a per-topic / per-chat ``approval_policy`` override (``NULL`` inherits the
-global ``conversation_approval_policy``) and the ``tool_approvals`` table that
+global ``topic_approval_policy`` / ``chat_approval_policy``) and the ``tool_approvals`` table that
 persists tool calls waiting on the user, so a pending approval survives a reload.
 
 Revision ID: c7d41e8a9f20

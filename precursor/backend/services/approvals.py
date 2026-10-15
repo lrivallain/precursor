@@ -1,7 +1,7 @@
 """Approval policies for chat and topic tool calls.
 
 A conversation runs under one of three policies (its own ``approval_policy``,
-else the global ``conversation_approval_policy``):
+else the global ``topic_approval_policy`` / ``chat_approval_policy``):
 
 * ``manual`` — every tool call waits for the user.
 * ``balanced`` — read-only tools run; anything that may change data waits.
@@ -43,7 +43,8 @@ from precursor.backend.models.tool_approval import (
 )
 from precursor.backend.services.app_settings import (
     CONVERSATION_APPROVAL_POLICIES,
-    resolve_conversation_approval_policy,
+    resolve_chat_approval_policy,
+    resolve_topic_approval_policy,
 )
 from precursor.backend.services.llm.base import ToolDef
 from precursor.backend.services.mcp.client import MCPToolDef
@@ -202,7 +203,9 @@ async def resolve_policy(
         own = chat.approval_policy if chat else None
     if own in CONVERSATION_APPROVAL_POLICIES:
         return own
-    return await resolve_conversation_approval_policy(session)
+    if chat_id is not None:
+        return await resolve_chat_approval_policy(session)
+    return await resolve_topic_approval_policy(session)
 
 
 async def build_gate(session: AsyncSession, kind: ContainerKind, container_id: int) -> ApprovalGate:

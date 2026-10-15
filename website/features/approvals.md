@@ -6,8 +6,9 @@ which wait for you. Applies to every [topic](/features/topics) and
 
 ## Three policies
 
-Set it in a topic's or chat's settings drawer under **Tool approval**, or change
-the global default in **Settings → Chat**.
+Pick it from the **shield pill** in the composer toolbar, next to the model and
+role pickers; it saves immediately. The defaults live in **Settings → Chat**,
+one for topics and one for chats.
 
 | Policy | What waits for you |
 | --- | --- |
@@ -15,7 +16,8 @@ the global default in **Settings → Chat**.
 | **Balanced** | Anything that changes something, or isn't known to be read-only. Reads run freely. |
 | **Autonomous** | Nothing. This is the default, so existing conversations behave as before. |
 
-A conversation can also *inherit* the global default, which is the initial state.
+A conversation can also follow the default for its kind (**Default** in the
+pill), which is the initial state.
 
 ## What is gated
 

@@ -417,7 +417,15 @@ def test_policy_is_validated_and_defaults_to_the_global_setting(client: TestClie
     assert bad.status_code == 422
     ok = client.patch(f"/api/chats/{cid}", json={"approval_policy": "manual"})
     assert ok.json()["approval_policy"] == "manual"
-    assert client.get("/api/settings").json()["conversation_approval_policy"] == "autonomous"
+    defaults = client.get("/api/settings").json()
+    assert defaults["topic_approval_policy"] == defaults["chat_approval_policy"] == "autonomous"
+    ignored = client.put("/api/settings", json={"topic_approval_policy": "reckless"}).json()
+    assert ignored["topic_approval_policy"] == "autonomous"
+    saved = client.put("/api/settings", json={"chat_approval_policy": "manual"}).json()
+    assert (saved["chat_approval_policy"], saved["topic_approval_policy"]) == (
+        "manual",
+        "autonomous",
+    )
 
 
 def _walk(nodes: list[dict[str, Any]]) -> Iterator[dict[str, Any]]:

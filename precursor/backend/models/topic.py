@@ -78,7 +78,7 @@ class Topic(Base, TimestampMixin):
     role: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
 
     # Tool-approval policy (manual / balanced / autonomous). Null inherits the
-    # global ``conversation_approval_policy`` setting.
+    # global ``topic_approval_policy`` setting.
     approval_policy: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
     # Collection this topic belongs to — the lens the sidebar filters by.
