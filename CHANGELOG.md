@@ -368,6 +368,11 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Fixed
 
+- **Live suggestions no longer pile up.** The Live view's Insights tab kept
+  every proactive suggestion as its own card (up to 12), pushing the insights
+  out of view. It now shows a single suggestion that a newer one replaces, and
+  it resets when you switch sessions. See
+  [Live sessions](website/features/live-sessions.md#insights-q-a-and-summary).
 - **A new chat's first prompt no longer flashes twice.** Starting a chat from
   the hero briefly showed the prompt both as the optimistic bubble and as the
   just-persisted message; the duplicate is now dropped immediately.

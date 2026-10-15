@@ -65,7 +65,9 @@ Summary · Context. Use the **Split** toggle to view two sections side by side.
 
 - **Live Insights** — while recording, the assistant re-derives a snapshot of
   **action items, decisions, open questions, suggestions, and risks** from the
-  rolling transcript.
+  rolling transcript. Each analysis **replaces** the previous snapshot, and a
+  proactive suggestion shows as a single card that a newer one replaces — nothing
+  stacks up while the meeting runs.
 - **Ask assistant** — ask free-form questions; answers stream from the transcript
   plus the attached topic.
 - **Speaker labels** — click a label in the transcript to rename it

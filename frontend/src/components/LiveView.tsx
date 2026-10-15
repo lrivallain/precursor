@@ -337,8 +337,9 @@ export function LiveView({
   const translateNextRef = useRef(0);
 
   // Proactive suggestions now ride along on the unified analysis pass (see
-  // runAnalysis). Surfaced as dismissible cards in the Insights tab.
-  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  // runAnalysis). Surfaced as a single dismissible card in the Insights tab; a
+  // newer suggestion replaces it rather than stacking above the insights.
+  const [suggestion, setSuggestion] = useState<Suggestion | null>(null);
   const assistLastTextRef = useRef("");
 
   const transcriptRef = useRef<HTMLDivElement>(null);
@@ -457,11 +458,12 @@ export function LiveView({
       const res = await api.meetings.analyze(session.id);
       setInsights(res.insights);
       // A proactive suggestion rides along on the same pass — surface genuinely
-      // new ones as dismissible cards in the Insights tab.
+      // new one in the Insights tab, replacing the previous card. An empty
+      // result keeps the current card so it never blanks mid-meeting.
       const text = (res.suggestion ?? "").trim();
       if (text && text !== assistLastTextRef.current) {
         assistLastTextRef.current = text;
-        setSuggestions((prev) => [{ id: Date.now(), text, at: Date.now() }, ...prev].slice(0, 12));
+        setSuggestion({ id: Date.now(), text, at: Date.now() });
       }
     } catch {
       // Non-fatal — keep the prior snapshot.
@@ -477,6 +479,8 @@ export function LiveView({
     setSegments([]);
     setInterim("");
     setInsights([]);
+    setSuggestion(null);
+    assistLastTextRef.current = "";
     // Seed the editable recap from the persisted summary (empty when none).
     // Must not clear it: this effect re-runs on every open/remount, so blanking
     // here would drop a stored summary when returning to the session.
@@ -1253,37 +1257,31 @@ export function LiveView({
       <div className="flex-1 overflow-y-auto px-3 py-3">
         {/* Proactive help rides along on the analysis pass: shown as cards when
             the assistant judges it can materially help right now. */}
-        {suggestions.length > 0 && (
-          <div className="mb-3 space-y-2">
-            {suggestions.map((s) => (
-              <div key={s.id} className="rounded border border-accent/40 bg-accent/5 px-3 py-2">
-                <div className="mb-1 flex items-center gap-1.5">
-                  <Lightbulb size={12} className="text-accent" />
-                  <span className="text-[11px] font-medium uppercase tracking-wide text-muted">
-                    Suggestion
-                  </span>
-                  <span className="ml-auto text-[10px] text-muted">
-                    {new Date(s.at).toLocaleTimeString(undefined, {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setSuggestions((prev) => prev.filter((x) => x.id !== s.id))
-                    }
-                    aria-label="Dismiss"
-                    className="text-muted hover:text-red-500"
-                  >
-                    <X size={12} />
-                  </button>
-                </div>
-                <div className="prose prose-sm dark:prose-invert max-w-none text-[13px]">
-                  <Markdown>{s.text}</Markdown>
-                </div>
-              </div>
-            ))}
+        {suggestion && (
+          <div className="mb-3 rounded border border-accent/40 bg-accent/5 px-3 py-2">
+            <div className="mb-1 flex items-center gap-1.5">
+              <Lightbulb size={12} className="text-accent" />
+              <span className="text-[11px] font-medium uppercase tracking-wide text-muted">
+                Suggestion
+              </span>
+              <span className="ml-auto text-[10px] text-muted">
+                {new Date(suggestion.at).toLocaleTimeString(undefined, {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}
+              </span>
+              <button
+                type="button"
+                onClick={() => setSuggestion(null)}
+                aria-label="Dismiss"
+                className="text-muted hover:text-red-500"
+              >
+                <X size={12} />
+              </button>
+            </div>
+            <div className="prose prose-sm dark:prose-invert max-w-none text-[13px]">
+              <Markdown>{suggestion.text}</Markdown>
+            </div>
           </div>
         )}
         {groupedInsights.length === 0 ? (
@@ -1407,7 +1405,7 @@ export function LiveView({
           {
             id: "insights",
             label: "Live insights",
-            badge: insights.length + suggestions.length || null,
+            badge: insights.length + (suggestion ? 1 : 0) || null,
           },
         ]
       : []),
