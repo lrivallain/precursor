@@ -146,6 +146,8 @@ export function useChatsController(deps: ChatsControllerDeps): ChatsController {
             }
           })();
         }
+      } else if (event.type === "approval.changed") {
+        if (event.chat_id != null) setChatListReloadKey((k) => k + 1);
       } else if (event.type === "message.changed") {
         if (event.chat_id != null) {
           const chatId = event.chat_id;

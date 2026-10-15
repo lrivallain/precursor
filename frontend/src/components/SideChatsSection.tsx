@@ -1,3 +1,4 @@
+import { ApprovalBadge } from "./ApprovalBadge";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AlarmClock, MessageSquarePlus, MessagesSquare, Quote, Split } from "lucide-react";
 import { api } from "../lib/api";
@@ -134,6 +135,7 @@ export function SideChatsSection({ items, onStart, starting }: SideChatsControls
                       }
                     />
                   )}
+                  <ApprovalBadge count={item.pending_approvals ?? 0} />
                   {item.unread_count > 0 && (
                     <span className="shrink-0 rounded-full bg-accent px-1.5 text-[10px] font-semibold text-white tabular-nums">
                       {item.unread_count}
@@ -194,6 +196,7 @@ export function SideChatLinks({ items }: { items: SideChatItem[] }) {
                 aria-label={fired ? "Reminder fired" : "Reminder set"}
               />
             )}
+            <ApprovalBadge count={item.pending_approvals ?? 0} />
             {item.unread_count > 0 && (
               <span className="shrink-0 rounded-full bg-accent px-1 text-[10px] font-semibold leading-4 text-white tabular-nums">
                 {item.unread_count}

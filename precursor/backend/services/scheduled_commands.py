@@ -35,9 +35,11 @@ from sqlalchemy import delete, select
 from precursor.backend.config import get_settings
 from precursor.backend.db import SessionLocal
 from precursor.backend.models import Message, MessageRole, Topic
+from precursor.backend.services import approvals as approval_service
 from precursor.backend.services import roles as roles_service
 from precursor.backend.services import side_chats
 from precursor.backend.services.events import (
+    publish_approval_changed,
     publish_mcp_auth_required,
     publish_message_changed,
     publish_topic_changed,
@@ -923,9 +925,11 @@ async def _clear_messages(topic_id: int) -> None:
         await side_chats.detach_messages(
             session, select(Message.id).where(Message.topic_id == topic_id)
         )
+        await approval_service.delete_for_container(session, "topic", topic_id)
         await session.execute(delete(Message).where(Message.topic_id == topic_id))
         await session.commit()
     await publish_message_changed(topic_id)
+    await publish_approval_changed(topic_id=topic_id)
 
 
 async def _record(topic_id: int, content: str) -> None:

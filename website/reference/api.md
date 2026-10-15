@@ -243,6 +243,8 @@ error flag — plus `link` (`{slug, path}`) when the tool read or wrote a
 The same object is stored on the tool message's `tool_calls` metadata, so the
 chip survives a reload without re-reading the result body.
 
+Tool approvals ([feature](/features/approvals)) live under `/api/topics/{id}/approvals` and `/api/chats/{id}/approvals` (`GET` the open rows, `POST …/{approval_id}` to answer, `POST …/resume` to stream the rest of a parked turn), plus `/api/approval-rules` for standing `allow` / `ask` rules. Topics and chats carry `approval_policy` (`manual`, `balanced`, `autonomous`, or `null` to inherit) and `pending_approvals`. A turn that needs approval ends with an `approval_required` event instead of `done`; changes publish `approval.changed` and `approval.parked` on `/api/events`. Topic schedules take `approval_timeout_minutes`.
+
 `POST /api/workspaces/{id}/chat/stream` — the [workspace](/features/workspaces)
 assistant — streams the same `delta`, `tool_calls`, `tool_result` (with `link`),
 `mcp_auth_required`, `system`, `error`, `done` and `suggestions` events. It is

@@ -26,6 +26,7 @@ from precursor.backend.schemas.schedule import (
     ScheduleUpdate,
     TopicScheduleCreate,
 )
+from precursor.backend.services import approvals as approval_service
 from precursor.backend.services import roles as roles_service
 from precursor.backend.services import side_chats
 from precursor.backend.services.collections import (
@@ -122,6 +123,7 @@ async def topic_tree(
     # One query for all unread counts: non-user messages newer than the topic's
     # last_read_at. Topics with last_read_at IS NULL are treated as fully read.
     unread_map = await message_unread_counts(session, Topic, Message.topic_id)
+    pending_map = await approval_service.pending_counts(session, "topic")
 
     # Schedule summaries for scheduled topics, keyed by topic id.
     schedule_rows = await session.execute(select(TopicSchedule))
@@ -148,6 +150,7 @@ async def topic_tree(
             updated_at=node.updated_at,
             children=[build(c) for c in children],
             unread_count=unread_map.get(node.id, 0),
+            pending_approvals=pending_map.get(node.id, 0),
             schedule=schedule_map.get(node.id),
         )
 
@@ -506,6 +509,7 @@ async def create_topic_schedule(
         enabled=payload.enabled,
         prompt=payload.prompt,
         clear_context=payload.clear_context,
+        approval_timeout_minutes=payload.approval_timeout_minutes,
         status="idle",
     )
     # Seeds the primary columns + extra_rules from the resolved rule set, so a
@@ -532,6 +536,8 @@ async def update_topic_schedule(
         schedule.prompt = data["prompt"]
     if "clear_context" in data and data["clear_context"] is not None:
         schedule.clear_context = data["clear_context"]
+    if "approval_timeout_minutes" in data:
+        schedule.approval_timeout_minutes = data["approval_timeout_minutes"]
 
     # Cadence is tri-state per field: omitted = unchanged, value = set, and for
     # run_at_minute an explicit null = back to interval mode. `resolved_rules`

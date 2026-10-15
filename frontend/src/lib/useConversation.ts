@@ -27,6 +27,7 @@ import {
   type ConvKind,
 } from "./streamStore";
 import { failedTurnUserMessageId } from "./systemNotice";
+import { useApprovals, type ApprovalsController } from "./useApprovals";
 import { useChatScroll, type ChatScroll } from "./useChatScroll";
 import type { ComposerInput } from "./useComposerInput";
 import { useMessageDeletion, type MessageDeletion } from "./useMessageDeletion";
@@ -113,6 +114,8 @@ export interface Conversation {
     /** Summarise the conversation so far (`/compact [focus]`). */
     run: (instructions?: string) => Promise<void>;
   };
+  /** Tool calls the turn is parked on, awaiting the user's answer. */
+  approvals: ApprovalsController;
   notes: NotesDraftController;
   /** In-place edits of assistant replies. */
   replyEdit: ReplyEditController;
@@ -236,6 +239,15 @@ export function useConversation({
   useEffect(() => {
     bindScroll({ captureTopAnchor, pinToBottom });
   }, [bindScroll, captureTopAnchor, pinToBottom]);
+
+  const approvals = useApprovals({
+    kind,
+    id,
+    streamKey,
+    containerApi,
+    streaming,
+    onUpdated,
+  });
 
   const timeline = useTurnTimeline({
     resetKey: streamKey,
@@ -634,6 +646,7 @@ export function useConversation({
     },
     deletion: { pendingDeletes, requestDeleteMessage, undoDelete },
     compaction: { compacting, markerId: compactionMarkerId, run: runCompact },
+    approvals,
     notes,
     replyEdit,
     reminders,

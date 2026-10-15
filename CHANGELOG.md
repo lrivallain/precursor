@@ -19,6 +19,15 @@ are the per-version history; releasing does not rewrite this file.
   persona falls back to the `X-Forwarded-User` header (e.g. behind an OAuth
   proxy) instead of "Guest". Display only; it grants no access.
 
+- **Tool approval policies for topics and chats.** Choose `manual`, `balanced`
+  or `autonomous` per conversation from a shield pill in the composer (defaults
+  in Settings → Chat, `autonomous` so nothing changes until you opt in). Calls
+  that need a go-ahead park the turn and show inline Approve / Always allow… /
+  Deny cards, persisted across reloads with an amber sidebar badge. Standing
+  `allow` / `ask` rules can match a server, tool and arguments, and the model can
+  ask first. Scheduled runs notify you and auto-deny after a timeout. See
+  [Tool approvals](website/features/approvals.md).
+
 - **A new install starts in files mode.** When nothing is declared in the
   database yet (no agent, no workflow, no role beyond the untouched `default`)
   and no source was ever chosen, Precursor records the install as migrated and

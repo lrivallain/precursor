@@ -402,6 +402,13 @@ hold via a hosted WorkIQ sign-in. In practice, if you've signed in to the WorkIQ
 preview the servers configure themselves with nothing to fill in. Until a
 tenant is known the entries stay unconfigured and say so.
 
+### Approving tool calls
+
+Whether an attached tool runs on its own is governed by the conversation's
+[tool approval policy](/features/approvals). Under **balanced**, a tool runs
+without asking only when its server marks it read-only (the MCP `readOnlyHint`
+annotation); a tool that says nothing is treated as a change and waits for you.
+
 ## As a server — exposing your conversations
 
 Precursor runs an MCP server (the SDK's `MCPServer`) named **`precursor`** that exposes its own data

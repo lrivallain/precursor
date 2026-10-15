@@ -32,7 +32,12 @@ logger = logging.getLogger(__name__)
 def _encode(tools: list[MCPToolDef]) -> str:
     return json.dumps(
         [
-            {"name": t.name, "description": t.description, "input_schema": t.input_schema}
+            {
+                "name": t.name,
+                "description": t.description,
+                "input_schema": t.input_schema,
+                "read_only": t.read_only,
+            }
             for t in tools
         ],
         sort_keys=True,
@@ -57,12 +62,14 @@ def _decode(server: str, raw: str) -> list[MCPToolDef]:
         if not isinstance(schema, dict):
             schema = {"type": "object", "properties": {}}
         description = item.get("description")
+        read_only = item.get("read_only")
         tools.append(
             MCPToolDef(
                 server=server,
                 name=name,
                 description=description if isinstance(description, str) else "",
                 input_schema=schema,
+                read_only=read_only if isinstance(read_only, bool) else None,
             )
         )
     return tools

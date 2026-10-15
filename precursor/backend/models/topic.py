@@ -12,9 +12,11 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from precursor.backend.models.base import Base, TimestampMixin
 
 if TYPE_CHECKING:
+    from precursor.backend.models.approval_rule import ApprovalRule
     from precursor.backend.models.message import Message
     from precursor.backend.models.note_draft import NoteDraft
     from precursor.backend.models.reminder import Reminder
+    from precursor.backend.models.tool_approval import ToolApproval
     from precursor.backend.models.topic_schedule import TopicSchedule
     from precursor.backend.models.topic_summary import TopicSummary
 
@@ -76,6 +78,10 @@ class Topic(Base, TimestampMixin):
     # (no persona injected). Stored by name; removing a role clears it here.
     role: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
 
+    # Tool-approval policy (manual / balanced / autonomous). Null inherits the
+    # global ``topic_approval_policy`` setting.
+    approval_policy: Mapped[str | None] = mapped_column(String(16), nullable=True)
+
     # Collection this topic belongs to — the lens the sidebar filters by.
     # Membership cascades down the tree, so a subtree is never split across
     # collections (enforced in the API layer). Null is a transient state only:
@@ -110,6 +116,13 @@ class Topic(Base, TimestampMixin):
         back_populates="topic",
         cascade="all, delete-orphan",
         order_by="Message.created_at",
+    )
+    # SQLite doesn't enforce the FK cascade, so the ORM carries it.
+    approvals: Mapped[list[ToolApproval]] = relationship(
+        "ToolApproval", cascade="all, delete-orphan", foreign_keys="ToolApproval.topic_id"
+    )
+    approval_rules: Mapped[list[ApprovalRule]] = relationship(
+        "ApprovalRule", cascade="all, delete-orphan", foreign_keys="ApprovalRule.topic_id"
     )
 
     # Recurrence config + run state when the topic runs on a schedule. One-to-

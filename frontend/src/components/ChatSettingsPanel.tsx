@@ -3,6 +3,7 @@ import { Archive, ArrowUpRight, Eraser, Trash2, X } from "lucide-react";
 import { api } from "../lib/api";
 import { clearConversation } from "../lib/useConversation";
 import type { Chat, Topic } from "../lib/types";
+import { ApprovalRulesSection } from "./ApprovalRulesSection";
 import { useConfirm } from "./ConfirmDialog";
 import { RefineTextarea } from "./RefineTextarea";
 import { PromoteChatDialog } from "./PromoteChatDialog";
@@ -208,6 +209,11 @@ export function ChatSettingsPanel({
                   </span>
                 </span>
               </label>
+            </section>
+
+            <section>
+              <h3 className="text-sm font-medium mb-1">Approval rules</h3>
+              <ApprovalRulesSection owner={{ kind: "chat", id: chat.id }} />
             </section>
 
             {error && <p className="text-xs text-red-500">{error}</p>}

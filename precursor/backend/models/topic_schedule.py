@@ -51,6 +51,9 @@ class TopicSchedule(Base, TimestampMixin, RecurrenceMixin):
     clear_context: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="0"
     )
+    # Minutes an unattended run waits on an approval before it is auto-denied.
+    # Null inherits the ``scheduled_approval_timeout_minutes`` setting; 0 waits forever.
+    approval_timeout_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # The prompt sent as the user turn on each run.
     prompt: Mapped[str] = mapped_column(Text, nullable=False)
     # Interval-based recurrence: run every N seconds. The UI exposes this as a

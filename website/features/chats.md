@@ -125,6 +125,14 @@ completes. It's off by default, and stopped or failed turns stay silent.
 Right-click a chat in the left sidebar to rename, pin, set a reminder, open
 `/notes`, or archive it.
 
+## Tool approvals
+
+Each chat can have its own [tool approval policy](/features/approvals) —
+**manual**, **balanced** or **autonomous** — set from the shield pill in the composer.
+A call that needs your go-ahead appears as an inline card in the transcript, and
+the chat's row in the sidebar shows an amber shield badge until you answer.
+The chat's settings list its [approval rules](/features/approvals#rules).
+
 ## Side chats
 
 A **side chat** is a chat started from a [topic](/features/topics), for a

@@ -88,6 +88,14 @@ features:
       a command runner, WorkIQ, and your own.
     link: /features/mcp
     linkText: About MCP
+  - icon: 🛡️
+    title: Tool approvals
+    details: >-
+      Choose per conversation whether tool calls run freely, only when
+      read-only, or always wait for you. Pending approvals survive a reload
+      and show in the sidebar.
+    link: /features/approvals
+    linkText: About approvals
   - icon: 🔎
     title: Precursor IQ
     details: >-

@@ -42,6 +42,8 @@ export interface Topic {
   schedule: ScheduleSummary | null;
   /** Quoted reply the conversation started from (a promoted side chat's). */
   seed_content?: string | null;
+  /** Null inherits the global default (`topic_approval_policy` / `chat_approval_policy`). */
+  approval_policy?: ConversationApprovalPolicy | null;
 }
 
 // One "when to run" clause of a schedule (mirrors backend RecurrenceRule). A
@@ -66,6 +68,8 @@ export interface ScheduleSummary {
   timezone: string;
   rules: RecurrenceRule[];
   clear_context: boolean;
+  /** Minutes an unanswered tool approval waits before it is auto-denied. Null inherits the global setting; 0 never expires. */
+  approval_timeout_minutes: number | null;
   next_run_at: string | null;
   last_run_at: string | null;
   status: string;
@@ -91,6 +95,7 @@ export interface TopicScheduleCreate {
   timezone?: string;
   rules?: RecurrenceRule[];
   clear_context?: boolean;
+  approval_timeout_minutes?: number | null;
   enabled?: boolean;
 }
 
@@ -102,12 +107,15 @@ export interface ScheduleUpdate {
   timezone?: string;
   rules?: RecurrenceRule[];
   clear_context?: boolean;
+  approval_timeout_minutes?: number | null;
   enabled?: boolean;
 }
 
 export interface TopicNode extends Topic {
   children: TopicNode[];
   unread_count: number;
+  /** Tool calls waiting for the user's approval. */
+  pending_approvals?: number;
 }
 
 // A flat conversation session (no tree hierarchy, no GitHub link). Mirrors the
@@ -133,6 +141,8 @@ export interface Chat {
   parent_message_id?: number | null;
   /** Frozen copy of that reply; survives its rewind or deletion. */
   seed_content?: string | null;
+  approval_policy?: ConversationApprovalPolicy | null;
+  pending_approvals?: number;
 }
 
 // A side chat as listed in its parent topic's right panel. Mirrors the
@@ -144,6 +154,7 @@ export interface SideChatItem {
   parent_message_id: number | null;
   from_reply: boolean;
   unread_count: number;
+  pending_approvals?: number;
   message_count: number;
   last_message_at: string | null;
   created_at: string;
@@ -166,6 +177,7 @@ export interface ChatCreate {
   slug?: string | null;
   /** Assistant Role to assign at creation. Null/omitted = the default role. */
   role?: string | null;
+  approval_policy?: ConversationApprovalPolicy | null;
   /**
    * Declares `title` a placeholder the client picked rather than something the
    * user typed, letting the server replace it with one derived from the first
@@ -182,6 +194,7 @@ export interface ChatUpdate {
   pinned?: boolean;
   slug?: string | null;
   role?: string | null;
+  approval_policy?: ConversationApprovalPolicy | null;
 }
 
 // One-shot date/time reminder for a topic or chat. Datetimes are ISO-8601 UTC.
@@ -1486,6 +1499,91 @@ export interface NoteDraftAttachment {
 //  - "autonomous": auto-approve everything
 export type AgentApprovalPolicy = "manual" | "balanced" | "autonomous";
 
+/** Per-conversation tool approval policy (mirrors backend `ApprovalPolicy`). */
+export type ConversationApprovalPolicy = AgentApprovalPolicy;
+
+/** A tool call (or the model's own intent) waiting on, or settled by, the user. */
+export interface ToolApproval {
+  id: number;
+  topic_id: number | null;
+  chat_id: number | null;
+  assistant_message_id: number | null;
+  tool_call_id: string;
+  tool_name: string;
+  server: string;
+  raw_tool: string;
+  arguments: string;
+  kind: "tool" | "intent";
+  reason: string | null;
+  status: "pending" | "approved" | "denied" | "cancelled";
+  scope: "once" | "conversation" | "global";
+  feedback: string | null;
+  /** Decided and its result already recorded in the transcript. */
+  executed: boolean;
+  created_at: string | null;
+  decided_at: string | null;
+  /** UTC deadline after which an unattended run's parked call is auto-denied. */
+  expires_at: string | null;
+}
+
+export interface ToolApprovalDecision {
+  approve: boolean;
+  /** `conversation` / `global` also save an allow rule for this tool. */
+  scope?: "once" | "conversation" | "global";
+  /** Narrows the saved rule to calls whose arguments match. */
+  arg_match?: ArgClause[];
+  feedback?: string | null;
+}
+
+/** One condition on a tool call's arguments; all clauses of a rule must hold. */
+export interface ArgClause {
+  arg: string;
+  op: "equals" | "glob" | "under";
+  value: string;
+}
+
+export type ApprovalRuleEffect = "allow" | "ask";
+export type ApprovalRuleScope = "global" | "topic" | "chat";
+
+/** A standing allow / ask answer in front of a conversation's approval policy. */
+export interface ApprovalRule {
+  id: number;
+  effect: ApprovalRuleEffect;
+  server: string;
+  tool: string;
+  arg_match: ArgClause[];
+  scope: ApprovalRuleScope;
+  topic_id: number | null;
+  chat_id: number | null;
+  enabled: boolean;
+  note: string | null;
+  hit_count: number;
+  last_used_at: string | null;
+  created_from_approval_id: number | null;
+  created_at: string | null;
+}
+
+export interface ApprovalRuleCreate {
+  effect: ApprovalRuleEffect;
+  server?: string;
+  tool?: string;
+  arg_match?: ArgClause[];
+  scope?: ApprovalRuleScope;
+  topic_id?: number | null;
+  chat_id?: number | null;
+  note?: string | null;
+}
+
+export type ApprovalRuleUpdate = Partial<
+  Pick<ApprovalRule, "effect" | "server" | "tool" | "arg_match" | "enabled" | "note">
+>;
+
+export interface ApprovalDecisionResult {
+  approval: ToolApproval;
+  /** Approvals still waiting; resume the turn once this hits 0. */
+  pending: number;
+}
+
 export interface ModelPreset {
   // An LLM provider id, or "agents" for the Copilot SDK runtime.
   provider: string;
@@ -1607,6 +1705,11 @@ export interface Settings {
   /** New agent sessions capture file changes so a rewind can restore them. */
   agents_file_change_tracking: boolean;
   agents_approval_policy: AgentApprovalPolicy;
+  /** Default tool approval policy for topics and chats without their own. */
+  topic_approval_policy: ConversationApprovalPolicy;
+  chat_approval_policy: ConversationApprovalPolicy;
+  /** Default minutes before an approval parked by a scheduled run is auto-denied; 0 never. */
+  scheduled_approval_timeout_minutes: number;
   agents_system_prompt: string;
   agents_watchdog_timeout_seconds: number;
   // Workflow defaults: what a new step may draw on, and the stall watchdog a
@@ -1685,6 +1788,9 @@ export interface SettingsUpdate {
   agents_context_tier?: string;
   agents_file_change_tracking?: boolean;
   agents_approval_policy?: AgentApprovalPolicy;
+  topic_approval_policy?: ConversationApprovalPolicy;
+  chat_approval_policy?: ConversationApprovalPolicy;
+  scheduled_approval_timeout_minutes?: number;
   agents_system_prompt?: string;
   agents_watchdog_timeout_seconds?: number;
   workflows_default_use_mcp?: boolean;

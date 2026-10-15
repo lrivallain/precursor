@@ -50,10 +50,13 @@ import type {
   MCPServerCreate,
   MCPServerUpdate,
   Me,
+  ConversationApprovalPolicy,
   Settings,
 } from "../lib/types";
 import { useConfirm } from "./ConfirmDialog";
+import { ApprovalRulesSection } from "./ApprovalRulesSection";
 import { Select } from "./Select";
+import { CONVERSATION_APPROVAL_POLICIES } from "../lib/approvalPolicies";
 import { DeploymentNamesInput } from "./DeploymentNamesInput";
 import { SidebarTabs } from "./SidebarTabs";
 import { SkillsTab } from "./SkillsTab";
@@ -290,6 +293,9 @@ export function SettingsPanel({ onClose: closeNow, initialCategory, onCollection
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
   const [completionSoundEnabled, setCompletionSoundEnabled] = useState(false);
   const [maxToolRounds, setMaxToolRounds] = useState(15);
+  const [scheduledApprovalTimeout, setScheduledApprovalTimeout] = useState(60);
+  const [topicApprovalPolicy, setTopicApprovalPolicy] = useState<ConversationApprovalPolicy>("autonomous");
+  const [chatApprovalPolicy, setChatApprovalPolicy] = useState<ConversationApprovalPolicy>("autonomous");
   const [issueAssociationsEnabled, setIssueAssociationsEnabled] = useState(true);
   // Folder backup (DB + blobs + definitions) — editable prefs plus a manual "run now" action.
   const [backupEnabled, setBackupEnabled] = useState(false);
@@ -429,6 +435,9 @@ export function SettingsPanel({ onClose: closeNow, initialCategory, onCollection
       setNotificationsEnabled(s.notifications_enabled);
       setCompletionSoundEnabled(s.completion_sound_enabled);
       setMaxToolRounds(s.max_tool_rounds);
+      setScheduledApprovalTimeout(s.scheduled_approval_timeout_minutes ?? 60);
+      setTopicApprovalPolicy(s.topic_approval_policy ?? "autonomous");
+      setChatApprovalPolicy(s.chat_approval_policy ?? "autonomous");
       setIssueAssociationsEnabled(s.issue_associations_enabled);
       setBackupEnabled(s.backup_enabled);
       setBackupDir(s.backup_dir);
@@ -527,6 +536,9 @@ export function SettingsPanel({ onClose: closeNow, initialCategory, onCollection
         notifications_enabled: notificationsEnabled,
         completion_sound_enabled: completionSoundEnabled,
         max_tool_rounds: maxToolRounds,
+        topic_approval_policy: topicApprovalPolicy,
+        chat_approval_policy: chatApprovalPolicy,
+        scheduled_approval_timeout_minutes: scheduledApprovalTimeout,
         issue_associations_enabled: issueAssociationsEnabled,
         azure_speech_endpoint: azureEndpoint,
         azure_speech_language: azureLanguage,
@@ -740,7 +752,7 @@ export function SettingsPanel({ onClose: closeNow, initialCategory, onCollection
   const formSnapshot = JSON.stringify([
     theme, font, defaultProvider, defaultModel, mockEnabled, modelFallbacks, providerConfig,
     repo, githubToken, azureKey, azureEndpoint, azureLanguage, ttlMinutes, showChatStats,
-    notificationsEnabled, completionSoundEnabled, maxToolRounds, issueAssociationsEnabled,
+    notificationsEnabled, completionSoundEnabled, maxToolRounds, topicApprovalPolicy, chatApprovalPolicy, scheduledApprovalTimeout, issueAssociationsEnabled,
     liveFastModel, liveReasoningEffort, liveEnabled, liveTranscriptRetentionDays,
     chatAutonameEnabled, chatAutonameModel, expose, httpEnabled, workiqTenant,
     playwrightBrowser, backupEnabled, backupDir, backupRetention, sys,
@@ -1017,6 +1029,67 @@ export function SettingsPanel({ onClose: closeNow, initialCategory, onCollection
                     assistant may chain before the stream aborts. Increase for
                     multi-step agents (e.g. browser automation); decrease to
                     cut runaway loops short. Range: 1–1000.
+                  </p>
+                  <label className="block text-xs text-muted mb-1 mt-4">
+                    Default tool approval — topics
+                  </label>
+                  <Select
+                    fullWidth
+                    size="sm"
+                    ariaLabel="Default tool approval policy for topics"
+                    value={topicApprovalPolicy}
+                    onChange={(v) => setTopicApprovalPolicy(v as ConversationApprovalPolicy)}
+                    options={CONVERSATION_APPROVAL_POLICIES.map((p) => ({
+                      value: p.value,
+                      label: p.label,
+                    }))}
+                  />
+                  <p className="text-[11px] text-muted mt-1">
+                    {CONVERSATION_APPROVAL_POLICIES.find((p) => p.value === topicApprovalPolicy)?.hint}
+                     Each topic can change it from the shield pill in its composer.
+                  </p>
+                  <label className="block text-xs text-muted mb-1 mt-4">
+                    Default tool approval — chats
+                  </label>
+                  <Select
+                    fullWidth
+                    size="sm"
+                    ariaLabel="Default tool approval policy for chats"
+                    value={chatApprovalPolicy}
+                    onChange={(v) => setChatApprovalPolicy(v as ConversationApprovalPolicy)}
+                    options={CONVERSATION_APPROVAL_POLICIES.map((p) => ({
+                      value: p.value,
+                      label: p.label,
+                    }))}
+                  />
+                  <p className="text-[11px] text-muted mt-1">
+                    {CONVERSATION_APPROVAL_POLICIES.find((p) => p.value === chatApprovalPolicy)?.hint}
+                     Each chat can change it from the shield pill in its composer.
+                  </p>
+                  <label className="block text-xs text-muted mb-1 mt-4">
+                    Unattended approval timeout (minutes)
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={scheduledApprovalTimeout}
+                    onChange={(e) =>
+                      setScheduledApprovalTimeout(Math.max(0, Math.floor(Number(e.target.value) || 0)))
+                    }
+                    className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
+                  />
+                  <p className="text-[11px] text-muted mt-1">
+                    When a scheduled run needs an approval nobody is there to give, it waits this
+                    long and is then denied, and the model is told nobody answered. 0 waits
+                    forever. A topic's schedule can override it.
+                  </p>
+                </section>
+
+                <section>
+                  <h3 className="text-sm font-medium mb-2">Approval rules</h3>
+                  <ApprovalRulesSection owner={{ kind: "global" }} />
+                  <p className="text-[11px] text-muted mt-2">
+                    Rules for a single conversation live in its settings.
                   </p>
                 </section>
               </>
