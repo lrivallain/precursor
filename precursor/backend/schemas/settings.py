@@ -123,6 +123,7 @@ class SettingsPayload(BaseModel):
     agents_context_tier: str | None = None
     agents_file_change_tracking: bool | None = None
     agents_approval_policy: str | None = None
+    conversation_approval_policy: str | None = None
     agents_system_prompt: str | None = None
     agents_watchdog_timeout_seconds: int | None = None
     # Workflows: seed values for a new workflow and its steps.
@@ -254,6 +255,8 @@ class SettingsRead(BaseModel):
     agents_file_change_tracking: bool = True
     # Default approval policy for agent actions: manual | balanced | autonomous.
     agents_approval_policy: str = "balanced"
+    # Default approval policy for chat/topic tool calls: manual | balanced | autonomous.
+    conversation_approval_policy: str = "autonomous"
     # Extra system-message preamble appended to every agent session.
     agents_system_prompt: str = ""
     # Minutes... seconds, actually: how long a running session may sit with no

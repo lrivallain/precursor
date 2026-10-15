@@ -15,6 +15,16 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **Tool approval policies for topics and chats.** Pick `manual`, `balanced` or
+  `autonomous` per conversation (global default in Settings → Chat, `autonomous`
+  so nothing changes until you opt in). Calls to MCP tools and Precursor's own
+  writing tools that need a go-ahead park the turn and show inline Approve /
+  Always allow here / Deny cards; the turn resumes once all are answered. The
+  model can also ask first through a built-in `request_approval` intent.
+  Pending approvals are persisted, so they survive a reload and show as an amber
+  shield badge in the sidebar. Per-tool rules are planned for a later release.
+  See [Tool approvals](website/features/approvals.md).
+
 - **A new install starts in files mode.** When nothing is declared in the
   database yet (no agent, no workflow, no role beyond the untouched `default`)
   and no source was ever chosen, Precursor records the install as migrated and

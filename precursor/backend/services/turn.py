@@ -22,6 +22,7 @@ import anyio
 
 from precursor.backend.db import SessionLocal
 from precursor.backend.models import Message, MessageRole, Topic
+from precursor.backend.services import approvals as approval_service
 from precursor.backend.services.conversation_turn import (
     clear_container_messages,
     persist_user_message,
@@ -29,12 +30,14 @@ from precursor.backend.services.conversation_turn import (
     snapshot_history,
 )
 from precursor.backend.services.events import (
+    publish_approval_changed,
     publish_message_changed,
     publish_stream_ended,
     publish_stream_started,
 )
 from precursor.backend.services.mcp.client import get_mcp_client_manager
 from precursor.backend.services.turn_engine import (
+    ApprovalsRequested,
     AssistantFinalTurn,
     AssistantTextDelta,
     AssistantToolCallsTurn,
@@ -117,6 +120,7 @@ async def _run(
             logger.warning("Scheduled run: MCP server %s unavailable: %s", server_name, err)
 
         turn_started = time.monotonic()
+        last_assistant_id: int | None = None
         async for ev in run_tool_loop(
             active=active,
             provider=settings.provider,
@@ -131,6 +135,7 @@ async def _run(
             # tool that needs one raises the app-global banner and fails fast
             # rather than parking the run for the full interactive window.
             auth_wait_timeout=0.0,
+            gate=settings.gate,
         ):
             if isinstance(ev, AssistantTextDelta):
                 # The scheduler doesn't stream deltas; it persists whole turns.
@@ -153,9 +158,19 @@ async def _run(
                 return
 
             if isinstance(ev, AssistantToolCallsTurn):
-                await persist_tool_calls_turn(
+                last_assistant_id = await persist_tool_calls_turn(
                     "topic", topic_id, ev, model=ev.model or settings.model
                 )
+
+            elif isinstance(ev, ApprovalsRequested):
+                # Nobody is watching, so park: the cards (and the sidebar badge)
+                # wait for the user, who resumes the turn from the topic.
+                async with SessionLocal() as ws:
+                    await approval_service.record_pending(
+                        ws, "topic", topic_id, last_assistant_id, ev.items
+                    )
+                await publish_approval_changed(topic_id=topic_id)
+                return
 
             elif isinstance(ev, ToolResultTurn):
                 await persist_tool_result("topic", topic_id, ev)

@@ -920,6 +920,24 @@ DEFAULT_AGENTS_SYSTEM_PROMPT = ""
 DEFAULT_AGENTS_WATCHDOG_TIMEOUT_SECONDS = 600
 
 
+CONVERSATION_APPROVAL_POLICIES = ("manual", "balanced", "autonomous")
+# Autonomous keeps chats and topics behaving as they did before approvals
+# existed; a conversation (or this default) opts in to prompting.
+DEFAULT_CONVERSATION_APPROVAL_POLICY = "autonomous"
+
+
+async def resolve_conversation_approval_policy(session: AsyncSession) -> str:
+    """Default approval policy for chat and topic tool calls (DB override on the default)."""
+    return await resolve(
+        session,
+        SettingSpec(
+            "conversation_approval_policy",
+            _str_in(CONVERSATION_APPROVAL_POLICIES),
+            default=DEFAULT_CONVERSATION_APPROVAL_POLICY,
+        ),
+    )
+
+
 async def resolve_agents_approval_policy(session: AsyncSession) -> str:
     """Default approval policy gating agent actions (DB override on the default)."""
     return await resolve(

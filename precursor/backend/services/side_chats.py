@@ -30,6 +30,7 @@ from precursor.backend.models import (
     TopicSummary,
 )
 from precursor.backend.schemas.chat import ChatRead, SideChatItem, SideChatReminder
+from precursor.backend.services import approvals as approval_service
 from precursor.backend.services.slugs import allocate_unique_slug
 from precursor.backend.services.unread import message_unread_counts
 
@@ -149,10 +150,12 @@ async def to_chat_reads(
 ) -> list[ChatRead]:
     """Serialize chats with their parent topic title resolved."""
     titles = await parent_topic_titles(session, chats)
+    pending = await approval_service.pending_counts(session, "chat", [c.id for c in chats])
     out: list[ChatRead] = []
     for chat in chats:
         read = ChatRead.model_validate(chat)
         read.unread_count = (unread or {}).get(chat.id, 0)
+        read.pending_approvals = pending.get(chat.id, 0)
         if chat.parent_topic_id is not None:
             read.parent_topic_title = titles.get(chat.parent_topic_id)
         out.append(read)
@@ -193,6 +196,7 @@ async def list_side_chats(session: AsyncSession, topic_id: int) -> list[SideChat
         ).all()
         if cid is not None
     }
+    pending = await approval_service.pending_counts(session, "chat", ids)
     reminders = {
         r.chat_id: r
         for r in (await session.execute(select(Reminder).where(Reminder.chat_id.in_(ids))))
@@ -211,6 +215,7 @@ async def list_side_chats(session: AsyncSession, topic_id: int) -> list[SideChat
                 parent_message_id=chat.parent_message_id,
                 from_reply=chat.seed_content is not None,
                 unread_count=unread.get(chat.id, 0),
+                pending_approvals=pending.get(chat.id, 0),
                 message_count=count,
                 last_message_at=last,
                 created_at=chat.created_at,

@@ -367,6 +367,8 @@ export function useTopicsController(deps: TopicsControllerDeps): TopicsControlle
             }
           })();
         }
+      } else if (event.type === "approval.changed") {
+        if (event.chat_id == null) void refreshTree();
       } else if (event.type === "message.changed") {
         if (event.chat_id != null) return;
         const topicId = event.topic_id;

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { ApprovalCards } from "./ApprovalCards";
 import { CompactionMarker } from "./CompactContext";
 import { MessageBubble } from "./MessageBubble";
 import { SideChatLinks } from "./SideChatsSection";
@@ -10,7 +11,7 @@ import { stripSuggestionBlock } from "../lib/suggestions";
 import { parseToolMeta } from "../lib/toolMeta";
 import type { MessageDeletion, PendingDelete } from "../lib/useMessageDeletion";
 import { TURN_ANCHOR_ATTR } from "../lib/useTurnTimeline";
-import type { Message, SideChatItem } from "../lib/types";
+import type { Message, SideChatItem, ToolApproval, ToolApprovalDecision } from "../lib/types";
 import type { PromptRewindActions } from "../lib/useConversation";
 import type { ReplyEditController } from "../lib/useReplyEdit";
 
@@ -190,6 +191,9 @@ interface TranscriptTailProps {
   pendingReasoning: string;
   onPickSuggestion: (text: string) => void;
   onStop: () => void;
+  /** Tool calls the turn is parked on. */
+  approvals?: ToolApproval[];
+  onDecideApproval?: (approval: ToolApproval, decision: ToolApprovalDecision) => Promise<void>;
 }
 
 /** The live reply while streaming, otherwise the last answer's suggestion chips. */
@@ -200,6 +204,8 @@ export function TranscriptTail({
   pendingReasoning,
   onPickSuggestion,
   onStop,
+  approvals,
+  onDecideApproval,
 }: TranscriptTailProps) {
   if (streaming) {
     return (
@@ -211,6 +217,9 @@ export function TranscriptTail({
         onStop={onStop}
       />
     );
+  }
+  if (approvals && approvals.length > 0 && onDecideApproval) {
+    return <ApprovalCards approvals={approvals} onDecide={onDecideApproval} />;
   }
   const last = visibleMessages[visibleMessages.length - 1];
   if (last?.role === "assistant" && last.suggestions?.length) {

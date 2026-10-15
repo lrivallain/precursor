@@ -37,6 +37,7 @@ from precursor.backend.services.app_settings import (
     resolve_agents_watchdog_timeout,
     resolve_azure_speech_endpoint,
     resolve_azure_speech_language,
+    resolve_conversation_approval_policy,
     resolve_iq_ask_model,
     resolve_iq_embedding_model,
     resolve_iq_embeddings_enabled,
@@ -228,6 +229,7 @@ async def _agents_block(session: AsyncSession) -> dict[str, Any]:
         "agents_context_tier": await resolve_agents_context_tier(session),
         "agents_file_change_tracking": await resolve_agents_file_change_tracking(session),
         "agents_approval_policy": await resolve_agents_approval_policy(session),
+        "conversation_approval_policy": await resolve_conversation_approval_policy(session),
         "agents_system_prompt": await resolve_agents_system_prompt(session),
         "agents_watchdog_timeout_seconds": await resolve_agents_watchdog_timeout(session),
         **{

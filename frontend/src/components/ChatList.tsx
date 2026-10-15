@@ -1,3 +1,4 @@
+import { ApprovalBadge } from "./ApprovalBadge";
 import { useEffect, useMemo, useState } from "react";
 import {
   AlarmClock,
@@ -200,6 +201,9 @@ export function ChatList({
               className="shrink-0 text-accent"
               aria-label="Reminder waiting"
             />
+          )}
+          {(chat.pending_approvals ?? 0) > 0 && (
+            <ApprovalBadge count={chat.pending_approvals ?? 0} />
           )}
           {chat.unread_count > 0 && !isActive && (
             <span className="shrink-0 rounded-full bg-accent px-1.5 text-xs text-white">

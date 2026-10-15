@@ -2,10 +2,11 @@ import { useState } from "react";
 import { Archive, ArrowUpRight, Eraser, Trash2, X } from "lucide-react";
 import { api } from "../lib/api";
 import { clearConversation } from "../lib/useConversation";
-import type { Chat, Topic } from "../lib/types";
+import type { Chat, ConversationApprovalPolicy, Topic } from "../lib/types";
 import { useConfirm } from "./ConfirmDialog";
 import { RefineTextarea } from "./RefineTextarea";
 import { PromoteChatDialog } from "./PromoteChatDialog";
+import { ApprovalPolicyPicker } from "./ApprovalPolicyPicker";
 
 interface Props {
   chat: Chat;
@@ -41,6 +42,9 @@ export function ChatSettingsPanel({
   const [slug, setSlug] = useState(chat.slug);
   const [description, setDescription] = useState(chat.description ?? "");
   const [asSystemPrompt, setAsSystemPrompt] = useState(chat.description_as_system_prompt);
+  const [approvalPolicy, setApprovalPolicy] = useState<ConversationApprovalPolicy | null>(
+    chat.approval_policy ?? null,
+  );
   const [saving, setSaving] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [archiving, setArchiving] = useState(false);
@@ -60,6 +64,7 @@ export function ChatSettingsPanel({
         slug: slug.trim() && slug.trim() !== chat.slug ? slug.trim() : undefined,
         description: description.trim() ? description.trim() : null,
         description_as_system_prompt: asSystemPrompt,
+        approval_policy: approvalPolicy,
       });
       onSaved(updated);
       onClose();
@@ -209,6 +214,13 @@ export function ChatSettingsPanel({
                 </span>
               </label>
             </section>
+
+            <ApprovalPolicyPicker
+              subject="chat"
+              value={approvalPolicy}
+              onChange={setApprovalPolicy}
+              disabled={saving}
+            />
 
             {error && <p className="text-xs text-red-500">{error}</p>}
 

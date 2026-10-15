@@ -21,8 +21,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator, Collection
-from dataclasses import dataclass
+from collections.abc import AsyncIterator, Callable, Collection
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -31,8 +31,11 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute, selectinload
 
+from precursor.backend.db import SessionLocal
 from precursor.backend.models import MESSAGE_KIND_COMPACTION, Attachment, Message, MessageRole
+from precursor.backend.models.tool_approval import APPROVAL_APPROVED, APPROVAL_KIND_INTENT
 from precursor.backend.schemas import ChatRequest
+from precursor.backend.services import approvals as approval_service
 from precursor.backend.services import side_chats
 from precursor.backend.services.app_settings import (
     resolve_llm_max_attachment_chars,
@@ -45,10 +48,11 @@ from precursor.backend.services.app_settings import (
 )
 from precursor.backend.services.attachment_extraction import warm_attachment_text_cache
 from precursor.backend.services.context_budget import elide_stale_tool_results
-from precursor.backend.services.events import is_streaming
+from precursor.backend.services.events import is_streaming, publish_approval_changed
 from precursor.backend.services.github_auth import resolve_github_token
 from precursor.backend.services.llm import get_llm_provider
-from precursor.backend.services.llm.base import ChatMessage, LLMProvider
+from precursor.backend.services.llm.base import ChatMessage, LLMProvider, ToolCallRequest
+from precursor.backend.services.mcp.client import AUTH_PAUSE_TIMEOUT_SECONDS, get_mcp_client_manager
 from precursor.backend.services.message_paging import list_message_window
 from precursor.backend.services.model_fallbacks import (
     resolve_model_category,
@@ -58,10 +62,14 @@ from precursor.backend.services.model_fallbacks import (
 from precursor.backend.services.note_drafts import consume_note_draft_attachments_to_message
 from precursor.backend.services.turn_engine import (
     ContainerKind,
+    ToolAuthRequired,
+    ToolResultTurn,
     container_message_kwargs,
+    execute_tool_call,
     hydrate_history,
     lifecycle_stream,
     load_enabled_mcp_servers,
+    persist_tool_result,
     prepare_retry_turn,
     publish_container_changed,
     run_message_stream,
@@ -91,6 +99,8 @@ class TurnSettings:
     provider: LLMProvider
     github_token: str
     enabled_servers: list[str]
+    # Approval policy for chats and topics; ``None`` runs every call (workspace chat).
+    gate: approval_service.ApprovalGate | None = None
 
 
 async def resolve_turn_settings(
@@ -105,8 +115,33 @@ async def resolve_turn_settings(
 
     ``model_override`` is the composer's per-turn model pick; the saved model is
     only looked up when it is absent. ``exclude_servers`` removes MCP servers
-    from the enabled set for this turn only.
+    from the enabled set for this turn only. A conversation (``topic_id`` or
+    ``chat_id``) also gets its approval gate.
     """
+    settings = await _resolve_base_settings(
+        session,
+        model_override=model_override,
+        exclude_servers=exclude_servers,
+        topic_id=topic_id,
+        chat_id=chat_id,
+    )
+    if topic_id is not None:
+        gate = await approval_service.build_gate(session, "topic", topic_id)
+    elif chat_id is not None:
+        gate = await approval_service.build_gate(session, "chat", chat_id)
+    else:
+        return settings
+    return replace(settings, gate=gate)
+
+
+async def _resolve_base_settings(
+    session: AsyncSession,
+    *,
+    model_override: str | None,
+    exclude_servers: Collection[str],
+    topic_id: int | None,
+    chat_id: int | None,
+) -> TurnSettings:
     enabled = [s for s in await load_enabled_mcp_servers(session) if s not in exclude_servers]
     from precursor.backend.services.conversation_llm import resolve_selection, saved_selection
 
@@ -182,6 +217,10 @@ async def persist_user_turn(
         )
         return user_msg, list(user_msg.attachments)
 
+    # Moving on from a parked turn settles its open approvals first, so their
+    # "not run" tool rows land before the new prompt and the history stays valid.
+    if await approval_service.abandon_open(session, kind, container_id):
+        await publish_approval_changed(**container_message_kwargs(kind, container_id))
     user_msg = await persist_user_message(session, kind, container_id, payload.content)
 
     # Only adopt rows that belong to this container and are still unbound, so a
@@ -310,11 +349,24 @@ def stream_turn(
     *,
     system_prompt: str,
     history: list[ChatMessage],
-    echo: dict[str, Any],
+    echo: dict[str, Any] | None,
     settings: TurnSettings,
 ) -> AsyncIterator[dict[str, str]]:
     """The SSE event stream for a prepared turn, framed by stream.started/ended."""
-    inner = run_message_stream(
+    return lifecycle_stream(
+        kind, container_id, _turn_events(kind, container_id, system_prompt, history, echo, settings)
+    )
+
+
+def _turn_events(
+    kind: ContainerKind,
+    container_id: int,
+    system_prompt: str,
+    history: list[ChatMessage],
+    echo: dict[str, Any] | None,
+    settings: TurnSettings,
+) -> AsyncIterator[dict[str, str]]:
+    return run_message_stream(
         kind=kind,
         container_id=container_id,
         system_prompt=system_prompt,
@@ -328,8 +380,119 @@ def stream_turn(
         provider=settings.provider,
         github_token=settings.github_token,
         enabled_servers=settings.enabled_servers,
+        gate=settings.gate,
     )
-    return lifecycle_stream(kind, container_id, inner)
+
+
+# -- Approvals: park and resume --------------------------------------------
+
+
+class ResumeConflict(Exception):
+    """The conversation can't resume now (still waiting, or already running)."""
+
+
+async def check_resumable(
+    session: AsyncSession, kind: ContainerKind, container_id: int
+) -> list[Any]:
+    """The decided approvals a resume will run, or a conflict explaining why not."""
+    if is_streaming(kind, container_id):
+        raise ResumeConflict("This conversation is already running")
+    decided, waiting = await approval_service.decided_unexecuted(session, kind, container_id)
+    if waiting:
+        raise ResumeConflict(f"{waiting} approval(s) still need an answer")
+    if not decided:
+        raise ResumeConflict("Nothing to resume")
+    return decided
+
+
+async def _settle_approvals(
+    kind: ContainerKind,
+    container_id: int,
+    decided: list[Any],
+    settings: TurnSettings,
+) -> AsyncIterator[dict[str, str]]:
+    """Write the tool result of every decided approval, running approved tools."""
+    manager = get_mcp_client_manager()
+    async with manager.acquired(
+        settings.enabled_servers, github_token=settings.github_token, advertise_cached=True
+    ) as active:
+        for row in decided:
+            call = ToolCallRequest(id=row.tool_call_id, name=row.tool_name, arguments=row.arguments)
+            if row.kind == APPROVAL_KIND_INTENT:
+                outcome = ToolResultTurn(
+                    call,
+                    approval_service.intent_result(row),
+                    row.status != APPROVAL_APPROVED,
+                    None,
+                )
+            elif row.status != APPROVAL_APPROVED:
+                outcome = ToolResultTurn(call, approval_service.denied_tool_result(row), True, None)
+            else:
+                executed: ToolResultTurn | None = None
+                async for step in execute_tool_call(active, call, AUTH_PAUSE_TIMEOUT_SECONDS):
+                    if isinstance(step, ToolAuthRequired):
+                        yield {
+                            "event": "mcp_auth_required",
+                            "data": json.dumps(
+                                {"server": step.server, "message": step.message, "tool": step.tool}
+                            ),
+                        }
+                    else:
+                        executed = step
+                assert executed is not None
+                outcome = executed
+            message_id = await persist_tool_result(kind, container_id, outcome)
+            await approval_service.mark_executed(row.id)
+            yield {
+                "event": "tool_result",
+                "data": json.dumps(
+                    {
+                        "message_id": message_id,
+                        "tool_call_id": call.id,
+                        "name": call.name,
+                        "arguments": call.arguments,
+                        "content": outcome.result_text,
+                        "is_error": outcome.is_error,
+                        "link": outcome.link,
+                    }
+                ),
+            }
+
+
+def resume_turn(
+    kind: ContainerKind,
+    container_id: int,
+    *,
+    system_prompt: str,
+    decided: list[Any],
+    settings: TurnSettings,
+    finish_history: Callable[[list[ChatMessage]], list[ChatMessage]] | None = None,
+) -> AsyncIterator[dict[str, str]]:
+    """Continue a parked turn: run the decided calls, then let the model go on.
+
+    The history is read only after the tool rows exist, so the parked assistant
+    turn hydrates intact. ``finish_history`` lets a chat re-apply its system
+    instruction to the fresh snapshot.
+    """
+
+    async def events() -> AsyncIterator[dict[str, str]]:
+        async for evt in _settle_approvals(kind, container_id, decided, settings):
+            yield evt
+        await publish_approval_changed(**container_message_kwargs(kind, container_id))
+        async with SessionLocal() as s:
+            history = await snapshot_history(s, kind, container_id)
+        if finish_history is not None:
+            history = finish_history(history)
+        # A continued turn can park again, so the gate is rebuilt: "always allow"
+        # answers given a moment ago apply to the very next call.
+        async with SessionLocal() as s:
+            gate = await approval_service.build_gate(s, kind, container_id)
+        async for evt in _turn_events(
+            kind, container_id, system_prompt, history, None, replace(settings, gate=gate)
+        ):
+            yield evt
+
+    return lifecycle_stream(kind, container_id, events())
 
 
 # -- Transcript upkeep -----------------------------------------------------
@@ -357,9 +520,11 @@ async def clear_container_messages(
         await side_chats.detach_messages(
             session, select(Message.id).where(Message.topic_id == container_id)
         )
+    await approval_service.delete_for_container(session, kind, container_id)
     await session.execute(delete(Message).where(_message_fk(kind) == container_id))
     await session.commit()
     await publish_container_changed(kind, container_id)
+    await publish_approval_changed(**container_message_kwargs(kind, container_id))
 
 
 async def delete_container_message(
@@ -372,6 +537,7 @@ async def delete_container_message(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Message not found")
     if kind == "topic":
         await side_chats.detach_messages(session, select(Message.id).where(Message.id == msg.id))
+    await approval_service.delete_for_messages(session, [msg.id])
     await session.delete(msg)
     await session.commit()
     await publish_container_changed(kind, container_id)
@@ -526,9 +692,11 @@ async def rewind_container(
     )
     if kind == "topic":
         await side_chats.detach_messages(session, select(Message.id).where(*in_cut))
+    await approval_service.delete_for_messages(session, select(Message.id).where(*in_cut))
     result = await session.execute(delete(Message).where(*in_cut))
     await session.commit()
     await publish_container_changed(kind, container_id)
+    await publish_approval_changed(**container_message_kwargs(kind, container_id))
     return int(getattr(result, "rowcount", 0) or 0)
 
 

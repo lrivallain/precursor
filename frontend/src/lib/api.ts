@@ -23,6 +23,9 @@ import type {
   AgentRuntimeStatus,
   AgentSchedule,
   AgentApprovalPolicy,
+  ApprovalDecisionResult,
+  ToolApproval,
+  ToolApprovalDecision,
   AgentScheduleCreate,
   AgentScheduleUpdate,
   AgentSession,
@@ -218,8 +221,12 @@ function parseDetail(body: string): string | null {
 export async function httpError(res: Response): Promise<Error> {
   const body = await res.text().catch(() => "");
   const detail = parseDetail(body);
-  if (detail) return new Error(detail);
-  return new Error(body ? `${res.status} ${res.statusText}: ${body}` : `${res.status} ${res.statusText}`);
+  const err = new Error(
+    detail ??
+      (body ? `${res.status} ${res.statusText}: ${body}` : `${res.status} ${res.statusText}`),
+  );
+  // Lets callers tell an expected conflict (e.g. 409) from a real failure.
+  return Object.assign(err, { status: res.status });
 }
 
 // FastAPI errors surface through `request`/`postForm` already reduced to their
@@ -298,6 +305,9 @@ export interface ContainerApi {
    */
   rewind: (fromMessageId: number, throughMessageId?: number) => Promise<RewindResult>;
   uploadAttachment: (file: File) => Promise<Attachment>;
+  /** Tool calls waiting on the user, plus decided ones not yet run. */
+  listApprovals: () => Promise<ToolApproval[]>;
+  decideApproval: (approvalId: number, decision: ToolApprovalDecision) => Promise<ApprovalDecisionResult>;
   notes: {
     getDraft: () => Promise<NotesDraft>;
     saveDraft: (text: string) => Promise<NotesDraft>;
@@ -320,6 +330,16 @@ function rewindContainer(
       from_message_id: fromMessageId,
       through_message_id: throughMessageId ?? null,
     }),
+  });
+}
+
+function decideApproval(
+  url: string,
+  decision: ToolApprovalDecision,
+): Promise<ApprovalDecisionResult> {
+  return request<ApprovalDecisionResult>(url, {
+    method: "POST",
+    body: JSON.stringify(decision),
   });
 }
 
@@ -978,6 +998,8 @@ export const api = {
           rewind: (fromId, throughId) =>
             rewindContainer(`/api/topics/${id}/messages`, fromId, throughId),
           uploadAttachment: (file) => api.attachments.uploadForTopic(id, file),
+          listApprovals: () => request<ToolApproval[]>(`/api/topics/${id}/approvals`),
+          decideApproval: (aid, decision) => decideApproval(`/api/topics/${id}/approvals/${aid}`, decision),
           notes: {
             getDraft: () => api.notes.getDraft(id),
             saveDraft: (text) => api.notes.saveDraft(id, text),
@@ -1001,6 +1023,8 @@ export const api = {
           rewind: (fromId, throughId) =>
             rewindContainer(`/api/chats/${id}/messages`, fromId, throughId),
           uploadAttachment: (file) => api.attachments.uploadForChat(id, file),
+          listApprovals: () => request<ToolApproval[]>(`/api/chats/${id}/approvals`),
+          decideApproval: (aid, decision) => decideApproval(`/api/chats/${id}/approvals/${aid}`, decision),
           notes: {
             getDraft: () => api.chats.getNotesDraft(id),
             saveDraft: (text) => api.chats.saveNotesDraft(id, text),

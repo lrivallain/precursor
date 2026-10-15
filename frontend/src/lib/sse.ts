@@ -93,6 +93,16 @@ export function streamChatSession(
   return postSSE(`/api/chats/${chatId}/messages/stream`, body, opts);
 }
 
+/** Continue a turn parked on tool approvals once every one is decided. */
+export function resumeConversation(
+  kind: "topic" | "chat",
+  id: number,
+  opts: StreamChatOptions,
+): Promise<void> {
+  const base = kind === "topic" ? "topics" : "chats";
+  return postSSE(`/api/${base}/${id}/approvals/resume`, {}, opts);
+}
+
 async function consumeStream(
   stream: ReadableStream<Uint8Array>,
   onEvent: (event: SSEEvent) => void,

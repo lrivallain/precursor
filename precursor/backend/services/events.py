@@ -429,6 +429,18 @@ async def publish_read_changed(
     )
 
 
+async def publish_approval_changed(
+    *, topic_id: int | None = None, chat_id: int | None = None
+) -> None:
+    """Signal that a conversation's pending approvals changed.
+
+    Emitted when a turn parks on an approval, when one is decided, and when they
+    are cancelled, so every window refreshes the sidebar badge and the approval
+    cards of that conversation.
+    """
+    await _bus.publish({"type": "approval.changed", "topic_id": topic_id, "chat_id": chat_id})
+
+
 async def publish_meeting_changed(meeting_session_id: int | None = None) -> None:
     """Signal that the set of meeting sessions (or one session) changed.
 

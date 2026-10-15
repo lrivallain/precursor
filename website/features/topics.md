@@ -100,6 +100,13 @@ short brief of where it stands and what is still open, generated on request
 from the conversation, notes and attachments, and merged change by change once
 you have edited it yourself.
 
+## Tool approvals
+
+A topic can override the global [tool approval policy](/features/approvals) in
+its settings drawer. Calls that wait for you show up as inline cards under the
+conversation, and the topic's sidebar row carries an amber shield badge with the
+number of pending approvals, even after a reload.
+
 ## Side chats
 
 To explore a tangent without adding it to the topic's conversation, start a

@@ -242,6 +242,8 @@ export function ChatSessionPanel({
               pendingReasoning={conv.pendingReasoning}
               onPickSuggestion={conv.sendSuggestion}
               onStop={conv.stop}
+              approvals={conv.approvals.approvals}
+              onDecideApproval={conv.approvals.decide}
             />
           </div>
         </div>

@@ -20,11 +20,18 @@ import { api } from "../lib/api";
 import { archiveTopic } from "../lib/sideChats";
 import { clearConversation } from "../lib/useConversation";
 import { useSettings } from "../lib/settingsStore";
-import type { Collection, Schedule, Topic, TopicNode } from "../lib/types";
+import type {
+  Collection,
+  ConversationApprovalPolicy,
+  Schedule,
+  Topic,
+  TopicNode,
+} from "../lib/types";
 import type { IssueContextState } from "../lib/useIssueContext";
 import { useConfirm } from "./ConfirmDialog";
 import { Select } from "./Select";
 import { RefineTextarea } from "./RefineTextarea";
+import { ApprovalPolicyPicker } from "./ApprovalPolicyPicker";
 import { Markdown } from "./Markdown";
 import {
   defaultRecurrence,
@@ -73,6 +80,9 @@ export function TopicSettingsPanel({
   const [collections, setCollections] = useState<Collection[]>([]);
   const [collectionId, setCollectionId] = useState<number | "">(topic.collection_id ?? "");
   const [permalinkCopied, setPermalinkCopied] = useState(false);
+  const [approvalPolicy, setApprovalPolicy] = useState<ConversationApprovalPolicy | null>(
+    topic.approval_policy ?? null,
+  );
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [archiving, setArchiving] = useState(false);
@@ -159,6 +169,7 @@ export function TopicSettingsPanel({
         collection_id: collectionId === "" ? null : collectionId,
         github_repo: repo.trim() ? repo.trim() : null,
         github_issue_number: issueNumber.trim() ? Number(issueNumber.trim()) : null,
+        approval_policy: approvalPolicy,
       });
       onSaved(updated);
       onClose();
@@ -369,6 +380,13 @@ export function TopicSettingsPanel({
                   className="w-full resize-y bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
                 />
               </section>
+
+              <ApprovalPolicyPicker
+                subject="topic"
+                value={approvalPolicy}
+                onChange={setApprovalPolicy}
+                disabled={saving}
+              />
 
               <section>
                 <label className="block text-xs text-muted mb-1">Parent topic</label>
