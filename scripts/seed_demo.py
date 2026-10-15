@@ -813,6 +813,49 @@ async def _seed_timeline_chat(s: AsyncSession) -> None:
             await s.flush()
 
 
+_BREAKDOWN_TURNS: list[tuple[str, str, int]] = [
+    (
+        "We need a capacity plan for the reporting stack next year. Start from the "
+        "current peak of 180 concurrent jobs and a 35% yearly growth rate.",
+        "At 35% growth the peak reaches roughly **243 concurrent jobs** by the end of "
+        "next year. Planning for 20% headroom on top of that gives **~290 slots**.\n\n"
+        "- Today: 180 slots (peak)\n- Year end: 243 slots\n- With headroom: 290 slots",
+        4_700,
+    ),
+    (
+        "Now compare running those 290 slots on managed batch versus our own cluster, "
+        "cost first and then operational load.",
+        "Managed batch is cheaper below ~200 slots and the cluster wins above that, "
+        "provided one engineer owns upgrades.\n\n"
+        "| Option | Monthly cost | Ops load |\n| --- | --- | --- |\n"
+        "| Managed batch | $18.4k | Low |\n| Own cluster | $14.1k | Medium |",
+        5_600,
+    ),
+]
+
+
+async def _seed_breakdown_chat(s: AsyncSession) -> None:
+    chat = Chat(title="Reporting stack capacity plan", slug="reporting-capacity-plan")
+    s.add(chat)
+    await s.flush()
+    for i, (prompt, answer, prompt_tokens) in enumerate(_BREAKDOWN_TURNS):
+        hours = 3 - i
+        for row in (
+            Message(role=MessageRole.USER, content=prompt, created_at=ago(hours=hours)),
+            Message(
+                role=MessageRole.ASSISTANT,
+                content=answer,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=420,
+                model="mock",
+                created_at=ago(hours=hours - 0.1),
+            ),
+        ):
+            row.chat_id = chat.id
+            s.add(row)
+            await s.flush()
+
+
 _EMAIL_PROMPT = "Draft a short email telling the vendor we need the renewal quote by Friday."
 _EMAIL_ORIGINAL = (
     "**Subject:** Renewal quote needed by Friday\n\n"
@@ -872,6 +915,14 @@ async def seed() -> None:
         await s.merge(AppSetting(key="agents_enabled", value="false"))
         await s.merge(AppSetting(key="llm_provider", value='"mock"'))
         await s.merge(AppSetting(key="llm_model", value='"mock"'))
+        # Built-in servers only: they spawn locally, so the context breakdown
+        # sees a real system-tools vs MCP-tools split without any network.
+        await s.merge(
+            AppSetting(
+                key="mcp_enabled",
+                value='{"precursor": true, "fetch": true, "drawio": true, "cmd-runner": true}',
+            )
+        )
 
         # ---------------- roles ----------------
         # The built-in `default` role is seeded by a migration; only add extras.
@@ -1123,6 +1174,7 @@ async def seed() -> None:
         # sized against the mock model's 8k window so the stats bar reads true.
         await _seed_compacted_topic(s, platform.id)
         await _seed_timeline_chat(s)
+        await _seed_breakdown_chat(s)
         await _seed_edited_reply_chat(s)
         # A topic with side chats started from it and from its replies.
         await seed_side_chats(s, platform.id)
@@ -1302,6 +1354,17 @@ async def seed() -> None:
                     "The draft is ready for review before publishing.\n\n"
                     "```suggest\nMake it shorter\nAdd a next-steps section\n```"
                 ),
+                at=ago(days=1),
+            ),
+            AgentEvent(
+                kind="context_usage",
+                data={
+                    "current_tokens": 52_400,
+                    "token_limit": 200_000,
+                    "conversation_tokens": 31_200,
+                    "system_tokens": 8_900,
+                    "tool_definitions_tokens": 12_300,
+                },
                 at=ago(days=1),
             ),
             # The SDK sends a round's thinking right after its message; the

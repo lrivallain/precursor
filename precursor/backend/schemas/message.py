@@ -96,7 +96,7 @@ class RewindResult(BaseModel):
 
 
 class ContextEstimateRead(BaseModel):
-    """Estimated history the next turn sends (system prompt and tools excluded)."""
+    """Estimated history the next turn sends, and the system prompt and tools on top."""
 
     tokens: int
     by_role: dict[str, int]
@@ -105,6 +105,9 @@ class ContextEstimateRead(BaseModel):
     compacted: bool
     compaction_id: int | None = None
     compacted_messages: int = 0
+    system_tokens: int = 0
+    system_tools_tokens: int = 0
+    mcp_tools_tokens: int = 0
 
 
 class StoppedTurn(BaseModel):

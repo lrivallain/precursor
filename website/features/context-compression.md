@@ -68,8 +68,35 @@ under `/compact` in **Settings → Usage stats**.
 ### Knowing when to compact
 
 The stats panel's **context window** bar shows how much of the model's window
-the last turn used. Past **80%**, the **Compact context** button turns amber
-with a nudge. The collapsed stats rail shows an amber shortcut too.
+the last turn used, split into what fills it:
+
+- **System prompt**: the role, instructions, skills and memories sent every turn.
+- **System tools**: Precursor's built-in tools (the `precursor` server and the
+  approval tool).
+- **MCP tools**: the tool definitions of every other enabled MCP server. This
+  is often the largest slice, so it is the first place to look when a short chat
+  already feels full. Disable servers a conversation doesn't need.
+- **Messages**: the conversation itself, tool results included.
+- **Free space** and **Buffer**: what is left. The buffer is the last 20% of the
+  window, kept clear so the model has room to answer; it is where the 80% nudge
+  below kicks in.
+
+<Screenshot src="/screenshots/context-breakdown.png" alt="The conversation stats panel with a segmented context window bar and a legend listing system prompt, system tools, MCP tools, messages, free space and buffer with their share and token count" caption="The context window, broken down by what fills it." />
+
+Hover a row for what it covers. Values marked `≈` are estimates: the provider
+reports a single total per turn, so Precursor sizes the system prompt and the
+tool definitions itself. A topic's linked-issue body is left out of that
+estimate.
+
+[Agents](/features/agents-mode/running) show the same breakdown in the Insights
+panel, using the split the Copilot SDK reports (system prompt, tool definitions
+and messages). The SDK doesn't separate MCP tools from built-in ones, so there
+is a single **System tools** row.
+
+<Screenshot src="/screenshots/agents-context.png" alt="The agent Insights panel with the same segmented context window bar and legend" caption="The agent Insights panel, with the SDK's own breakdown." />
+
+Past **80%**, the **Compact context** button turns amber with a nudge. The
+collapsed stats rail shows an amber shortcut too.
 
 <Screenshot src="/screenshots/context-compression-nudge.png" alt="The conversation stats panel with the context window bar at 87% and an amber call-out: Context is 87% full, with a Compact context button" caption="Past 80% of the window, the stats panel suggests compacting." />
 

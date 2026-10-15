@@ -70,7 +70,9 @@ an interrupted turn rather than replace it.
 The runtime compacts a long conversation on its own when the context window runs
 low. **`/compact [focus]`** in the composer, or **Compact context** under
 **Usage** in the insights sidebar, does it now. Each compaction shows in the
-timeline as a *context compacted* marker with the tokens freed. See
+timeline as a *context compacted* marker with the tokens freed. The **Usage**
+section also breaks the window down into system prompt, system tools and
+messages, with the free space and the compaction buffer. See
 [context compression](/features/context-compression#compacting-an-agent).
 
 To drop only the last few turns instead of the whole context, [rewind](/features/rewind#in-agent-sessions)

@@ -1047,6 +1047,8 @@ def test_normalise_context_usage_event_captures_window() -> None:
             self.current_tokens = 8000
             self.token_limit = 128000
             self.conversation_tokens = 7500
+            self.system_tokens = 300
+            self.tool_definitions_tokens = 200
 
     event = normalize_event(SessionUsageInfoData())
 
@@ -1055,6 +1057,8 @@ def test_normalise_context_usage_event_captures_window() -> None:
     assert event.data["current_tokens"] == 8000
     assert event.data["token_limit"] == 128000
     assert event.data["conversation_tokens"] == 7500
+    assert event.data["system_tokens"] == 300
+    assert event.data["tool_definitions_tokens"] == 200
 
 
 def test_normalise_tool_completion_failure_captures_error() -> None:

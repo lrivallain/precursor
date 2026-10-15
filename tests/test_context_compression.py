@@ -10,6 +10,7 @@ starts from, and the ``/compact`` endpoints for topics, chats and agents.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -253,6 +254,31 @@ def test_compact_appends_a_marker_and_undo_restores_history(monkeypatch, kind) -
             if row["kind"] == "compaction":
                 assert client.delete(f"{base}/{row['id']}").status_code == 204
         assert client.get(f"{base}/context").json()["compacted"] is False
+
+
+@pytest.mark.parametrize("kind", ["topic", "chat"])
+def test_context_estimate_reports_system_prompt_and_tool_tokens(monkeypatch, kind) -> None:
+    """The system prompt and tool catalogue ride on every turn: the estimate splits
+    Precursor's own tools from other MCP servers' so the panel can chart them."""
+    from precursor.backend.services.mcp.client import MCPToolDef, get_mcp_client_manager
+
+    manager = get_mcp_client_manager()
+    tool = MCPToolDef(server="x", name="t", description="d" * 300, input_schema={"type": "object"})
+
+    async def _enabled(_session):
+        return ["precursor", "demo-srv"]
+
+    monkeypatch.setattr(compaction_mod, "load_enabled_mcp_servers", _enabled)
+    monkeypatch.setattr(manager, "get", lambda n: SimpleNamespace(tools=[replace(tool, server=n)]))
+    app = create_app()
+    with TestClient(app) as client:
+        base = "/api/topics" if kind == "topic" else "/api/chats"
+        cid = client.post(base, json={"title": "Sized"}).json()["id"]
+        est = client.get(f"{base}/{cid}/messages/context").json()
+    assert est["system_tokens"] > 0
+    assert est["system_tools_tokens"] >= 100
+    assert est["mcp_tools_tokens"] >= 100
+    assert est["tokens"] == 0
 
 
 def test_compact_is_refused_while_a_reply_is_generating(monkeypatch) -> None:

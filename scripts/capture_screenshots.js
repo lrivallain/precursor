@@ -1210,6 +1210,42 @@ const scenes = {
     },
   },
 
+  // The stats panel's context-window breakdown: system prompt, system tools,
+  // MCP tools and messages, plus the free space and the compaction buffer.
+  // Clipped to the panel so the sidebar's persona footer stays out.
+  "context-breakdown": {
+    viewport: { width: 1440, height: 900 },
+    async go(page) {
+      await page.addInitScript(() => localStorage.setItem("precursor:chat-stats:collapsed", "0"));
+      await page.goto(`${BASE}/chats/reporting-capacity-plan`, { waitUntil: "networkidle" });
+      await page.getByText("System prompt").waitFor();
+      await page.mouse.move(0, 0);
+      await sleep(400);
+      const aside = await page.locator("aside", { hasText: "Conversation" }).last().boundingBox();
+      if (!aside) throw new Error("Seed the reporting-capacity-plan chat first.");
+      return { x: Math.floor(aside.x), y: Math.floor(aside.y), width: Math.ceil(aside.width), height: 460 };
+    },
+  },
+
+  // The agent Insights panel reports the SDK's own split of the window.
+  "agents-context": {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      const response = await page.request.get(`${BASE}/api/agents`);
+      const agents = await response.json();
+      const agent = agents.find((item) => item.title === "Digest writer");
+      if (!agent) throw new Error("Seed the demo Digest writer before capturing agents.");
+      await page.addInitScript(() => localStorage.setItem("precursor:agent-show-panel:collapsed", "0"));
+      await page.goto(`${BASE}/agents/${agent.public_id}`, { waitUntil: "networkidle" });
+      await page.getByText("System prompt").waitFor();
+      await page.mouse.move(0, 0);
+      await sleep(400);
+      const aside = await page.locator("aside", { hasText: "Insights" }).last().boundingBox();
+      if (!aside) throw new Error("Insights panel not found.");
+      return { x: Math.floor(aside.x), y: Math.floor(aside.y), width: Math.ceil(aside.width), height: 440 };
+    },
+  },
+
   // The transcript timeline: scrolled back to an earlier turn, a later dash
   // hovered for its preview card, and the "Reading turn N" bar above the
   // composer. Clipped right of the sidebar so its persona footer stays out.

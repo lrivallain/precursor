@@ -15,6 +15,7 @@ import { useSettings } from "../lib/settingsStore";
 import { useIsNarrow } from "../lib/useMediaQuery";
 import type { ContextEstimate, ConversationLLMSelection, Message, ReminderContainer } from "../lib/types";
 import { COMPACT_NUDGE_PERCENT, CompactContextButton } from "./CompactContext";
+import { ContextBreakdown } from "./ContextBreakdown";
 import { ReminderSection, reminderSummary, type ReminderPanelControls } from "./ChatStatsReminder";
 import { SideChatsSection, type SideChatsControls } from "./SideChatsSection";
 import { ArtifactsSection, useConversationArtifacts } from "./ArtifactsSection";
@@ -199,7 +200,12 @@ export function ChatStatsPanel({
   const lastUsageId = totals.rounds.length > 0 ? totals.rounds[totals.rounds.length - 1].id : 0;
   const compactedSinceUsage =
     compaction.markerId !== null && compaction.markerId > lastUsageId && !liveUsage;
-  const windowUsed = compactedSinceUsage && estimate ? estimate.tokens : lastInput;
+  const estimatedTotal = estimate
+    ? estimate.tokens + estimate.system_tokens + estimate.system_tools_tokens + estimate.mcp_tools_tokens
+    : null;
+  // Before the first reply there is no reported prompt size either.
+  const useEstimate = estimatedTotal !== null && (compactedSinceUsage || lastInput === 0);
+  const windowUsed = useEstimate ? estimatedTotal : lastInput;
   const windowPct =
     contextWindow !== null && contextWindow > 0 ? (windowUsed / contextWindow) * 100 : null;
   const hasConversation = messages.some((m) => m.role === "user" || m.role === "assistant");
@@ -303,13 +309,27 @@ export function ChatStatsPanel({
         <ArtifactsSection {...artifacts} discussion={discussion} />
         {sideChats && <SideChatsSection {...sideChats} />}
 
-        {contextWindow !== null && contextWindow > 0 && (
-          <ContextWindowSection
+        {contextWindow !== null && contextWindow > 0 && estimate ? (
+          <ContextBreakdown
             used={windowUsed}
             limit={contextWindow}
-            modelName={model?.name ?? model?.id ?? "model"}
-            estimated={compactedSinceUsage && estimate !== null}
+            system={estimate.system_tokens}
+            systemTools={estimate.system_tools_tokens}
+            mcpTools={estimate.mcp_tools_tokens}
+            estimated={useEstimate}
+            partsEstimated
+            model={model?.name ?? model?.id ?? "model"}
           />
+        ) : (
+          contextWindow !== null &&
+          contextWindow > 0 && (
+            <ContextWindowSection
+              used={windowUsed}
+              limit={contextWindow}
+              modelName={model?.name ?? model?.id ?? "model"}
+              estimated={false}
+            />
+          )
         )}
         <CompactContextButton
           pct={windowPct}
@@ -325,7 +345,7 @@ export function ChatStatsPanel({
               label="History"
               value={formatInt(estimate.tokens)}
               unit="tokens"
-              tooltip="Estimated tokens of conversation history the next turn sends. The system prompt and tool definitions come on top."
+              tooltip="Estimated tokens of conversation history the next turn sends. The system prompt and tool definitions are counted separately in the context window."
             />
             {estimate.saved_by_hygiene > 0 && (
               <Stat

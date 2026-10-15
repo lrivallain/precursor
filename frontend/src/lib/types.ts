@@ -1391,8 +1391,9 @@ export interface Message {
  * reply, stored with it.
  */
 /**
- * Estimated history the next turn sends to the model (system prompt and tools
- * excluded). Mirrors `ContextEstimateRead` in `schemas/message.py`.
+ * Estimated history the next turn sends to the model, plus the system prompt
+ * and tool definitions it carries. `tokens` counts the history alone. Mirrors
+ * `ContextEstimateRead` in `schemas/message.py`.
  */
 export interface ContextEstimate {
   tokens: number;
@@ -1404,6 +1405,11 @@ export interface ContextEstimate {
   compaction_id: number | null;
   /** Rows the latest compaction marker hides from the model. */
   compacted_messages: number;
+  system_tokens: number;
+  /** Tool definitions of Precursor's own MCP server. */
+  system_tools_tokens: number;
+  /** Tool definitions of every other enabled MCP server. */
+  mcp_tools_tokens: number;
 }
 
 export interface StoppedTurn {

@@ -15,6 +15,14 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **Context window breakdown in the stats panels.** The conversation stats
+  panel (topics, chats) and the agent Insights panel now show a segmented
+  context bar and a legend splitting the window into system prompt, system
+  tools, MCP tools, messages, free space and the compaction buffer, each with
+  its share and token count. The estimate endpoint
+  (`GET /api/{topics|chats}/{id}/messages/context`) gains `system_tokens`,
+  `system_tools_tokens` and `mcp_tools_tokens`. See
+  [Context compression](website/features/context-compression.md#knowing-when-to-compact).
 - **Resizable workspace discussion panel and a compact composer.** Drag the
   left edge of the workspace discussion panel to resize it (320–800 px,
   remembered per browser). When the composer is too narrow for its pickers (in
