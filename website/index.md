@@ -47,7 +47,7 @@ features:
     title: Live meeting assistant
     details: >-
       Transcribe a meeting with speaker labels via Azure Speech, and
-      get live insights, Q&A, notes and an editable summary — from the template
+      get live insights, suggested answers to the questions you're asked, Q&A, notes and an editable summary — from the template
       and in the language you pick — you can post to a topic.
     link: /features/live-sessions
     linkText: About live sessions

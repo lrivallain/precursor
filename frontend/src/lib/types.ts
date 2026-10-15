@@ -2769,13 +2769,15 @@ export interface MeetingSession {
   chat_id: number | null;
   // Map of raw diarization label (e.g. "Guest-2") -> chosen display name.
   speaker_names: Record<string, string>;
+  /** Speaker labels the user marked as themselves (never asked a suggestion for). */
+  me_labels: string[];
   // Attendee display names used in the summary (editable).
   attendees: string[];
   // Free-form notes pinned to the grounding context (e.g. saved Q&A answers).
   context_notes: string[];
   // Live Markdown notes the user takes during the meeting.
   notes: string;
-  // Enabled optional Live features (insights, notes, assistant, proactive, translation).
+  // Enabled optional Live features (insights, notes, assistant, answers, translation).
   features: string[];
   // A linked M365 calendar meeting (subject/times/attendees), or null.
   external_meeting: ExternalMeeting | null;

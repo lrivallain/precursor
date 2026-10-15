@@ -109,6 +109,16 @@ function renderRow({
       />
     );
   }
+  if (m.kind === "live_question") {
+    // The question the Live assistant answered unattended; the suggestion follows.
+    return (
+      <div className="px-3 pt-1 text-[12px] text-muted">
+        <span className="font-medium">Question heard</span>
+        <span className="mx-1">·</span>
+        <span className="italic">{m.content}</span>
+      </div>
+    );
+  }
   if (m.role === "tool") {
     const meta = parseToolMeta(m.tool_calls);
     return (

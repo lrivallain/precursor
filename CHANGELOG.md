@@ -15,6 +15,16 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **Suggested answers in Live sessions.** An opt-in feature: when another
+  participant asks a question, the assistant streams a short first-person reply
+  in a card above the transcript (one fast-model call; `[[NONE]]` suppresses
+  non-questions), and saves it to the session chat as an unattended
+  `live_question` / `live_suggestion` turn. Mark your own voice with **This is
+  me** on its speaker label (`POST /api/live/{id}/speakers/me`) so it is never
+  answered. New `POST /api/live/{id}/suggest` SSE endpoint and `me_labels` on
+  live sessions. See
+  [Suggested answers](website/features/live-sessions.md#suggested-answers).
+
 - **Context window breakdown in the stats panels.** The conversation stats
   panel (topics, chats) and the agent Insights panel now show a segmented
   context bar and a legend splitting the window into system prompt, system

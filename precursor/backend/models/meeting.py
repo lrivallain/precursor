@@ -88,6 +88,23 @@ class MeetingSession(Base, TimestampMixin):
             return {}
         return {str(k): str(v) for k, v in data.items()}
 
+    # JSON-encoded list[str] of raw diarization labels (run-scoped, like the keys
+    # of ``speaker_names``) the user marked as themselves, so suggested answers
+    # only react to questions asked by someone else.
+    me_labels_json: Mapped[str] = mapped_column(
+        Text, nullable=False, default="[]", server_default="[]"
+    )
+
+    @property
+    def me_labels(self) -> list[str]:
+        try:
+            data = json.loads(self.me_labels_json or "[]")
+        except (json.JSONDecodeError, TypeError):
+            return []
+        if not isinstance(data, list):
+            return []
+        return [str(x) for x in data]
+
     # JSON-encoded list[str] of attendee display names for the summary. Seeded
     # from speakers confirmed in the transcript (i.e. renamed to a real name);
     # a linked meeting's invitees are only *suggested*, not auto-added. Editable.

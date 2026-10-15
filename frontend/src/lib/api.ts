@@ -1468,6 +1468,11 @@ export const api = {
         method: "POST",
         body: JSON.stringify({ label, name }),
       }),
+    markSpeakerMe: (id: number, label: string, me: boolean) =>
+      request<MeetingSession>(`/api/live/${id}/speakers/me`, {
+        method: "POST",
+        body: JSON.stringify({ label, me }),
+      }),
     setAttendees: (id: number, attendees: string[]) =>
       request<MeetingSession>(`/api/live/${id}/attendees`, {
         method: "PUT",
