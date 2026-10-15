@@ -461,7 +461,7 @@ export function SettingsPanel({ onClose: closeNow, initialCategory, onCollection
       try {
         setMe(await api.me.get());
       } catch {
-        setMe({ github: null, github_token_source: "none" });
+        setMe({ github: null, github_token_source: "none", proxy_user: null });
       }
       try {
         setAppVersion((await api.system.getVersion()).version);

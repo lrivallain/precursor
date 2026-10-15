@@ -15,6 +15,10 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **The persona shows the proxy user.** With no GitHub account, the sidebar
+  persona falls back to the `X-Forwarded-User` header (e.g. behind an OAuth
+  proxy) instead of "Guest". Display only; it grants no access.
+
 - **A new install starts in files mode.** When nothing is declared in the
   database yet (no agent, no workflow, no role beyond the untouched `default`)
   and no source was ever chosen, Precursor records the install as migrated and

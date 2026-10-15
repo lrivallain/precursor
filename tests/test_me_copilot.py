@@ -122,3 +122,35 @@ def test_endpoint_returns_null_for_seatless_account(monkeypatch: pytest.MonkeyPa
         resp = client.get("/api/me/copilot")
     assert resp.status_code == 200
     assert resp.json() is None
+
+
+def _no_github(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _no_token(_session: Any) -> str | None:
+        return None
+
+    monkeypatch.setattr(me_router, "resolve_github_token", _no_token)
+
+
+def test_me_reports_forwarded_user_for_guests(monkeypatch: pytest.MonkeyPatch) -> None:
+    _no_github(monkeypatch)
+    with TestClient(create_app()) as client:
+        resp = client.get("/api/me", headers={"X-Forwarded-User": "  jdoe@example.com "})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["github"] is None
+    assert body["proxy_user"] == "jdoe@example.com"
+
+
+def test_me_has_no_proxy_user_without_header(monkeypatch: pytest.MonkeyPatch) -> None:
+    _no_github(monkeypatch)
+    with TestClient(create_app()) as client:
+        assert client.get("/api/me").json()["proxy_user"] is None
+        blank = client.get("/api/me", headers={"X-Forwarded-User": "   "})
+    assert blank.json()["proxy_user"] is None
+
+
+def test_me_caps_forwarded_user_length(monkeypatch: pytest.MonkeyPatch) -> None:
+    _no_github(monkeypatch)
+    with TestClient(create_app()) as client:
+        resp = client.get("/api/me", headers={"X-Forwarded-User": "a" * 500})
+    assert len(resp.json()["proxy_user"]) == 120

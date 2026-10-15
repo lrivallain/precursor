@@ -272,6 +272,11 @@ The token value itself is never returned by the API. When a token resolves to a
 real GitHub account, the sidebar persona menu also shows your Copilot **AI
 credits** and the next reset date.
 
+With no GitHub account, the persona shows the `X-Forwarded-User` request header
+when one is present — handy behind an OAuth proxy such as oauth2-proxy — as
+"Signed in via proxy". It is display only: Precursor does not use it to grant or
+deny access, so keep the proxy in charge of authentication.
+
 ### Several accounts signed in to `gh`
 
 `gh auth token` follows whichever account is *active*, so with more than one
