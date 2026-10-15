@@ -28,6 +28,11 @@ are the per-version history; releasing does not rewrite this file.
   `GET /api/workspaces/{id}/discussions`; the stream endpoints accept
   `workspace_context`. See [Workspaces](website/features/workspaces.md#discussing-a-workspace).
 
+- **The persona shows the proxy user.** With no GitHub account, the sidebar
+  persona falls back to the `X-Forwarded-User` header (e.g. behind an OAuth
+  proxy) instead of "Guest", shown with an initials avatar and a shield badge
+  so it reads as signed in. Display only; it grants no access.
+
 - **Tool approval policies for topics and chats.** Choose `manual`, `balanced`
   or `autonomous` per conversation from a shield pill in the composer (defaults
   in Settings → Chat, `autonomous` so nothing changes until you opt in). Calls
@@ -342,6 +347,10 @@ are the per-version history; releasing does not rewrite this file.
   workspace roles are dropped by a migration.
 
 ### Fixed
+
+- **The persona no longer claims the mock provider is in use.** The "GitHub not
+  connected" tooltip dropped "using mock provider": other providers work
+  without a GitHub account.
 
 - **An install already in files mode lost its roles.** Installs that had
   migrated agents and workflows before roles became files kept their roles in
