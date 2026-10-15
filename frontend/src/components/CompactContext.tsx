@@ -6,6 +6,9 @@ import type { Message } from "../lib/types";
 /** Context-window fill (percent) from which the stats panels suggest compacting. */
 export const COMPACT_NUDGE_PERCENT = 80;
 
+/** The window share above the nudge threshold, shown as "Buffer" in the breakdown. */
+export const COMPACT_BUFFER_FRACTION = (100 - COMPACT_NUDGE_PERCENT) / 100;
+
 function compactInt(n: number): string {
   if (n < 1000) return String(n);
   if (n < 10_000) return (n / 1000).toFixed(1) + "k";

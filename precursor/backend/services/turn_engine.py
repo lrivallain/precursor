@@ -87,8 +87,14 @@ ContainerKind = Literal["topic", "chat"]
 # -- System context --------------------------------------------------------
 
 
-async def build_system_context(session: AsyncSession, topic: Topic) -> str:
-    """Compose system prompt: role persona + long-term memory + topic context + GitHub issue + labels (newest comments first)."""
+async def build_system_context(
+    session: AsyncSession, topic: Topic, *, fetch_issue: bool = True
+) -> str:
+    """Compose system prompt: role persona + long-term memory + topic context + GitHub issue + labels (newest comments first).
+
+    ``fetch_issue=False`` skips the GitHub round trip, for callers that only
+    need the prompt's rough size.
+    """
     parts: list[str] = [
         "You are Precursor, a focused assistant for the topic below. "
         "Use the linked GitHub issue context (when present) as authoritative; "
@@ -113,7 +119,7 @@ async def build_system_context(session: AsyncSession, topic: Topic) -> str:
 
     repo = await resolve_topic_github_repo(session, topic)
     token = await resolve_github_token(session)
-    if repo and topic.github_issue_number and token:
+    if fetch_issue and repo and topic.github_issue_number and token:
         try:
             gh = GitHubClient(token=token)
             issue = await gh.get_issue(repo, topic.github_issue_number)

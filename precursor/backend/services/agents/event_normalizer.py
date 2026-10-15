@@ -204,7 +204,13 @@ def normalize_event(event: Any) -> AgentEvent:
         if model:
             extra["model"] = str(model)
     elif name == "SessionUsageInfoData":
-        for attr in ("current_tokens", "token_limit", "conversation_tokens"):
+        for attr in (
+            "current_tokens",
+            "token_limit",
+            "conversation_tokens",
+            "system_tokens",
+            "tool_definitions_tokens",
+        ):
             val = getattr(data, attr, None)
             if val is not None:
                 extra[attr] = int(val)
