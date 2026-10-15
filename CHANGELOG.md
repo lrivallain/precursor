@@ -354,6 +354,10 @@ are the per-version history; releasing does not rewrite this file.
   workspace discussion is an ordinary chat, which has its own role. Existing
   workspace roles are dropped by a migration.
 
+- **The "Engine selects model" label in the composer.** With a preset category
+  selected, the model picker already shows the category, so the extra caption
+  is gone. The amber "Category needs presets" warning stays.
+
 ### Fixed
 
 - **The persona no longer claims the mock provider is in use.** The "GitHub not
