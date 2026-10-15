@@ -15,26 +15,14 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
-- **Tool approval policies for topics and chats.** Pick `manual`, `balanced` or
-  `autonomous` per conversation from a shield pill in the composer (separate
-  topic and chat defaults in Settings → Chat, both `autonomous` so nothing
-  changes until you opt in). Calls to MCP tools and Precursor's own
-  writing tools that need a go-ahead park the turn and show inline Approve /
-  Always allow… / Deny cards; the turn resumes once all are answered. The
-  model can also ask first through a built-in `request_approval` intent.
-  Pending approvals are persisted, so they survive a reload and show as an amber
-  shield badge in the sidebar.
-  **Approval rules** add standing answers in front of the policy: `allow` or
-  `ask` a server and tool (globs), optionally only when an argument matches
-  (for example `path` inside `notes/drafts`). "Always allow…" saves one from a
-  card for this conversation or everywhere; manage them in Settings → Chat and
-  in each conversation's settings. `ask` beats `allow`, and calls no rule
-  matches follow the policy. Earlier "Always allow here" answers were migrated
-  into rules. See [Tool approvals](website/features/approvals.md).
-  **Unattended runs:** when a scheduled topic parks on an approval, Precursor
-  sends a browser notification and starts a timeout (60 minutes by default,
-  overridable per schedule, `0` never). If nobody answers, the call is denied,
-  the model is told, and the run finishes by itself.
+- **Tool approval policies for topics and chats.** Choose `manual`, `balanced`
+  or `autonomous` per conversation from a shield pill in the composer (defaults
+  in Settings → Chat, `autonomous` so nothing changes until you opt in). Calls
+  that need a go-ahead park the turn and show inline Approve / Always allow… /
+  Deny cards, persisted across reloads with an amber sidebar badge. Standing
+  `allow` / `ask` rules can match a server, tool and arguments, and the model can
+  ask first. Scheduled runs notify you and auto-deny after a timeout. See
+  [Tool approvals](website/features/approvals.md).
 
 - **A new install starts in files mode.** When nothing is declared in the
   database yet (no agent, no workflow, no role beyond the untouched `default`)
