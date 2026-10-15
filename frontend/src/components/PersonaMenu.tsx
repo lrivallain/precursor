@@ -25,7 +25,8 @@ export function PersonaMenu({ collapsed = false, onOpenSettings, onOpenArchive }
         if (!cancelled) setMe(m);
       })
       .catch(() => {
-        if (!cancelled) setMe({ github: null, github_token_source: "none" });
+        if (!cancelled)
+          setMe({ github: null, github_token_source: "none", proxy_user: null });
       });
     return () => {
       cancelled = true;
