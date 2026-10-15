@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CommandDraftCard } from "./CommandDraftCard";
 import { Composer } from "./Composer";
+import { ComposerApprovalControl } from "./ComposerApprovalControl";
 import { ComposerModelControls } from "./ComposerModelControls";
 import { ChatStatsPanel } from "./ChatStatsPanel";
 import { ConversationNotes, NotesConfirmModal } from "./ConversationNotes";
@@ -242,6 +243,8 @@ export function ChatSessionPanel({
               pendingReasoning={conv.pendingReasoning}
               onPickSuggestion={conv.sendSuggestion}
               onStop={conv.stop}
+              approvals={conv.approvals.approvals}
+              onDecideApproval={conv.approvals.decide}
             />
           </div>
         </div>
@@ -296,6 +299,7 @@ export function ChatSessionPanel({
               toolbarStart={
                 <>
                   <ComposerModelControls conversation={{ kind: "chat", id: chat.id, selection: chat.llm_selection, onUpdated: onChatUpdated }} />
+                  <ComposerApprovalControl kind="chat" id={chat.id} policy={chat.approval_policy} onUpdated={onChatUpdated} />
                   <RoleSelector
                     value={chat.role ?? null}
                     onChange={(roleName) => void onSetRole?.(roleName)}

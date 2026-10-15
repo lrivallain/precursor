@@ -11,9 +11,11 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from precursor.backend.models.base import Base, TimestampMixin
 
 if TYPE_CHECKING:
+    from precursor.backend.models.approval_rule import ApprovalRule
     from precursor.backend.models.message import Message
     from precursor.backend.models.note_draft import NoteDraft
     from precursor.backend.models.reminder import Reminder
+    from precursor.backend.models.tool_approval import ToolApproval
 
 
 class Chat(Base, TimestampMixin):
@@ -35,6 +37,10 @@ class Chat(Base, TimestampMixin):
     # Assistant Role assigned to this chat. Null resolves to the default role
     # (no persona injected). Stored by name; an unknown name falls back to it.
     role: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+
+    # Tool-approval policy (manual / balanced / autonomous). Null inherits the
+    # global ``chat_approval_policy`` setting.
+    approval_policy: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
     # Timestamp of the last time the user opened this chat. Used to compute
     # unread badge (non-user messages newer than this are unread).
@@ -84,6 +90,12 @@ class Chat(Base, TimestampMixin):
         cascade="all, delete-orphan",
         order_by="Message.created_at",
         foreign_keys="Message.chat_id",
+    )
+    approvals: Mapped[list[ToolApproval]] = relationship(
+        "ToolApproval", cascade="all, delete-orphan", foreign_keys="ToolApproval.chat_id"
+    )
+    approval_rules: Mapped[list[ApprovalRule]] = relationship(
+        "ApprovalRule", cascade="all, delete-orphan", foreign_keys="ApprovalRule.chat_id"
     )
 
     # Optional one-shot reminder. One-to-one; deleting the chat cascades to it.

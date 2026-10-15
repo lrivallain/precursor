@@ -19,6 +19,7 @@ from precursor.backend.models.agent_trigger import (
     AGENT_TRIGGER_TYPES,
     AgentTrigger,
 )
+from precursor.backend.models.approval_rule import ApprovalRule
 from precursor.backend.models.attachment import Attachment
 from precursor.backend.models.base import Base
 from precursor.backend.models.chat import Chat
@@ -46,6 +47,7 @@ from precursor.backend.models.reminder import Reminder
 from precursor.backend.models.role import Role
 from precursor.backend.models.settings import AppSetting
 from precursor.backend.models.skill import Skill
+from precursor.backend.models.tool_approval import ToolApproval
 from precursor.backend.models.topic import Topic
 from precursor.backend.models.topic_schedule import TopicSchedule
 from precursor.backend.models.topic_summary import TopicSummary
@@ -89,6 +91,7 @@ __all__ = [
     "AgentState",
     "AgentTrigger",
     "AppSetting",
+    "ApprovalRule",
     "Attachment",
     "Base",
     "Chat",
@@ -110,6 +113,7 @@ __all__ = [
     "Reminder",
     "Role",
     "Skill",
+    "ToolApproval",
     "Topic",
     "TopicSchedule",
     "TopicSummary",

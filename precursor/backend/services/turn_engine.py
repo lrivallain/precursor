@@ -27,6 +27,9 @@ from sqlalchemy.orm import selectinload
 
 from precursor.backend.db import SessionLocal
 from precursor.backend.models import MESSAGE_KIND_COMPACTION, Chat, Message, MessageRole, Topic
+from precursor.backend.models.tool_approval import APPROVAL_KIND_TOOL
+from precursor.backend.services import approval_rules as approval_rules_service
+from precursor.backend.services import approvals as approval_service
 from precursor.backend.services import memories as memory_service
 from precursor.backend.services import side_chats
 from precursor.backend.services import skills as skills_service
@@ -39,6 +42,7 @@ from precursor.backend.services.attachment_extraction import (
 from precursor.backend.services.collections import resolve_topic_github_repo
 from precursor.backend.services.context_budget import strip_inline_binaries, trim_messages
 from precursor.backend.services.events import (
+    publish_approval_changed,
     publish_message_changed,
     publish_message_changed_chat,
     publish_stream_ended,
@@ -71,6 +75,7 @@ from precursor.backend.services.meeting_analysis import live_chat_grounding
 from precursor.backend.services.roles import resolve_role_prompt
 from precursor.backend.services.suggestions import SUGGESTIONS_INSTRUCTION, split_suggestions
 from precursor.backend.services.usage_stats import record_usage
+from precursor.backend.services.workspaces import WORKSPACE_READ_TOOLS, WORKSPACE_WRITE_TOOLS
 
 logger = logging.getLogger(__name__)
 
@@ -487,9 +492,11 @@ async def prepare_retry_turn(
         await side_chats.detach_messages(
             session, select(Message.id).where(fk == container_id, Message.id > message_id)
         )
+    await approval_service.delete_after(session, kind, container_id, message_id)
     await session.execute(delete(Message).where(fk == container_id, Message.id > message_id))
     await session.commit()
     await publish_container_changed(kind, container_id)
+    await publish_approval_changed(**container_message_kwargs(kind, container_id))
     return user_msg
 
 
@@ -667,6 +674,13 @@ class RoundCapReached:
     max_tool_rounds: int
 
 
+@dataclass(slots=True)
+class ApprovalsRequested:
+    """The round's remaining calls wait on the user, so the turn parks here."""
+
+    items: list[approval_service.PendingCall]
+
+
 TurnEvent = (
     AssistantTextDelta
     | AssistantReasoningDelta
@@ -674,12 +688,49 @@ TurnEvent = (
     | AssistantToolCallsTurn
     | ToolResultTurn
     | ToolAuthRequired
+    | ApprovalsRequested
     | RoundCapReached
 )
 
 
 def _effective_provider(provider: Any) -> str | None:
     return getattr(provider, "effective_provider", None) or getattr(provider, "name", None)
+
+
+async def execute_tool_call(
+    active: Any, call: Any, auth_wait_timeout: float
+) -> AsyncIterator[ToolAuthRequired | ToolResultTurn]:
+    """Run one model-issued call against ``active``; always ends with its result.
+
+    Shared by the tool loop and the resume of a parked turn, so an approved call
+    behaves exactly like one the policy let straight through.
+    """
+    lookup = active.tool_to_server.get(call.name)
+    if lookup is None:
+        yield ToolResultTurn(
+            call, f"Unknown tool '{call.name}'. No MCP server exposes it.", True, None
+        )
+        return
+    server_name, raw_name = lookup
+    try:
+        args = json.loads(call.arguments or "{}")
+    except json.JSONDecodeError as exc:
+        yield ToolResultTurn(call, f"Invalid JSON arguments: {exc}", True, None)
+        return
+    result_text, is_error, link = "", False, None
+    async for step in call_tool_with_auth_retry(
+        active=active,
+        server=server_name,
+        raw_name=raw_name,
+        tool_name=call.name,
+        args=args,
+        auth_wait_timeout=auth_wait_timeout,
+    ):
+        if isinstance(step, ToolAuthRequired):
+            yield step
+        else:
+            result_text, is_error, link = step.result_text, step.is_error, step.link
+    yield ToolResultTurn(call, result_text, is_error, link)
 
 
 async def run_tool_loop(
@@ -694,6 +745,7 @@ async def run_tool_loop(
     max_input_tokens: int,
     max_tool_result_tokens: int,
     auth_wait_timeout: float = AUTH_PAUSE_TIMEOUT_SECONDS,
+    gate: approval_service.ApprovalGate | None = None,
 ) -> AsyncIterator[TurnEvent]:
     """Drive the provider + MCP tool loop, yielding semantic turn events.
 
@@ -707,9 +759,19 @@ async def run_tool_loop(
     sign-in. Pass ``0`` for unattended runs (the scheduler), where nobody is
     there to complete one: the prompt is still surfaced, but the call fails fast
     with a tool error instead of parking the run for minutes.
+
+    ``gate`` applies an approval policy (chats and topics). A call it holds back,
+    or a ``request_approval`` the model raised, gets no tool result: after the
+    round's other calls ran, an :class:`ApprovalsRequested` event is yielded and
+    the loop ends, leaving the turn parked until the user decides. ``None`` runs
+    every call, as workspace chat does.
     """
     tool_to_server = active.tool_to_server  # qualified -> (server, raw_name)
     provider_tools = mcp_tools_to_provider(active.tools)
+    tool_defs = {t.qualified_name: t for t in active.tools}
+    if gate is not None and gate.offers_intent:
+        provider_tools = [*provider_tools, approval_service.REQUEST_APPROVAL_DEF]
+        system_prompt = f"{system_prompt}\n\n{approval_service.APPROVAL_PROMPT}"
 
     messages: list[ChatMessage] = [
         ChatMessage(role="system", content=system_prompt),
@@ -785,38 +847,45 @@ async def run_tool_loop(
             )
         )
 
+        parked: list[approval_service.PendingCall] = []
         for call in tool_calls:
             server_lookup = tool_to_server.get(call.name)
-            is_error = False
-            link: dict[str, str] | None = None
-            if server_lookup is None:
-                result_text = f"Unknown tool '{call.name}'. No MCP server exposes it."
-                is_error = True
-            else:
-                server_name, raw_name = server_lookup
-                try:
-                    args = json.loads(call.arguments or "{}")
-                except json.JSONDecodeError as exc:
-                    args = None
-                    result_text = f"Invalid JSON arguments: {exc}"
-                    is_error = True
-                if args is not None:
-                    async for step in call_tool_with_auth_retry(
-                        active=active,
-                        server=server_name,
-                        raw_name=raw_name,
-                        tool_name=call.name,
-                        args=args,
-                        auth_wait_timeout=auth_wait_timeout,
-                    ):
-                        if isinstance(step, ToolAuthRequired):
-                            yield step
-                        else:
-                            result_text = step.result_text
-                            is_error = step.is_error
-                            link = step.link
-
-            yield ToolResultTurn(call, result_text, is_error, link)
+            if gate is not None and call.name == approval_service.REQUEST_APPROVAL_TOOL:
+                if gate.offers_intent:
+                    parked.append(approval_service.intent_pending(call.id, call.arguments))
+                    continue
+            elif gate is not None and server_lookup is not None:
+                verdict = gate.check(
+                    call.name,
+                    server_lookup[0],
+                    server_lookup[1],
+                    tool_defs.get(call.name),
+                    call.arguments or "{}",
+                )
+                if verdict.rule_id is not None:
+                    await approval_rules_service.touch_rule(verdict.rule_id)
+                if verdict.reason is not None:
+                    parked.append(
+                        approval_service.PendingCall(
+                            call_id=call.id,
+                            tool_name=call.name,
+                            server=server_lookup[0],
+                            raw_tool=server_lookup[1],
+                            arguments=call.arguments or "{}",
+                            kind=APPROVAL_KIND_TOOL,
+                            reason=verdict.reason,
+                        )
+                    )
+                    continue
+            outcome: ToolResultTurn | None = None
+            async for step in execute_tool_call(active, call, auth_wait_timeout):
+                if isinstance(step, ToolAuthRequired):
+                    yield step
+                else:
+                    outcome = step
+            assert outcome is not None
+            result_text = outcome.result_text
+            yield outcome
 
             messages.append(
                 ChatMessage(
@@ -826,6 +895,10 @@ async def run_tool_loop(
                     name=call.name,
                 )
             )
+
+        if parked:
+            yield ApprovalsRequested(parked)
+            return
 
     yield RoundCapReached(max_tool_rounds)
 
@@ -995,7 +1068,7 @@ async def run_message_stream(
     container_id: int,
     system_prompt: str,
     history: list[ChatMessage],
-    user_echo: dict[str, Any],
+    user_echo: dict[str, Any] | None,
     model: str,
     reasoning_effort: str,
     max_tool_rounds: int,
@@ -1005,6 +1078,8 @@ async def run_message_stream(
     github_token: str,
     enabled_servers: list[str],
     auth_wait_timeout: float = AUTH_PAUSE_TIMEOUT_SECONDS,
+    gate: approval_service.ApprovalGate | None = None,
+    restrict_precursor: bool = False,
 ) -> AsyncIterator[dict[str, str]]:
     """Container-agnostic SSE generator shared by topic and chat streaming.
 
@@ -1015,13 +1090,17 @@ async def run_message_stream(
     ``auth_wait_timeout`` is how long a tool call may pause for an interactive
     sign-in; it defaults to the interactive window and is threaded through so a
     caller (or a test) can bound it, mirroring the scheduler's run_tool_loop.
+
+    ``user_echo`` is ``None`` when resuming a parked turn: there is no new user
+    message to echo. ``gate`` applies the conversation's approval policy.
     """
     manager = get_mcp_client_manager()
 
-    yield {
-        "event": "user_message",
-        "data": json.dumps(user_echo),
-    }
+    if user_echo is not None:
+        yield {
+            "event": "user_message",
+            "data": json.dumps(user_echo),
+        }
 
     # No pre-LLM auth gate: the turn starts now. The catalogue of a server whose
     # credential has lapsed is still advertised (from the stored one), so the
@@ -1032,6 +1111,8 @@ async def run_message_stream(
     async with manager.acquired(
         enabled_servers, github_token=github_token, advertise_cached=True
     ) as active:
+        if restrict_precursor:
+            active.restrict_server_tools("precursor", WORKSPACE_READ_TOOLS | WORKSPACE_WRITE_TOOLS)
         # Warm MCP sessions for the enabled servers (reused across turns). Each
         # contributes tools we aggregate for the LLM; failures are surfaced but
         # don't abort the turn.
@@ -1046,6 +1127,7 @@ async def run_message_stream(
                 "data": json.dumps({"message": f"MCP server '{server_name}' unavailable: {err}"}),
             }
 
+        last_assistant_id: int | None = None
         try:
             turn_started = time.monotonic()
             async for ev in run_tool_loop(
@@ -1059,6 +1141,7 @@ async def run_message_stream(
                 max_input_tokens=max_input_tokens,
                 max_tool_result_tokens=max_tool_result_tokens,
                 auth_wait_timeout=auth_wait_timeout,
+                gate=gate,
             ):
                 if isinstance(ev, AssistantTextDelta):
                     yield {
@@ -1107,6 +1190,7 @@ async def run_message_stream(
                     assistant_id = await persist_tool_calls_turn(
                         kind, container_id, ev, model=ev.model or model
                     )
+                    last_assistant_id = assistant_id
                     if ev.usage is not None:
                         yield usage_event(assistant_id, ev.usage)
                     yield {
@@ -1157,6 +1241,19 @@ async def run_message_stream(
                             }
                         ),
                     }
+
+                elif isinstance(ev, ApprovalsRequested):
+                    async with SessionLocal() as ws:
+                        rows = await approval_service.record_pending(
+                            ws, kind, container_id, last_assistant_id, ev.items
+                        )
+                        payload = [approval_service.serialize(r) for r in rows]
+                    await publish_approval_changed(**container_message_kwargs(kind, container_id))
+                    yield {
+                        "event": "approval_required",
+                        "data": json.dumps({"approvals": payload}),
+                    }
+                    return
 
                 elif isinstance(ev, RoundCapReached):
                     # Hit the iteration cap.

@@ -13,6 +13,16 @@ from precursor.backend.schemas.agent_state import (
     AgentStateSummary,
     AgentStateWrite,
 )
+from precursor.backend.schemas.approval import (
+    ApprovalDecisionResult,
+    ApprovalPolicy,
+    ApprovalRuleCreate,
+    ApprovalRuleRead,
+    ApprovalRuleUpdate,
+    ArgClause,
+    ToolApprovalDecision,
+    ToolApprovalRead,
+)
 from precursor.backend.schemas.chat import (
     ChatCreate,
     ChatRead,
@@ -159,6 +169,12 @@ __all__ = [
     "AgentStateRead",
     "AgentStateSummary",
     "AgentStateWrite",
+    "ApprovalDecisionResult",
+    "ApprovalPolicy",
+    "ApprovalRuleCreate",
+    "ApprovalRuleRead",
+    "ApprovalRuleUpdate",
+    "ArgClause",
     "AttachmentRead",
     "AttendeesUpdate",
     "BranchRequest",
@@ -248,6 +264,8 @@ __all__ = [
     "SummaryTemplateFileResult",
     "SummaryTemplateRead",
     "SummaryTemplateSelection",
+    "ToolApprovalDecision",
+    "ToolApprovalRead",
     "TopicCreate",
     "TopicNode",
     "TopicNoteDraft",

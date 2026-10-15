@@ -20,8 +20,14 @@ import { api } from "../lib/api";
 import { archiveTopic } from "../lib/sideChats";
 import { clearConversation } from "../lib/useConversation";
 import { useSettings } from "../lib/settingsStore";
-import type { Collection, Schedule, Topic, TopicNode } from "../lib/types";
+import type {
+  Collection,
+  Schedule,
+  Topic,
+  TopicNode,
+} from "../lib/types";
 import type { IssueContextState } from "../lib/useIssueContext";
+import { ApprovalRulesSection } from "./ApprovalRulesSection";
 import { useConfirm } from "./ConfirmDialog";
 import { Select } from "./Select";
 import { RefineTextarea } from "./RefineTextarea";
@@ -88,6 +94,7 @@ export function TopicSettingsPanel({
   const [prompt, setPrompt] = useState("");
   const [recurrence, setRecurrence] = useState<RecurrenceValue[]>(() => [defaultRecurrence()]);
   const [clearContext, setClearContext] = useState(false);
+  const [approvalTimeout, setApprovalTimeout] = useState("");
   const [runningNow, setRunningNow] = useState(false);
   const hasSchedule = topic.schedule !== null || schedule !== null;
 
@@ -100,6 +107,7 @@ export function TopicSettingsPanel({
         setPrompt(s.prompt);
         setRecurrence(recurrenceListFromSchedule(s));
         setClearContext(s.clear_context);
+        setApprovalTimeout(s.approval_timeout_minutes == null ? "" : String(s.approval_timeout_minutes));
         setScheduleOn(s.enabled);
       } catch {
         /* schedule may have been deleted elsewhere */
@@ -177,6 +185,7 @@ export function TopicSettingsPanel({
         prompt: prompt.trim(),
         ...recurrenceListToPayload(recurrence),
         clear_context: clearContext,
+        approval_timeout_minutes: approvalTimeout.trim() === "" ? null : Math.max(0, Math.floor(Number(approvalTimeout)) || 0),
         enabled: true,
       };
       if (hasSchedule) {
@@ -370,6 +379,7 @@ export function TopicSettingsPanel({
                 />
               </section>
 
+
               <section>
                 <label className="block text-xs text-muted mb-1">Parent topic</label>
                 <Select
@@ -489,6 +499,26 @@ export function TopicSettingsPanel({
                       </span>
                     </label>
 
+                    <div>
+                      <label className="block text-xs text-muted mb-1" htmlFor="approval-timeout">
+                        Approval timeout (minutes)
+                      </label>
+                      <input
+                        id="approval-timeout"
+                        type="number"
+                        min={0}
+                        value={approvalTimeout}
+                        placeholder="Use the default"
+                        onChange={(e) => setApprovalTimeout(e.target.value)}
+                        className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
+                      />
+                      <p className="text-[11px] text-muted mt-1 leading-relaxed">
+                        How long a tool approval waits when this run needs one and nobody is
+                        there. Then it is denied and the model is told. Blank uses the global
+                        default; 0 waits forever.
+                      </p>
+                    </div>
+
                     {schedule && (
                       <div className="rounded border border-border bg-surface/50 px-3 py-2 text-[11px] text-muted space-y-1">
                         <div className="flex items-center gap-1.5">
@@ -519,6 +549,11 @@ export function TopicSettingsPanel({
                     )}
                   </div>
                 )}
+              </section>
+
+              <section className="pt-4 border-t border-border">
+                <h3 className="text-sm font-medium mb-1">Approval rules</h3>
+                <ApprovalRulesSection owner={{ kind: "topic", id: topic.id }} />
               </section>
 
               {error && <p className="text-xs text-red-500">{error}</p>}

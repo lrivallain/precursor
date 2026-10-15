@@ -145,6 +145,17 @@ _TOOL_ALIAS_PREFIX = "_mcp_"
 _UNSAFE_TOOL_NAME_CHARS = re.compile(r"[^a-zA-Z0-9_-]")
 
 
+def _read_only_hint(tool: Any) -> bool | None:
+    """The tool's declared read-only-ness; a destructive hint overrides it."""
+    annotations = getattr(tool, "annotations", None)
+    if annotations is None:
+        return None
+    if getattr(annotations, "destructive_hint", None) is True:
+        return False
+    hint = getattr(annotations, "read_only_hint", None)
+    return hint if isinstance(hint, bool) else None
+
+
 @dataclass(slots=True)
 class MCPToolDef:
     """An MCP tool exposed by a server, in a transport-agnostic shape."""
@@ -153,6 +164,9 @@ class MCPToolDef:
     name: str
     description: str
     input_schema: dict[str, Any]
+    # The server's own ``readOnlyHint`` annotation. ``None`` when it declared
+    # nothing, which approval policies treat as "may change something".
+    read_only: bool | None = None
 
     @property
     def qualified_name(self) -> str:
@@ -1103,6 +1117,7 @@ class MCPClientManager:
                 name=t.name,
                 description=(t.description or "").strip(),
                 input_schema=t.input_schema or {"type": "object", "properties": {}},
+                read_only=_read_only_hint(t),
             )
             for t in result.tools
         ]

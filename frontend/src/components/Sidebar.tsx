@@ -1,3 +1,4 @@
+import { ApprovalBadge } from "./ApprovalBadge";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ComponentType, ReactNode } from "react";
 import {
@@ -673,6 +674,8 @@ function TopicItem({
             aria-label="Last run failed"
             data-tooltip="Last run failed"
           />
+        ) : (node.pending_approvals ?? 0) > 0 ? (
+          <ApprovalBadge count={node.pending_approvals ?? 0} />
         ) : node.unread_count > 0 ? (
           <UnreadBadge count={node.unread_count} />
         ) : null}
@@ -1448,6 +1451,8 @@ function PinnedItem({
         )}
         {isStreaming ? (
           <StreamingDots />
+        ) : (node.pending_approvals ?? 0) > 0 ? (
+          <ApprovalBadge count={node.pending_approvals ?? 0} />
         ) : node.unread_count > 0 ? (
           <UnreadBadge count={node.unread_count} />
         ) : null}

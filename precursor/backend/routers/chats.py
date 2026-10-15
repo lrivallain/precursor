@@ -105,6 +105,7 @@ async def create_chat(
         description_as_system_prompt=payload.description_as_system_prompt,
         pinned=payload.pinned,
         role=await roles_service.require_role(session, payload.role),
+        approval_policy=payload.approval_policy,
         llm_selection=payload.llm_selection.model_dump_json() if payload.llm_selection else None,
         autoname_pending=payload.autoname,
     )
@@ -159,6 +160,8 @@ async def update_chat(
         chat.pinned = payload.pinned
     if "role" in payload.model_fields_set:
         chat.role = await roles_service.require_role(session, payload.role)
+    if "approval_policy" in payload.model_fields_set:
+        chat.approval_policy = payload.approval_policy
     if "llm_selection" in payload.model_fields_set:
         await validate_selection(session, payload.llm_selection)
         chat.llm_selection = (
