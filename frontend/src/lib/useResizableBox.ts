@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { beginDrag } from "./dragGuard";
 
 interface Size {
   width: number;
@@ -34,6 +35,7 @@ export function useResizableBox({
   const [size, setSize] = useState<Size>(() => readStored(storageKey, defaultWidth, defaultHeight));
   const dragging = useRef(false);
   const start = useRef({ x: 0, y: 0, w: 0, h: 0 });
+  const endGuard = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -46,6 +48,8 @@ export function useResizableBox({
       e.stopPropagation();
       dragging.current = true;
       start.current = { x: e.clientX, y: e.clientY, w: size.width, h: size.height };
+      endGuard.current?.();
+      endGuard.current = beginDrag();
       document.body.style.userSelect = "none";
       document.body.style.cursor = "nwse-resize";
     },
@@ -62,6 +66,8 @@ export function useResizableBox({
       setSize({ width, height });
     }
     function onUp(): void {
+      endGuard.current?.();
+      endGuard.current = null;
       if (!dragging.current) return;
       dragging.current = false;
       document.body.style.userSelect = "";
@@ -70,6 +76,7 @@ export function useResizableBox({
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
     return () => {
+      onUp();
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
     };

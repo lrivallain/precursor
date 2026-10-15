@@ -205,6 +205,12 @@ body,
   }
 }
 
+/* Set by lib/dragGuard.ts while a panel is being resized, so an iframe under
+   the cursor can't swallow the drag. */
+html.resizing iframe {
+  pointer-events: none;
+}
+
 body {
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;

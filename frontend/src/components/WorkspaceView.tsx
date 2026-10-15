@@ -963,7 +963,7 @@ export function WorkspaceView({
         </div>
       )}
 
-      <div className="relative flex-1 min-h-0 flex">
+      <div className="relative flex-1 min-h-0 min-w-0 flex overflow-hidden">
         {/* Hidden rather than unmounted on a phone while a file or diff is
             open, so the commit message, the expanded commit and the scroll
             position are still there on the way back. */}
@@ -971,7 +971,7 @@ export function WorkspaceView({
           className={`relative border-r border-border flex flex-col min-h-0 ${
             // Beside the assistant's 2.25rem rail, so it fills what's left
             // rather than claiming a full viewport width the row can't afford.
-            narrow ? "flex-1 min-w-0 border-r-0" : "shrink-0"
+            narrow ? "flex-1 min-w-0 border-r-0" : "shrink min-w-36"
           } ${showFiles ? "" : "hidden"}`}
           style={narrow ? undefined : { width: filesWidth }}
         >
@@ -1073,8 +1073,10 @@ export function WorkspaceView({
           )}
         </aside>
 
+        {/* The editor has a floor: the open discussion and the Files tree
+            shrink first, rather than the editor header getting squeezed. */}
         {showEditor && (
-        <section className="flex-1 min-w-0 flex flex-col">
+        <section className={`flex-1 flex flex-col ${narrow ? "min-w-0" : "min-w-72"}`}>
           {diff?.kind === "conflict" ? (
             <ConflictPane
               workspaceId={area.id}
@@ -1099,9 +1101,10 @@ export function WorkspaceView({
           <div className={diff ? "hidden" : "flex min-h-0 flex-1 flex-col"}>
           {activePath ? (
             <>
-              {/* Wraps on phones: fixed-height nowrap would clip the
-                  edit/preview toggle and the file actions off-screen. */}
-              <div className="flex flex-wrap items-center gap-2 px-4 py-1.5 border-b border-border md:h-10 md:flex-nowrap md:py-0">
+              {/* Wraps whenever the pane is narrow (a phone, or the discussion
+                  open beside it): the actions drop under the name as one
+                  group instead of squeezing or clipping. */}
+              <div className="flex min-h-10 flex-wrap items-center gap-x-2 gap-y-1 px-4 py-1.5 border-b border-border">
                 {narrow && (
                   <button
                     type="button"
@@ -1117,10 +1120,11 @@ export function WorkspaceView({
                 ) : (
                   <FileText size={15} className="text-muted shrink-0" />
                 )}
-                <span className="text-sm truncate flex-1 min-w-0" title={activePath}>
+                <span className="text-sm truncate flex-1 min-w-[8rem]" title={activePath}>
                   {activePath}
                   {dirty && <span className="text-accent"> •</span>}
                 </span>
+                <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-x-2 gap-y-1">
                 {hasPreview(activePath) && (
                   <div className="flex shrink-0 rounded border border-border overflow-hidden text-xs">
                     <button
@@ -1236,6 +1240,7 @@ export function WorkspaceView({
                 >
                   <Trash2 size={15} />
                 </button>
+                </div>
               </div>
               <div className="flex-1 min-h-0 overflow-auto">
                 {loadingFile ? (

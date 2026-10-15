@@ -368,6 +368,12 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Fixed
 
+- **Workspace layout with the discussion panel open.** The discussion panel
+  and Files tree now shrink before the editor, so the workspace no longer
+  scrolls horizontally or clips the composer, and the file header wraps its
+  actions cleanly instead of scattering the icons in a narrow pane.
+- **Panel resizing over iframes.** Dragging a panel edge over a draw.io, HTML
+  or PDF preview no longer loses the drag when the cursor enters the preview.
 - **Live suggestions no longer pile up.** The Live view's Insights tab kept
   every proactive suggestion as its own card (up to 12), pushing the insights
   out of view. It now shows a single suggestion that a newer one replaces, and

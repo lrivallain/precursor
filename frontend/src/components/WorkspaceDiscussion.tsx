@@ -114,7 +114,7 @@ export function WorkspaceDiscussionPanel({
       // The inline width only applies from lg up: below that the panel is a
       // full-width overlay and the drag handle is hidden.
       style={{ "--discussion-w": `${width}px` } as React.CSSProperties}
-      className="flex min-h-0 w-full shrink-0 flex-col border-l border-border bg-bg lg:relative lg:w-[var(--discussion-w)] lg:max-w-[65%] max-lg:absolute max-lg:inset-y-0 max-lg:right-0 max-lg:z-20"
+      className="flex min-h-0 min-w-0 w-full shrink flex-col border-l border-border bg-bg lg:relative lg:min-w-70 lg:w-[var(--discussion-w)] lg:max-w-[65%] max-lg:absolute max-lg:inset-y-0 max-lg:right-0 max-lg:z-20"
       aria-label="Discussion"
       data-testid="workspace-discussion"
     >
