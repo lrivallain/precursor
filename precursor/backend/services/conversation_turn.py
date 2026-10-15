@@ -74,6 +74,7 @@ from precursor.backend.services.turn_engine import (
     publish_container_changed,
     run_message_stream,
 )
+from precursor.backend.services.workspaces import WORKSPACE_READ_TOOLS, WORKSPACE_WRITE_TOOLS
 
 
 def _message_fk(kind: ContainerKind) -> InstrumentedAttribute[int | None]:
@@ -101,6 +102,8 @@ class TurnSettings:
     enabled_servers: list[str]
     # Approval policy for chats and topics; ``None`` runs every call (workspace chat).
     gate: approval_service.ApprovalGate | None = None
+    # An unattended run keeps only Precursor's workspace tools (see ``run_topic_turn``).
+    restrict_precursor: bool = False
 
 
 async def resolve_turn_settings(
@@ -383,6 +386,7 @@ def _turn_events(
         enabled_servers=settings.enabled_servers,
         auth_wait_timeout=auth_wait_timeout,
         gate=settings.gate,
+        restrict_precursor=settings.restrict_precursor,
     )
 
 
@@ -419,6 +423,8 @@ async def _settle_approvals(
     async with manager.acquired(
         settings.enabled_servers, github_token=settings.github_token, advertise_cached=True
     ) as active:
+        if settings.restrict_precursor:
+            active.restrict_server_tools("precursor", WORKSPACE_READ_TOOLS | WORKSPACE_WRITE_TOOLS)
         for row in decided:
             call = ToolCallRequest(id=row.tool_call_id, name=row.tool_name, arguments=row.arguments)
             if row.kind == APPROVAL_KIND_INTENT:

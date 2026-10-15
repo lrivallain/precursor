@@ -226,3 +226,43 @@ async def test_parked_event_reaches_subscribers_with_its_payload() -> None:
     assert event["type"] == "approval.parked"
     assert (event["topic_id"], event["title"], event["count"]) == (7, "Nightly", 2)
     assert event["expires_at"] == deadline.isoformat()
+
+
+class _ToolSpy(_ScriptedProvider):
+    """Records the tool names each round was offered."""
+
+    def __init__(self, *rounds: list[ProviderEvent]) -> None:
+        super().__init__(*rounds)
+        self.offered: list[list[str]] = []
+
+    async def stream_chat_with_tools(self, *, tools: Any, **kwargs: Any) -> Any:
+        self.offered.append(sorted(t.name for t in tools))
+        async for event in super().stream_chat_with_tools(tools=tools, **kwargs):
+            yield event
+
+
+async def test_headless_resume_offers_the_same_tools_as_the_scheduled_pass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spy = _ToolSpy(_publish_round(), _answer("done"))
+    _install_provider(monkeypatch, spy)
+    own = [
+        MCPToolDef(
+            server="precursor",
+            name=name,
+            description=name,
+            input_schema={"type": "object", "properties": {}},
+        )
+        for name in ("post_message", "read_workspace_file")
+    ]
+    _install_mcp(monkeypatch, tools=[_WRITE, *own])
+    topic_id = await _topic()
+    await run_topic_turn(topic_id, "go")
+    await _expire_now(topic_id)
+    await expire_overdue()
+    await resume_headless(topic_id)
+
+    first, resumed = spy.offered
+    assert first == resumed
+    assert not any("post_message" in name for name in resumed)
+    assert any("read_workspace_file" in name for name in resumed)

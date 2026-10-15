@@ -116,8 +116,8 @@ in the topic's settings (blank inherits, `0` waits forever). Approvals you
 trigger yourself in an open conversation never expire.
 
 If a resumed run needs another approval, it parks again with a fresh deadline.
-The resumed run does not hide Precursor's own MCP tools from the model the way
-the first, scheduled pass does.
+The resumed run offers the model the same tools as the scheduled pass: only
+Precursor's workspace tools, never its own scheduling or messaging tools.
 
 ::: tip Agents mode
 [Agents mode](/features/agents-mode) has its own approval policy, which governs

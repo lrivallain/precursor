@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
@@ -150,7 +151,9 @@ async def resume_headless(topic_id: int) -> None:
             # Other calls still wait on a person (or the turn is already running).
             logger.info("Not resuming topic %s after expiry: %s", topic_id, exc)
             return
-        settings = await resolve_turn_settings(session, topic_id=topic_id)
+        settings = replace(
+            await resolve_turn_settings(session, topic_id=topic_id), restrict_precursor=True
+        )
         system_prompt = await build_system_context(session, topic)
     try:
         async for _ in resume_turn(

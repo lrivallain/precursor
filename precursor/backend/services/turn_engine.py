@@ -75,6 +75,7 @@ from precursor.backend.services.meeting_analysis import live_chat_grounding
 from precursor.backend.services.roles import resolve_role_prompt
 from precursor.backend.services.suggestions import SUGGESTIONS_INSTRUCTION, split_suggestions
 from precursor.backend.services.usage_stats import record_usage
+from precursor.backend.services.workspaces import WORKSPACE_READ_TOOLS, WORKSPACE_WRITE_TOOLS
 
 logger = logging.getLogger(__name__)
 
@@ -1078,6 +1079,7 @@ async def run_message_stream(
     enabled_servers: list[str],
     auth_wait_timeout: float = AUTH_PAUSE_TIMEOUT_SECONDS,
     gate: approval_service.ApprovalGate | None = None,
+    restrict_precursor: bool = False,
 ) -> AsyncIterator[dict[str, str]]:
     """Container-agnostic SSE generator shared by topic and chat streaming.
 
@@ -1109,6 +1111,8 @@ async def run_message_stream(
     async with manager.acquired(
         enabled_servers, github_token=github_token, advertise_cached=True
     ) as active:
+        if restrict_precursor:
+            active.restrict_server_tools("precursor", WORKSPACE_READ_TOOLS | WORKSPACE_WRITE_TOOLS)
         # Warm MCP sessions for the enabled servers (reused across turns). Each
         # contributes tools we aggregate for the LLM; failures are surfaced but
         # don't abort the turn.
