@@ -1,5 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
-import { AlarmClock, ChevronLeft, ChevronRight, BarChart3, MessagesSquare, Shrink } from "lucide-react";
+import {
+  AlarmClock,
+  ChevronLeft,
+  ChevronRight,
+  BarChart3,
+  MessagesSquare,
+  Paperclip,
+  Shrink,
+} from "lucide-react";
 import { streamStore } from "../lib/streamStore";
 import { api } from "../lib/api";
 import { modelsStore, useCurrentModel } from "../lib/modelsStore";
@@ -9,6 +17,8 @@ import type { ContextEstimate, ConversationLLMSelection, Message, ReminderContai
 import { COMPACT_NUDGE_PERCENT, CompactContextButton } from "./CompactContext";
 import { ReminderSection, reminderSummary, type ReminderPanelControls } from "./ChatStatsReminder";
 import { SideChatsSection, type SideChatsControls } from "./SideChatsSection";
+import { ArtifactsSection, useConversationArtifacts } from "./ArtifactsSection";
+import type { WsDiscussionRef } from "../lib/routes";
 
 interface ChatStatsPanelProps {
   selection?: ConversationLLMSelection | null;
@@ -23,6 +33,8 @@ interface ChatStatsPanelProps {
     run: (instructions?: string) => Promise<void>;
   };
   reminder: ReminderPanelControls;
+  /** How the workspace addresses this conversation when an artifact is opened. */
+  discussion: WsDiscussionRef;
   /** Topics only: the side chats started from this topic. */
   sideChats?: SideChatsControls;
 }
@@ -106,10 +118,12 @@ export function ChatStatsPanel({
   streaming,
   compaction,
   reminder,
+  discussion,
   sideChats,
   selection,
 }: ChatStatsPanelProps) {
   const settings = useSettings();
+  const artifacts = useConversationArtifacts(kind, containerId);
   const narrow = useIsNarrow();
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     if (typeof window === "undefined") return true;
@@ -225,6 +239,17 @@ export function ChatStatsPanel({
             <AlarmClock size={16} />
           </button>
         )}
+        {artifacts.items.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setCollapsed(false)}
+            className="mt-2 rounded p-1.5 text-muted hover:bg-surface"
+            data-tooltip={`${artifacts.items.length} ${artifacts.items.length === 1 ? "artifact" : "artifacts"}`}
+            aria-label="Show artifacts"
+          >
+            <Paperclip size={16} />
+          </button>
+        )}
         {sideChats && sideChats.items.length > 0 && (
           <button
             type="button"
@@ -275,6 +300,7 @@ export function ChatStatsPanel({
 
       <div className="flex-1 overflow-y-auto p-3 space-y-4 text-sm">
         <ReminderSection {...reminder} />
+        <ArtifactsSection {...artifacts} discussion={discussion} />
         {sideChats && <SideChatsSection {...sideChats} />}
 
         {contextWindow !== null && contextWindow > 0 && (

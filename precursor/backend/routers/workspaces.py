@@ -2,8 +2,7 @@
 
 Workspaces are working copies of GitHub repositories. The browser/editor
 operate on files relative to the workspace's (optional) subdir; git sync
-operates on the repository root. Chat is ephemeral assist over the active
-file's content.
+operates on the repository root.
 """
 
 from __future__ import annotations
@@ -16,7 +15,6 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sse_starlette.sse import EventSourceResponse
 
 from precursor.backend.config import get_settings
 from precursor.backend.db import get_session
@@ -42,22 +40,14 @@ from precursor.backend.schemas import (
     ResolveRequest,
     WorkspaceCreate,
     WorkspaceRead,
-    WorkspaceUpdate,
 )
-from precursor.backend.schemas.workspace import WorkspaceChatRequest
 from precursor.backend.services import workspace_fs as fs
 from precursor.backend.services import workspace_git as git
-from precursor.backend.services.conversation_turn import resolve_turn_settings
 from precursor.backend.services.definitions import anchors as definition_anchors
 from precursor.backend.services.definitions import home as definitions_home
 from precursor.backend.services.definitions import overlay as definition_overlay
 from precursor.backend.services.definitions.loader import kind_for
 from precursor.backend.services.github_auth import resolve_github_token
-from precursor.backend.services.workspace_chat import (
-    build_workspace_system_prompt,
-    run_workspace_stream,
-    workspace_history,
-)
 from precursor.backend.services.workspaces import (
     WorkspaceError,
 )
@@ -140,22 +130,6 @@ async def create_workspace(
         )
     except WorkspaceError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
-
-
-@router.patch("/{workspace_id}", response_model=WorkspaceRead)
-async def update_workspace(
-    workspace_id: int,
-    payload: WorkspaceUpdate,
-    session: AsyncSession = Depends(get_session),
-) -> Workspace:
-    """Update mutable workspace fields (currently the assigned Assistant Role)."""
-    ws = await _get_workspace(workspace_id, session)
-    data = payload.model_dump(exclude_unset=True)
-    for key, value in data.items():
-        setattr(ws, key, value)
-    await session.commit()
-    await session.refresh(ws)
-    return ws
 
 
 @router.delete("/{workspace_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -777,26 +751,3 @@ async def git_commit_detail(
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
     except git.GitError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
-
-
-# --------------------------------------------------------------------------
-# Chat — ephemeral authoring assistant bound to the active file
-# --------------------------------------------------------------------------
-
-
-@router.post("/{workspace_id}/chat/stream")
-async def chat_stream(
-    workspace_id: int,
-    payload: WorkspaceChatRequest,
-    session: AsyncSession = Depends(get_session),
-) -> EventSourceResponse:
-    ws = await _get_workspace(workspace_id, session)
-    system_prompt = await build_workspace_system_prompt(session, ws, browse_root(ws), payload.path)
-    settings = await resolve_turn_settings(session, model_override=payload.model)
-    return EventSourceResponse(
-        run_workspace_stream(
-            system_prompt=system_prompt,
-            history=workspace_history(payload),
-            settings=settings,
-        )
-    )

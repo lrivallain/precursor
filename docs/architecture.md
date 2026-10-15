@@ -135,9 +135,19 @@ detached background process, so Precursor can run without a terminal:
 
 Chats (`/api/chats/{id}/messages/stream`) take the same path. Scheduled topics
 and MCP `post_message` run the *same* preparation, tool loop and persistence off
-the request path via `services/turn.py`. The workspace assistant
-(`services/workspace_chat.py`) is ephemeral — the client sends its history and
-nothing is stored — but it drives the same tool loop and meters its rounds too.
+the request path via `services/turn.py`. The workspace's discussion panel is not
+a separate engine: it renders a real chat or topic, so its turns take this same
+path. The client adds `workspace_context {workspace_id, path}` to the stream
+body while the conversation is viewed in a workspace, and the turn engine tells
+the model which file is open.
+
+**Artifacts.** `ConversationArtifact` (`models/conversation_artifact.py`) links a
+chat or topic to a workspace file — many-to-many, stored as `(workspace_id,
+path)`. `services/artifacts.py` records a link when a workspace *write* tool
+succeeds (`persist_tool_result`; reads never attach), and the router exposes
+`GET/POST/DELETE /api/{topics|chats}/{id}/artifacts` plus
+`GET /api/workspaces/{id}/discussions?path=` for the "continue a discussion"
+list.
 Tool-less features that ask the model once (`/refine`, summaries, auto-naming,
 …) don't take this path; they use `complete_once()` — see *One-shot calls*
 under [LLM provider abstraction](#llm-provider-abstraction).
@@ -229,8 +239,7 @@ Their shared turn and one-shot services use those preferences for replies,
 retries, compaction, summaries, notes, naming and scheduled/MCP turns. Side chats
 copy the override; promotion preserves it. `complete_once` has an explicit
 `use_conversation_selection=False` opt-out for Live/IQ work attributed to a
-conversation. Agents remain on the independent Copilot SDK, while workspace chat
-and the OpenAI relay continue using app defaults. Credentials stay in the existing
+conversation. Agents remain on the independent Copilot SDK, while the OpenAI relay continue using app defaults. Credentials stay in the existing
 provider configuration map and never enter conversation read models.
 
 `services/llm/base.py` defines a small protocol — two streaming methods

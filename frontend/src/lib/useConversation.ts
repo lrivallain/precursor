@@ -43,7 +43,7 @@ import { inCut, useRewind, type RewindController } from "./useRewind";
 import { useTurnTimeline, type TurnTimeline } from "./useTurnTimeline";
 import { useWindowedMessages } from "./useWindowedMessages";
 import type { ComposerAttachments } from "../components/Composer";
-import type { Message } from "./types";
+import type { Message, WorkspaceTurnContext } from "./types";
 
 /**
  * Erase a conversation's transcript and drop its client-side stream buffer, so a
@@ -80,6 +80,11 @@ export interface UseConversationOptions {
   onRemindersChanged?: () => void;
   /** Persist a role change for this conversation (null = default). */
   onSetRole?: (roleName: string | null) => Promise<void>;
+  /**
+   * Set while the conversation is viewed from the workspace panel: each turn
+   * carries the workspace (and open file) so the model sees them.
+   */
+  workspaceContext?: WorkspaceTurnContext | null;
   /** Topic-only: post the notes pad as a GitHub issue comment. */
   onPostComment?: UseNotesDraftOptions["onPostComment"];
 }
@@ -151,6 +156,7 @@ export function useConversation({
   onUpdated,
   onRemindersChanged,
   onSetRole,
+  workspaceContext,
   onPostComment,
 }: UseConversationOptions): Conversation {
   const confirmAction = useConfirm();
@@ -290,7 +296,14 @@ export function useConversation({
       onUpdated();
     },
     startAppendAndAsk: (body, attachmentIds) =>
-      void streamStore.start(streamKey, body, undefined, undefined, attachmentIds),
+      void streamStore.start(
+        streamKey,
+        body,
+        undefined,
+        undefined,
+        attachmentIds,
+        workspaceContext ?? undefined,
+      ),
     onPostComment,
     systemNote,
   });
@@ -417,7 +430,7 @@ export function useConversation({
         setPendingAttachments([]);
         // Persist the literal slash command as the user message;
         // the LLM receives the expanded prompt for this turn only.
-        void streamStore.start(streamKey, content, expanded, atts);
+        void streamStore.start(streamKey, content, expanded, atts, undefined, workspaceContext ?? undefined);
         return;
       }
     }
@@ -433,6 +446,8 @@ export function useConversation({
       content || "(attachment attached)",
       inlined && inlined !== content ? inlined : undefined,
       atts,
+      undefined,
+      workspaceContext ?? undefined,
     );
   }
 
@@ -440,7 +455,16 @@ export function useConversation({
     if (streaming || !text.trim()) return;
     pinToBottom();
     void rewind.flush().then((ok) => {
-      if (ok) void streamStore.start(streamKey, text.trim());
+      if (ok) {
+        void streamStore.start(
+          streamKey,
+          text.trim(),
+          undefined,
+          undefined,
+          undefined,
+          workspaceContext ?? undefined,
+        );
+      }
     });
   }
 
@@ -460,7 +484,15 @@ export function useConversation({
     void rewind
       .flush()
       .then((ok) => {
-        if (ok) void streamStore.retry(streamKey, m.id, m.content, m.attachments);
+        if (ok) {
+          void streamStore.retry(
+            streamKey,
+            m.id,
+            m.content,
+            m.attachments,
+            workspaceContext ?? undefined,
+          );
+        }
       });
   }
 

@@ -1,7 +1,7 @@
 """Assistant Roles: named personas (system prompts) attached to a discussion.
 
 A role is referenced **by name** (case-insensitively) from topics, chats,
-workspaces, agents, workflows, meetings and collections. Where roles live
+agents, workflows, meetings and collections. Where roles live
 follows the definitions source: the ``roles`` table in database mode, one
 ``roles/<slug>.role.yaml`` file each in files mode. A name nothing defines
 resolves to the ``default`` role, so a stale reference never breaks a chat.
@@ -123,7 +123,7 @@ async def resolve_role_prompt(session: AsyncSession, name: str | None) -> str:
     is "inject nothing" unless the user customised it.
 
     A role prompt may reference skills (``/rewrite``), expanded here so every
-    surface that adopts a role — topics, chats, workspaces, agents, meetings —
+    surface that adopts a role — topics, chats, agents, meetings —
     gets the same treatment.
     """
     role = await find_role(session, name)

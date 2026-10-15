@@ -15,6 +15,19 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **Workspace discussions are real chats and topics, with artifacts.** The
+  ephemeral workspace assistant is gone. A **Discuss** button in the workspace
+  header (the panel is hidden until you press it) opens a real chat or topic
+  beside the files — start a new chat, continue one that already attaches files
+  from the workspace, or bring in any other. The address carries it
+  (`/ws/<slug>/<file>?chat=…` / `?topic=…`). Files an assistant creates or
+  modifies through the workspace tools become **Artifacts** of the chat or topic,
+  listed in its right-hand stats area (attach or detach by hand too); clicking
+  one opens the file with the conversation beside it. New endpoints:
+  `GET/POST/DELETE /api/{topics|chats}/{id}/artifacts` and
+  `GET /api/workspaces/{id}/discussions`; the stream endpoints accept
+  `workspace_context`. See [Workspaces](website/features/workspaces.md#discussing-a-workspace).
+
 - **Tool approval policies for topics and chats.** Choose `manual`, `balanced`
   or `autonomous` per conversation from a shield pill in the composer (defaults
   in Settings → Chat, `autonomous` so nothing changes until you opt in). Calls
@@ -321,6 +334,12 @@ are the per-version history; releasing does not rewrite this file.
   runs the whole Windows journey on the wheel CI builds. It installs with
   `install.ps1` in Windows PowerShell 5.1, checks the login items, stops and
   restarts the app, replays the login entry, self-updates, and uninstalls.
+
+### Removed
+
+- **`POST /api/workspaces/{id}/chat/stream` and the workspace `role`.** A
+  workspace discussion is an ordinary chat, which has its own role. Existing
+  workspace roles are dropped by a migration.
 
 ### Fixed
 

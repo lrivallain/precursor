@@ -23,6 +23,12 @@ from precursor.backend.schemas.approval import (
     ToolApprovalDecision,
     ToolApprovalRead,
 )
+from precursor.backend.schemas.artifact import (
+    ArtifactCreate,
+    ArtifactRead,
+    DiscussionItem,
+    WorkspaceTurnContext,
+)
 from precursor.backend.schemas.chat import (
     ChatCreate,
     ChatRead,
@@ -153,7 +159,6 @@ from precursor.backend.schemas.workspace import (
     ResolveRequest,
     WorkspaceCreate,
     WorkspaceRead,
-    WorkspaceUpdate,
 )
 
 __all__ = [
@@ -175,6 +180,8 @@ __all__ = [
     "ApprovalRuleRead",
     "ApprovalRuleUpdate",
     "ArgClause",
+    "ArtifactCreate",
+    "ArtifactRead",
     "AttachmentRead",
     "AttendeesUpdate",
     "BranchRequest",
@@ -190,6 +197,7 @@ __all__ = [
     "ContextEstimateRead",
     "ContextNoteAdd",
     "ContextNotesUpdate",
+    "DiscussionItem",
     "FileContent",
     "FileCreate",
     "FileDiff",
@@ -287,5 +295,5 @@ __all__ = [
     "UsageStats",
     "WorkspaceCreate",
     "WorkspaceRead",
-    "WorkspaceUpdate",
+    "WorkspaceTurnContext",
 ]

@@ -275,7 +275,7 @@ async def test_link_survives_a_real_mcp_round_trip(
         )
 
     expected = {"slug": "diagrams", "path": "architecture/hub.drawio"}
-    assert links.link_from_result(written) == expected
+    assert links.link_from_result(written) == {**expected, "written": True}
     assert links.link_from_result(read) == expected
 
 

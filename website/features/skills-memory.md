@@ -112,8 +112,8 @@ Until you migrate, the tab shows where to start: a note linking to
 ### Picking a role where you type
 
 The role picker sits in the **composer toolbar**, next to the model controls, on
-every surface that has one: a topic, a chat, a [workspace](/features/workspaces)
-assistant, an [agent](/features/agents-mode) task, and the *Start a new chat* /
+every surface that has one: a topic, a chat (including one opened beside a
+[workspace](/features/workspaces#discussing-a-workspace)), an [agent](/features/agents-mode) task, and the *Start a new chat* /
 *Start an agent task* screens. [Live sessions](/features/live-sessions) have no
 composer, so their picker sits in the capture toolbar beside the meeting
 language.
@@ -127,7 +127,7 @@ What it means depends on where you are:
   for the next message. Reload the page and the new role is still there.
 
 The `/role <name>` command does exactly the same thing from the keyboard — on a
-topic, a chat, a [workspace](/features/workspaces) assistant and an
+topic, a chat and an
 [agent](/features/agents-mode) session — and a bare `/role` opens that surface's
 picker so you can browse what's available. [Live sessions](/features/live-sessions)
 have no composer to type it in, so they use the toolbar picker only.

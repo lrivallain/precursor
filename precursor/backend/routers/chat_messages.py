@@ -41,6 +41,7 @@ from precursor.backend.schemas import (
 )
 from precursor.backend.services import notes as notes_service
 from precursor.backend.services import skills as skills_service
+from precursor.backend.services.artifacts import workspace_turn_context
 from precursor.backend.services.chat_autoname import schedule_autoname, suggest_chat_name
 from precursor.backend.services.compaction import (
     CompactionError,
@@ -208,6 +209,8 @@ async def stream_chat(
 
     # Snapshot history + system context now, before the session closes.
     system_prompt = await build_chat_system_context(session, chat)
+    if payload.workspace_context is not None:
+        system_prompt += "\n\n" + await workspace_turn_context(session, payload.workspace_context)
     history = await snapshot_history(
         session, "chat", chat_id, prompt_override=payload.prompt_override
     )

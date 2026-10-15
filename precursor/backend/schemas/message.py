@@ -8,6 +8,7 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from precursor.backend.models.message import MessageRole
+from precursor.backend.schemas.artifact import WorkspaceTurnContext
 
 
 class AttachmentRead(BaseModel):
@@ -194,6 +195,9 @@ class ChatRequest(BaseModel):
     # (partial answer, tool rows, the error notice). Attachments stay bound to
     # the message, so a retry keeps its images and documents.
     retry_message_id: int | None = None
+    # Set when the turn is held from the workspace panel: the file the user is
+    # viewing is injected into this turn's prompt only, never stored.
+    workspace_context: WorkspaceTurnContext | None = None
 
 
 class NotesRephraseRequest(BaseModel):

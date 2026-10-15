@@ -232,9 +232,14 @@ formatted copy.
   spinning, and stays in the transcript after a reload — so the next turn knows
   the call was cut short.
 
-Chats behave the same way, and so does the
-[workspace assistant](/features/workspaces#the-workspace-assistant) (which has no
-per-message delete or rewind, since nothing there is saved).
+Chats behave the same way, and so does a discussion opened beside a
+[workspace](/features/workspaces#discussing-a-workspace) — it *is* a chat or a topic.
+
+## Artifacts
+
+Workspace files a topic created or that you attached are listed as **Artifacts**
+in the stats area on the right, under the reminder. See
+[Discussing a workspace](/features/workspaces#discussing-a-workspace).
 
 ## When a turn fails
 

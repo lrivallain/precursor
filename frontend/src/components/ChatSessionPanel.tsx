@@ -19,7 +19,7 @@ import { useComposerInput } from "../lib/useComposerInput";
 import { useConversation } from "../lib/useConversation";
 import { ReminderModal } from "./ReminderModal";
 import { ReminderBanner } from "./ReminderBanner";
-import type { Chat } from "../lib/types";
+import type { Chat, WorkspaceTurnContext } from "../lib/types";
 import { RoleSelector } from "./RoleSelector";
 import { SideChatSeedCard } from "./SideChatSeedCard";
 
@@ -41,6 +41,8 @@ interface ChatSessionPanelProps {
   onRemindersChanged?: () => void;
   /** Persist a role change for this chat (null = default). */
   onSetRole?: (roleName: string | null) => Promise<void>;
+  /** Shown from the workspace panel: turns carry the open file, and the stats rail is left out. */
+  workspaceContext?: WorkspaceTurnContext | null;
 }
 
 // Chats are flat sessions with no GitHub issue, so the gh-* commands, the
@@ -52,9 +54,10 @@ export function ChatSessionPanel({
   onArchived,
   onRemindersChanged,
   onSetRole,
+  workspaceContext,
 }: ChatSessionPanelProps) {
   const settings = useSettings();
-  const showStats = settings?.show_chat_stats ?? true;
+  const showStats = (settings?.show_chat_stats ?? true) && !workspaceContext;
 
   // `/send-to-topic` only means something in a chat linked to a topic.
   const linked = chat.parent_topic_id != null;
@@ -72,6 +75,7 @@ export function ChatSessionPanel({
     onUpdated: onChatUpdated,
     onRemindersChanged,
     onSetRole,
+    workspaceContext,
   });
   const { streamKey, systemNote, visibleMessages, streaming, reminders } = conv;
   const rewindFrom = conv.rewind.preview?.fromId ?? null;
@@ -323,6 +327,7 @@ export function ChatSessionPanel({
           selection={chat.llm_selection}
           streaming={streaming}
           compaction={conv.compaction}
+          discussion={{ kind: "chat", ref: chat.slug }}
           reminder={{
             reminder: reminders.reminder,
             busy: reminders.reminderBusy,

@@ -12,6 +12,7 @@ from precursor.backend.models.base import Base, TimestampMixin
 
 if TYPE_CHECKING:
     from precursor.backend.models.approval_rule import ApprovalRule
+    from precursor.backend.models.conversation_artifact import ConversationArtifact
     from precursor.backend.models.message import Message
     from precursor.backend.models.note_draft import NoteDraft
     from precursor.backend.models.reminder import Reminder
@@ -96,6 +97,11 @@ class Chat(Base, TimestampMixin):
     )
     approval_rules: Mapped[list[ApprovalRule]] = relationship(
         "ApprovalRule", cascade="all, delete-orphan", foreign_keys="ApprovalRule.chat_id"
+    )
+    artifacts: Mapped[list[ConversationArtifact]] = relationship(
+        "ConversationArtifact",
+        cascade="all, delete-orphan",
+        foreign_keys="ConversationArtifact.chat_id",
     )
 
     # Optional one-shot reminder. One-to-one; deleting the chat cascades to it.

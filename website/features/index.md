@@ -21,7 +21,7 @@ of working:
 | 🎙️ [**Live sessions**](/features/live-sessions) | Record & transcribe a meeting with live insights, Q&A, and a summary written from the template and in the language you pick. |
 | 🤖 [**Agents**](/features/agents-mode) | Autonomous Copilot SDK agents for long-running tasks, monitored from a control-tower dashboard (opt-in). |
 | 🔗 [**Workflows**](/features/workflows) | Chain those agents into a reusable pipeline the coordinator runs unattended, with gates and approval checkpoints (opt-in). |
-| 🗂️ [**Workspaces & files**](/features/workspaces) | Git clones / local dirs the assistant can browse and edit. Shown as **Files** in the sidebar. |
+| 🗂️ [**Workspaces & files**](/features/workspaces) | Git clones / local dirs the assistant can browse and edit, with a chat or topic you can open beside any file. Shown as **Files** in the sidebar. |
 | ✨ [**IQ**](/features/iq) | Ask a question about everything in Precursor and get a cited answer whose sources open the real items. |
 | 📋 [**Kanban**](/features/kanban) | A board over the GitHub issues linked to your topics. Ships as a [plugin](/features/plugins) — routes, tools and UI in one package. |
 

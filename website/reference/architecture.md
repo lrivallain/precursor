@@ -230,7 +230,7 @@ The shared turn and one-shot resolvers honor them for replies, retries,
 compaction, summaries, notes, naming and scheduled/MCP topic turns. Model
 catalogues and frontend caches are provider-scoped, including models with the
 same ID. Side chats copy overrides and promotion preserves them.
-Live/IQ one-shots explicitly opt out, and agents, workflows, workspace chat and
+Live/IQ one-shots explicitly opt out, and agents, workflows and
 the OpenAI relay retain their existing global/runtime selection. Credentials
 remain in the write-only provider configuration, separate from conversations.
 

@@ -24,7 +24,6 @@ from precursor.backend.models import (
     Role,
     Topic,
     Workflow,
-    Workspace,
 )
 from precursor.backend.schemas import RoleCreate, RoleRead, RoleUpdate
 from precursor.backend.schemas.definitions import DEFAULT_ROLE_NAME
@@ -38,7 +37,6 @@ router = APIRouter(prefix="/api/roles", tags=["roles"])
 _REFERENCES = (
     Topic.role,
     Chat.role,
-    Workspace.role,
     MeetingSession.role,
     AgentSession.role,
     AgentBlueprint.role,

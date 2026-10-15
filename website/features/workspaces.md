@@ -255,22 +255,53 @@ other edit.
 **Copy local path** gives the same absolute path, including a workspace's
 subdirectory.
 
-## The workspace assistant
+## Discussing a workspace
 
-The **Assistant** pane beside the editor is a conversation about the workspace,
-focused on the file you have open. It is ephemeral — nothing is saved, and
-**Clear** empties it (stopping a reply that is still streaming first). It uses
-the same tools as a topic or a chat, shown inline, and **Stop** behaves the same
-way: what already streamed is kept, and a tool call still running settles as
-**stopped** rather than spinning. See
-[deleting, clearing and stopping](/features/topics#deleting-clearing-and-stopping).
+The discussion panel is hidden until you press **Discuss** in the workspace
+header. It isn't a separate assistant: it renders a real [chat](/features/chats)
+or [topic](/features/topics) beside the files, so everything those surfaces do —
+history, tools, approvals, rewind, stop, roles — works the same, and a chat you
+start here shows up in **Chats** like any other.
+
+<Screenshot src="/screenshots/workspaces-discussion.png" alt="A workspace with a chat open beside the file, and the picker listing discussions that attach files" caption="Pressing Discuss offers a new chat, the discussions already attaching files from this workspace, or any other chat or topic." />
+
+The picker offers:
+
+- **New chat** — a fresh chat about the open file.
+- **Continue a discussion** — the chats and topics that already attach files
+  from this workspace, those attached to the open file first. Archived chats are
+  left out.
+- **Open another** — search any chat or topic and bring it in. One discussion is
+  open at a time; **Switch** returns to the picker.
+
+Opening a discussion attaches the file you are viewing to it, and it keeps
+attaching whichever file you move to while it is open. The open file also rides
+along on each turn, so the model knows what "this" means. The address carries the
+discussion (`/ws/<slug>/<file>?chat=<chat>` or `?topic=<id>`), so a reload, a
+shared link and Back all land on the same view; closing the panel removes it.
+
+### Artifacts
+
+Every file a conversation attaches is one of its **artifacts**. They are listed
+in the **Artifacts** section of the stats area on the right of a chat or topic
+(under the reminder), with a count on the collapsed rail.
+
+- A file the assistant **creates or modifies** through the workspace tools is
+  attached automatically, from a chat, a topic or the workspace panel. Reading a
+  file never attaches it.
+- **Attach** adds one by hand; the detach button removes the link without
+  touching the file.
+- Clicking an artifact opens the workspace on that file **with the
+  conversation beside it**.
+- Links follow the path. A file that is renamed or deleted stays listed, marked
+  **missing**.
 
 ## Jumping from a conversation to the file
 
 When the assistant touches a file in a workspace — a diagram via the
 [`drawio` MCP server](/features/mcp), or any file via the `precursor` workspace tools — the tool
-call in the transcript carries an **Open** chip naming it. That holds in a chat,
-a topic, and the workspace's own assistant alike. One click switches to the
+call in the transcript carries an **Open** chip naming it. That holds in a chat
+or a topic, including one opened beside a workspace. One click switches to the
 Files section with that file already open, so a
 diagram produced (or merely inspected) mid-conversation doesn't have to be
 hunted down in the tree. Browser **Back** returns to the discussion.

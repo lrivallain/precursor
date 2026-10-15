@@ -35,6 +35,7 @@ import type {
   Message,
   SideChatItem,
   Topic,
+  WorkspaceTurnContext,
 } from "../lib/types";
 import { RoleSelector } from "./RoleSelector";
 
@@ -49,6 +50,8 @@ interface ChatPanelProps {
   onRemindersChanged?: () => void;
   /** Persist a role change for this topic (null = default). */
   onSetRole?: (roleName: string | null) => Promise<void>;
+  /** Shown from the workspace panel: turns carry the open file, and the stats rail is left out. */
+  workspaceContext?: WorkspaceTurnContext | null;
 }
 
 type PendingKind = "gh-update" | "gh-create" | "gh-close";
@@ -115,13 +118,13 @@ function cardConfirmHint(kind: PendingKind): string | undefined {
   return undefined;
 }
 
-export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, onRemindersChanged, onSetRole }: ChatPanelProps) {
+export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, onRemindersChanged, onSetRole, workspaceContext }: ChatPanelProps) {
   const [composerFocusToken, setComposerFocusToken] = useState(0);
   const [pendingCommand, setPendingCommand] = useState<PendingCommand | null>(null);
 
   const confirmAction = useConfirm();
   const settings = useSettings();
-  const showStats = settings?.show_chat_stats ?? true;
+  const showStats = (settings?.show_chat_stats ?? true) && !workspaceContext;
   const issueAssociationsEnabled = settings?.issue_associations_enabled ?? true;
   const agentsEnabled = settings?.agents_enabled ?? false;
   const excludedCommands = useMemo<ReadonlySet<string>>(() => {
@@ -138,6 +141,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
     onUpdated: onTopicUpdated,
     onRemindersChanged,
     onSetRole,
+    workspaceContext,
     onPostComment: async (text, attachmentIds) => {
       const res = await api.github.postUpdate(topic.id, text, attachmentIds);
       return [
@@ -826,6 +830,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
           messages={conv.messages}
           kind="topic"
           containerId={topic.id}
+          discussion={{ kind: "topic", ref: topic.public_id }}
           selection={topic.llm_selection}
           streaming={streaming}
           compaction={conv.compaction}
