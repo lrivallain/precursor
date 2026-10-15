@@ -368,6 +368,10 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Fixed
 
+- **A new chat's first prompt no longer flashes twice.** Starting a chat from
+  the hero briefly showed the prompt both as the optimistic bubble and as the
+  just-persisted message; the duplicate is now dropped immediately.
+
 - **The collapsed Summary bar no longer shows on topics without a summary.** It
   only appears once a brief exists; the header document icon and
   `/show-summary` still open an empty panel to generate one. See

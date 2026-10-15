@@ -561,6 +561,10 @@ export const streamStore = new StreamStore();
  * same turn also lives in the buffer (reconciled to its real id by the
  * `user_message` event). Deduping by id keeps that first turn from rendering
  * twice; for an established conversation there is no overlap and this is a no-op.
+ *
+ * Before that event arrives the buffered prompt still carries its optimistic
+ * (negative) id, so it is matched against the persisted tail by content instead.
+ * Only the tail counts: an earlier identical prompt ("yes") must not hide it.
  */
 export function mergeConversation(
   persisted: Message[],
@@ -569,7 +573,17 @@ export function mergeConversation(
   if (buffered.length === 0) return persisted;
   const bufferedIds = new Set(buffered.map((m) => m.id));
   const deduped = persisted.filter((m) => !bufferedIds.has(m.id));
-  return [...deduped, ...buffered];
+  const tailPrompts = new Set<string>();
+  for (let i = deduped.length - 1; i >= 0 && deduped[i].role === "user"; i--) {
+    tailPrompts.add(deduped[i].content);
+  }
+  if (tailPrompts.size === 0) return [...deduped, ...buffered];
+  return [
+    ...deduped,
+    ...buffered.filter(
+      (m) => !(m.id < 0 && m.role === "user" && tailPrompts.has(m.content)),
+    ),
+  ];
 }
 
 export function useStreamVersion(): number {
