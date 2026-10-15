@@ -3,8 +3,10 @@ import { MessageSquare, MessageSquarePlus, MessagesSquare, Repeat2, X } from "lu
 import { api } from "../lib/api";
 import type { WsDiscussionRef } from "../lib/routes";
 import type { Chat, Topic, Workspace, WorkspaceDiscussion } from "../lib/types";
+import { useResizableWidth } from "../lib/useResizableWidth";
 import { ChatPanel } from "./ChatPanel";
 import { ChatSessionPanel } from "./ChatSessionPanel";
+import { ResizeHandle } from "./ResizeHandle";
 
 export function DiscussButton({ active, onClick }: { active: boolean; onClick: () => void }) {
   return (
@@ -94,6 +96,13 @@ export function WorkspaceDiscussionPanel({
   onClose,
 }: WorkspaceDiscussionPanelProps) {
   const [picking, setPicking] = useState(discussion === null);
+  const { width, onMouseDown: onResize } = useResizableWidth({
+    storageKey: "precursor:workspace:discussionWidth",
+    defaultWidth: 416,
+    min: 320,
+    max: 800,
+    side: "left",
+  });
   const select = (next: WsDiscussionRef) => {
     setPicking(false);
     onSelect(next);
@@ -102,10 +111,16 @@ export function WorkspaceDiscussionPanel({
 
   return (
     <aside
-      className="flex min-h-0 w-[26rem] max-w-[45%] shrink-0 flex-col border-l border-border bg-bg max-lg:absolute max-lg:inset-y-0 max-lg:right-0 max-lg:z-20 max-lg:w-full max-lg:max-w-full"
+      // The inline width only applies from lg up: below that the panel is a
+      // full-width overlay and the drag handle is hidden.
+      style={{ "--discussion-w": `${width}px` } as React.CSSProperties}
+      className="flex min-h-0 w-full shrink-0 flex-col border-l border-border bg-bg lg:relative lg:w-[var(--discussion-w)] lg:max-w-[65%] max-lg:absolute max-lg:inset-y-0 max-lg:right-0 max-lg:z-20"
       aria-label="Discussion"
       data-testid="workspace-discussion"
     >
+      <div className="max-lg:hidden">
+        <ResizeHandle onMouseDown={onResize} side="left" />
+      </div>
       {showPicker ? (
         <DiscussionPicker
           workspace={workspace}

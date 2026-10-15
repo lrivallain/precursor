@@ -14,6 +14,7 @@ import {
 import { api } from "../lib/api";
 import { ATTACHMENT_ACCEPT } from "../lib/attachments";
 import { useRefine } from "../lib/useRefine";
+import { ComposerCompactProvider, useIsCompactWidth } from "../lib/composerCompact";
 import type { SlashCommand } from "../lib/commands";
 import type { Attachment } from "../lib/types";
 import { SlashCommandPicker } from "./SlashCommandPicker";
@@ -92,6 +93,9 @@ export function Composer({
   toolbarStart,
 }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const toolbarRef = useRef<HTMLDivElement>(null);
+  const compact = useIsCompactWidth(toolbarRef);
+  const btnPad = compact ? "p-1.5" : "p-2";
   const fileInputRef = useRef<HTMLInputElement>(null);
   const historyIndexRef = useRef<number | null>(null);
   const originalDraftRef = useRef<string>("");
@@ -361,20 +365,20 @@ export function Composer({
           </div>
         )}
         </div>
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-2 pb-2 pt-1">
+        <div ref={toolbarRef} className="flex flex-wrap items-center gap-x-2 gap-y-1 px-2 pb-2 pt-1">
           <div className="flex flex-wrap items-center gap-1 min-w-0 flex-1">
             {attachments && (
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                className="p-2 rounded-lg text-muted hover:text-text hover:bg-bg"
+                className={`${btnPad} rounded-lg text-muted hover:text-text hover:bg-bg`}
                 aria-label="Attach file"
                 data-tooltip="Attach file (image, pdf, docx, pptx, or text/code)"
               >
                 <Plus size={18} />
               </button>
             )}
-            {toolbarStart}
+            <ComposerCompactProvider value={compact}>{toolbarStart}</ComposerCompactProvider>
           </div>
           <div className="flex items-center gap-1 shrink-0 ml-auto">
             <button
@@ -389,7 +393,7 @@ export function Composer({
                 if (next !== null) onChange(next);
               }}
               disabled={refining || (!canRevert && !value.trim())}
-              className={`p-2 rounded-lg disabled:opacity-40 ${
+              className={`${btnPad} rounded-lg disabled:opacity-40 ${
                 refineError
                   ? "text-red-500 hover:bg-bg"
                   : "text-muted hover:text-text hover:bg-bg"
@@ -418,7 +422,7 @@ export function Composer({
               <button
                 type="button"
                 onClick={speech.toggle}
-                className={`p-2 rounded-lg ${
+                className={`${btnPad} rounded-lg ${
                   speech.listening
                     ? "bg-red-600 text-white animate-pulse"
                     : "text-muted hover:text-text hover:bg-bg"
@@ -437,7 +441,7 @@ export function Composer({
             {streaming ? (
               <button
                 onClick={onStop}
-                className="p-2 rounded-lg text-muted hover:text-text hover:bg-bg"
+                className={`${btnPad} rounded-lg text-muted hover:text-text hover:bg-bg`}
                 aria-label="Stop generation"
                 data-tooltip="Stop generation"
               >
@@ -447,7 +451,7 @@ export function Composer({
               <button
                 onClick={triggerSend}
                 disabled={sendDisabled}
-                className="p-2 rounded-lg bg-accent text-white disabled:opacity-40 disabled:hover:bg-accent hover:bg-accent/90"
+                className={`${btnPad} rounded-lg bg-accent text-white disabled:opacity-40 disabled:hover:bg-accent hover:bg-accent/90`}
                 aria-label="Send"
                 data-tooltip="Send (Enter)"
               >

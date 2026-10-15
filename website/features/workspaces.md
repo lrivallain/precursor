@@ -280,6 +280,11 @@ along on each turn, so the model knows what "this" means. The address carries th
 discussion (`/ws/<slug>/<file>?chat=<chat>` or `?topic=<id>`), so a reload, a
 shared link and Back all land on the same view; closing the panel removes it.
 
+Drag the panel's left edge to **resize** it (320–800 px, at most 65% of the
+window). The width is remembered per browser. On narrow screens the panel is a
+full-width overlay and has no handle. When the panel is narrow, the composer
+switches to its [compact mode](/features/chats#compact-composer).
+
 ### Artifacts
 
 Every file a conversation attaches is one of its **artifacts**. They are listed
