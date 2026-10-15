@@ -938,6 +938,22 @@ async def resolve_topic_approval_policy(session: AsyncSession) -> str:
     )
 
 
+DEFAULT_SCHEDULED_APPROVAL_TIMEOUT_MINUTES = 60
+MAX_SCHEDULED_APPROVAL_TIMEOUT_MINUTES = 60 * 24 * 14
+
+
+async def resolve_scheduled_approval_timeout(session: AsyncSession) -> int:
+    """Minutes an unattended run waits on an approval before auto-denying it (0 = forever)."""
+    return await resolve(
+        session,
+        SettingSpec(
+            "scheduled_approval_timeout_minutes",
+            _clamped_int(0, MAX_SCHEDULED_APPROVAL_TIMEOUT_MINUTES, require=lambda v: v >= 0),
+            default=DEFAULT_SCHEDULED_APPROVAL_TIMEOUT_MINUTES,
+        ),
+    )
+
+
 async def resolve_chat_approval_policy(session: AsyncSession) -> str:
     """Default approval policy for chat tool calls (DB override on the default)."""
     return await resolve(

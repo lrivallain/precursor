@@ -365,6 +365,7 @@ def _turn_events(
     history: list[ChatMessage],
     echo: dict[str, Any] | None,
     settings: TurnSettings,
+    auth_wait_timeout: float = AUTH_PAUSE_TIMEOUT_SECONDS,
 ) -> AsyncIterator[dict[str, str]]:
     return run_message_stream(
         kind=kind,
@@ -380,6 +381,7 @@ def _turn_events(
         provider=settings.provider,
         github_token=settings.github_token,
         enabled_servers=settings.enabled_servers,
+        auth_wait_timeout=auth_wait_timeout,
         gate=settings.gate,
     )
 
@@ -410,6 +412,7 @@ async def _settle_approvals(
     container_id: int,
     decided: list[Any],
     settings: TurnSettings,
+    auth_wait_timeout: float = AUTH_PAUSE_TIMEOUT_SECONDS,
 ) -> AsyncIterator[dict[str, str]]:
     """Write the tool result of every decided approval, running approved tools."""
     manager = get_mcp_client_manager()
@@ -429,7 +432,7 @@ async def _settle_approvals(
                 outcome = ToolResultTurn(call, approval_service.denied_tool_result(row), True, None)
             else:
                 executed: ToolResultTurn | None = None
-                async for step in execute_tool_call(active, call, AUTH_PAUSE_TIMEOUT_SECONDS):
+                async for step in execute_tool_call(active, call, auth_wait_timeout):
                     if isinstance(step, ToolAuthRequired):
                         yield {
                             "event": "mcp_auth_required",
@@ -467,16 +470,20 @@ def resume_turn(
     decided: list[Any],
     settings: TurnSettings,
     finish_history: Callable[[list[ChatMessage]], list[ChatMessage]] | None = None,
+    auth_wait_timeout: float = AUTH_PAUSE_TIMEOUT_SECONDS,
 ) -> AsyncIterator[dict[str, str]]:
     """Continue a parked turn: run the decided calls, then let the model go on.
 
     The history is read only after the tool rows exist, so the parked assistant
     turn hydrates intact. ``finish_history`` lets a chat re-apply its system
-    instruction to the fresh snapshot.
+    instruction to the fresh snapshot. ``auth_wait_timeout`` bounds a pause for
+    an interactive sign-in (``0`` for an unattended resume).
     """
 
     async def events() -> AsyncIterator[dict[str, str]]:
-        async for evt in _settle_approvals(kind, container_id, decided, settings):
+        async for evt in _settle_approvals(
+            kind, container_id, decided, settings, auth_wait_timeout
+        ):
             yield evt
         await publish_approval_changed(**container_message_kwargs(kind, container_id))
         async with SessionLocal() as s:
@@ -488,7 +495,13 @@ def resume_turn(
         async with SessionLocal() as s:
             gate = await approval_service.build_gate(s, kind, container_id)
         async for evt in _turn_events(
-            kind, container_id, system_prompt, history, None, replace(settings, gate=gate)
+            kind,
+            container_id,
+            system_prompt,
+            history,
+            None,
+            replace(settings, gate=gate),
+            auth_wait_timeout,
         ):
             yield evt
 

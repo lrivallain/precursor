@@ -513,4 +513,7 @@ def serialize(row: ToolApproval) -> dict[str, Any]:
         "executed": row.executed,
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "decided_at": row.decided_at.isoformat() if row.decided_at else None,
+        "expires_at": row.expires_at.replace(tzinfo=row.expires_at.tzinfo or UTC).isoformat()
+        if row.expires_at
+        else None,
     }

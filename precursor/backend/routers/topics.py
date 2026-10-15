@@ -509,6 +509,7 @@ async def create_topic_schedule(
         enabled=payload.enabled,
         prompt=payload.prompt,
         clear_context=payload.clear_context,
+        approval_timeout_minutes=payload.approval_timeout_minutes,
         status="idle",
     )
     # Seeds the primary columns + extra_rules from the resolved rule set, so a
@@ -535,6 +536,8 @@ async def update_topic_schedule(
         schedule.prompt = data["prompt"]
     if "clear_context" in data and data["clear_context"] is not None:
         schedule.clear_context = data["clear_context"]
+    if "approval_timeout_minutes" in data:
+        schedule.approval_timeout_minutes = data["approval_timeout_minutes"]
 
     # Cadence is tri-state per field: omitted = unchanged, value = set, and for
     # run_at_minute an explicit null = back to interval mode. `resolved_rules`

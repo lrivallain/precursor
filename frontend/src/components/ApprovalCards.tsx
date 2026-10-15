@@ -110,6 +110,18 @@ function ApprovalCard({
         )}
       </div>
       {a.reason && <p className="px-3 pb-2 text-xs text-text/90 whitespace-pre-wrap">{a.reason}</p>}
+      {!settled && a.expires_at && (
+        <p className="px-3 pb-2 text-[11px] text-muted">
+          Nobody was there when this was asked. It is denied automatically at{" "}
+          {new Date(a.expires_at).toLocaleString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+            month: "short",
+            day: "numeric",
+          })}
+          .
+        </p>
+      )}
       {!isIntent && (
         <div className="px-3 pb-2">
           <button

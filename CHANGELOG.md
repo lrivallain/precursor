@@ -31,6 +31,10 @@ are the per-version history; releasing does not rewrite this file.
   in each conversation's settings. `ask` beats `allow`, and calls no rule
   matches follow the policy. Earlier "Always allow here" answers were migrated
   into rules. See [Tool approvals](website/features/approvals.md).
+  **Unattended runs:** when a scheduled topic parks on an approval, Precursor
+  sends a browser notification and starts a timeout (60 minutes by default,
+  overridable per schedule, `0` never). If nobody answers, the call is denied,
+  the model is told, and the run finishes by itself.
 
 - **A new install starts in files mode.** When nothing is declared in the
   database yet (no agent, no workflow, no role beyond the untouched `default`)

@@ -210,6 +210,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     backup_ticker = get_backup_ticker()
     await backup_ticker.start()
+    from precursor.backend.services.approval_expiry_ticker import get_approval_expiry_ticker
+
+    approval_expiry_ticker = get_approval_expiry_ticker()
+    await approval_expiry_ticker.start()
     from precursor.backend.services.iq.ticker import get_iq_ticker
 
     iq_ticker = get_iq_ticker()
@@ -245,6 +249,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await live_transcript_ticker.stop()
         await agent_event_ticker.stop()
         await backup_ticker.stop()
+        await approval_expiry_ticker.stop()
         await iq_ticker.stop()
         from precursor.backend.services.iq import indexer as iq_indexer
 

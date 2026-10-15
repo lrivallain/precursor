@@ -30,7 +30,6 @@ from precursor.backend.services.conversation_turn import (
     snapshot_history,
 )
 from precursor.backend.services.events import (
-    publish_approval_changed,
     publish_message_changed,
     publish_stream_ended,
     publish_stream_started,
@@ -50,6 +49,7 @@ from precursor.backend.services.turn_engine import (
     persist_tool_result,
     run_tool_loop,
 )
+from precursor.backend.services.unattended_approvals import announce_parked
 from precursor.backend.services.workspaces import WORKSPACE_READ_TOOLS, WORKSPACE_WRITE_TOOLS
 
 logger = logging.getLogger(__name__)
@@ -166,10 +166,12 @@ async def _run(
                 # Nobody is watching, so park: the cards (and the sidebar badge)
                 # wait for the user, who resumes the turn from the topic.
                 async with SessionLocal() as ws:
-                    await approval_service.record_pending(
+                    rows = await approval_service.record_pending(
                         ws, "topic", topic_id, last_assistant_id, ev.items
                     )
-                await publish_approval_changed(topic_id=topic_id)
+                    parked_ids = [r.id for r in rows]
+                # Starts the auto-deny clock and notifies the windows.
+                await announce_parked(topic_id, parked_ids)
                 return
 
             elif isinstance(ev, ToolResultTurn):

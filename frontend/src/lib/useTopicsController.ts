@@ -7,7 +7,7 @@ import {
   readStoredCollectionId,
   writeStoredCollectionId,
 } from "./collections";
-import { eventBus } from "./events";
+import { eventBus, type BusEvent } from "./events";
 import { notifyIfUnfocused } from "./notifications";
 import { openNotes } from "./notesOpen";
 import { navigate, topicsModeUrl, topicUrl, type AppRoute } from "./routes";
@@ -236,6 +236,22 @@ export function useTopicsController(deps: TopicsControllerDeps): TopicsControlle
     });
   }
 
+  // A scheduled run parked on an approval nobody is there to give: say so,
+  // with the deadline after which it is denied.
+  function notifyParked(event: Extract<BusEvent, { type: "approval.parked" }>): void {
+    if (!notificationsEnabledRef.current) return;
+    if (activeTopicRef.current?.id === event.topic_id && document.hasFocus()) return;
+    const what = event.count === 1 ? "1 tool call is" : `${event.count} tool calls are`;
+    const until = event.expires_at
+      ? ` Denied automatically at ${new Date(event.expires_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.`
+      : "";
+    notifyIfUnfocused({
+      title: `${event.title || "A scheduled run"} needs approval`,
+      body: `${what} waiting for you.${until}`,
+      tag: `precursor-approval-${event.topic_id}`,
+    });
+  }
+
   // Adopt a topic the URL resolved to. A deep link (or a permalink) can point
   // outside the collection the user last had open, so the lens follows the
   // topic rather than rendering an empty tree beside it.
@@ -369,6 +385,8 @@ export function useTopicsController(deps: TopicsControllerDeps): TopicsControlle
         }
       } else if (event.type === "approval.changed") {
         if (event.chat_id == null) void refreshTree();
+      } else if (event.type === "approval.parked") {
+        notifyParked(event);
       } else if (event.type === "message.changed") {
         if (event.chat_id != null) return;
         const topicId = event.topic_id;

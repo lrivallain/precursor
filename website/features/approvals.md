@@ -98,6 +98,27 @@ Rules apply to topics and chats. They are never created from the model's own
 `request_approval` intents. There is no `deny` effect and no per-workspace scope
 yet.
 
+## Unattended runs
+
+A [scheduled](/features/scheduler) topic run has nobody watching. When it needs
+an approval it parks like any other turn, and Precursor:
+
+- sends a browser notification ("*Topic* needs approval", with the deadline) when
+  notifications are on in Settings → Chat, unless you are already looking at
+  that topic;
+- starts a clock. After **60 minutes** by default the call is denied
+  automatically and the run is resumed on its own: the model is told nobody
+  answered, so it can carry on without the tool or finish with a note.
+
+The card shows the deadline ("denied automatically at …"). Answer before then and
+nothing changes. Change the default in Settings → Chat → Tools, or per schedule
+in the topic's settings (blank inherits, `0` waits forever). Approvals you
+trigger yourself in an open conversation never expire.
+
+If a resumed run needs another approval, it parks again with a fresh deadline.
+The resumed run does not hide Precursor's own MCP tools from the model the way
+the first, scheduled pass does.
+
 ::: tip Agents mode
 [Agents mode](/features/agents-mode) has its own approval policy, which governs
 the agent's CLI session. The two are independent.

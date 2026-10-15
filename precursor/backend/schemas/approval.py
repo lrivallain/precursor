@@ -8,6 +8,7 @@ from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from precursor.backend.schemas.schedule import UtcDateTime
 from precursor.backend.services.approval_rules import (
     ARG_OPS,
     MAX_CLAUSES,
@@ -64,6 +65,8 @@ class ToolApprovalRead(BaseModel):
     executed: bool
     created_at: datetime | None = None
     decided_at: datetime | None = None
+    # Set for a call parked by an unattended run: when it is auto-denied.
+    expires_at: UtcDateTime | None = None
 
 
 class ToolApprovalDecision(BaseModel):

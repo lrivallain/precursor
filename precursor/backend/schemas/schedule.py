@@ -48,6 +48,8 @@ MIN_INTERVAL_SECONDS = 60
 ALL_DAYS_MASK = 127
 # run_at_minute bounds: minutes since local midnight.
 MAX_MINUTE_OF_DAY = 24 * 60 - 1
+# Two weeks; longer than that a parked run is effectively abandoned.
+MAX_APPROVAL_TIMEOUT_MINUTES = 60 * 24 * 14
 
 
 class RecurrenceRule(BaseModel):
@@ -200,6 +202,9 @@ class ScheduleSummary(BaseModel):
     timezone: str = "UTC"
     rules: RuleListRead
     clear_context: bool = False
+    # Minutes a parked approval waits before it is auto-denied; null inherits the
+    # global setting and 0 waits forever.
+    approval_timeout_minutes: int | None = None
     next_run_at: UtcDateTime | None = None
     last_run_at: UtcDateTime | None = None
     status: str = "idle"
@@ -232,6 +237,9 @@ class ScheduleCreate(RulesPayload):
     # Full rule set. Takes precedence over the flat fields above when non-empty.
     rules: RuleListWrite
     clear_context: bool = False
+    approval_timeout_minutes: int | None = Field(
+        default=None, ge=0, le=MAX_APPROVAL_TIMEOUT_MINUTES
+    )
     enabled: bool = True
 
 
@@ -247,6 +255,9 @@ class TopicScheduleCreate(RulesPayload):
     timezone: str = Field(default="UTC", max_length=64)
     rules: RuleListWrite
     clear_context: bool = False
+    approval_timeout_minutes: int | None = Field(
+        default=None, ge=0, le=MAX_APPROVAL_TIMEOUT_MINUTES
+    )
     enabled: bool = True
 
 
@@ -265,4 +276,8 @@ class ScheduleUpdate(RulesPayload):
     # delete the schedule instead of leaving it with nothing to fire on).
     rules: RuleListWrite
     clear_context: bool | None = None
+    # Explicit null returns to the global default; use `model_fields_set` in the router.
+    approval_timeout_minutes: int | None = Field(
+        default=None, ge=0, le=MAX_APPROVAL_TIMEOUT_MINUTES
+    )
     enabled: bool | None = None

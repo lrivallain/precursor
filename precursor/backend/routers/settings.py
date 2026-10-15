@@ -48,6 +48,7 @@ from precursor.backend.services.app_settings import (
     resolve_openai_proxy_enabled,
     resolve_openai_proxy_key,
     resolve_plugin_install_enabled,
+    resolve_scheduled_approval_timeout,
     resolve_system_settings,
     resolve_topic_approval_policy,
     resolve_workflows_default_capabilities,
@@ -232,6 +233,7 @@ async def _agents_block(session: AsyncSession) -> dict[str, Any]:
         "agents_approval_policy": await resolve_agents_approval_policy(session),
         "topic_approval_policy": await resolve_topic_approval_policy(session),
         "chat_approval_policy": await resolve_chat_approval_policy(session),
+        "scheduled_approval_timeout_minutes": await resolve_scheduled_approval_timeout(session),
         "agents_system_prompt": await resolve_agents_system_prompt(session),
         "agents_watchdog_timeout_seconds": await resolve_agents_watchdog_timeout(session),
         **{

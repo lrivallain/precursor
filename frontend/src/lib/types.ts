@@ -68,6 +68,8 @@ export interface ScheduleSummary {
   timezone: string;
   rules: RecurrenceRule[];
   clear_context: boolean;
+  /** Minutes an unanswered tool approval waits before it is auto-denied. Null inherits the global setting; 0 never expires. */
+  approval_timeout_minutes: number | null;
   next_run_at: string | null;
   last_run_at: string | null;
   status: string;
@@ -93,6 +95,7 @@ export interface TopicScheduleCreate {
   timezone?: string;
   rules?: RecurrenceRule[];
   clear_context?: boolean;
+  approval_timeout_minutes?: number | null;
   enabled?: boolean;
 }
 
@@ -104,6 +107,7 @@ export interface ScheduleUpdate {
   timezone?: string;
   rules?: RecurrenceRule[];
   clear_context?: boolean;
+  approval_timeout_minutes?: number | null;
   enabled?: boolean;
 }
 
@@ -1518,6 +1522,8 @@ export interface ToolApproval {
   executed: boolean;
   created_at: string | null;
   decided_at: string | null;
+  /** UTC deadline after which an unattended run's parked call is auto-denied. */
+  expires_at: string | null;
 }
 
 export interface ToolApprovalDecision {
@@ -1702,6 +1708,8 @@ export interface Settings {
   /** Default tool approval policy for topics and chats without their own. */
   topic_approval_policy: ConversationApprovalPolicy;
   chat_approval_policy: ConversationApprovalPolicy;
+  /** Default minutes before an approval parked by a scheduled run is auto-denied; 0 never. */
+  scheduled_approval_timeout_minutes: number;
   agents_system_prompt: string;
   agents_watchdog_timeout_seconds: number;
   // Workflow defaults: what a new step may draw on, and the stall watchdog a
@@ -1782,6 +1790,7 @@ export interface SettingsUpdate {
   agents_approval_policy?: AgentApprovalPolicy;
   topic_approval_policy?: ConversationApprovalPolicy;
   chat_approval_policy?: ConversationApprovalPolicy;
+  scheduled_approval_timeout_minutes?: number;
   agents_system_prompt?: string;
   agents_watchdog_timeout_seconds?: number;
   workflows_default_use_mcp?: boolean;

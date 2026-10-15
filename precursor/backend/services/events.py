@@ -32,6 +32,7 @@ import secrets
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
+from datetime import datetime
 from typing import TypedDict
 
 logger = logging.getLogger(__name__)
@@ -94,6 +95,11 @@ class Event(TypedDict, total=False):
     workflow_id: int | None
     status: str | None
     name: str | None
+    # Carried by ``approval.parked``: what a notification needs to name the
+    # topic, count the waiting calls and state when they auto-deny.
+    title: str | None
+    count: int | None
+    expires_at: str | None
     client_id: str | None
 
 
@@ -201,6 +207,9 @@ class EventBus:
             "workflow_id": event.get("workflow_id"),
             "status": event.get("status"),
             "name": event.get("name"),
+            "title": event.get("title"),
+            "count": event.get("count"),
+            "expires_at": event.get("expires_at"),
             "client_id": event.get("client_id") or _current_client_id.get(),
         }
         self.dispatch(payload)
@@ -439,6 +448,25 @@ async def publish_approval_changed(
     cards of that conversation.
     """
     await _bus.publish({"type": "approval.changed", "topic_id": topic_id, "chat_id": chat_id})
+
+
+async def publish_approval_parked(
+    *, topic_id: int, title: str, count: int, expires_at: datetime | None
+) -> None:
+    """Signal that an unattended run is waiting on a person.
+
+    Carries what a browser notification needs (title, how many calls, when they
+    auto-deny) so a window can alert without fetching the topic first.
+    """
+    await _bus.publish(
+        {
+            "type": "approval.parked",
+            "topic_id": topic_id,
+            "title": title,
+            "count": count,
+            "expires_at": expires_at.isoformat() if expires_at else None,
+        }
+    )
 
 
 async def publish_meeting_changed(meeting_session_id: int | None = None) -> None:

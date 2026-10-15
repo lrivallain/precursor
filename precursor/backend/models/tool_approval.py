@@ -68,5 +68,10 @@ class ToolApproval(Base, TimestampMixin):
     scope: Mapped[str] = mapped_column(String(16), nullable=False, default=APPROVAL_SCOPE_ONCE)
     feedback: Mapped[str | None] = mapped_column(Text, nullable=True)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Set only when an unattended (scheduled) run parked: past this moment the
+    # expiry ticker denies the call instead of leaving the run parked forever.
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
     # True once the tool result row for this call has been written.
     executed: Mapped[bool] = mapped_column(nullable=False, default=False, server_default="0")

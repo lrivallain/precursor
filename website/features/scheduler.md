@@ -66,6 +66,10 @@ watching: it raises the [out-of-band "agent needs you"
 signal](/features/agents-mode/running#the-agent-needs-you-signal) — a focus-independent
 notification, a 🔔 in the tab title, and top billing in the ⌘K palette.
 
+A scheduled **topic** that needs a [tool approval](/features/approvals#unattended-runs)
+notifies you the same way; if nobody answers within the schedule's *Approval
+timeout* (default 60 minutes), the call is denied and the run finishes without it.
+
 ## `/guard` — gate a run behind a cheap probe
 
 A scheduled prompt can be prefixed with one or more `/guard` directives that gate

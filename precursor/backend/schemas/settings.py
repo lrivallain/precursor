@@ -125,6 +125,7 @@ class SettingsPayload(BaseModel):
     agents_approval_policy: str | None = None
     topic_approval_policy: str | None = None
     chat_approval_policy: str | None = None
+    scheduled_approval_timeout_minutes: int | None = None
     agents_system_prompt: str | None = None
     agents_watchdog_timeout_seconds: int | None = None
     # Workflows: seed values for a new workflow and its steps.
@@ -259,6 +260,8 @@ class SettingsRead(BaseModel):
     # Default approval policy for topic / chat tool calls: manual | balanced | autonomous.
     topic_approval_policy: str = "autonomous"
     chat_approval_policy: str = "autonomous"
+    # Minutes a scheduled run waits on an approval before it is auto-denied; 0 waits forever.
+    scheduled_approval_timeout_minutes: int = 60
     # Extra system-message preamble appended to every agent session.
     agents_system_prompt: str = ""
     # Minutes... seconds, actually: how long a running session may sit with no
