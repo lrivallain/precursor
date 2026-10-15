@@ -187,8 +187,8 @@ export function ChatSessionPanel({
   }
 
   return (
-    <div className="h-full flex min-h-0">
-      <div className="flex-1 flex flex-col min-h-0">
+    <div className="h-full flex min-h-0 min-w-0">
+      <div className="flex-1 flex flex-col min-h-0 min-w-0">
         {reminders.reminder && reminders.reminder.status === "fired" && (
           <ReminderBanner
             reminder={reminders.reminder}

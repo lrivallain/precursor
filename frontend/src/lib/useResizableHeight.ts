@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { beginDrag } from "./dragGuard";
 
 interface Options {
   storageKey: string;
@@ -28,6 +29,7 @@ export function useResizableHeight({
   const dragging = useRef(false);
   const startY = useRef(0);
   const startH = useRef(0);
+  const endGuard = useRef<(() => void) | null>(null);
   const pointerCleanup = useRef<(() => void) | null>(null);
   const height = clamp(preferredHeight, min, max);
 
@@ -94,6 +96,8 @@ export function useResizableHeight({
       dragging.current = true;
       startY.current = e.clientY;
       startH.current = height;
+      endGuard.current?.();
+      endGuard.current = beginDrag();
       document.body.style.userSelect = "none";
       document.body.style.cursor = "row-resize";
     },
@@ -108,6 +112,8 @@ export function useResizableHeight({
       setHeight(clamp(next, min, max));
     }
     function onUp(): void {
+      endGuard.current?.();
+      endGuard.current = null;
       if (!dragging.current) return;
       dragging.current = false;
       document.body.style.userSelect = "";
