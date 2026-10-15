@@ -72,6 +72,17 @@ Chats share the same conversation experience as topics:
   place, or lift part of it into `/notes` — see
   [editing replies](/features/topics#editing-replies).
 
+### Compact composer
+
+The composer only goes compact when it has to. If the model, reasoning effort,
+context size, approval and role pickers no longer fit on one row — a narrow
+window, the [workspace discussion](/features/workspaces#discussing-a-workspace)
+panel, a phone — they shrink to **icons**. The current value moves into the
+tooltip and the accessible name (for example "Model: GPT-5 · Medium"), and the
+menus open as viewport-clamped popups so they never spill past the edge. It
+applies to topics, chats, agents and the start screen alike, and the labelled
+pills come back as soon as there is room again.
+
 ## Chats name themselves
 
 A new chat starts as **"New chat"** — which, after a busy afternoon, leaves a

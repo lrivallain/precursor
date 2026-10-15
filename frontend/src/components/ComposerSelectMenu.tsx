@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Check, ChevronDown, Plus, Search } from "lucide-react";
+import { useComposerCompact } from "../lib/composerCompact";
 
 export interface MenuOption {
   value: string;
@@ -28,6 +29,7 @@ export function ComposerSelectMenu({
   tooltip,
   triggerLabel,
   icon,
+  compactIcon,
   value,
   groups,
   emptyHint,
@@ -35,7 +37,7 @@ export function ComposerSelectMenu({
   disabled,
   filterPlaceholder,
   fullWidth = false,
-  portal = false,
+  portal: portalProp = false,
   onCustomValue,
   customOptions,
   footerAction,
@@ -50,6 +52,9 @@ export function ComposerSelectMenu({
   triggerLabel: string;
   /** Optional leading glyph, for pickers whose label alone is ambiguous. */
   icon?: ReactNode;
+  /** Glyph standing in for the label when the composer is too narrow for text
+   *  pills; falls back to `icon`, and to the label when neither exists. */
+  compactIcon?: ReactNode;
   value: string;
   groups: MenuGroup[];
   emptyHint?: string;
@@ -73,6 +78,11 @@ export function ComposerSelectMenu({
   onOpen?: () => void;
   onSelect: (value: string) => void;
 }) {
+  const composerCompact = useComposerCompact();
+  const glyphOnly = composerCompact && !fullWidth && Boolean(compactIcon ?? icon);
+  // A narrow panel can't hold an inline menu anchored mid-toolbar: it would
+  // run past the edge, so the popup escapes to the viewport and is clamped.
+  const portal = portalProp || glyphOnly;
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
   const open = controlledOpen ?? uncontrolledOpen;
   const [query, setQuery] = useState("");
@@ -341,23 +351,29 @@ export function ComposerSelectMenu({
       <button
         ref={triggerRef}
         type="button"
-        aria-label={ariaLabel}
+        aria-label={glyphOnly ? `${ariaLabel}: ${triggerLabel}` : ariaLabel}
         aria-haspopup="listbox"
         aria-expanded={open}
-        data-tooltip={tooltip}
+        data-tooltip={glyphOnly ? `${triggerLabel}\n${tooltip}` : tooltip}
         disabled={disabled}
         onClick={() => {
           const next = !open;
           setOpen(next);
           if (next) onOpen?.();
         }}
-        className={`inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs hover:text-text hover:bg-bg outline-none disabled:opacity-50 disabled:cursor-not-allowed ${
+        className={`inline-flex items-center gap-1 rounded-lg ${glyphOnly ? "px-1.5" : "px-2"} py-1 text-xs hover:text-text hover:bg-bg outline-none disabled:opacity-50 disabled:cursor-not-allowed ${
           fullWidth ? "w-full min-w-0 border border-border bg-bg text-text focus-visible:ring-2 focus-visible:ring-accent" : "text-muted"
         }`}
       >
-        {icon}
-        <span className={`truncate ${fullWidth ? "min-w-0 flex-1 text-left" : "max-w-[13rem]"}`}>{triggerLabel}</span>
-        <ChevronDown size={13} className="shrink-0 opacity-70" />
+        {glyphOnly ? (
+          (compactIcon ?? icon)
+        ) : (
+          <>
+            {icon}
+            <span className={`truncate ${fullWidth ? "min-w-0 flex-1 text-left" : "max-w-[13rem]"}`}>{triggerLabel}</span>
+            <ChevronDown size={13} className="shrink-0 opacity-70" />
+          </>
+        )}
       </button>
       {portal && menu ? createPortal(menu, document.body) : menu}
     </div>

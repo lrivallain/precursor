@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Brain, Cpu, Gauge } from "lucide-react";
 import { api } from "../lib/api";
 import { modelsStore, useModelsVersion } from "../lib/modelsStore";
 import { settingsStore, useSettings } from "../lib/settingsStore";
@@ -303,6 +304,7 @@ function LlmModelControls({ conversation }: { conversation?: Parameters<typeof C
     <div className="flex flex-wrap items-center gap-1 min-w-0">
       <ComposerSelectMenu
         ariaLabel="Model"
+        compactIcon={<Cpu size={14} className="shrink-0" />}
         tooltip={conversation ? `Model for this conversation only\nProvider: ${currentProvider?.label ?? providerId}` : "Model (global default)"}
         triggerLabel={`${modelLabel || "Select a model\u2026"}${conversation && !selection ? " · Default" : ""}`}
         value={conversation ? selection ? modelValue(providerId, selection.model, selection.category) : "" : activePreset?.value ?? (inCatalog ? modelId : "")}
@@ -331,6 +333,7 @@ function LlmModelControls({ conversation }: { conversation?: Parameters<typeof C
       {!category && supportedEfforts.length > 0 && (
         <ComposerSelectMenu
           ariaLabel="Reasoning effort"
+          compactIcon={<Brain size={14} className="shrink-0" />}
           tooltip="Reasoning effort (supported by this model)"
           triggerLabel={effortLabelText}
           value={effort}
@@ -342,6 +345,7 @@ function LlmModelControls({ conversation }: { conversation?: Parameters<typeof C
       {!category && ctxValue > 0 && (
         <ComposerSelectMenu
           ariaLabel="Context size"
+          compactIcon={<Gauge size={14} className="shrink-0" />}
           tooltip="Context size — max input tokens kept per turn"
           triggerLabel={`${formatTokens(ctxValue)} ctx`}
           value={String(ctxValue)}
@@ -457,6 +461,7 @@ function AgentModelControls() {
     <div className="flex flex-wrap items-center gap-1 min-w-0">
       <ComposerSelectMenu
         ariaLabel="Agent model"
+        compactIcon={<Cpu size={14} className="shrink-0" />}
         tooltip="Default model for new agent sessions"
         triggerLabel={label}
         value={activePreset?.value ?? defaultModel}
@@ -472,6 +477,7 @@ function AgentModelControls() {
       {!category && supportedEfforts.length > 0 && (
         <ComposerSelectMenu
           ariaLabel="Reasoning effort"
+          compactIcon={<Brain size={14} className="shrink-0" />}
           tooltip="Reasoning effort (supported by this model)"
           triggerLabel={effortLabelText}
           value={effort}
@@ -482,6 +488,7 @@ function AgentModelControls() {
       )}
       {!category && <ComposerSelectMenu
         ariaLabel="Context tier"
+        compactIcon={<Gauge size={14} className="shrink-0" />}
         tooltip="Context window tier for new agent sessions"
         triggerLabel={tierLabelText}
         value={tier}

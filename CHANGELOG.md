@@ -15,6 +15,14 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **Resizable workspace discussion panel and a compact composer.** Drag the
+  left edge of the workspace discussion panel to resize it (320–800 px,
+  remembered per browser). When the composer is too narrow for its pickers (in
+  topics, chats, agents and the panel alike), the model, effort, context,
+  approval and role pickers collapse to icons with their value in the tooltip, and their menus open as viewport-clamped popups. See
+  [Workspaces](website/features/workspaces.md#discussing-a-workspace) and
+  [Chats](website/features/chats.md#compact-composer).
+
 - **Workspace discussions are real chats and topics, with artifacts.** The
   ephemeral workspace assistant is gone. A **Discuss** button in the workspace
   header (the panel is hidden until you press it) opens a real chat or topic
