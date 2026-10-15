@@ -16,6 +16,10 @@ from precursor.backend.schemas.agent_state import (
 from precursor.backend.schemas.approval import (
     ApprovalDecisionResult,
     ApprovalPolicy,
+    ApprovalRuleCreate,
+    ApprovalRuleRead,
+    ApprovalRuleUpdate,
+    ArgClause,
     ToolApprovalDecision,
     ToolApprovalRead,
 )
@@ -167,6 +171,10 @@ __all__ = [
     "AgentStateWrite",
     "ApprovalDecisionResult",
     "ApprovalPolicy",
+    "ApprovalRuleCreate",
+    "ApprovalRuleRead",
+    "ApprovalRuleUpdate",
+    "ArgClause",
     "AttachmentRead",
     "AttendeesUpdate",
     "BranchRequest",

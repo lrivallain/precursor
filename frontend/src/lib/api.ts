@@ -26,6 +26,9 @@ import type {
   ApprovalDecisionResult,
   ToolApproval,
   ToolApprovalDecision,
+  ApprovalRule,
+  ApprovalRuleCreate,
+  ApprovalRuleUpdate,
   AgentScheduleCreate,
   AgentScheduleUpdate,
   AgentSession,
@@ -1152,6 +1155,24 @@ export const api = {
         method: "POST",
         body: JSON.stringify({ body, state_reason: stateReason }),
       }),
+  },
+
+  approvalRules: {
+    list: (owner?: { topicId?: number; chatId?: number }) => {
+      const qs = new URLSearchParams();
+      if (owner?.topicId != null) qs.set("topic_id", String(owner.topicId));
+      if (owner?.chatId != null) qs.set("chat_id", String(owner.chatId));
+      else if (owner?.topicId == null) qs.set("scope", "global");
+      return request<ApprovalRule[]>(`/api/approval-rules?${qs}`);
+    },
+    create: (body: ApprovalRuleCreate) =>
+      request<ApprovalRule>("/api/approval-rules", { method: "POST", body: JSON.stringify(body) }),
+    update: (id: number, body: ApprovalRuleUpdate) =>
+      request<ApprovalRule>(`/api/approval-rules/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify(body),
+      }),
+    remove: (id: number) => request<void>(`/api/approval-rules/${id}`, { method: "DELETE" }),
   },
 
   mcp: {

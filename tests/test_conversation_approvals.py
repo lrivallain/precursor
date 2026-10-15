@@ -19,6 +19,7 @@ from mcp.types import CallToolResult, TextContent
 
 from precursor.backend.main import create_app
 from precursor.backend.services import app_settings
+from precursor.backend.services.approval_rules import CompiledRule
 from precursor.backend.services.approvals import (
     ApprovalGate,
     is_read_only,
@@ -217,7 +218,8 @@ def test_gate_reasons_per_policy() -> None:
     assert ApprovalGate("manual").reason_for(*args) is not None
     write = ("acme__publish", "acme", "publish", _WRITE)
     assert ApprovalGate("balanced").reason_for(*write) is not None
-    assert ApprovalGate("balanced", frozenset({"acme__publish"})).reason_for(*write) is None
+    allow = CompiledRule(id=1, effect="allow", server="acme", tool="publish")
+    assert ApprovalGate("balanced", (allow,)).reason_for(*write) is None
     assert ApprovalGate("autonomous").offers_intent
     assert not ApprovalGate("manual").offers_intent
 

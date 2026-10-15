@@ -20,11 +20,17 @@ are the per-version history; releasing does not rewrite this file.
   topic and chat defaults in Settings → Chat, both `autonomous` so nothing
   changes until you opt in). Calls to MCP tools and Precursor's own
   writing tools that need a go-ahead park the turn and show inline Approve /
-  Always allow here / Deny cards; the turn resumes once all are answered. The
+  Always allow… / Deny cards; the turn resumes once all are answered. The
   model can also ask first through a built-in `request_approval` intent.
   Pending approvals are persisted, so they survive a reload and show as an amber
-  shield badge in the sidebar. Per-tool rules are planned for a later release.
-  See [Tool approvals](website/features/approvals.md).
+  shield badge in the sidebar.
+  **Approval rules** add standing answers in front of the policy: `allow` or
+  `ask` a server and tool (globs), optionally only when an argument matches
+  (for example `path` inside `notes/drafts`). "Always allow…" saves one from a
+  card for this conversation or everywhere; manage them in Settings → Chat and
+  in each conversation's settings. `ask` beats `allow`, and calls no rule
+  matches follow the policy. Earlier "Always allow here" answers were migrated
+  into rules. See [Tool approvals](website/features/approvals.md).
 
 - **A new install starts in files mode.** When nothing is declared in the
   database yet (no agent, no workflow, no role beyond the untouched `default`)

@@ -1512,7 +1512,7 @@ export interface ToolApproval {
   kind: "tool" | "intent";
   reason: string | null;
   status: "pending" | "approved" | "denied" | "cancelled";
-  scope: "once" | "conversation";
+  scope: "once" | "conversation" | "global";
   feedback: string | null;
   /** Decided and its result already recorded in the transcript. */
   executed: boolean;
@@ -1522,9 +1522,55 @@ export interface ToolApproval {
 
 export interface ToolApprovalDecision {
   approve: boolean;
-  scope?: "once" | "conversation";
+  /** `conversation` / `global` also save an allow rule for this tool. */
+  scope?: "once" | "conversation" | "global";
+  /** Narrows the saved rule to calls whose arguments match. */
+  arg_match?: ArgClause[];
   feedback?: string | null;
 }
+
+/** One condition on a tool call's arguments; all clauses of a rule must hold. */
+export interface ArgClause {
+  arg: string;
+  op: "equals" | "glob" | "under";
+  value: string;
+}
+
+export type ApprovalRuleEffect = "allow" | "ask";
+export type ApprovalRuleScope = "global" | "topic" | "chat";
+
+/** A standing allow / ask answer in front of a conversation's approval policy. */
+export interface ApprovalRule {
+  id: number;
+  effect: ApprovalRuleEffect;
+  server: string;
+  tool: string;
+  arg_match: ArgClause[];
+  scope: ApprovalRuleScope;
+  topic_id: number | null;
+  chat_id: number | null;
+  enabled: boolean;
+  note: string | null;
+  hit_count: number;
+  last_used_at: string | null;
+  created_from_approval_id: number | null;
+  created_at: string | null;
+}
+
+export interface ApprovalRuleCreate {
+  effect: ApprovalRuleEffect;
+  server?: string;
+  tool?: string;
+  arg_match?: ArgClause[];
+  scope?: ApprovalRuleScope;
+  topic_id?: number | null;
+  chat_id?: number | null;
+  note?: string | null;
+}
+
+export type ApprovalRuleUpdate = Partial<
+  Pick<ApprovalRule, "effect" | "server" | "tool" | "arg_match" | "enabled" | "note">
+>;
 
 export interface ApprovalDecisionResult {
   approval: ToolApproval;

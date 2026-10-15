@@ -7,6 +7,9 @@ else the global ``topic_approval_policy`` / ``chat_approval_policy``):
 * ``balanced`` — read-only tools run; anything that may change data waits.
 * ``autonomous`` — nothing is gated.
 
+Rules (``services/approval_rules.py``) sit in front of the policy: an ``allow``
+rule lets a matching call run, an ``ask`` rule makes it wait, whatever the policy.
+
 Unless the policy is ``manual`` the model also gets a ``request_approval`` tool
 to ask before an action it judges risky, whatever the tool's own annotations say.
 
@@ -30,6 +33,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute
 
 from precursor.backend.models import Chat, Message, MessageRole, Topic
+from precursor.backend.models.approval_rule import (
+    RULE_ALLOW,
+    RULE_SCOPE_CHAT,
+    RULE_SCOPE_GLOBAL,
+    RULE_SCOPE_TOPIC,
+)
 from precursor.backend.models.tool_approval import (
     APPROVAL_APPROVED,
     APPROVAL_CANCELLED,
@@ -38,9 +47,11 @@ from precursor.backend.models.tool_approval import (
     APPROVAL_KIND_TOOL,
     APPROVAL_PENDING,
     APPROVAL_SCOPE_CONVERSATION,
+    APPROVAL_SCOPE_GLOBAL,
     APPROVAL_SCOPE_ONCE,
     ToolApproval,
 )
+from precursor.backend.services import approval_rules
 from precursor.backend.services.app_settings import (
     CONVERSATION_APPROVAL_POLICIES,
     resolve_chat_approval_policy,
@@ -97,28 +108,55 @@ def is_read_only(server: str, raw_name: str, tool: MCPToolDef | None = None) -> 
 
 
 @dataclass(frozen=True, slots=True)
+class GateDecision:
+    """Whether a call waits (``reason`` set) and which rule, if any, decided it."""
+
+    reason: str | None = None
+    rule_id: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ApprovalGate:
     """What the tool loop consults before running each call."""
 
     policy: str = POLICY_AUTONOMOUS
-    # Qualified tool names the user allowed for the rest of the conversation.
-    allowed: frozenset[str] = frozenset()
+    rules: tuple[approval_rules.CompiledRule, ...] = ()
 
     @property
     def offers_intent(self) -> bool:
         return self.policy != POLICY_MANUAL
 
+    def check(
+        self,
+        qualified: str,
+        server: str,
+        raw_name: str,
+        tool: MCPToolDef | None,
+        arguments: str = "{}",
+    ) -> GateDecision:
+        """Decide one call: a matching rule first, then the policy."""
+        rule = approval_rules.first_match(self.rules, server, raw_name, arguments)
+        if rule is not None:
+            if rule.effect == RULE_ALLOW:
+                return GateDecision(None, rule.id)
+            why = f" ({rule.note})" if rule.note else ""
+            return GateDecision(f"An approval rule asks before this call{why}.", rule.id)
+        if self.policy == POLICY_MANUAL:
+            return GateDecision("Manual policy: every tool call needs your approval.")
+        if self.policy == POLICY_BALANCED and not is_read_only(server, raw_name, tool):
+            return GateDecision("This tool may change data, so the balanced policy asks first.")
+        return GateDecision()
+
     def reason_for(
-        self, qualified: str, server: str, raw_name: str, tool: MCPToolDef | None
+        self,
+        qualified: str,
+        server: str,
+        raw_name: str,
+        tool: MCPToolDef | None,
+        arguments: str = "{}",
     ) -> str | None:
         """Why this call must wait for the user, or ``None`` to run it now."""
-        if qualified in self.allowed:
-            return None
-        if self.policy == POLICY_MANUAL:
-            return "Manual policy: every tool call needs your approval."
-        if self.policy == POLICY_BALANCED and not is_read_only(server, raw_name, tool):
-            return "This tool may change data, so the balanced policy asks first."
-        return None
+        return self.check(qualified, server, raw_name, tool, arguments).reason
 
 
 REQUEST_APPROVAL_DEF = ToolDef(
@@ -209,17 +247,10 @@ async def resolve_policy(
 
 
 async def build_gate(session: AsyncSession, kind: ContainerKind, container_id: int) -> ApprovalGate:
-    """The gate for a conversation's next turn (policy plus per-conversation allows)."""
+    """The gate for a conversation's next turn (its policy plus the rules that apply)."""
     policy = await resolve_policy(session, **_owner(kind, container_id))
-    rows = await session.execute(
-        select(ToolApproval.tool_name).where(
-            _container_fk(kind) == container_id,
-            ToolApproval.kind == APPROVAL_KIND_TOOL,
-            ToolApproval.status == APPROVAL_APPROVED,
-            ToolApproval.scope == APPROVAL_SCOPE_CONVERSATION,
-        )
-    )
-    return ApprovalGate(policy=policy, allowed=frozenset(rows.scalars().all()))
+    rules = await approval_rules.load_for_conversation(session, kind, container_id)
+    return ApprovalGate(policy=policy, rules=rules)
 
 
 # -- Persistence -----------------------------------------------------------
@@ -308,26 +339,58 @@ async def decide(
     *,
     approve: bool,
     scope: str = APPROVAL_SCOPE_ONCE,
+    arg_match: Sequence[Any] | None = None,
     feedback: str | None = None,
 ) -> ToolApproval:
-    """Record the user's answer to one pending approval."""
+    """Record the user's answer to one pending approval.
+
+    Approving with a ``conversation`` or ``global`` scope also saves an allow rule
+    for the tool, so later calls skip the card.
+    """
     row = await session.get(ToolApproval, approval_id)
     owner = None if row is None else (row.topic_id if kind == "topic" else row.chat_id)
     if row is None or owner != container_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Approval not found")
     if row.status != APPROVAL_PENDING:
         raise HTTPException(status.HTTP_409_CONFLICT, "This approval was already decided")
+    standing = (
+        approve
+        and row.kind == APPROVAL_KIND_TOOL
+        and row.server != ""
+        and row.raw_tool != ""
+        and scope in (APPROVAL_SCOPE_CONVERSATION, APPROVAL_SCOPE_GLOBAL)
+    )
+    clauses = tuple(approval_rules.ArgClause(c.arg, c.op, c.value) for c in (arg_match or ()))
+    if standing:
+        # A rule that would not cover the very call being approved is a mistake.
+        arguments = approval_rules.parse_arguments(row.arguments)
+        if not all(c.matches(arguments) for c in clauses):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                "The rule's argument conditions don't match this call",
+            )
     row.status = APPROVAL_APPROVED if approve else APPROVAL_DENIED
     # "Always allow" only makes sense for a real tool; an intent is per-action.
-    row.scope = (
-        scope
-        if approve and row.kind == APPROVAL_KIND_TOOL and scope in (APPROVAL_SCOPE_CONVERSATION,)
-        else APPROVAL_SCOPE_ONCE
-    )
+    row.scope = scope if standing else APPROVAL_SCOPE_ONCE
     row.feedback = (feedback or "").strip() or None
     row.decided_at = datetime.now(UTC)
     await session.commit()
     await session.refresh(row)
+    if standing:
+        is_global = scope == APPROVAL_SCOPE_GLOBAL
+        await approval_rules.create_rule(
+            session,
+            effect=RULE_ALLOW,
+            server=approval_rules.glob_escape(row.server),
+            tool=approval_rules.glob_escape(row.raw_tool),
+            clauses=clauses,
+            scope=RULE_SCOPE_GLOBAL
+            if is_global
+            else (RULE_SCOPE_TOPIC if kind == "topic" else RULE_SCOPE_CHAT),
+            topic_id=None if is_global or kind != "topic" else container_id,
+            chat_id=None if is_global or kind != "chat" else container_id,
+            created_from_approval_id=row.id,
+        )
     return row
 
 

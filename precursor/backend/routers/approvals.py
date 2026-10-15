@@ -64,6 +64,7 @@ async def _decide(
         approval_id,
         approve=payload.approve,
         scope=payload.scope,
+        arg_match=payload.arg_match,
         feedback=payload.feedback,
     )
     await publish_approval_changed(**container_message_kwargs(kind, container_id))

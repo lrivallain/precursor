@@ -19,6 +19,7 @@ from precursor.backend.models.agent_trigger import (
     AGENT_TRIGGER_TYPES,
     AgentTrigger,
 )
+from precursor.backend.models.approval_rule import ApprovalRule
 from precursor.backend.models.attachment import Attachment
 from precursor.backend.models.base import Base
 from precursor.backend.models.chat import Chat
@@ -90,6 +91,7 @@ __all__ = [
     "AgentState",
     "AgentTrigger",
     "AppSetting",
+    "ApprovalRule",
     "Attachment",
     "Base",
     "Chat",

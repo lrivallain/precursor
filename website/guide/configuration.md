@@ -313,7 +313,7 @@ feature it configures:
 | --- | --- |
 | **Appearance** | Light/dark/system theme and the reading font, including dyslexia-friendly options like OpenDyslexic, Atkinson Hyperlegible and Lexend — see [Accessibility](/features/accessibility). |
 | **Model** | Active provider + credentials, default chat model, prompt budgeting (including how long tool results stay in full; see [context compression](/features/context-compression#automatic-trimming)), and the [OpenAI-compatible endpoint](/features/openai-endpoint) that lets other clients use those models (off by default). |
-| **Chat** | Stats sidebar, notifications, an optional [completion sound](/features/chats#unread-badges-notifications), [auto-naming](/features/chats#chats-name-themselves) for new chats, the max tool-call rounds, and the default [tool approval policy](/features/approvals) for topics and for chats (both `autonomous` out of the box, so nothing changes until you opt in). |
+| **Chat** | Stats sidebar, notifications, an optional [completion sound](/features/chats#unread-badges-notifications), [auto-naming](/features/chats#chats-name-themselves) for new chats, the max tool-call rounds, and the default [tool approval policy](/features/approvals) for topics and for chats (both `autonomous` out of the box, so nothing changes until you opt in), plus the global [approval rules](/features/approvals#rules). |
 | **GitHub** | Token, default repository, issue-context behaviour. |
 | **MCP** | Enable [tool servers](/features/mcp), choose which of your own sections the built-in server exposes (off by default), and manage the [Precursor IQ](/features/iq) index: status, rebuild, opt-in embeddings and the Ask answer model. |
 | **Collections** | Create and edit [collections](/features/collections). |

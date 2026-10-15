@@ -54,6 +54,7 @@ import type {
   Settings,
 } from "../lib/types";
 import { useConfirm } from "./ConfirmDialog";
+import { ApprovalRulesSection } from "./ApprovalRulesSection";
 import { Select } from "./Select";
 import { CONVERSATION_APPROVAL_POLICIES } from "../lib/approvalPolicies";
 import { DeploymentNamesInput } from "./DeploymentNamesInput";
@@ -1061,6 +1062,14 @@ export function SettingsPanel({ onClose: closeNow, initialCategory, onCollection
                   <p className="text-[11px] text-muted mt-1">
                     {CONVERSATION_APPROVAL_POLICIES.find((p) => p.value === chatApprovalPolicy)?.hint}
                      Each chat can change it from the shield pill in its composer.
+                  </p>
+                </section>
+
+                <section>
+                  <h3 className="text-sm font-medium mb-2">Approval rules</h3>
+                  <ApprovalRulesSection owner={{ kind: "global" }} />
+                  <p className="text-[11px] text-muted mt-2">
+                    Rules for a single conversation live in its settings.
                   </p>
                 </section>
               </>

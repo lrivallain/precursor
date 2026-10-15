@@ -34,8 +34,9 @@ amber card appears under the transcript showing the tool, its arguments and the
 server.
 
 - **Approve** runs it once.
-- **Always allow here** approves it and allows that tool for the rest of the
-  conversation.
+- **Always allow…** approves it and saves an [allow rule](#rules): choose this
+  conversation or every conversation, and optionally limit it to the folder the
+  call touched.
 - **Deny…** refuses, with optional feedback the model sees.
 
 Once every card is answered the turn **resumes** by itself and the assistant
@@ -60,11 +61,42 @@ windows or restart: the cards are still there, and answering in one window
 updates the others. Scheduled and unattended turns park the same way and wait
 until you open the conversation.
 
-## Not yet
+## Rules
 
-Per-tool and per-argument **rules** (for instance "always allow reading under
-`docs/`") are planned as a later phase; today the choices are the policy, the
-per-call answer, and *Always allow here*.
+Rules are standing answers that sit **in front of the policy**. Each one says
+`allow` or `ask` for a server and a tool, optionally only when an argument
+matches.
+
+- **Allow** runs the call without a card, even under *manual*.
+- **Ask** always parks the call, even under *autonomous*.
+- Calls no rule matches follow the policy as before.
+
+Server and tool take `*` and `?` globs (`*` matches anything; Precursor's own
+tools live on the server `precursor`). An argument condition names an argument
+(dotted for nested ones) and one of:
+
+| Condition | Matches |
+| --- | --- |
+| **is inside folder** | A path equal to the folder or below it. `..` segments are resolved first, so `notes/../secrets` is not inside `notes`. |
+| **equals** | The exact value (text or number). |
+| **matches pattern** | A `*` / `?` glob on the value. |
+
+All conditions of a rule must hold, and a rule allows at most five. A call
+whose argument is missing or the wrong type never matches.
+
+Evaluation order: the conversation's rules, then global rules; within a level
+**ask beats allow**; the first match decides.
+
+Manage them in **Settings → Chat → Approval rules** (global) and in each
+topic's or chat's settings (that conversation only). Each rule shows how often
+it fired and when it was last used, and can be switched off or deleted. Rules go
+with their conversation when it is deleted. *Always allow…* on a card creates
+the matching rule for you, prefilled with the call's folder; the condition must
+match the call you are approving.
+
+Rules apply to topics and chats. They are never created from the model's own
+`request_approval` intents. There is no `deny` effect and no per-workspace scope
+yet.
 
 ::: tip Agents mode
 [Agents mode](/features/agents-mode) has its own approval policy, which governs

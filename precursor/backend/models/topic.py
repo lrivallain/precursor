@@ -12,6 +12,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from precursor.backend.models.base import Base, TimestampMixin
 
 if TYPE_CHECKING:
+    from precursor.backend.models.approval_rule import ApprovalRule
     from precursor.backend.models.message import Message
     from precursor.backend.models.note_draft import NoteDraft
     from precursor.backend.models.reminder import Reminder
@@ -119,6 +120,9 @@ class Topic(Base, TimestampMixin):
     # SQLite doesn't enforce the FK cascade, so the ORM carries it.
     approvals: Mapped[list[ToolApproval]] = relationship(
         "ToolApproval", cascade="all, delete-orphan", foreign_keys="ToolApproval.topic_id"
+    )
+    approval_rules: Mapped[list[ApprovalRule]] = relationship(
+        "ApprovalRule", cascade="all, delete-orphan", foreign_keys="ApprovalRule.topic_id"
     )
 
     # Recurrence config + run state when the topic runs on a schedule. One-to-

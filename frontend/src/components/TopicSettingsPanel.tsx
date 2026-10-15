@@ -27,6 +27,7 @@ import type {
   TopicNode,
 } from "../lib/types";
 import type { IssueContextState } from "../lib/useIssueContext";
+import { ApprovalRulesSection } from "./ApprovalRulesSection";
 import { useConfirm } from "./ConfirmDialog";
 import { Select } from "./Select";
 import { RefineTextarea } from "./RefineTextarea";
@@ -525,6 +526,11 @@ export function TopicSettingsPanel({
                     )}
                   </div>
                 )}
+              </section>
+
+              <section className="pt-4 border-t border-border">
+                <h3 className="text-sm font-medium mb-1">Approval rules</h3>
+                <ApprovalRulesSection owner={{ kind: "topic", id: topic.id }} />
               </section>
 
               {error && <p className="text-xs text-red-500">{error}</p>}

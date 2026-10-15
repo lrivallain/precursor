@@ -131,6 +131,7 @@ Each chat can have its own [tool approval policy](/features/approvals) —
 **manual**, **balanced** or **autonomous** — set from the shield pill in the composer.
 A call that needs your go-ahead appears as an inline card in the transcript, and
 the chat's row in the sidebar shows an amber shield badge until you answer.
+The chat's settings list its [approval rules](/features/approvals#rules).
 
 ## Side chats
 

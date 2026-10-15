@@ -28,6 +28,7 @@ from sqlalchemy.orm import selectinload
 from precursor.backend.db import SessionLocal
 from precursor.backend.models import MESSAGE_KIND_COMPACTION, Chat, Message, MessageRole, Topic
 from precursor.backend.models.tool_approval import APPROVAL_KIND_TOOL
+from precursor.backend.services import approval_rules as approval_rules_service
 from precursor.backend.services import approvals as approval_service
 from precursor.backend.services import memories as memory_service
 from precursor.backend.services import side_chats
@@ -853,10 +854,16 @@ async def run_tool_loop(
                     parked.append(approval_service.intent_pending(call.id, call.arguments))
                     continue
             elif gate is not None and server_lookup is not None:
-                reason = gate.reason_for(
-                    call.name, server_lookup[0], server_lookup[1], tool_defs.get(call.name)
+                verdict = gate.check(
+                    call.name,
+                    server_lookup[0],
+                    server_lookup[1],
+                    tool_defs.get(call.name),
+                    call.arguments or "{}",
                 )
-                if reason is not None:
+                if verdict.rule_id is not None:
+                    await approval_rules_service.touch_rule(verdict.rule_id)
+                if verdict.reason is not None:
                     parked.append(
                         approval_service.PendingCall(
                             call_id=call.id,
@@ -865,7 +872,7 @@ async def run_tool_loop(
                             raw_tool=server_lookup[1],
                             arguments=call.arguments or "{}",
                             kind=APPROVAL_KIND_TOOL,
-                            reason=reason,
+                            reason=verdict.reason,
                         )
                     )
                     continue

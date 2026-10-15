@@ -105,7 +105,8 @@ you have edited it yourself.
 A topic can override the default [tool approval policy](/features/approvals) from
 the shield pill in its composer. Calls that wait for you show up as inline cards under the
 conversation, and the topic's sidebar row carries an amber shield badge with the
-number of pending approvals, even after a reload.
+number of pending approvals, even after a reload. The topic's settings list its
+[approval rules](/features/approvals#rules).
 
 ## Side chats
 

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Check, ChevronDown, ChevronRight, Loader2, ShieldAlert, X } from "lucide-react";
 import { apiErrorMessage } from "../lib/api";
-import type { ToolApproval, ToolApprovalDecision } from "../lib/types";
+import type { ArgClause, ToolApproval, ToolApprovalDecision } from "../lib/types";
 
 interface Props {
   approvals: ToolApproval[];
@@ -14,6 +14,31 @@ function prettyJson(s: string): string {
   } catch {
     return s;
   }
+}
+
+const PATH_ARGS = ["path", "file_path", "filepath", "file", "filename", "dir", "directory", "folder"];
+
+/** The first path-like string argument of a call, to offer a folder condition on. */
+function pathArgument(raw: string): { arg: string; value: string } | null {
+  try {
+    const parsed: unknown = JSON.parse(raw || "{}");
+    if (parsed === null || typeof parsed !== "object") return null;
+    const args = parsed as Record<string, unknown>;
+    for (const name of PATH_ARGS) {
+      const v = args[name];
+      if (typeof v === "string" && v.trim()) return { arg: name, value: v.trim() };
+    }
+  } catch {
+    // Unparseable arguments simply offer no path condition.
+  }
+  return null;
+}
+
+/** The condition a rule would carry: inside the call's folder, or that exact path. */
+function defaultClause(p: { arg: string; value: string }): ArgClause {
+  const cut = p.value.replace(/\/+$/, "").lastIndexOf("/");
+  if (cut > 0) return { arg: p.arg, op: "under", value: p.value.slice(0, cut) };
+  return { arg: p.arg, op: "equals", value: p.value };
 }
 
 /** The inline cards a parked turn waits on, rendered at the transcript tail. */
@@ -47,8 +72,14 @@ function ApprovalCard({
   const [feedback, setFeedback] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [always, setAlways] = useState(false);
+  const [everywhere, setEverywhere] = useState(false);
+  const [limit, setLimit] = useState(true);
+  const [limitValue, setLimitValue] = useState("");
   const isIntent = a.kind === "intent";
   const settled = a.status !== "pending";
+  const pathArg = isIntent ? null : pathArgument(a.arguments);
+  const clause = pathArg ? defaultClause(pathArg) : null;
 
   async function decide(decision: ToolApprovalDecision): Promise<void> {
     setBusy(true);
@@ -148,11 +179,15 @@ function ApprovalCard({
                   <button
                     type="button"
                     disabled={busy}
-                    onClick={() => void decide({ approve: true, scope: "conversation" })}
+                    aria-expanded={always}
+                    onClick={() => {
+                      setAlways((o) => !o);
+                      setLimitValue(clause?.value ?? "");
+                    }}
                     className="rounded border border-amber-500/50 px-2.5 py-1 text-xs hover:bg-amber-500/10 disabled:opacity-50"
-                    data-tooltip="Approve this and let the model call this tool again in this conversation without asking"
+                    data-tooltip="Approve this and save a rule so the model can call this tool again without asking"
                   >
-                    Always allow here
+                    Always allow…
                   </button>
                 )}
                 <button
@@ -167,6 +202,71 @@ function ApprovalCard({
             )}
             {busy && <Loader2 size={12} className="animate-spin text-muted" />}
           </div>
+          {always && !declining && !isIntent && (
+            <div className="flex flex-col gap-1.5 rounded border border-amber-500/30 bg-bg/60 p-2 text-xs">
+              <span className="text-muted">
+                Save a rule allowing <code className="font-mono">{a.raw_tool || a.tool_name}</code>
+                {a.server && (
+                  <>
+                    {" "}on <code className="font-mono">{a.server}</code>
+                  </>
+                )}
+                :
+              </span>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="radio"
+                  name={`scope-${a.id}`}
+                  checked={!everywhere}
+                  onChange={() => setEverywhere(false)}
+                />
+                In this conversation
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="radio"
+                  name={`scope-${a.id}`}
+                  checked={everywhere}
+                  onChange={() => setEverywhere(true)}
+                />
+                In every conversation
+              </label>
+              {clause && (
+                <div className="flex flex-col gap-1">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" checked={limit} onChange={(e) => setLimit(e.target.checked)} />
+                    Only when <code className="font-mono">{clause.arg}</code>{" "}
+                    {clause.op === "under" ? "is inside" : "is exactly"}
+                  </label>
+                  {limit && (
+                    <input
+                      value={limitValue}
+                      onChange={(e) => setLimitValue(e.target.value)}
+                      aria-label="Path condition"
+                      className="w-full rounded border border-border bg-bg px-2 py-1 font-mono text-xs"
+                    />
+                  )}
+                </div>
+              )}
+              <div>
+                <button
+                  type="button"
+                  disabled={busy || (!!clause && limit && !limitValue.trim())}
+                  onClick={() =>
+                    void decide({
+                      approve: true,
+                      scope: everywhere ? "global" : "conversation",
+                      arg_match:
+                        clause && limit ? [{ ...clause, value: limitValue.trim() }] : [],
+                    })
+                  }
+                  className="inline-flex items-center gap-1 rounded bg-amber-500 px-2.5 py-1 text-xs font-medium text-white hover:bg-amber-600 disabled:opacity-50"
+                >
+                  <Check size={12} /> Approve and save rule
+                </button>
+              </div>
+            </div>
+          )}
           {error && <p className="text-xs text-red-500">{error}</p>}
         </div>
       )}

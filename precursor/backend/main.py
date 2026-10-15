@@ -35,6 +35,7 @@ from precursor.backend.db import SessionLocal, init_db
 from precursor.backend.plugins import discover
 from precursor.backend.routers import (
     agents,
+    approval_rules,
     approvals,
     attachments,
     chat,
@@ -421,6 +422,7 @@ def create_app() -> FastAPI:
         chat.router,
         chats.router,
         chat_messages.router,
+        approval_rules.router,
         approvals.topic_router,
         approvals.chat_router,
         attachments.router,
