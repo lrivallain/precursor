@@ -15,6 +15,13 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **Skills and attachments on the "Start a new chat" screen.** The start
+  composer now offers your `/skills` in the autocomplete (built-in commands such
+  as `/clear` stay out, since they act on an open chat) and accepts files via
+  the paperclip, paste or drop. Attaching creates the chat in the background so
+  the upload has somewhere to live; leaving the screen without sending deletes
+  it again. See [Chats](website/features/chats.md#starting-a-chat).
+
 - **Suggested answers in Live sessions.** An opt-in feature: when another
   participant asks a question, the assistant streams a short first-person reply
   in a card above the transcript (one fast-model call; `[[NONE]]` suppresses

@@ -17,7 +17,8 @@ stored efficiently on disk, not in the database.
 | **DOCX / PPTX** | **Text-extracted** and included as context. |
 | **Text & code files** (`.txt`, `.md`, `.csv`, `.json`, `.yaml`, `.py`, `.ts`, `.sql`, …) | Read as **UTF-8 text** and included as context. |
 
-Drop a file into the composer, or use the attach button. The extracted text (or
+Drop a file into the composer, or use the attach button. That includes the
+*Start a new chat* screen, where the first attachment creates the chat. The extracted text (or
 image) is included alongside your prompt for that turn.
 
 Text and code files cover the common plain-text and source formats — Markdown,

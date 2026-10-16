@@ -17,7 +17,7 @@ import {
   parseMemoryUpdateArg,
 } from "./commands";
 import { rolesStore } from "./rolesStore";
-import { skillsStore } from "./skillsStore";
+import { resolveSkillPrompt } from "./skillPrompt";
 import {
   containerFields,
   convKey,
@@ -421,30 +421,16 @@ export function useConversation({
       }
       return;
     }
-    if (cmd) {
-      const skill = skillsStore.byName(cmd.name);
-      if (skill) {
-        setDraft("");
-        const expanded = `${skill.instructions.trim()}\n\n---\n\n${skillsStore.expandReferences(cmd.argument)}`;
-        const atts = pendingAttachments;
-        setPendingAttachments([]);
-        // Persist the literal slash command as the user message;
-        // the LLM receives the expanded prompt for this turn only.
-        void streamStore.start(streamKey, content, expanded, atts, undefined, workspaceContext ?? undefined);
-        return;
-      }
-    }
-
     setDraft("");
     const atts = pendingAttachments;
     setPendingAttachments([]);
-    // No leading skill command, but a `/skill-name` may appear mid-prompt: send
-    // the expanded text to the LLM while the transcript keeps what was typed.
-    const inlined = content ? skillsStore.expandReferences(content) : content;
+    // The transcript keeps what was typed; the LLM receives the skill-expanded
+    // prompt for this turn only.
+    const resolved = resolveSkillPrompt(content, parseCommand);
     void streamStore.start(
       streamKey,
-      content || "(attachment attached)",
-      inlined && inlined !== content ? inlined : undefined,
+      resolved.content,
+      resolved.promptOverride,
       atts,
       undefined,
       workspaceContext ?? undefined,

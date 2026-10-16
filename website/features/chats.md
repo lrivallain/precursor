@@ -83,6 +83,16 @@ menus open as viewport-clamped popups so they never spill past the edge. It
 applies to topics, chats, agents and the start screen alike, and the labelled
 pills come back as soon as there is room again.
 
+## Starting a chat
+
+The **Start a new chat** screen (and the *New chat* card on the home screen) is a
+full composer: type a prompt, pick a model and [role](/features/skills-memory),
+use a [skill](/features/skills-memory) with `/`, or [attach files](/features/attachments)
+with the paperclip, paste or drag and drop. Only skills are suggested after `/`;
+built-in commands such as `/clear` need an open chat. Attaching a file creates
+the chat right away so the upload has a home, and it is deleted again if you
+leave without sending.
+
 ## Chats name themselves
 
 A new chat starts as **"New chat"** — which, after a busy afternoon, leaves a
