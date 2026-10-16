@@ -621,6 +621,7 @@ export function WorkspaceView({
         message: `${what} ${extra}`,
         confirmLabel: "Delete folder",
         variant: "danger",
+        requireText: path.split("/").filter(Boolean).pop() ?? path,
       }))
     )
       return;
@@ -1411,6 +1412,7 @@ function LocalWorkspaceBar({
         message: `Remove "${area.name}"? This deletes the local folder and its files.`,
         confirmLabel: "Remove workspace",
         variant: "danger",
+        requireText: area.name,
       }))
     )
       return;
@@ -1585,6 +1587,7 @@ function GitBar({
           `Remove "${area.name}"? This deletes the local working copy (the remote repo is untouched).`,
         confirmLabel: "Remove workspace",
         variant: "danger",
+        requireText: area.name,
       }))
     )
       return;

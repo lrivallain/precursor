@@ -550,6 +550,10 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Changed
 
+- **Deleting a workspace or a folder asks you to type its name.** Removing a
+  workspace, or deleting a folder in Files, now needs the exact name typed into
+  the confirmation (with a **Copy** button) before the button is enabled, so a
+  stray click or Enter can't wipe one out.
 - **Roles are referenced by name, not id.** Topics, chats, workspaces, live
   sessions, agents, workflows and collections store the role's `name`
   (case-insensitive); an unknown name falls back to the `default` role with a

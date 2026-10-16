@@ -213,11 +213,17 @@ the browser's built-in viewer; both are view-only.
 
 Hover a folder in the tree for its actions: **New file**, **New folder**, and
 **Delete folder**, which removes the folder with everything in it once you
-confirm. The confirmation says how many files go, and whether they can come
+confirm by typing its name (a **Copy** button in the dialog saves retyping it).
+The confirmation says how many files go, and whether they can come
 back: in a git workspace, committed files can be restored from **Changes** until
 you commit; anywhere else, deleting can't be undone. A folder that holds your
 agent and workflow [definition files](/features/definitions) can't be deleted,
 and a symlinked folder loses only the link, never what it points to.
+
+Removing a whole workspace (the trash icon in its header bar) asks the same way:
+you must type the workspace's name, with a **Copy** button, before **Remove
+workspace** becomes available. For a local workspace this deletes its folder; for
+a git workspace it deletes the local working copy and leaves the remote alone.
 
 ## The editor
 
