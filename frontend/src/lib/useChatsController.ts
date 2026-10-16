@@ -7,7 +7,7 @@ import { openNotes } from "./notesOpen";
 import { chatUrl, navigate, type AppRoute } from "./routes";
 import { OPEN_CHAT_EVENT, type OpenChatDetail } from "./sideChats";
 import { convKey, streamStore } from "./streamStore";
-import type { Chat } from "./types";
+import type { Attachment, Chat } from "./types";
 import { windowFocused } from "./windowFocus";
 
 // Shell state the chats section reads or drives. The once-registered listeners
@@ -21,6 +21,17 @@ export interface ChatsControllerDeps {
   setSidebarMode: Dispatch<SetStateAction<SidebarMode>>;
   setAtHome: Dispatch<SetStateAction<boolean>>;
   closeMobileNav: () => void;
+}
+
+/** What the start composer hands over beyond the typed prompt. */
+export interface StartChatOptions {
+  /** A chat already created to hold the uploads; reused instead of making one. */
+  chat?: Chat | null;
+  attachments?: Attachment[];
+  /** Skill-expanded prompt for the model; the transcript keeps the typed one. */
+  promptOverride?: string;
+  /** Runs once the chat exists, in the batch that selects it. */
+  reveal?: () => void;
 }
 
 export interface ChatsController {
@@ -42,8 +53,16 @@ export interface ChatsController {
   refreshActiveChat: () => Promise<void>;
   toggleChatPin: () => Promise<void>;
   handleRenameChat: (id: number, title: string) => Promise<void>;
-  handleStartChat: (prompt: string, roleName?: string | null) => Promise<void>;
-  startChatFromHome: (prompt: string, roleName?: string | null) => Promise<void>;
+  handleStartChat: (
+    prompt: string,
+    roleName?: string | null,
+    opts?: StartChatOptions,
+  ) => Promise<void>;
+  startChatFromHome: (
+    prompt: string,
+    roleName?: string | null,
+    opts?: StartChatOptions,
+  ) => Promise<void>;
   handleOpenChatNotes: (chat: Chat) => Promise<void>;
   handleStreamComplete: (chatId: number) => Promise<void>;
   setRoleForActive: (roleName: string | null) => Promise<void>;
@@ -286,25 +305,44 @@ export function useChatsController(deps: ChatsControllerDeps): ChatsController {
   async function handleStartChat(
     prompt: string,
     roleName: string | null = null,
-    reveal?: () => void,
+    opts: StartChatOptions = {},
   ): Promise<void> {
     const text = prompt.trim();
-    if (!text) return;
-    const chat = await api.chats.create({ title: "New chat", autoname: true, role: roleName });
-    reveal?.();
+    const attachments = opts.attachments ?? [];
+    if (!text && attachments.length === 0) return;
+    let chat = opts.chat ?? null;
+    if (!chat) {
+      chat = await api.chats.create({ title: "New chat", autoname: true, role: roleName });
+    } else if ((chat.role ?? null) !== roleName) {
+      // The role may have been picked after the draft chat was created.
+      chat = await api.chats.update(chat.id, { role: roleName });
+    }
+    opts.reveal?.();
     setActiveChat(chat);
     setChatListReloadKey((k) => k + 1);
-    void streamStore.start(convKey("chat", chat.id), text);
+    void streamStore.start(
+      convKey("chat", chat.id),
+      text || "(attachment attached)",
+      opts.promptOverride,
+      attachments,
+    );
   }
 
   // The "New chat" card's inline composer: create + stream, then reveal the chat.
-  async function startChatFromHome(prompt: string, roleName: string | null = null): Promise<void> {
+  async function startChatFromHome(
+    prompt: string,
+    roleName: string | null = null,
+    opts: StartChatOptions = {},
+  ): Promise<void> {
     // Leave home only once the chat exists, in the batch that selects it.
     // Switching first would commit the chat still open in Chats, and the URL
     // effect would push an entry for it ahead of the new one.
-    await handleStartChat(prompt, roleName, () => {
-      setAtHome(false);
-      setSidebarMode("chats");
+    await handleStartChat(prompt, roleName, {
+      ...opts,
+      reveal: () => {
+        setAtHome(false);
+        setSidebarMode("chats");
+      },
     });
   }
 

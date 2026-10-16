@@ -1,7 +1,10 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { MessageSquarePlus, MessagesSquare } from "lucide-react";
-import type { SlashCommand } from "../lib/commands";
-import { useDictation } from "../lib/useDictation";
+import { SLASH_COMMANDS } from "../lib/commands";
+import { resolveSkillPrompt } from "../lib/skillPrompt";
+import type { StartChatOptions } from "../lib/useChatsController";
+import { useComposerInput } from "../lib/useComposerInput";
+import { useStartChatDraft } from "../lib/useStartChatDraft";
 import { useResizableHeight } from "../lib/useResizableHeight";
 import { Composer } from "./Composer";
 import { ComposerModelControls } from "./ComposerModelControls";
@@ -45,17 +48,25 @@ export function TopicStartHero({
   );
 }
 
+// Built-in commands act on an open conversation, so the start composer only
+// offers skills.
+const BUILTIN_COMMAND_NAMES: ReadonlySet<string> = new Set(SLASH_COMMANDS.map((c) => c.name));
+
 /**
  * Landing surface shown in the Chats pane when nothing is selected. Lets the
- * user type a prompt that spins up a fresh chat and sends the first message,
- * matching the agent tab's start-task experience.
+ * user type a prompt (with `/skills` and attached files) that spins up a fresh
+ * chat and sends the first message, matching the agent tab's start-task
+ * experience.
  */
 export function ChatStartHero({
   onStart,
 }: {
-  onStart: (prompt: string, roleName: string | null) => void | Promise<void>;
+  onStart: (
+    prompt: string,
+    roleName: string | null,
+    opts?: StartChatOptions,
+  ) => void | Promise<void>;
 }) {
-  const [prompt, setPrompt] = useState("");
   const [busy, setBusy] = useState(false);
   // Assistant Role the new chat is created with. Null = the default role.
   const [roleName, setRoleName] = useState<string | null>(null);
@@ -67,18 +78,31 @@ export function ChatStartHero({
       min: 40,
       max: 480,
     });
-  const { interimText, speech } = useDictation(setPrompt);
-
-  const suggestions = useMemo<SlashCommand[]>(() => [], []);
+  const { draft, setDraft, interimText, speech, suggestions, parseCommand } =
+    useComposerInput({ surface: "chat", exclude: BUILTIN_COMMAND_NAMES });
+  const startDraft = useStartChatDraft(roleName);
+  const { attachments } = startDraft;
 
   async function start(): Promise<void> {
-    const text = prompt.trim();
-    if (!text || busy) return;
+    const text = draft.trim();
+    const hasAttachments = attachments.pending.length > 0;
+    if ((!text && !hasAttachments) || busy || attachments.uploadingCount > 0) return;
     setBusy(true);
     if (speech.listening) speech.stop();
+    const resolved = resolveSkillPrompt(text, parseCommand);
+    // The send unmounts this screen; keep the draft chat through that.
+    startDraft.release();
     try {
-      await onStart(text, roleName);
-      setPrompt("");
+      await onStart(resolved.content, roleName, {
+        chat: startDraft.chat,
+        attachments: attachments.pending,
+        promptOverride: resolved.promptOverride,
+      });
+      setDraft("");
+      startDraft.reset();
+    } catch (err) {
+      startDraft.reclaim();
+      throw err;
     } finally {
       setBusy(false);
     }
@@ -91,12 +115,12 @@ export function ChatStartHero({
         <h2 className="text-sm font-medium">Start a new chat</h2>
       </div>
       <p className="text-[12px] text-muted">
-        Chats are quick, throwaway conversations. Type a prompt to spin one up
-        and send your first message.
+        Chats are quick, throwaway conversations. Type a prompt, use a{" "}
+        <code>/skill</code> or attach files, and your first message is sent.
       </p>
       <Composer
-        value={prompt}
-        onChange={setPrompt}
+        value={draft}
+        onChange={setDraft}
         onSend={() => void start()}
         onStop={() => {}}
         streaming={false}
@@ -109,6 +133,7 @@ export function ChatStartHero({
         disabled={busy}
         autoFocus
         placeholder="e.g. Summarize the tradeoffs between REST and GraphQL…"
+        attachments={attachments}
         toolbarStart={
           <>
             <ComposerModelControls />
