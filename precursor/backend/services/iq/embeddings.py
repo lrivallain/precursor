@@ -38,6 +38,9 @@ class Embedder(Protocol):
 
 
 def as_embedder(provider: object) -> Embedder | None:
+    # The preset router forwards `embed` through `__getattr__`, which the
+    # runtime Protocol check can't see, so look at the provider it wraps.
+    provider = getattr(provider, "base_provider", provider)
     return provider if isinstance(provider, Embedder) else None
 
 
