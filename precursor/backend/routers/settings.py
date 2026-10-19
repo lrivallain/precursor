@@ -39,7 +39,9 @@ from precursor.backend.services.app_settings import (
     resolve_azure_speech_language,
     resolve_chat_approval_policy,
     resolve_iq_ask_model,
+    resolve_iq_ask_provider,
     resolve_iq_embedding_model,
+    resolve_iq_embedding_provider,
     resolve_iq_embeddings_enabled,
     resolve_llm_model,
     resolve_llm_provider,
@@ -62,6 +64,7 @@ from precursor.backend.services.github_auth import (
     invalidate_gh_cli_token,
     resolve_github_token,
 )
+from precursor.backend.services.llm.registry import PROVIDERS
 from precursor.backend.services.mcp.precursor_server import (
     http_endpoint_url,
     is_loopback_host,
@@ -188,7 +191,9 @@ async def _openai_proxy_block(session: AsyncSession) -> dict[str, Any]:
 async def _iq_block(session: AsyncSession) -> dict[str, Any]:
     return {
         "iq_embeddings_enabled": await resolve_iq_embeddings_enabled(session),
+        "iq_embedding_provider": await resolve_iq_embedding_provider(session),
         "iq_embedding_model": await resolve_iq_embedding_model(session),
+        "iq_ask_provider": await resolve_iq_ask_provider(session),
         "iq_ask_model": await resolve_iq_ask_model(session),
     }
 
@@ -295,6 +300,10 @@ async def update_settings(
             ):
                 data[category_key] = None
 
+    for provider_key in ("iq_embedding_provider", "iq_ask_provider"):
+        if data.get(provider_key) and data[provider_key] not in PROVIDERS:
+            raise HTTPException(status_code=422, detail=f"Unknown LLM provider for {provider_key}.")
+
     # Merge api_keys instead of replacing — clients may PATCH a single key.
     if "api_keys" in data:
         current = await _load_all(session)
@@ -381,7 +390,9 @@ async def update_settings(
             logger.exception("Backup nudge failed after settings update")
 
     # Start vectorising right away rather than on the next indexer tick.
-    if data.get("iq_embeddings_enabled") or "iq_embedding_model" in data:
+    if data.get("iq_embeddings_enabled") or any(
+        k in data for k in ("iq_embedding_model", "iq_embedding_provider")
+    ):
         from precursor.backend.services.iq.ticker import get_iq_ticker
 
         try:

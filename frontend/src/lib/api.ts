@@ -134,6 +134,7 @@ import type {
   IQAskResponse,
   IQRetrieveResponse,
   IQSection,
+  IQEmbeddingTestResponse,
   IQStatus,
   Settings,
   SettingsUpdate,
@@ -1827,6 +1828,12 @@ export const api = {
       }),
     status: () => request<IQStatus>(`/api/iq/status`),
     reindex: () => request<IQStatus>(`/api/iq/reindex`, { method: "POST" }),
+    // Tries the unsaved provider/model; omitted fields fall back to the saved ones.
+    testEmbeddings: (provider?: string, model?: string) =>
+      request<IQEmbeddingTestResponse>(`/api/iq/embeddings/test`, {
+        method: "POST",
+        body: JSON.stringify({ provider, model }),
+      }),
   },
 
   topicSummary: {

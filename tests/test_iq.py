@@ -297,6 +297,19 @@ async def test_ask_grounds_on_retrieved_sources() -> None:
     assert result.answer
 
 
+async def test_ask_serves_the_answer_model_from_its_own_provider() -> None:
+    await _topic("Narwhal rollout", messages=("narwhal rollout starts monday",))
+    await _set("iq_ask_provider", "mock")
+    await _set("iq_ask_model", "my-answer-model")
+    try:
+        result = await ask("When does the narwhal rollout start?")
+        assert result.sources
+        assert result.answer
+    finally:
+        await _set("iq_ask_provider", "")
+        await _set("iq_ask_model", "")
+
+
 # -- MCP --------------------------------------------------------------------
 
 
@@ -357,7 +370,52 @@ def test_rest_endpoints_round_trip() -> None:
         settings = client.get("/api/settings").json()
         assert settings["iq_embeddings_enabled"] is False
         assert settings["iq_embedding_model"] == "text-embedding-3-small"
+        assert settings["iq_embedding_provider"] == ""
+        assert settings["iq_ask_provider"] == ""
         assert settings["mcp_expose"]["iq"] is False
+
+
+def test_embedding_and_answer_providers_are_validated_and_tested() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        try:
+            for key in ("iq_embedding_provider", "iq_ask_provider"):
+                assert client.put("/api/settings", json={key: "nope"}).status_code == 422
+            saved = client.put(
+                "/api/settings",
+                json={"iq_embedding_provider": "mock", "iq_ask_provider": "mock"},
+            ).json()
+            assert saved["iq_embedding_provider"] == "mock"
+            assert saved["iq_ask_provider"] == "mock"
+            assert client.get("/api/iq/status").json()["embedding_provider"] == "mock"
+
+            ok = client.post("/api/iq/embeddings/test", json={}).json()
+            assert ok["ok"] is True
+            assert ok["provider"] == "mock"
+            assert ok["dimensions"] == 256
+            assert ok["model"] == "text-embedding-3-small"
+
+            tried = client.post(
+                "/api/iq/embeddings/test", json={"provider": "mock", "model": " my-embed "}
+            ).json()
+            assert tried["model"] == "my-embed"
+
+            # Azure has no endpoint/key here: reported, never embedded elsewhere.
+            missing = client.post("/api/iq/embeddings/test", json={"provider": "azure_foundry"})
+            assert missing.json()["ok"] is False
+            assert missing.json()["provider"] == "azure_foundry"
+            unknown = client.post("/api/iq/embeddings/test", json={"provider": "nope"})
+            assert unknown.status_code == 422
+        finally:
+            client.put("/api/settings", json={"iq_embedding_provider": "", "iq_ask_provider": ""})
+
+
+async def test_unconfigured_embedding_provider_never_falls_back_to_another() -> None:
+    from precursor.backend.services.iq.embeddings import resolve_embedder
+
+    async with SessionLocal() as session:
+        assert await resolve_embedder(session, "azure_foundry") is None
+        assert await resolve_embedder(session, "") is not None
 
 
 def test_any_process_using_the_db_module_queues_changes() -> None:

@@ -31,9 +31,9 @@ from precursor.backend.db import SessionLocal
 from precursor.backend.models import AppSetting, IQChunk, IQDirty
 from precursor.backend.services.iq.embeddings import (
     DIMENSIONS,
-    as_embedder,
     model_tag,
     pack,
+    resolve_embedder,
 )
 from precursor.backend.services.iq.sources import (
     SOURCE_KINDS,
@@ -371,13 +371,12 @@ async def embed_pending(*, batch: int = 64, max_batches: int = 4) -> int:
         resolve_iq_embedding_model,
         resolve_iq_embeddings_enabled,
     )
-    from precursor.backend.services.llm import get_llm_provider
     from precursor.backend.services.usage_stats import record_usage
 
     async with SessionLocal() as session:
         if not await resolve_iq_embeddings_enabled(session):
             return 0
-        embedder = as_embedder(await get_llm_provider(session))
+        embedder = await resolve_embedder(session)
         if embedder is None:
             return 0
         model = await resolve_iq_embedding_model(session)
@@ -467,9 +466,9 @@ async def status() -> dict[str, Any]:
     """Counts and switches for the Settings card and ``/api/iq/status``."""
     from precursor.backend.services.app_settings import (
         resolve_iq_embedding_model,
+        resolve_iq_embedding_provider,
         resolve_iq_embeddings_enabled,
     )
-    from precursor.backend.services.llm import get_llm_provider
 
     async with SessionLocal() as session:
         chunks = int(await session.scalar(select(func.count()).select_from(IQChunk)) or 0)
@@ -484,7 +483,8 @@ async def status() -> dict[str, Any]:
         }
         enabled = await resolve_iq_embeddings_enabled(session)
         model = await resolve_iq_embedding_model(session)
-        embedder = as_embedder(await get_llm_provider(session))
+        provider_id = await resolve_iq_embedding_provider(session)
+        embedder = await resolve_embedder(session)
         embedded = 0
         if embedder is not None:
             tag = model_tag(embedder.name, model)
@@ -504,6 +504,7 @@ async def status() -> dict[str, Any]:
         "lexical_backend": backend,
         "embeddings_enabled": enabled,
         "embeddings_available": embedder is not None,
+        "embedding_provider": embedder.name if embedder is not None else provider_id,
         "embedding_model": model,
         "embedded": embedded,
         "reconciled_at": reconciled if isinstance(reconciled, str) else None,

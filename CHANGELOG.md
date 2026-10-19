@@ -15,6 +15,15 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **Precursor IQ has its own Settings page.** The IQ card moved out of
+  **Settings → MCP servers** to **Settings → Precursor IQ**. Embeddings now pick
+  any provider configured under **Settings → Model** (Azure AI Foundry reuses
+  its endpoint and key), with a **Test embeddings** button that checks the
+  provider and model before the index is re-embedded. Ask answers get a real
+  provider and model selector instead of a free-text field. New settings
+  `iq_embedding_provider` and `iq_ask_provider`, and `POST
+  /api/iq/embeddings/test`. See [Precursor IQ](website/features/iq.md).
+
 - **Skills and attachments on the "Start a new chat" screen.** The start
   composer now offers your `/skills` in the autocomplete (built-in commands such
   as `/clear` stay out, since they act on an open chat) and accepts files via

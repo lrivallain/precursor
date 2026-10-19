@@ -39,9 +39,9 @@ from precursor.backend.services import links
 from precursor.backend.services.iq import indexer
 from precursor.backend.services.iq.embeddings import (
     DIMENSIONS,
-    as_embedder,
     model_tag,
     normalise,
+    resolve_embedder,
     vector_cache,
 )
 from precursor.backend.services.iq.sources import CONTAINER_SECTIONS
@@ -261,11 +261,10 @@ async def _semantic(
         resolve_iq_embedding_model,
         resolve_iq_embeddings_enabled,
     )
-    from precursor.backend.services.llm import get_llm_provider
 
     if not await resolve_iq_embeddings_enabled(session):
         return None
-    embedder = as_embedder(await get_llm_provider(session))
+    embedder = await resolve_embedder(session)
     if embedder is None:
         return None
     model = await resolve_iq_embedding_model(session)

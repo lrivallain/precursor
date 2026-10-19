@@ -1,7 +1,8 @@
 """Precursor IQ schemas — ranked retrieval and cited answers.
 
 Mirrored in ``frontend/src/lib/types.ts`` (``IQHit``, ``IQRetrieveResponse``,
-``IQAskResponse``, ``IQStatus``).
+``IQAskResponse``, ``IQStatus``, ``IQEmbeddingTestRequest``,
+``IQEmbeddingTestResponse``).
 """
 
 from __future__ import annotations
@@ -92,6 +93,22 @@ class IQStatus(BaseModel):
     lexical_backend: str
     embeddings_enabled: bool
     embeddings_available: bool
+    embedding_provider: str
     embedding_model: str
     embedded: int
     reconciled_at: str | None = None
+
+
+class IQEmbeddingTestRequest(BaseModel):
+    # Unsaved choices to try; omitted fields use the saved settings.
+    provider: str | None = None
+    model: str | None = Field(default=None, max_length=200)
+
+
+class IQEmbeddingTestResponse(BaseModel):
+    ok: bool
+    provider: str
+    model: str
+    dimensions: int | None = None
+    latency_ms: int | None = None
+    detail: str | None = None

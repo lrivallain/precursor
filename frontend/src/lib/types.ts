@@ -1668,6 +1668,9 @@ export interface Settings {
   iq_embeddings_enabled: boolean;
   iq_embedding_model: string;
   iq_ask_model: string;
+  // Provider serving each ("" = the default provider from Settings → Model).
+  iq_embedding_provider: string;
+  iq_ask_provider: string;
   // Tenant GUID used by the Agent 365 servers (the workiq-* family).
   workiq_tenant_id: string;
   // True when the tenant above was read off a stored token rather than typed.
@@ -1768,6 +1771,8 @@ export interface SettingsUpdate {
   iq_embeddings_enabled?: boolean;
   iq_embedding_model?: string;
   iq_ask_model?: string;
+  iq_embedding_provider?: string;
+  iq_ask_provider?: string;
   workiq_tenant_id?: string;
   playwright_browser?: string;
   llm_max_input_tokens?: number;
@@ -2937,8 +2942,18 @@ export interface IQStatus {
   embeddings_enabled: boolean;
   embeddings_available: boolean;
   embedding_model: string;
+  embedding_provider: string;
   embedded: number;
   reconciled_at: string | null;
+}
+
+export interface IQEmbeddingTestResponse {
+  ok: boolean;
+  provider: string;
+  model: string;
+  dimensions: number | null;
+  latency_ms: number | null;
+  detail: string | null;
 }
 
 // ── Refine with AI ──────────────────────────────────────────────────────────
