@@ -34,6 +34,7 @@ const COMMON_EMBEDDING_MODELS = [
 ];
 
 const DEFAULT_PROVIDER = "";
+const CUSTOM_MODEL = "\u0000custom";
 
 function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
@@ -48,11 +49,12 @@ function errorText(e: unknown): string {
  * background work the user wants to see start.
  */
 export function IQSettings({ settings, onSettings, providers, onNavigate }: Props) {
-  const modelListId = useId();
+  const modelInputId = useId();
   const [status, setStatus] = useState<IQStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [model, setModel] = useState(settings?.iq_embedding_model ?? "");
+  const [customModel, setCustomModel] = useState(false);
   const [embedCatalog, setEmbedCatalog] = useState<LLMModel[]>([]);
   const [askCatalog, setAskCatalog] = useState<LLMModel[]>([]);
   const [testing, setTesting] = useState(false);
@@ -67,6 +69,7 @@ export function IQSettings({ settings, onSettings, providers, onNavigate }: Prop
 
   useEffect(() => {
     setModel(settings?.iq_embedding_model ?? "");
+    setCustomModel(false);
   }, [settings?.iq_embedding_model]);
 
   const refresh = useCallback(async () => {
@@ -192,12 +195,26 @@ export function IQSettings({ settings, onSettings, providers, onNavigate }: Prop
       : []),
     ...askCatalog.map((m) => ({ value: m.id, label: m.name || m.id })),
   ];
-  const embedSuggestions = [
-    ...new Set([
-      ...embedCatalog.map((m) => m.id),
-      ...(effectiveEmbedProvider === "azure_foundry" ? [] : COMMON_EMBEDDING_MODELS),
-    ]),
+  // Azure deployment names are arbitrary, so its whole list is offered; other
+  // catalogues are mostly chat models, so only embedding ones are kept.
+  const embedIds = [
+    ...new Set(
+      effectiveEmbedProvider === "azure_foundry"
+        ? embedCatalog.map((m) => m.id)
+        : [
+            ...embedCatalog.map((m) => m.id).filter((id) => /embed/i.test(id)),
+            ...COMMON_EMBEDDING_MODELS,
+          ],
+    ),
   ];
+  const savedEmbedModel = current.iq_embedding_model;
+  const embedModelOptions: SelectOption[] = [
+    ...(savedEmbedModel && !embedIds.includes(savedEmbedModel) ? [savedEmbedModel] : []),
+    ...embedIds,
+  ]
+    .map((id) => ({ value: id, label: id }))
+    .concat([{ value: CUSTOM_MODEL, label: "Other…" }]);
+  const embeddingsOn = current.iq_embeddings_enabled;
 
   const summary = !status
     ? "…"
@@ -292,37 +309,57 @@ export function IQSettings({ settings, onSettings, providers, onNavigate }: Prop
               options={providerOptions(
                 `Default provider (${providerLabel(defaultProvider)})`,
               )}
-              disabled={busy}
+              disabled={busy || !embeddingsOn}
               ariaLabel="Embeddings provider"
               fullWidth
             />
           </div>
           <div className="min-w-0">
-            <label className="block text-[11px] text-muted mb-1" htmlFor={`${modelListId}-in`}>
+            <div className="block text-[11px] text-muted mb-1">
               {effectiveEmbedProvider === "azure_foundry"
                 ? "Embeddings deployment"
                 : "Embeddings model"}
-            </label>
-            <input
-              id={`${modelListId}-in`}
-              type="text"
-              list={modelListId}
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              onBlur={() => {
-                if (model.trim() && model.trim() !== current.iq_embedding_model) {
-                  void save({ iq_embedding_model: model.trim() });
+            </div>
+            <Select
+              value={customModel ? CUSTOM_MODEL : savedEmbedModel}
+              onChange={(next) => {
+                if (next === CUSTOM_MODEL) {
+                  setCustomModel(true);
+                  setModel("");
+                } else if (next !== savedEmbedModel) {
+                  setCustomModel(false);
+                  void save({ iq_embedding_model: next });
                 }
               }}
+              options={embedModelOptions}
+              disabled={busy || !embeddingsOn}
+              ariaLabel="Embeddings model"
               placeholder="text-embedding-3-small"
-              spellCheck={false}
-              className="w-full px-2 py-1.5 rounded border border-border bg-surface text-sm font-mono text-text"
+              searchable={false}
+              fullWidth
             />
-            <datalist id={modelListId}>
-              {embedSuggestions.map((id) => (
-                <option key={id} value={id} />
-              ))}
-            </datalist>
+            {customModel && (
+              <input
+                id={modelInputId}
+                type="text"
+                autoFocus
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                onBlur={() => {
+                  if (model.trim() && model.trim() !== savedEmbedModel) {
+                    void save({ iq_embedding_model: model.trim() });
+                  } else if (!model.trim()) {
+                    setModel(savedEmbedModel);
+                    setCustomModel(false);
+                  }
+                }}
+                aria-label="Custom embeddings model"
+                placeholder="Model or deployment name"
+                disabled={busy || !embeddingsOn}
+                spellCheck={false}
+                className="mt-1.5 w-full px-2 py-1.5 rounded border border-border bg-surface text-sm font-mono text-text"
+              />
+            )}
           </div>
         </div>
 
