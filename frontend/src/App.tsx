@@ -68,6 +68,7 @@ import { rolesStore } from "./lib/rolesStore";
 import { useSettings, useSettingsReady } from "./lib/settingsStore";
 import { streamStore, useStreamVersion } from "./lib/streamStore";
 import { useGlobalShortcuts } from "./lib/useGlobalShortcuts";
+import { ShortcutsHelp } from "./components/ShortcutsHelp";
 import { useIsNarrow } from "./lib/useMediaQuery";
 import { useSidebarNavStyle } from "./lib/useSidebarNavStyle";
 import { useAgentsController } from "./lib/useAgentsController";
@@ -131,6 +132,7 @@ export default function App() {
     if (!narrow) setMobileNavOpen(false);
   }, [narrow]);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   // What ⌘⇧K hands the IQ section: the selected text, and a counter so a
   // repeat press while already there still refocuses the question box.
   const [iqSeed, setIqSeed] = useState<IQSeed | null>(null);
@@ -138,7 +140,9 @@ export default function App() {
     mobileNavOpen,
     setMobileNavOpen,
     setPaletteOpen,
+    setShortcutsOpen,
     onAskIQ: (question) => void askIQ(question),
+    onNew: newFromShortcut,
   });
   useStreamVersion();
   const streamingTopicIds = streamStore.streamingIds("topic");
@@ -583,6 +587,14 @@ export default function App() {
   // create affordance lives in the same place across Topics / Chats / Files.
   // Chats and agents drop the selection to reveal their "start" landing surface;
   // topics open the create dialog directly.
+  // The "n" shortcut: the "+" button's action, only where that button exists.
+  // The home launcher has no current section, so it stays out.
+  function newFromShortcut(): void {
+    if (atHome || sidebarMode === "iq") return;
+    if (isPluginMode(sidebarMode) && !activeSection?.onNew) return;
+    handleNew();
+  }
+
   function handleNew(): void {
     closeMobileNav();
     // The "+" always lands on a mode's create surface, so leave the home
@@ -670,6 +682,7 @@ export default function App() {
           onClose={() => setPaletteOpen(false)}
           onNavigate={changeMode}
           onGoHome={goHome}
+          onOpenShortcuts={() => setShortcutsOpen(true)}
           onOpenResult={openSearchResult}
           agents={agentsCtl.agents ?? []}
           onOpenAgent={(id) => {
@@ -681,6 +694,7 @@ export default function App() {
           initialQuery={atHome ? "" : highlightCtl.searchHighlight.trim()}
         />
       )}
+      {shortcutsOpen && <ShortcutsHelp onClose={() => setShortcutsOpen(false)} />}
       {atHome && navStyle === "rail" && !narrow && (
         <SectionRail
           {...sectionNav}

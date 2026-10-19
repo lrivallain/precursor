@@ -48,6 +48,8 @@ Useful things to try in the composer:
   [ask a question](/features/iq#ask-from-k) and get a cited answer.
 - **⌘⇧K / Ctrl+Shift+K**: open the [IQ section](/features/iq#the-iq-section)
   with the selected text as the question.
+- **C** focuses the composer, **N** starts a new item in the current section, **Esc** stops a streaming reply, and **?** lists
+  every [keyboard shortcut](/features/keyboard-shortcuts).
 
 That's the core loop. From here, each of Precursor's other sections has its own
 short quick start.

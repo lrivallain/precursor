@@ -8,6 +8,7 @@ import {
   Bot,
   FolderGit2,
   Home,
+  Keyboard,
   Lightbulb,
   Loader2,
   Paperclip,
@@ -67,6 +68,8 @@ interface Props {
   onNavigate: (mode: SidebarMode) => void;
   /** Jump to the home launcher. */
   onGoHome: () => void;
+  /** Open the keyboard-shortcuts cheat-sheet. */
+  onOpenShortcuts?: () => void;
   /** Open a specific content hit (topic/chat/agent/live session). */
   onOpenResult: (result: SearchResult, query: string) => void;
   /**
@@ -190,6 +193,7 @@ export function CommandPalette({
   onClose,
   onNavigate,
   onGoHome,
+  onOpenShortcuts,
   onOpenResult,
   agents = [],
   onOpenAgent,
@@ -341,9 +345,24 @@ export function CommandPalette({
           onClose();
         },
       },
+      ...(onOpenShortcuts
+        ? [
+            {
+              id: "shortcuts",
+              label: "Keyboard shortcuts",
+              hint: "Show the shortcut list (?)",
+              keywords: "keyboard shortcuts keys hotkeys help cheat sheet",
+              icon: Keyboard,
+              run: () => {
+                onClose();
+                onOpenShortcuts();
+              },
+            },
+          ]
+        : []),
     ];
     return all;
-  }, [liveEnabled, pluginSections, onNavigate, onGoHome, onClose, agents, onOpenAgent]);
+  }, [liveEnabled, pluginSections, onNavigate, onGoHome, onClose, onOpenShortcuts, agents, onOpenAgent]);
 
   const sections = useMemo(() => {
     const q = query.trim().toLowerCase();

@@ -15,6 +15,13 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **More keyboard shortcuts.** **C** focuses the message composer, **N** starts a new chat, topic or other
+  item in the current section, **?** opens a
+  new keyboard-shortcuts cheat-sheet (also in the ⌘K palette), and **Esc** in the
+  composer stops a streaming reply. The single-key shortcuts are ignored while
+  you type or a dialog is open. See
+  [Keyboard shortcuts](website/features/keyboard-shortcuts.md).
+
 - **Precursor IQ has its own Settings page.** The IQ card moved out of
   **Settings → MCP servers** to **Settings → Precursor IQ**. Embeddings now pick
   any provider configured under **Settings → Model** (Azure AI Foundry reuses
