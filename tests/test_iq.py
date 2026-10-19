@@ -410,6 +410,15 @@ def test_embedding_and_answer_providers_are_validated_and_tested() -> None:
             client.put("/api/settings", json={"iq_embedding_provider": "", "iq_ask_provider": ""})
 
 
+def test_as_embedder_sees_through_the_preset_router() -> None:
+    from precursor.backend.services.iq.embeddings import as_embedder
+    from precursor.backend.services.llm.fallback import CategoryFallbackProvider
+    from precursor.backend.services.llm.mock import MockProvider
+
+    routed = CategoryFallbackProvider(MockProvider(), None, 1000)  # type: ignore[arg-type]
+    assert as_embedder(routed) is routed.base_provider
+
+
 async def test_unconfigured_embedding_provider_never_falls_back_to_another() -> None:
     from precursor.backend.services.iq.embeddings import resolve_embedder
 

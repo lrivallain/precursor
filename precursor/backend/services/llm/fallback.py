@@ -54,6 +54,10 @@ class CategoryFallbackProvider:
         self.effective_model: str | None = None
         self.effective_provider: str | None = None
 
+    @property
+    def base_provider(self) -> LLMProvider:
+        return self._provider
+
     def __getattr__(self, name: str) -> Any:
         # Optional provider capabilities (notably embeddings) stay untouched.
         return getattr(self._provider, name)
