@@ -224,12 +224,14 @@ The retrieval index behind [Precursor IQ](/features/iq): ⌘K ranking, Ask mode,
 | `PRECURSOR_IQ_INDEX_POLL_SECONDS` | `20` | How often the background indexer processes queued changes and computes missing embeddings (floor 5 s). Gated by `PRECURSOR_SCHEDULER_ENABLED`; queries still process a small batch on their own. |
 | `PRECURSOR_IQ_RECONCILE_POLL_SECONDS` | `3600` | How often the check for bulk edits and deletes that bypassed the change queue runs. |
 
-Runtime settings (**Settings → MCP servers → Precursor IQ**) stored in `AppSetting`:
+Runtime settings (**Settings → Precursor IQ**) stored in `AppSetting`:
 
 | Setting | Default | Description |
 | --- | --- | --- |
 | `iq_embeddings_enabled` | `false` | Embed every indexed passage with the active provider (uses quota) and add vector similarity to the ranking. |
+| `iq_embedding_provider` | `""` | Provider serving embeddings (an id from `/api/llm/providers`). Empty uses the default provider. An unconfigured provider disables semantic matching rather than falling back. |
 | `iq_embedding_model` | `text-embedding-3-small` | Embeddings model, or the deployment name on Azure AI Foundry. Requested at 256 dimensions. |
+| `iq_ask_provider` | `""` | Provider serving Ask answers. Only used together with `iq_ask_model`; empty uses the default provider. |
 | `iq_ask_model` | `""` | Model that writes Ask answers. Empty uses the chat model. |
 
 Two `mcp_expose` sections gate the MCP tools: `iq` (`retrieve`) and `iq_ask`

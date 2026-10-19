@@ -41,6 +41,28 @@ def as_embedder(provider: object) -> Embedder | None:
     return provider if isinstance(provider, Embedder) else None
 
 
+async def resolve_embedder(
+    session: AsyncSession, provider_id: str | None = None
+) -> Embedder | None:
+    """The provider that vectorises passages.
+
+    ``provider_id`` defaults to the ``iq_embedding_provider`` setting; ``""``
+    follows the global default provider. A named provider that isn't configured
+    yields ``None`` (full-text only) rather than silently embedding elsewhere:
+    its vectors would carry another provider's tag.
+    """
+    from precursor.backend.services.app_settings import resolve_iq_embedding_provider
+    from precursor.backend.services.llm import ProviderConfigurationError, get_llm_provider
+
+    chosen = await resolve_iq_embedding_provider(session) if provider_id is None else provider_id
+    if not chosen:
+        return as_embedder(await get_llm_provider(session))
+    try:
+        return as_embedder(await get_llm_provider(session, override_provider=chosen, strict=True))
+    except ProviderConfigurationError:
+        return None
+
+
 def model_tag(provider_name: str, model: str) -> str:
     """Identity of a vector space: switching provider or model invalidates vectors."""
     return f"{provider_name}:{model}"

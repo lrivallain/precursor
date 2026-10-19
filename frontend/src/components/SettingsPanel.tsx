@@ -7,6 +7,7 @@ import {
   MessageSquare,
   Cpu,
   Plug,
+  BrainCircuit,
   Puzzle,
   Radio,
   Plus,
@@ -135,6 +136,7 @@ type CoreCategory =
   | "speech"
   | "live"
   | "mcp"
+  | "iq"
   | "skills"
   | "roles"
   | "collections"
@@ -186,6 +188,7 @@ const CATEGORIES: ReadonlyArray<CategoryDef> = [
   { id: "speech", label: "Speech-to-text", icon: Mic, group: "Integrations" },
   { id: "live", label: "Live", icon: Radio, group: "Integrations" },
   { id: "mcp", label: "MCP servers", icon: Plug, group: "Integrations" },
+  { id: "iq", label: "Precursor IQ", icon: BrainCircuit, group: "Integrations" },
   { id: "skills", label: "Skills", icon: Sparkles, group: "Extensions" },
   { id: "roles", label: "Roles", icon: Drama, group: "Extensions" },
   { id: "collections", label: "Collections", icon: Layers, group: "Extensions" },
@@ -1626,6 +1629,18 @@ export function SettingsPanel({ onClose: closeNow, initialCategory, onCollection
               </section>
             )}
 
+            {category === "iq" && (
+              <IQSettings
+                settings={settings}
+                onSettings={(next) => {
+                  setSettings(next);
+                  settingsStore.set(next);
+                }}
+                providers={providers}
+                onNavigate={setCategory}
+              />
+            )}
+
             {category === "mcp" && (
               <section>
                 <McpExposeCard
@@ -1638,13 +1653,6 @@ export function SettingsPanel({ onClose: closeNow, initialCategory, onCollection
                   setHttpEnabled={setHttpEnabled}
                   httpUrl={settings?.mcp_http_url ?? null}
                   httpLoopbackOk={settings?.mcp_http_loopback_ok ?? true}
-                />
-                <IQSettings
-                  settings={settings}
-                  onSettings={(next) => {
-                    setSettings(next);
-                    settingsStore.set(next);
-                  }}
                 />
                 <Agent365Card
                   tenant={workiqTenant}

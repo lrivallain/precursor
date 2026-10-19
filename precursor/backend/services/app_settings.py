@@ -782,7 +782,7 @@ async def resolve_openai_proxy_key(session: AsyncSession) -> str:
     return await resolve(session, SettingSpec("openai_proxy_key", _nonempty_str(), default=""))
 
 
-# Precursor IQ embeddings are opt-in: every indexed chunk is sent to the active
+# Precursor IQ embeddings are opt-in: every indexed chunk is sent to the chosen
 # provider's embeddings endpoint, which spends quota. Retrieval stays full-text
 # only until the user turns them on.
 DEFAULT_IQ_EMBEDDINGS_ENABLED = False
@@ -803,9 +803,19 @@ async def resolve_iq_embedding_model(session: AsyncSession) -> str:
     )
 
 
+async def resolve_iq_embedding_provider(session: AsyncSession) -> str:
+    """Provider that vectorises IQ passages; ``""`` follows the global default."""
+    return await resolve(session, SettingSpec("iq_embedding_provider", _any_str, default=""))
+
+
 async def resolve_iq_ask_model(session: AsyncSession) -> str:
     """Model that writes IQ answers; ``""`` falls back to the chat model."""
     return await resolve(session, SettingSpec("iq_ask_model", _any_str, default=""))
+
+
+async def resolve_iq_ask_provider(session: AsyncSession) -> str:
+    """Provider serving ``iq_ask_model``; ``""`` follows the global default."""
+    return await resolve(session, SettingSpec("iq_ask_provider", _any_str, default=""))
 
 
 async def resolve_mcp_enabled(session: AsyncSession) -> dict[str, bool]:

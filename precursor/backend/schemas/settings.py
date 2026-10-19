@@ -74,11 +74,14 @@ class SettingsPayload(BaseModel):
     # Serve the OpenAI-compatible endpoint (/api/openai/v1). Turning it on mints
     # the API key if there isn't one yet; the key itself isn't writable here.
     openai_proxy_enabled: bool | None = None
-    # Precursor IQ: vectorise indexed passages with the active provider (spends
-    # quota), the embeddings model/deployment, and the model that writes cited
-    # answers ("" = the chat model).
+    # Precursor IQ: vectorise indexed passages (spends quota) with the embeddings
+    # model/deployment of a provider ("" = the global default provider), and the
+    # model that writes cited answers ("" = the chat model) on its own provider
+    # ("" = the global default provider).
     iq_embeddings_enabled: bool | None = None
+    iq_embedding_provider: str | None = None
     iq_embedding_model: str | None = None
+    iq_ask_provider: str | None = None
     iq_ask_model: str | None = None
     # Entra tenant GUID for the Agent 365 MCP servers (the workiq-* family).
     workiq_tenant_id: str | None = None
@@ -206,7 +209,9 @@ class SettingsRead(BaseModel):
     openai_proxy_unavailable_reason: str | None = None
     # Precursor IQ (see SettingsPayload).
     iq_embeddings_enabled: bool = False
+    iq_embedding_provider: str = ""
     iq_embedding_model: str = "text-embedding-3-small"
+    iq_ask_provider: str = ""
     iq_ask_model: str = ""
     # Effective Entra tenant GUID used by the Agent 365 MCP servers ("" when unset).
     workiq_tenant_id: str = ""

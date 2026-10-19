@@ -60,6 +60,7 @@ async def complete_once(
     topic_id: int | None = None,
     chat_id: int | None = None,
     model: str | None = None,
+    provider_id: str | None = None,
     reasoning_effort: str | None = None,
     release_connection: bool = True,
     use_conversation_selection: bool = True,
@@ -67,7 +68,10 @@ async def complete_once(
     """Run a tool-less completion and record its token usage.
 
     ``model`` defaults to the chat model; pass a feature-specific one (the live
-    fast model, the auto-name model) when the feature has its own setting.
+    fast model, the auto-name model) when the feature has its own setting. With
+    a ``model``, ``provider_id`` serves it from that provider instead of the
+    global default (it is ignored without one: the chat model belongs to the
+    default provider).
 
     With ``release_connection`` the caller's session is committed before the
     provider call so a slow model doesn't keep a pooled connection checked out.
@@ -93,11 +97,14 @@ async def complete_once(
             reasoning_effort = resolved.reasoning_effort
         else:
             category = await resolve_model_category(session) if not model else None
-            provider = (
-                await get_llm_provider(session, model_category=category)
-                if category is not None
-                else await get_llm_provider(session)
-            )
+            if model and provider_id:
+                provider = await get_llm_provider(
+                    session, override_provider=provider_id, strict=True
+                )
+            elif category is not None:
+                provider = await get_llm_provider(session, model_category=category)
+            else:
+                provider = await get_llm_provider(session)
     except Exception as exc:
         raise LLMCallFailed(usage_source, exc) from exc
     if release_connection:

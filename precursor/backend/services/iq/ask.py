@@ -55,7 +55,10 @@ async def ask(
     limit: int = 8,
 ) -> AskResult:
     """Retrieve, then have the model write a cited answer."""
-    from precursor.backend.services.app_settings import resolve_iq_ask_model
+    from precursor.backend.services.app_settings import (
+        resolve_iq_ask_model,
+        resolve_iq_ask_provider,
+    )
     from precursor.backend.services.llm.one_shot import complete_once
 
     question = (question or "").strip()
@@ -66,6 +69,7 @@ async def ask(
     today = datetime.now(UTC).date().isoformat()
     async with SessionLocal() as session:
         model = await resolve_iq_ask_model(session)
+        provider_id = await resolve_iq_ask_provider(session)
         out = await complete_once(
             session,
             use_conversation_selection=False,
@@ -73,6 +77,7 @@ async def ask(
             user=f"Question: {question}\n\nSources:\n\n{found.markdown}",
             usage_source="/iq-ask",
             model=model or None,
+            provider_id=provider_id or None,
         )
     by_number = {hit.n: hit for hit in found.hits}
     citations = [by_number[n] for n in cited_numbers(out.text) if n in by_number]

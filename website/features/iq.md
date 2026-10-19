@@ -41,8 +41,9 @@ small batch itself, so results include what you just wrote. An hourly check
 bypass the queue. On first start, Precursor queues everything once and builds
 the index in the background.
 
-**Settings → MCP servers → Precursor IQ** shows the passage count, the queue
-depth and which full-text engine is active, and has a **Rebuild index** button.
+**Settings → Precursor IQ** shows the passage count, the queue depth and which
+full-text engine is active, and has a **Rebuild index** button. It also holds
+the embeddings and answer-model settings described below.
 
 ## How ranking works
 
@@ -119,14 +120,21 @@ the exact words. `retrieve` is the tool for natural-language lookups.
 
 Embeddings are **off by default** because each indexed passage is sent once to
 your provider's `/embeddings` endpoint, which uses quota. To turn them on,
-tick **Semantic matching** in **Settings → MCP servers → Precursor IQ**.
+tick **Semantic matching** in **Settings → Precursor IQ**.
 
+- **Provider**: any provider configured under **Settings → Model**, or the
+  default provider. Azure AI Foundry reuses its endpoint, key and API version,
+  so you configure it once. GitHub Copilot and the OpenAI-compatible providers
+  work too. A provider that is not configured, or has no embeddings endpoint,
+  never falls back to another one: retrieval stays full-text only and the page
+  says so.
 - **Model**: defaults to `text-embedding-3-small`, requested at 256 dimensions.
-  On Azure AI Foundry, enter your embeddings **deployment** name. Models that
-  can't shorten their vectors keep their native size.
-- **Providers**: GitHub Copilot, the OpenAI-compatible providers and Azure AI
-  Foundry. With a provider that has no embeddings endpoint, retrieval stays
-  full-text only and the card says so.
+  On Azure AI Foundry, enter your embeddings **deployment** name (add it to the
+  provider's deployment names to pick it from the list). Models that can't
+  shorten their vectors keep their native size.
+- **Test embeddings**: embeds one short text with the provider and model
+  currently selected, saved or not, and reports the vector size and latency or
+  the provider's error, before the whole index starts spending quota.
 - **Storage**: vectors are stored next to their passages and compared in-process,
   with no vector database or extra dependency. Changing the provider or the
   model re-embeds everything in the background. Embedding calls appear in usage
@@ -139,7 +147,8 @@ tick **Semantic matching** in **Settings → MCP servers → Precursor IQ**.
 | `PRECURSOR_IQ_ENABLED` | env | `true`. When `false`, ⌘K falls back to substring search and `/api/iq/*` returns `404`. |
 | `PRECURSOR_IQ_INDEX_POLL_SECONDS` | env | `20` |
 | `PRECURSOR_IQ_RECONCILE_POLL_SECONDS` | env | `3600` |
-| Semantic matching / embeddings model / answer model | Settings → MCP servers → Precursor IQ | off / `text-embedding-3-small` / chat model |
+| Semantic matching / embeddings provider and model | Settings → Precursor IQ | off / default provider / `text-embedding-3-small` |
+| Answer provider and model | Settings → Precursor IQ | default provider / chat model |
 | IQ retrieve / IQ ask exposure | Settings → MCP servers → Precursor capabilities | off / off |
 
 The background indexer only runs when `PRECURSOR_SCHEDULER_ENABLED` is on, like
