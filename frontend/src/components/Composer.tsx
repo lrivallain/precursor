@@ -246,6 +246,7 @@ export function Composer({
         <div className="relative">
         <textarea
           ref={textareaRef}
+          data-composer
           value={value}
           onChange={(e) => {
             historyIndexRef.current = null;
@@ -290,6 +291,11 @@ export function Composer({
                 onChange("");
                 return;
               }
+            }
+            if (e.key === "Escape" && streaming) {
+              e.preventDefault();
+              onStop();
+              return;
             }
             if (e.key === "ArrowUp" && userHistory.length > 0) {
               const ta = e.currentTarget;

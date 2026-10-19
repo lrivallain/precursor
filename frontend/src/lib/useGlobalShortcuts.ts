@@ -8,14 +8,31 @@ export interface GlobalShortcutsDeps {
   mobileNavOpen: boolean;
   setMobileNavOpen: Dispatch<SetStateAction<boolean>>;
   setPaletteOpen: Dispatch<SetStateAction<boolean>>;
+  setShortcutsOpen: Dispatch<SetStateAction<boolean>>;
   /** ⌘⇧K: open the IQ section, seeding the question with the selected text. */
   onAskIQ: (question: string) => void;
+  /** "n": start a new item in the current section; a no-op where there is none. */
+  onNew: () => void;
 }
 
 // The palette is a modal too, but ⌘⇧K is allowed to replace it.
 const OTHER_MODAL = '[aria-modal="true"]:not([aria-labelledby="command-palette-input"])';
 // Mirrors the backend's cap on a question (schemas/iq.py IQAskRequest).
 const MAX_QUESTION = 4000;
+
+// The composer textarea carries `data-composer`. With several on screen (agent
+// session + start form) the first one that is actually visible wins.
+function focusComposer(): boolean {
+  const boxes = document.querySelectorAll<HTMLTextAreaElement>("textarea[data-composer]");
+  for (const box of boxes) {
+    if (box.disabled || box.getClientRects().length === 0) continue;
+    box.focus();
+    const end = box.value.length;
+    box.setSelectionRange(end, end);
+    return true;
+  }
+  return false;
+}
 
 function selectedText(): string {
   return (window.getSelection()?.toString() ?? "").replace(/\s+/g, " ").trim().slice(0, MAX_QUESTION);
@@ -48,10 +65,12 @@ function isTypingTarget(e: KeyboardEvent): boolean {
 // attached while the drawer is open, so folding it into the palette's
 // always-on listener would change when (and in which order) it's registered.
 export function useGlobalShortcuts(deps: GlobalShortcutsDeps): void {
-  const { mobileNavOpen, setMobileNavOpen, setPaletteOpen, onAskIQ } = deps;
+  const { mobileNavOpen, setMobileNavOpen, setPaletteOpen, setShortcutsOpen, onAskIQ, onNew } = deps;
   // The listener registers once; read the latest callback through a ref.
   const askRef = useRef(onAskIQ);
   askRef.current = onAskIQ;
+  const newRef = useRef(onNew);
+  newRef.current = onNew;
 
   useEffect(() => {
     if (!mobileNavOpen) return;
@@ -66,7 +85,9 @@ export function useGlobalShortcuts(deps: GlobalShortcutsDeps): void {
   // jump to any section regardless of the sidebar's horizontal overflow. A bare
   // "/" opens it too (search-first, like GitHub), but only when the user isn't
   // typing and no other dialog owns the screen. ⌘⇧K / Ctrl+Shift+K asks IQ
-  // instead, from anywhere — typing included, since it's a chord.
+  // instead, from anywhere — typing included, since it's a chord. The bare keys
+  // "c" (focus the composer), "n" (new item) and "?" (shortcut list) follow the
+  // same rules as "/": never while typing, never over a dialog.
   useEffect(() => {
     function onKey(e: KeyboardEvent): void {
       if ((e.metaKey || e.ctrlKey) && !e.altKey && e.shiftKey && e.key.toLowerCase() === "k") {
@@ -87,6 +108,23 @@ export function useGlobalShortcuts(deps: GlobalShortcutsDeps): void {
         if (document.querySelector('[aria-modal="true"]')) return;
         e.preventDefault();
         setPaletteOpen(true);
+        return;
+      }
+      if (e.metaKey || e.ctrlKey || e.altKey || e.repeat) return;
+      const isHelp = e.key === "?";
+      const isComposer = e.key === "c" && !e.shiftKey;
+      const isNew = e.key === "n" && !e.shiftKey;
+      if (!isHelp && !isComposer && !isNew) return;
+      if (isTypingTarget(e) || document.querySelector('[aria-modal="true"]')) return;
+      if (isHelp) {
+        e.preventDefault();
+        setShortcutsOpen(true);
+      } else if (isNew) {
+        e.preventDefault();
+        newRef.current();
+      } else if (focusComposer()) {
+        // preventDefault keeps the "c" from being typed into the box.
+        e.preventDefault();
       }
     }
     window.addEventListener("keydown", onKey);
