@@ -110,7 +110,7 @@ from precursor.backend.services.meeting_analysis import (
     language_name,
     meeting_context_text,
     meeting_details_markdown,
-    role_persona_instruction,
+    session_persona,
     translate_lines,
     translate_transcript,
 )
@@ -123,7 +123,6 @@ from precursor.backend.services.meeting_transcript import (
     fetch_meeting_transcript,
     list_meeting_transcripts,
 )
-from precursor.backend.services.roles import resolve_role_prompt
 from precursor.backend.services.slugs import allocate_unique_slug, slugify
 from precursor.backend.services.usage_stats import record_usage
 
@@ -158,11 +157,13 @@ async def _get_session_or_404(session_id: int, session: AsyncSession) -> Meeting
     return ms
 
 
-async def _validate_topic(topic_id: int | None, session: AsyncSession) -> None:
+async def _validate_topic(topic_id: int | None, session: AsyncSession) -> Topic | None:
     if topic_id is None:
-        return
-    if await session.get(Topic, topic_id) is None:
+        return None
+    topic = await session.get(Topic, topic_id)
+    if topic is None:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Attached topic not found")
+    return topic
 
 
 @router.get("", response_model=list[MeetingSessionRead])
@@ -287,7 +288,7 @@ async def create_session_endpoint(
     payload: MeetingSessionCreate,
     session: AsyncSession = Depends(get_session),
 ) -> MeetingSession:
-    await _validate_topic(payload.topic_id, session)
+    topic = await _validate_topic(payload.topic_id, session)
 
     title = (payload.title or "").strip() or (f"Live session — {datetime.now(UTC):%Y-%m-%d %H:%M}")
     slug = await _allocate_slug(session, slugify(payload.slug or title))
@@ -298,6 +299,8 @@ async def create_session_endpoint(
         status="active",
         language=(payload.language or "").strip() or None,
         topic_id=payload.topic_id,
+        # The session starts with the role of the topic it is attached to.
+        role=topic.role if topic is not None else None,
     )
     session.add(ms)
     await session.commit()
@@ -323,11 +326,15 @@ async def update_session_endpoint(
     data = payload.model_dump(exclude_unset=True)
 
     if "topic_id" in data:
-        await _validate_topic(data["topic_id"], session)
+        topic = await _validate_topic(data["topic_id"], session)
         # Attaching a different topic invalidates the cached context summary so
         # the Context tab regenerates it for the new topic.
         if data["topic_id"] != ms.topic_id:
             ms.topic_summary = None
+            # The session adopts the new topic's role (an explicit role in the
+            # same request wins; detaching leaves the role as it is).
+            if topic is not None and "role" not in data:
+                data["role"] = topic.role
     if "title" in data and data["title"] is not None:
         data["title"] = data["title"].strip() or ms.title
     if "language" in data:
@@ -349,6 +356,10 @@ async def update_session_endpoint(
 
     for key, value in data.items():
         setattr(ms, key, value)
+    if "role" in data and ms.chat_id is not None:
+        chat = await session.get(Chat, ms.chat_id)
+        if chat is not None:
+            chat.role = ms.role
     await session.commit()
     await session.refresh(ms)
     await publish_meeting_changed(ms.id)
@@ -650,7 +661,7 @@ async def ensure_chat(session_id: int, session: AsyncSession = Depends(get_sessi
             return existing
 
     slug = await allocate_unique_slug(session, slugify(ms.title) or "live-chat", Chat)
-    chat = Chat(title=f"{ms.title} — Live chat", slug=slug)
+    chat = Chat(title=f"{ms.title} — Live chat", slug=slug, role=ms.role)
     session.add(chat)
     await session.commit()
     await session.refresh(chat)
@@ -758,7 +769,7 @@ async def ask(
     lang = language_name(ms.language)
     if lang:
         system += f" Respond in {lang}."
-    persona = role_persona_instruction(await resolve_role_prompt(session, ms.role))
+    persona = await session_persona(session, ms.role)
     if persona:
         system += f"\n\n{persona}"
     user_parts = [
@@ -1150,7 +1161,9 @@ async def topic_summary(
     if ms.topic_id is None:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "No topic attached to this session.")
     try:
-        text, model = await summarize_topic_conversation(session, ms.topic_id, language=ms.language)
+        text, model = await summarize_topic_conversation(
+            session, ms.topic_id, language=ms.language, role=ms.role
+        )
     except Exception as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Summary failed: {exc}") from exc
     # Persist the summary so we serve it from cache on later opens instead of

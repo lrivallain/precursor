@@ -1528,3 +1528,89 @@ def test_suggest_none_marker_suppresses_turn(monkeypatch, chunks) -> None:  # ty
 
         chat_id = client.get(f"/api/live/{sid}").json()["chat_id"]
         assert client.get(f"/api/chats/{chat_id}/messages").json() == []
+
+
+def _make_role(client: TestClient, name: str, prompt: str) -> str:
+    r = client.post("/api/roles", json={"name": name, "system_prompt": prompt})
+    assert r.status_code == 201, r.text
+    return r.json()["name"]
+
+
+def test_live_session_inherits_role_from_topic() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        reviewer = _make_role(client, "live-inherit-reviewer", "Be strict.")
+        other = _make_role(client, "live-inherit-other", "Be kind.")
+        tid = client.post("/api/topics", json={"title": "Roled", "role": reviewer}).json()["id"]
+        plain = client.post("/api/topics", json={"title": "Plain"}).json()["id"]
+
+        # Created with a topic: starts with the topic's role.
+        sid = client.post("/api/live", json={"topic_id": tid}).json()["id"]
+        assert client.get(f"/api/live/{sid}").json()["role"] == reviewer
+
+        # Attaching another topic overwrites it (null topic role = default).
+        patched = client.patch(f"/api/live/{sid}", json={"topic_id": plain})
+        assert patched.json()["role"] is None
+
+        # An explicit role in the same request wins over the topic's.
+        patched = client.patch(f"/api/live/{sid}", json={"topic_id": tid, "role": other})
+        assert patched.json()["role"] == other
+
+        # Re-sending the same topic is not an attach: the manual role stays.
+        patched = client.patch(f"/api/live/{sid}", json={"topic_id": tid})
+        assert patched.json()["role"] == other
+
+        # Detaching leaves the role alone.
+        patched = client.patch(f"/api/live/{sid}", json={"topic_id": None})
+        assert patched.json()["role"] == other
+
+        # Attaching from scratch takes the topic's role again.
+        patched = client.patch(f"/api/live/{sid}", json={"topic_id": tid})
+        assert patched.json()["role"] == reviewer
+
+
+def test_live_chat_follows_session_role() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        role = _make_role(client, "live-chat-role", "Be terse.")
+        sid = client.post("/api/live", json={"title": "Chat role"}).json()["id"]
+        client.patch(f"/api/live/{sid}", json={"role": role})
+        chat_id = client.post(f"/api/live/{sid}/chat").json()["id"]
+        assert client.get(f"/api/chats/{chat_id}").json()["role"] == role
+
+        other = _make_role(client, "live-chat-role-2", "Be verbose.")
+        client.patch(f"/api/live/{sid}", json={"role": other})
+        assert client.get(f"/api/chats/{chat_id}").json()["role"] == other
+
+
+def test_live_recap_and_topic_brief_use_session_role(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from precursor.backend.services.llm.base import TextDeltaEvent, UsageEvent
+
+    systems: list[str] = []
+
+    class _Provider:
+        name = "fake"
+
+        async def stream_chat_with_tools(self, **kwargs):  # type: ignore[no-untyped-def]
+            systems.append(kwargs["messages"][0].content)
+            yield TextDeltaEvent(content="ok")
+            yield UsageEvent(prompt_tokens=1, completion_tokens=1, total_tokens=2)
+
+    async def _prov(_session, **_kwargs):  # type: ignore[no-untyped-def]
+        return _Provider()
+
+    monkeypatch.setattr(one_shot, "get_llm_provider", _prov)
+
+    app = create_app()
+    with TestClient(app) as client:
+        role = _make_role(client, "live-recap-role", "Answer like a pirate.")
+        tid = client.post("/api/topics", json={"title": "Brief", "role": role}).json()["id"]
+        client.post(f"/api/topics/{tid}/messages", json={"content": "hello"})
+        sid = client.post("/api/live", json={"topic_id": tid}).json()["id"]
+        client.post(f"/api/live/{sid}/segments", json={"text": "We shipped"})
+
+        assert client.post(f"/api/live/{sid}/summary").status_code == 200
+        assert client.post(f"/api/live/{sid}/topic-summary").status_code == 200
+
+    assert systems
+    assert all("Answer like a pirate." in s for s in systems)

@@ -15,6 +15,13 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **Live sessions inherit the topic's role.** Attaching a topic to a live
+  session now copies its assistant role into the session, and the role picker
+  moved from the Transcript tab to the session header because it applies to the
+  whole session. The role now also shapes the recap and the topic context
+  brief, not just insights, suggestions and Ask assistant, and is mirrored on
+  the session's chat. See [Live sessions](website/features/live-sessions.md).
+
 - **More keyboard shortcuts.** **C** focuses the message composer, **N** starts a new chat, topic or other
   item in the current section, **?** opens a
   new keyboard-shortcuts cheat-sheet (also in the ⌘K palette), and **Esc** in the

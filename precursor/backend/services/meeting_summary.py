@@ -28,6 +28,7 @@ from precursor.backend.services.meeting_analysis import (
     display_label,
     language_name,
     meeting_context_text,
+    session_persona,
 )
 from precursor.backend.services.summary_templates import builtin_templates
 
@@ -46,7 +47,9 @@ _KIND_LABELS = {
 }
 
 
-def _system_prompt(ms: MeetingSession, instructions: str | None, language: str | None) -> str:
+def _system_prompt(
+    ms: MeetingSession, instructions: str | None, language: str | None, persona: str = ""
+) -> str:
     """The template's instructions plus the language to write in.
 
     ``instructions`` defaults to the standard recap; ``language`` (a BCP-47
@@ -58,6 +61,8 @@ def _system_prompt(ms: MeetingSession, instructions: str | None, language: str |
     lang = language_name(language or ms.language)
     if lang:
         system += f"\n\nWrite the entire summary in {lang}."
+    if persona:
+        system += f"\n\n{persona}"
     return system
 
 
@@ -153,7 +158,7 @@ async def generate_summary(
         .all()
     )
 
-    system = _system_prompt(ms, instructions, language)
+    system = _system_prompt(ms, instructions, language, await session_persona(session, ms.role))
 
     user_parts = [
         f"Meeting title: {ms.title}",
@@ -214,7 +219,7 @@ async def generate_summary_from_transcript(
     if ms is None or not transcript.strip():
         return "", ""
 
-    system = _system_prompt(ms, instructions, language)
+    system = _system_prompt(ms, instructions, language, await session_persona(session, ms.role))
 
     user_parts = [f"Meeting title: {ms.title}"]
     if ms.attendees:
@@ -259,7 +264,11 @@ _TOPIC_SUMMARY_SYSTEM = (
 
 
 async def summarize_topic_conversation(
-    session: AsyncSession, topic_id: int, *, language: str | None = None
+    session: AsyncSession,
+    topic_id: int,
+    *,
+    language: str | None = None,
+    role: str | None = None,
 ) -> tuple[str, str]:
     """Summarize a topic's conversation as meeting context. Returns (text, model)."""
     from precursor.backend.models import IssueContextCache, Message
@@ -297,6 +306,9 @@ async def summarize_topic_conversation(
     lang = language_name(language)
     if lang:
         system += f"\n\nWrite the brief in {lang}."
+    persona = await session_persona(session, role)
+    if persona:
+        system += f"\n\n{persona}"
 
     result = await complete_once(
         session,
