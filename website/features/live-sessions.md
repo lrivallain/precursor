@@ -63,6 +63,14 @@ produced in the session's language.
 The Live view is a **tabbed, splittable panel** — Transcript · Live Insights ·
 Summary · Context. Use the **Split** toggle to view two sections side by side.
 
+::: tip Assistant role
+The **Role** picker in the session header sets the persona for **every AI
+feature of the session** — insights, suggested answers, Ask assistant, the
+recap and the topic context brief. Attaching a [topic](/features/topics) copies
+that topic's role into the session (replacing the current one); pick another
+role afterwards to override it. Detaching a topic leaves the role as it is.
+:::
+
 - **Live Insights** — while recording, the assistant re-derives a snapshot of
   **action items, decisions, open questions, suggestions, and risks** from the
   rolling transcript. Each analysis **replaces** the previous snapshot, and a

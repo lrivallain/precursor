@@ -1149,14 +1149,6 @@ export function LiveView({
         ariaLabel="Meeting language"
         size="sm"
       />
-
-      <RoleSelector
-        value={session.role ?? null}
-        onChange={(roleName) => void applyRole(roleName)}
-        open={roleOpen}
-        onOpenChange={setRoleOpen}
-        variant="toolbar"
-      />
     </>
   );
 
@@ -1570,6 +1562,20 @@ export function LiveView({
             collections={collections}
           />
         </label>
+
+        <div
+          className="inline-flex items-center gap-1 text-[11px] text-muted"
+          data-tooltip={"Assistant role for every AI feature of this session.\nInherited from the topic when you attach one."}
+        >
+          Role
+          <RoleSelector
+            value={session.role ?? null}
+            onChange={(roleName) => void applyRole(roleName)}
+            open={roleOpen}
+            onOpenChange={setRoleOpen}
+            variant="toolbar"
+          />
+        </div>
 
         <div className="ml-auto flex items-center gap-2">
           <FeaturePicker

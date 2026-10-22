@@ -40,10 +40,9 @@ from precursor.backend.services.meeting_analysis import (
     display_label,
     language_name,
     meeting_context_text,
-    role_persona_instruction,
+    session_persona,
 )
 from precursor.backend.services.model_fallbacks import resolve_model_category
-from precursor.backend.services.roles import resolve_role_prompt
 from precursor.backend.services.usage_stats import record_usage
 
 logger = logging.getLogger(__name__)
@@ -120,7 +119,7 @@ async def prepare_suggestion(
     lang = language_name(ms.language)
     if lang:
         system += f" Respond in {lang}."
-    persona = role_persona_instruction(await resolve_role_prompt(session, ms.role))
+    persona = await session_persona(session, ms.role)
     if persona:
         system += f"\n\n{persona}"
 

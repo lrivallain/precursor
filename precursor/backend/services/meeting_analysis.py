@@ -37,6 +37,15 @@ def role_persona_instruction(role_prompt: str) -> str:
     return f"Active assistant role — adopt this persona for every reply:\n{role_prompt.strip()}"
 
 
+async def session_persona(session: AsyncSession, role: str | None) -> str:
+    """The persona directive for a live session's role, or "" for the default.
+
+    Every AI task of the session (insights, suggestions, Ask chat, recap, topic
+    brief) goes through this so the role applies uniformly.
+    """
+    return role_persona_instruction(await resolve_role_prompt(session, role))
+
+
 # Characters of transcript / topic context fed to the model. Kept modest so the
 # analysis stays fast; the snapshot is re-derived each run so older context that
 # has fallen out of the window is still reflected in prior insights.
@@ -209,7 +218,7 @@ async def live_chat_grounding(session: AsyncSession, chat_id: int) -> str:
         "meeting context below; it updates as the meeting progresses. Prefer it "
         "over prior assumptions for anything time-sensitive."
     ]
-    persona = role_persona_instruction(await resolve_role_prompt(session, ms.role))
+    persona = await session_persona(session, ms.role)
     if persona:
         parts.append(persona)
     if segments:
@@ -436,7 +445,7 @@ async def analyze_session(
     lang = language_name(ms.language)
     if lang:
         system += f"\n\nWrite every insight's content and the suggestion in {lang}."
-    persona = role_persona_instruction(await resolve_role_prompt(session, ms.role))
+    persona = await session_persona(session, ms.role)
     if persona:
         system += f"\n\n{persona}"
 
