@@ -9,7 +9,7 @@ labels, and surfaces live insights, Q&A, and an editable summary you can attach
 to a [topic](/features/topics). Audio is transcribed in the browser via **Azure
 Speech** and **never stored** — only the transcript and derived insights are kept.
 
-<Screenshot src="/screenshots/live.png" alt="A live session with a speaker-labeled transcript on the left and live insights on the right" caption="A live session — speaker-labeled transcript alongside live insights (action items, decisions, open questions)." />
+<Screenshot src="/screenshots/live.png" alt="A live session with a speaker-labeled transcript on the left and grouped live insights plus a structured suggestion on the right" caption="Live insights beside the transcript: a concise recommendation, grouped follow-ups, decisions, questions and risks." />
 
 ## Prerequisites
 
@@ -74,8 +74,10 @@ role afterwards to override it. Detaching a topic leaves the role as it is.
 - **Live Insights** — while recording, the assistant re-derives a snapshot of
   **action items, decisions, open questions, suggestions, and risks** from the
   rolling transcript. Each analysis **replaces** the previous snapshot, and a
-  proactive suggestion shows as a single card that a newer one replaces — nothing
-  stacks up while the meeting runs.
+  proactive suggestion shows in a highlighted card that a newer one replaces —
+  nothing stacks up while the meeting runs. Insight categories are separated
+  into scan-friendly groups, and suggestions lead with a concise recommendation
+  followed by short bullets when alternatives or next steps help.
 - **Ask assistant** — ask free-form questions; answers stream from the transcript
   plus the attached topic.
 - **Suggested answers** — turn on **Suggested answers** in the feature picker and

@@ -1431,6 +1431,14 @@ def test_parse_insights_help_and_suggestion() -> None:
     assert _parse_insights("nothing here") == ([], False, "")
 
 
+def test_live_analysis_prompt_requests_scannable_suggestions() -> None:
+    from precursor.backend.services.meeting_analysis import _SYSTEM_PROMPT
+
+    assert "start with one direct recommendation or answer" in _SYSTEM_PROMPT
+    assert "up to 3 short Markdown bullets" in _SYSTEM_PROMPT
+    assert "avoid numbered run-on paragraphs" in _SYSTEM_PROMPT
+
+
 def test_mark_speaker_me_roundtrip() -> None:
     app = create_app()
     with TestClient(app) as client:

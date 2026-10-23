@@ -116,8 +116,13 @@ _SYSTEM_PROMPT = (
     "If nothing substantive has been said yet, return an empty insights list.\n\n"
     "For help/suggestion: ONLY set help=true when there is a clear, current open "
     "question or problem you can materially help with — give a specific, brief "
-    "answer or next step in 'suggestion'. Most of the time nothing is needed: set "
-    "help=false with an empty suggestion. Do not repeat the insights as a suggestion."
+    "answer or next step in 'suggestion'. Make it easy to scan during a live "
+    "discussion: start with one direct recommendation or answer in a short sentence. "
+    "When useful, follow with up to 3 short Markdown bullets for options or next "
+    "steps, using bold labels sparingly. Keep it to about 3 short lines; avoid "
+    "numbered run-on paragraphs, long caveats, and repeating the insights. Most of "
+    "the time nothing is needed: set help=false with an empty suggestion. Do not "
+    "repeat the insights as a suggestion."
 )
 
 
