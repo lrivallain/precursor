@@ -62,6 +62,21 @@ def _refuse_broken(linked: LoadedFile | None) -> None:
         )
 
 
+def _read_unchanged(linked: LoadedFile) -> bytes:
+    try:
+        data = (overlay.definitions_root() / linked.path).read_bytes()
+    except OSError as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, f"Couldn't read {linked.path}: {exc}"
+        ) from exc
+    if hashlib.sha256(data).hexdigest() != linked.content_hash:
+        overlay.invalidate()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, f"{linked.path} changed on disk just now; try again"
+        )
+    return data
+
+
 def _validate(
     model: type[AgentDefinition] | type[WorkflowDefinition], doc: dict[str, Any]
 ) -> AgentDefinition | WorkflowDefinition:
@@ -180,7 +195,11 @@ _SETTING_FIELDS = (
 
 
 async def _repin_if_running(
-    session: AsyncSession, workflow: Workflow, saved: WorkflowDefinition
+    session: AsyncSession,
+    workflow: Workflow,
+    saved: WorkflowDefinition,
+    *,
+    changed: set[str] | None = None,
 ) -> None:
     """A settings save during a run applies to that run.
 
@@ -191,7 +210,11 @@ async def _repin_if_running(
     if pin is None or workflow.current_run_id is None:
         return
     updated = pin.definition.model_copy(
-        update={name: getattr(saved, name) for name in _SETTING_FIELDS}
+        update={
+            name: getattr(saved, name)
+            for name in _SETTING_FIELDS
+            if changed is None or name in changed
+        }
     )
     text = render_document(updated.model_dump(mode="json", by_alias=True, exclude_defaults=True))
     digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -199,6 +222,63 @@ async def _repin_if_running(
     run = await session.get(WorkflowRun, workflow.current_run_id)
     if run is not None:
         run.definition_hash, run.definition_snapshot = digest, text
+
+
+async def clear_role_references(session: AsyncSession, name: str) -> None:
+    """Clear a deleted role in declarations, not just their stale SQL copies."""
+    if not overlay.files_mode():
+        return
+    overlay.invalidate()
+    dset = overlay.current_definitions()
+    pending: list[tuple[LoadedFile, str]] = []
+    for linked in dset.files:
+        if linked.kind not in ("agent", "workflow"):
+            continue
+        # A broken declaration may carry a reference we cannot safely inspect.
+        _refuse_broken(linked)
+        defn = linked.definition
+        if not isinstance(defn, AgentDefinition | WorkflowDefinition):
+            continue
+        if not defn.role or defn.role.lower() != name.lower():
+            continue
+        if dset.find(linked.kind, defn.id) is None:
+            paths = ", ".join(f.path for f in dset.by_id[defn.id])
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"A definition id is shared by {paths}; fix the duplicate first",
+            )
+        raw = yaml.safe_load(_read_unchanged(linked).decode("utf-8"))
+        raw.pop("role", None)
+        _validate(type(defn), raw)
+        pending.append((linked, render_document(raw)))
+
+    workflows = (
+        (await session.execute(select(Workflow).where(Workflow.current_run_id.is_not(None))))
+        .scalars()
+        .all()
+    )
+    for linked, text in pending:
+        _read_unchanged(linked)
+        try:
+            _write_atomic(overlay.definitions_root() / linked.path, text)
+        except OSError as exc:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT, f"Couldn't update {linked.path}: {exc}"
+            ) from exc
+        finally:
+            overlay.invalidate()
+
+    # Only the role changes: never accept permissions or pull new steps into
+    # the version an active run is pinned to.
+    for workflow in workflows:
+        pin = overlay._current_pin(workflow)
+        if pin is not None and pin.definition.role and pin.definition.role.lower() == name.lower():
+            await _repin_if_running(
+                session,
+                workflow,
+                pin.definition.model_copy(update={"role": None}),
+                changed={"role"},
+            )
 
 
 async def _save_workflow_settings(
@@ -217,14 +297,13 @@ async def _save_workflow_settings(
     """
     path = overlay.definitions_root() / linked.path
     try:
-        data = path.read_bytes()
-        raw = yaml.safe_load(data.decode("utf-8")) or {}
-    except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
+        raw = yaml.safe_load(_read_unchanged(linked).decode("utf-8")) or {}
+    except (UnicodeDecodeError, yaml.YAMLError) as exc:
         raise HTTPException(
             status.HTTP_409_CONFLICT, f"Couldn't read {linked.path}: {exc}"
         ) from exc
     # What is kept is what was just checked, byte for byte.
-    if hashlib.sha256(data).hexdigest() != linked.content_hash or not isinstance(raw, dict):
+    if not isinstance(raw, dict):
         overlay.invalidate()
         raise HTTPException(
             status.HTTP_409_CONFLICT, f"{linked.path} changed on disk just now; save again"

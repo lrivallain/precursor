@@ -408,6 +408,13 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Fixed
 
+- **Deleted roles stay cleared in files mode.** Role deletion now removes
+  matching assignments from agent and workflow definition files, including
+  definitions with stale database columns or no database row yet. Reloads and
+  restarts no longer restore the deleted role. Workflow run snapshots retain
+  their steps, and permission reviews are preserved. Unsafe file edits report
+  a conflict and keep the role instead of claiming success.
+
 - **Workspace layout with the discussion panel open.** The discussion panel
   and Files tree now shrink before the editor, so the workspace no longer
   scrolls horizontally or clips the composer, and the file header wraps its

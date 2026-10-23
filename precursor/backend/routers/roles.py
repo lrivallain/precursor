@@ -11,20 +11,11 @@ name means editing the file and what uses it.
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.db import get_session
-from precursor.backend.models import (
-    AgentBlueprint,
-    AgentSession,
-    Chat,
-    Collection,
-    MeetingSession,
-    Role,
-    Topic,
-    Workflow,
-)
+from precursor.backend.models import Role
 from precursor.backend.schemas import RoleCreate, RoleRead, RoleUpdate
 from precursor.backend.schemas.definitions import DEFAULT_ROLE_NAME
 from precursor.backend.services import roles as roles_service
@@ -32,17 +23,6 @@ from precursor.backend.services.definitions import overlay
 from precursor.backend.services.roles import RoleFileError, RoleInfo
 
 router = APIRouter(prefix="/api/roles", tags=["roles"])
-
-# Columns that name a role; cleared when it is deleted.
-_REFERENCES = (
-    Topic.role,
-    Chat.role,
-    MeetingSession.role,
-    AgentSession.role,
-    AgentBlueprint.role,
-    Workflow.role,
-    Collection.default_role,
-)
 
 
 def _read(role: RoleInfo) -> RoleRead:
@@ -133,20 +113,4 @@ async def update_role(
 
 @router.delete("/{name:path}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_role(name: str, session: AsyncSession = Depends(get_session)) -> None:
-    role = await _get(session, name)
-    if role.is_default:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "The default role cannot be deleted.")
-    # Whatever used the role reverts to the default; cleared here rather than
-    # by a foreign key, which SQLite doesn't enforce.
-    for column in _REFERENCES:
-        await session.execute(
-            update(column.class_)
-            .where(func.lower(column) == role.name.lower())
-            .values({column.key: None})
-        )
-    row = await _row(session, role.name)
-    if row is not None:
-        await session.delete(row)
-    await session.commit()
-    if role.path is not None:
-        roles_service.delete_role_file(role)
+    await roles_service.delete_role(session, await _get(session, name))
