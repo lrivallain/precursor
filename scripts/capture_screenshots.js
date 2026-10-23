@@ -404,8 +404,30 @@ const scenes = {
   live: {
     viewport: { width: 1440, height: 1000 },
     async go(page) {
+      await page.addInitScript(() => {
+        localStorage.setItem("precursor:live-panel", JSON.stringify({
+          panes: [
+            { tabs: ["transcript"], active: "transcript" },
+            { tabs: ["insights"], active: "insights" },
+          ],
+        }));
+      });
+      await page.route("**/api/live/*/analyze", (route) => route.fulfill({
+        json: {
+          insights: [
+            { id: 1, kind: "action_item", content: "Sam: Add a bounded-retry regression test." },
+            { id: 2, kind: "decision", content: "Cap retries and add jitter to the backoff." },
+            { id: 3, kind: "question", content: "What retry limit keeps recovery fast without amplifying load?" },
+            { id: 4, kind: "risk", content: "Slow gateways can amplify load during retries." },
+            { id: 5, kind: "note", content: "The release checklist needs an update." },
+          ],
+          suggestion: "**Recommendation:** Cap retries and add jitter to prevent slow gateways from amplifying load.\n\n- **Next step:** Add a regression test for slow gateway responses.\n- **Check:** Confirm the retry limit with the team.",
+        },
+      }));
       await page.goto(`${BASE}/live/weekly-platform-sync`, { waitUntil: "networkidle" });
       await page.getByText("Let's review the latency regression and agree on next steps.", { exact: true }).waitFor();
+      await page.getByRole("button", { name: "Analyze now" }).click();
+      await page.getByText("Recommendation", { exact: false }).waitFor();
       return undefined;
     },
   },

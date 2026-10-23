@@ -15,6 +15,11 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **Live insights are easier to scan.** Insight categories now have clearer
+  visual grouping, and proactive suggestions lead with a short recommendation
+  followed by concise bullets for alternatives or next steps when useful. See
+  [Live sessions](website/features/live-sessions.md).
+
 - **Live sessions inherit the topic's role.** Attaching a topic to a live
   session now copies its assistant role into the session, and the role picker
   moved from the Transcript tab to the session header because it applies to the

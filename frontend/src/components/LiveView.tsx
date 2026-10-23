@@ -1350,17 +1350,17 @@ export function LiveView({
           <RefreshCw size={14} className={analyzing ? "animate-spin" : ""} />
         </button>
       </div>
-      <div className="flex-1 overflow-y-auto px-3 py-3">
+      <div className="flex-1 overflow-y-auto px-4 py-4">
         {/* Proactive help rides along on the analysis pass: shown as cards when
             the assistant judges it can materially help right now. */}
         {suggestion && (
-          <div className="mb-3 rounded border border-accent/40 bg-accent/5 px-3 py-2">
-            <div className="mb-1 flex items-center gap-1.5">
-              <Lightbulb size={12} className="text-accent" />
-              <span className="text-[11px] font-medium uppercase tracking-wide text-muted">
+          <div className="mb-4 rounded-lg border border-accent/40 bg-accent/5 px-4 py-3">
+            <div className="mb-2 flex items-center gap-2">
+              <Lightbulb size={14} className="text-accent" />
+              <span className="text-xs font-semibold uppercase tracking-wide text-text">
                 Suggestion
               </span>
-              <span className="ml-auto text-[10px] text-muted">
+              <span className="ml-auto text-[11px] text-muted">
                 {new Date(suggestion.at).toLocaleTimeString(undefined, {
                   hour: "2-digit",
                   minute: "2-digit",
@@ -1372,10 +1372,10 @@ export function LiveView({
                 aria-label="Dismiss"
                 className="text-muted hover:text-red-500"
               >
-                <X size={12} />
+                <X size={14} />
               </button>
             </div>
-            <div className="prose prose-sm dark:prose-invert max-w-none text-[13px]">
+            <div className="prose prose-sm dark:prose-invert max-w-none text-[13px] leading-relaxed">
               <Markdown>{suggestion.text}</Markdown>
             </div>
           </div>
@@ -1389,21 +1389,27 @@ export function LiveView({
         ) : (
           <div className="space-y-3">
             {groupedInsights.map((g) => (
-              <div key={g.kind}>
-                <div className="mb-1 flex items-center gap-1.5">
+              <section key={g.kind} className="rounded-lg border border-border bg-bg/60 px-3 py-3">
+                <div className="mb-2 flex items-center gap-2">
                   <span className={`h-1.5 w-1.5 rounded-full ${g.dot}`} />
-                  <span className="text-[11px] font-medium uppercase tracking-wide text-muted">
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-text">
                     {g.label}
-                  </span>
+                  </h3>
                 </div>
-                <ul className="space-y-1">
+                <ul className="space-y-2">
                   {g.items.map((it) => (
-                    <li key={it.id} className="text-[13px] leading-snug text-text">
-                      <HighlightedText text={it.content} />
+                    <li key={it.id} className="flex items-start gap-2 text-sm leading-relaxed text-text">
+                      <span
+                        className={`mt-[0.45rem] h-1.5 w-1.5 shrink-0 rounded-full ${g.dot}`}
+                        aria-hidden="true"
+                      />
+                      <span className="min-w-0">
+                        <HighlightedText text={it.content} />
+                      </span>
                     </li>
                   ))}
                 </ul>
-              </div>
+              </section>
             ))}
           </div>
         )}
