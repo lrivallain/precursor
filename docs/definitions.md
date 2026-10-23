@@ -183,6 +183,16 @@ prompt: |
   whatever used it). The **migration wizard** writes a file for every role in
   the database, and **Switch back to the database** copies the files' prompts
   back into the table. The cleanup blanks the table's prompts.
+- Deleting a role clears its name from agent/workflow files as well as database
+  references, even when the database's declaration columns are stale or blank
+  or a valid file has not yet been adopted. Only the role changes: other
+  settings, workflow steps and accepted-permission records are kept. Current
+  workflow pins and their persisted run snapshots also lose only that role.
+  An uncheckable agent/workflow definition, or an affected file with an
+  ambiguous id, concurrent edit or write failure, produces a conflict and
+  retains the role. Atomic file replacements are not a transaction across
+  the folder and database; after an I/O failure, some references may already
+  be cleared, and retrying completes the cleanup.
 - The `roles` table and the old `role_id` columns stay in the schema for now;
   conversations read and write the `role` name columns.
 

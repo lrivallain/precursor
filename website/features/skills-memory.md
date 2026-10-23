@@ -106,6 +106,16 @@ Conversations refer to a role by its **name**, so a role can't be renamed — cr
 a new one to use another name. Deleting a role reverts whatever used it to the
 default. With [definition files](/features/definitions#roles-as-files) in files
 mode, each role is a `roles/<name>.role.yaml` file and this tab edits it.
+Deleting also clears that name from agent and workflow definition files, so
+reloading or restarting cannot restore the old assignment. Other file settings
+and pending permission reviews are kept. A running workflow's saved version
+loses only the deleted role; its pinned steps stay unchanged.
+
+If an agent or workflow definition cannot be checked safely, or an affected
+file has a duplicate id, changes during deletion, or cannot be written, deletion
+reports a conflict and keeps the role. Resolve the reported file problem and
+try again.
+
 Until you migrate, the tab shows where to start: a note linking to
 **Settings → Definition files**.
 

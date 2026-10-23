@@ -218,6 +218,263 @@ async def _role_prompt(name: str) -> str | None:
         return None if row is None else row.system_prompt
 
 
+@pytest.mark.parametrize("source", ["database", "files"])
+async def test_deletion_clears_agent_and_workflow_roles_durably(
+    database_mode: Path, monkeypatch: pytest.MonkeyPatch, source: str
+) -> None:
+    from precursor.backend.config import get_settings
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentSession, Workflow
+    from precursor.backend.services.definitions import overlay
+
+    monkeypatch.setattr(get_settings(), "definitions_source", source)
+    name = f"Researcher {_uid()}"
+    agent_key, workflow_key = _uid(), _uid()
+    with TestClient(create_app()) as client:
+        assert client.post("/api/roles", json={"name": name}).status_code == 201
+        async with SessionLocal() as session:
+            agent = AgentSession(
+                title="Task",
+                task_prompt="seed",
+                status="idle",
+                export_id=agent_key,
+                role=name.upper() if source == "database" else None,
+                accepted_permissions="{}",
+            )
+            workflow = Workflow(
+                name="Pipeline",
+                export_id=workflow_key,
+                role=name.upper() if source == "database" else None,
+                accepted_permissions="{}",
+            )
+            session.add_all([agent, workflow])
+            await session.commit()
+            agent_id, workflow_id = agent.id, workflow.id
+
+        documents = {
+            "agents/research.agent.yaml": {
+                "kind": "agent",
+                "id": agent_key,
+                "title": "Task",
+                "prompt": "Keep this.",
+                "role": name.upper(),
+                "capabilities": {"memory": False},
+            },
+            "workflows/research.workflow.yaml": {
+                "kind": "workflow",
+                "id": workflow_key,
+                "name": "Pipeline",
+                "role": name.upper(),
+                "steps": [{"key": "check", "kind": "inline", "prompt": "Keep this step."}],
+            },
+            "agents/unadopted.agent.yaml": {
+                "kind": "agent",
+                "id": _uid(),
+                "title": "Not adopted",
+                "role": name,
+            },
+            "workflows/unadopted.workflow.yaml": {
+                "kind": "workflow",
+                "id": _uid(),
+                "name": "Not adopted",
+                "role": name,
+            },
+        }
+        for rel, doc in documents.items():
+            _put(database_mode, rel, doc)
+        if source == "files":
+            _put(
+                database_mode,
+                "agents/other.agent.yaml",
+                {
+                    "kind": "agent",
+                    "id": _uid(),
+                    "title": "Other",
+                    "role": "Other persona",
+                },
+            )
+            untouched = (database_mode / "agents/other.agent.yaml").read_bytes()
+            overlay.invalidate()
+
+        assert client.get(f"/api/agents/{agent_id}").json()["role"] == name.upper()
+        assert client.get(f"/api/workflows/{workflow_id}").json()["role"] == name.upper()
+        deleted = client.delete(f"/api/roles/{name.upper()}")
+        assert deleted.status_code == 204, deleted.text
+        overlay.invalidate()
+        assert client.get(f"/api/agents/{agent_id}").json()["role"] is None
+        assert client.get(f"/api/workflows/{workflow_id}").json()["role"] is None
+
+        for rel, doc in documents.items():
+            expected = (
+                {key: value for key, value in doc.items() if key != "role"}
+                if source == "files"
+                else doc
+            )
+            assert yaml.safe_load((database_mode / rel).read_text()) == expected
+        if source == "files":
+            assert (database_mode / "agents/other.agent.yaml").read_bytes() == untouched
+        async with SessionLocal() as session:
+            agent = await session.get(AgentSession, agent_id)
+            workflow = await session.get(Workflow, workflow_id)
+            assert agent is not None and agent.accepted_permissions == "{}"
+            assert workflow is not None and workflow.accepted_permissions == "{}"
+
+    with TestClient(create_app()) as client:
+        assert client.get(f"/api/agents/{agent_id}").json()["role"] is None
+        assert client.get(f"/api/workflows/{workflow_id}").json()["role"] is None
+        # Reusing a deleted name must not silently reassign old discussions.
+        assert client.post("/api/roles", json={"name": name}).status_code == 201
+        assert client.get(f"/api/agents/{agent_id}").json()["role"] is None
+
+
+@pytest.mark.parametrize("problem", ["invalid", "ambiguous", "unwritable", "changed"])
+def test_unsafe_definition_cleanup_keeps_the_role(
+    files_mode: Path, monkeypatch: pytest.MonkeyPatch, problem: str
+) -> None:
+    from precursor.backend.services.definitions import overlay, writer
+    from precursor.backend.services.definitions.loader import LoadedFile
+
+    name = f"Researcher {_uid()}"
+    with TestClient(create_app()) as client:
+        role = client.post("/api/roles", json={"name": name}).json()
+        doc = {"kind": "agent", "id": _uid(), "title": "Task", "role": name}
+        _put(files_mode, "agents/research.agent.yaml", doc)
+        if problem == "invalid":
+            doc["unknown"] = True
+            _put(files_mode, "agents/research.agent.yaml", doc)
+        elif problem == "ambiguous":
+            _put(files_mode, "agents/copy.agent.yaml", doc)
+        elif problem == "unwritable":
+
+            def refuse_write(*args: Any, **kwargs: Any) -> None:
+                raise PermissionError("test: definition is read-only")
+
+            monkeypatch.setattr(writer, "_write_atomic", refuse_write)
+        else:
+            read_unchanged = writer._read_unchanged
+            raced = False
+
+            def change_after_preflight(linked: LoadedFile) -> bytes:
+                nonlocal raced
+                data = read_unchanged(linked)
+                if not raced:
+                    raced = True
+                    (files_mode / linked.path).write_bytes(data + b"# Concurrent edit.\n")
+                return data
+
+            monkeypatch.setattr(writer, "_read_unchanged", change_after_preflight)
+        if problem in ("invalid", "ambiguous"):
+            _put(
+                files_mode,
+                "agents/first.agent.yaml",
+                {
+                    "kind": "agent",
+                    "id": _uid(),
+                    "title": "First",
+                    "role": name,
+                },
+            )
+            first = (files_mode / "agents/first.agent.yaml").read_bytes()
+        overlay.invalidate()
+        before = (files_mode / "agents/research.agent.yaml").read_bytes()
+        deleted = client.delete(f"/api/roles/{name}")
+        assert deleted.status_code == 409, deleted.text
+        assert "research.agent.yaml" in deleted.json()["detail"]
+        assert client.get(f"/api/roles/{name}").status_code == 200
+        assert (files_mode / role["path"]).is_file()
+        expected = before + b"# Concurrent edit.\n" if problem == "changed" else before
+        assert (files_mode / "agents/research.agent.yaml").read_bytes() == expected
+        if problem in ("invalid", "ambiguous"):
+            assert (files_mode / "agents/first.agent.yaml").read_bytes() == first
+
+
+@pytest.mark.parametrize("file_role_changed", [False, True])
+async def test_deleting_role_updates_only_the_role_in_a_running_workflow_snapshot(
+    files_mode: Path, file_role_changed: bool
+) -> None:
+    import hashlib
+
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import Workflow, WorkflowRun
+    from precursor.backend.schemas.definitions import WorkflowDefinition
+    from precursor.backend.services.definitions import anchors, overlay
+    from precursor.backend.services.definitions.exporter import render_document
+
+    name, ident = f"Researcher {_uid()}", _uid()
+    rel = "workflows/pinned.workflow.yaml"
+    original = {
+        "kind": "workflow",
+        "id": ident,
+        "name": "Pinned",
+        "role": name.upper(),
+        "steps": [{"key": "original", "kind": "inline", "prompt": "Original step."}],
+    }
+    snapshot = render_document(original)
+    digest = hashlib.sha256(snapshot.encode()).hexdigest()
+    with TestClient(create_app()) as client:
+        assert client.post("/api/roles", json={"name": name}).status_code == 201
+        _put(files_mode, rel, original)
+        overlay.invalidate()
+        async with SessionLocal() as session:
+            workflow = Workflow(
+                name="Pinned",
+                export_id=ident,
+                status="paused",
+                accepted_permissions="{}",
+            )
+            session.add(workflow)
+            await session.flush()
+            run = WorkflowRun(
+                workflow_id=workflow.id,
+                run_number=1,
+                status="paused",
+                definition_path=rel,
+                definition_hash=digest,
+                definition_snapshot=snapshot,
+            )
+            session.add(run)
+            await session.flush()
+            workflow.current_run_id = run.id
+            await session.commit()
+            workflow_id, run_id = workflow.id, run.id
+        overlay.pin_run(ident, run_id, WorkflowDefinition.model_validate(original), rel, digest)
+        changed = {
+            **original,
+            "description": "For the next run.",
+            "steps": [{"key": "next", "kind": "inline", "prompt": "Next step."}],
+        }
+        if file_role_changed:
+            changed["role"] = "Another persona"
+        _put(files_mode, rel, changed)
+        overlay.invalidate()
+
+        deleted = client.delete(f"/api/roles/{name}")
+        assert deleted.status_code == 204, deleted.text
+        expected_file = dict(changed)
+        if not file_role_changed:
+            expected_file.pop("role")
+        assert yaml.safe_load((files_mode / rel).read_text()) == expected_file
+
+        async with SessionLocal() as session:
+            row = await session.get(Workflow, workflow_id)
+            run = await session.get(WorkflowRun, run_id)
+            assert row is not None and row.role is None
+            assert row.accepted_permissions == "{}"
+            assert run is not None and run.definition_snapshot is not None
+            saved = yaml.safe_load(run.definition_snapshot)
+            assert saved["steps"] == original["steps"]
+            assert saved.get("role") is None
+            assert "description" not in saved
+            assert (
+                run.definition_hash == hashlib.sha256(run.definition_snapshot.encode()).hexdigest()
+            )
+        overlay._pins.clear()
+        async with SessionLocal() as session:
+            assert await anchors.restore_pins(session) >= 1
+            row = await session.get(Workflow, workflow_id)
+            assert row is not None and row.role is None
+
+
 async def _roles_filed_marker() -> bool:
     from precursor.backend.db import SessionLocal
     from precursor.backend.models import AppSetting

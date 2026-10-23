@@ -63,6 +63,12 @@ it when it's missing. The migration wizard writes your existing roles with the
 agents and workflows, and switching back copies their prompts into the
 database again.
 
+Deleting a role from Settings also clears matching role names from agent and
+workflow files, including definitions not yet listed in the app. Unrelated
+settings and permission reviews are preserved. Uncheckable definitions and
+conflicting or unwritable affected files block deletion instead of leaving a
+stale assignment; see [assistant roles](/features/skills-memory#assistant-roles).
+
 ## Getting there from today's data
 
 While the database still declares them, the **Agents** and **Workflows** homes
