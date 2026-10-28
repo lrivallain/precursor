@@ -71,6 +71,33 @@ from precursor.backend.services.slugs import allocate_unique_slug
 
 MAX_STEPS_PER_PLAN = 200
 MAX_DEPTH = 6
+
+# A reply is a discussion; only what sits between these lines is a deliverable.
+# HTML comments, so they stay invisible when the transcript renders Markdown.
+ARTIFACT_OPEN = "<!-- artifact -->"
+ARTIFACT_CLOSE = "<!-- /artifact -->"
+_DELIVERABLE_RES = (
+    re.compile(r"<!--\s*artifact\s*-->(.*?)<!--\s*/artifact\s*-->", re.DOTALL | re.IGNORECASE),
+    re.compile(r"<artifact>(.*?)</artifact>", re.DOTALL | re.IGNORECASE),
+)
+_FENCED = re.compile(r"^```[a-zA-Z]*\n(.*)\n```$", re.DOTALL)
+
+
+def extract_deliverable(reply: str) -> str | None:
+    """The last marked deliverable of a model reply, or None when it has none."""
+    best: tuple[int, str] | None = None
+    for pattern in _DELIVERABLE_RES:
+        for match in pattern.finditer(reply):
+            if best is None or match.start() >= best[0]:
+                best = (match.start(), match.group(1))
+    if best is None:
+        return None
+    text = best[1].strip()
+    fenced = _FENCED.match(text)
+    text = fenced.group(1).strip() if fenced else text
+    return text or None
+
+
 _TITLE_MAX = 255
 
 # A step's discussion starts as a placeholder; the title is the step's own.
@@ -193,7 +220,7 @@ def _depth(steps: list[Step], step_id: int | None) -> int:
     return depth
 
 
-def _is_ready(steps: list[Step]) -> bool:
+def is_ready(steps: list[Step]) -> bool:
     leaves = working_leaves(steps)
     return bool(leaves) and all(s.status == STEP_VALIDATED for s in leaves)
 
@@ -251,7 +278,7 @@ async def to_plan_read(session: AsyncSession, plan: StepPlan) -> StepPlanRead:
         topic_title = topic.title if topic else None
     read = StepPlanRead.model_validate(plan)
     read.source_topic_title = topic_title
-    read.ready_to_consolidate = _is_ready(steps)
+    read.ready_to_consolidate = is_ready(steps)
     if consolidation is not None:
         read.consolidation_chat_id, read.consolidation_chat_slug = consolidation
     read.steps = [_step_read(s, effective[s.id], step_chats.get(s.id)) for s, _ in ordered(steps)]
@@ -874,6 +901,20 @@ def render_artifacts(steps: list[Step], *, include_unvalidated: bool = False) ->
     return "\n\n".join(blocks)
 
 
+def render_drafts(steps: list[Step]) -> str:
+    """Markdown of the working steps' artifacts that aren't validated yet."""
+    kids = children_by_parent(steps)
+    blocks: list[str] = []
+    for s, depth in ordered(steps):
+        if s.status in (STEP_PROPOSED, STEP_CANCELLED, STEP_VALIDATED):
+            continue
+        if _accepted_children(kids, s.id) or not s.artifact.strip():
+            continue
+        heading = "#" * min(depth + 2, 6)
+        blocks.append(f"{heading} {s.title}\n\n{_cap(s.artifact, _ARTIFACT_CAP)}")
+    return "\n\n".join(blocks)
+
+
 _TOPIC_TRANSCRIPT_CAP = 16_000
 _OTHER_STEPS_CAP = 24_000
 _VALIDATED_EXCERPT = 4_000
@@ -1004,9 +1045,11 @@ async def build_step_context(session: AsyncSession, chat: Chat) -> str:
         parts = [
             "This chat works on ONE step of a larger step-by-step plan. Stay on "
             "this step: help the user think it through, answer their questions and "
-            "draft its result. The step's artifact is saved from the app (the user "
-            "or the 'Draft from discussion' action does it), so when you draft "
-            "content, present it as clean Markdown ready to become the artifact.",
+            "draft its result. The step's artifact is saved from the app, not by "
+            "you. When you draft or revise the whole artifact, put it between the "
+            f"lines `{ARTIFACT_OPEN}` and `{ARTIFACT_CLOSE}` (nothing but the "
+            "deliverable inside) so the app can tell it from the discussion; keep "
+            "questions, alternatives and notes outside the markers.",
             *await step_grounding(session, plan, steps, step),
             f"Current step: {step.title}",
         ]
@@ -1028,7 +1071,10 @@ async def build_step_context(session: AsyncSession, chat: Chat) -> str:
         parts = [
             "This chat is the final consolidation of a step-by-step plan: the user "
             "reviews how the validated steps combine into one deliverable and asks "
-            "for adjustments. Ground every statement in the steps' artifacts.",
+            "for adjustments. Ground every statement in the steps' artifacts. When you "
+            f"write the whole deliverable, put it between the lines `{ARTIFACT_OPEN}` "
+            f"and `{ARTIFACT_CLOSE}` (nothing but the deliverable inside); keep "
+            "questions and notes outside the markers.",
             plan_header(plan),
         ]
         background = await topic_background(session, plan)
@@ -1037,9 +1083,15 @@ async def build_step_context(session: AsyncSession, chat: Chat) -> str:
         parts.append(f"Plan outline:\n{render_outline(steps)}")
         if plan.output_instructions:
             parts.append(f"Requested output:\n{plan.output_instructions}")
-        artifacts = render_artifacts(steps, include_unvalidated=True)
+        artifacts = render_artifacts(steps)
         if artifacts:
-            parts.append(f"Steps' artifacts:\n<<<ARTIFACTS\n{artifacts}\nARTIFACTS>>>")
+            parts.append(f"Validated artifacts:\n<<<ARTIFACTS\n{artifacts}\nARTIFACTS>>>")
+        drafts = render_drafts(steps)
+        if drafts:
+            parts.append(
+                "Drafts NOT validated yet (provisional: use them only when the user "
+                f"asks to consolidate anyway):\n<<<DRAFTS\n{drafts}\nDRAFTS>>>"
+            )
         if plan.final_output:
             stale = " (out of date: a step changed since)" if plan.final_stale else ""
             parts.append(

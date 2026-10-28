@@ -52,6 +52,8 @@ class StepPlanRead(ConversationLLMFields):
     output_instructions: str | None = None
     final_output: str | None = None
     final_stale: bool = False
+    # Built before every working step was validated: a draft, not an approved result.
+    final_provisional: bool = False
     # Whether consolidating needs no override: every working step is validated.
     ready_to_consolidate: bool = False
     consolidation_chat_id: int | None = None
@@ -156,6 +158,28 @@ class ConsolidateRequest(BaseModel):
     force: bool = False
 
 
+# What a model draft did: "published" saved a marked deliverable as a to-validate
+# version; "discussion" means the reply only stayed in the discussion (questions,
+# alternatives…); "awaiting_approval" means the turn is parked on a tool approval.
+DraftOutcome = Literal["published", "discussion", "awaiting_approval"]
+
+
+class ArtifactDraftResult(BaseModel):
+    step: StepRead
+    outcome: DraftOutcome
+
+
+class FinalDraftResult(BaseModel):
+    plan: StepPlanRead
+    outcome: DraftOutcome
+
+
+class UseMessageRequest(BaseModel):
+    """Publish a reply of the discussion as the artifact (or final output)."""
+
+    message_id: int
+
+
 class FinalWrite(BaseModel):
     content: str = Field(max_length=300_000)
 
@@ -163,6 +187,8 @@ class FinalWrite(BaseModel):
 class SendToTopicRequest(BaseModel):
     # What to file; the plan's final output when omitted.
     text: str | None = Field(default=None, max_length=300_000)
+    # File a provisional final output anyway (it is labelled as such).
+    force: bool = False
 
 
 class StepPlanReview(BaseModel):

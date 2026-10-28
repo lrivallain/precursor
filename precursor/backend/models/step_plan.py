@@ -72,6 +72,11 @@ class StepPlan(Base, TimestampMixin):
     final_stale: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="0"
     )
+    # The final output was built before every working step was validated: it is
+    # a draft for review, never an approved result.
+    final_provisional: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
 
 
 class Step(Base, TimestampMixin):

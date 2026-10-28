@@ -1,16 +1,19 @@
 """The model-driven actions of a step-by-step plan.
 
-Every action is an explicit, one-shot, tool-less call (``complete_once``) whose
-result lands in the plan as data the user then reviews — suggested steps stay
-``proposed`` until accepted, a drafted artifact lands in ``to_validate``. The
-model never changes a plan on its own initiative.
+Structured actions (suggesting steps, reviewing the plan) are explicit,
+one-shot, tool-less calls (``complete_once``). Drafting an artifact or the final
+output is a real turn of the step's (or the consolidation) chat, run through the
+shared headless pipeline, so it is tracked in that discussion and inherits the
+chat's model, role, tools and approval gates. A reply is a discussion: only the
+deliverable the model marks (``ARTIFACT_OPEN`` … ``ARTIFACT_CLOSE``) becomes an
+artifact version, always landing in ``to_validate`` — the model never validates.
 """
 
 from __future__ import annotations
 
 import json
-import re
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Literal
 
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,6 +37,7 @@ from precursor.backend.services.compaction import render_transcript
 from precursor.backend.services.conversation_turn import load_model_history
 from precursor.backend.services.events import publish_message_changed
 from precursor.backend.services.llm.one_shot import complete_once
+from precursor.backend.services.turn import run_chat_turn
 
 from sqlalchemy import select  # isort: skip
 
@@ -76,17 +80,21 @@ validated independently. Reply with JSON only, no prose and no code fence:
 Return 2 to 6 steps that together cover the step completely, without overlap, \
 in a sensible order. Keep the specifics of the original step. {_LANGUAGE}"""
 
-_ARTIFACT_SYSTEM = """\
-You write the result (the "artifact") of ONE step of a larger plan. It will be \
-reviewed by the user and later combined with the other steps' artifacts into \
-one deliverable.
+_ARTIFACT_DRAFT_PROMPT = f"""\
+Draft the result (the "artifact") of this step now, or revise the current one. \
+It will be reviewed by the user and later combined with the other steps' \
+artifacts into one deliverable.
 
-Use the step's discussion as the source of truth for decisions and wording: \
-what the user and assistant settled on wins over your own preferences. Ground \
-everything in the original ask and the discussion; never invent facts, \
-figures or commitments. Write clean Markdown, ready to be reused as is, in the \
-language of the original ask. Output ONLY the artifact — no preamble, no \
-closing remarks, no code fence around it."""
+- Use this discussion as the source of truth for decisions and wording: what \
+the user and you settled on wins over your own preferences.
+- Ground everything in the original ask and the discussion; never invent \
+facts, figures or commitments.
+- Put the complete artifact between a line `{svc.ARTIFACT_OPEN}` and a line \
+`{svc.ARTIFACT_CLOSE}`: clean Markdown, ready to be reused as is, no preamble \
+and no code fence inside the markers. {_LANGUAGE}
+- Anything else (questions you need answered, alternatives, caveats) goes \
+OUTSIDE the markers, briefly. If you can't write a trustworthy artifact yet, \
+ask your questions and leave the markers out."""
 
 _REVIEW_SYSTEM = """\
 You review a step-by-step plan before it is consolidated. Compare the original \
@@ -102,10 +110,8 @@ instruction.
 Be specific and brief; quote step titles. Say so plainly when the plan looks \
 sound. Write in the language of the original ask."""
 
-_FINAL_SYSTEM = """\
-You consolidate a step-by-step plan into ONE final deliverable. You get the \
-original ask, the requested output (if any) and each step's validated \
-artifact in plan order.
+_FINAL_DRAFT_PROMPT = f"""\
+Consolidate the plan into ONE final deliverable now.
 
 - Answer the original ask completely, using the artifacts as your material; \
 keep their decisions, numbers, names and commitments verbatim.
@@ -115,8 +121,11 @@ isn't supported by the artifacts, and never drop an artifact's substance.
 otherwise write a clear, well-structured Markdown answer.
 - If artifacts contradict each other, keep the later step's version and list \
 the conflict at the end under "Points to check".
-- Write in the language of the original ask. Output ONLY the deliverable — no \
-preamble and no code fence around it."""
+- Put the complete deliverable between a line `{svc.ARTIFACT_OPEN}` and a line \
+`{svc.ARTIFACT_CLOSE}`, with no preamble and no code fence inside the markers. \
+{_LANGUAGE}
+- Anything else (questions, caveats) goes OUTSIDE the markers, briefly. If you \
+can't consolidate yet, ask and leave the markers out."""
 
 
 # --- plumbing -----------------------------------------------------------------
@@ -148,14 +157,6 @@ async def _complete(session: AsyncSession, plan: StepPlan, *, system: str, user:
         **_selection_kwargs(plan),
     )
     return result.text.strip()
-
-
-_FENCE_RE = re.compile(r"^```[a-zA-Z]*\n(.*)\n```$", re.DOTALL)
-
-
-def _unfence(text: str) -> str:
-    match = _FENCE_RE.match(text.strip())
-    return match.group(1).strip() if match else text.strip()
 
 
 def extract_json(text: str) -> Any:
@@ -310,38 +311,80 @@ async def suggest_steps(
 # --- artifacts ----------------------------------------------------------------
 
 
+DraftOutcome = Literal["published", "discussion", "awaiting_approval"]
+
+
+@dataclass
+class ArtifactDraft:
+    step: Step
+    outcome: DraftOutcome
+
+
+@dataclass
+class FinalDraft:
+    plan: StepPlan
+    outcome: DraftOutcome
+
+
+def _visible_prompt(base: str, instructions: str | None) -> str:
+    focus = (instructions or "").strip()
+    return f"{base}\n\n{focus}" if focus else base
+
+
+def _llm_prompt(rules: str, instructions: str | None) -> str:
+    focus = (instructions or "").strip()
+    return f"{rules}\n\nExtra guidance from the user: {focus}" if focus else rules
+
+
 async def generate_artifact(
     session: AsyncSession, step_id: int, *, instructions: str | None = None
-) -> Step:
-    """Draft the step's artifact from its instruction and discussion."""
+) -> ArtifactDraft:
+    """Ask the step's discussion to draft the artifact.
+
+    The turn is tracked in the step's chat. Only a deliverable the model marked
+    is saved (as a ``to_validate`` version); a reply with questions or
+    alternatives stays in the discussion.
+    """
     step = await svc.get_step(session, step_id)
-    plan = await svc.get_plan(session, step.plan_id)
-    steps = await svc.plan_steps(session, plan.id)
+    steps = await svc.plan_steps(session, step.plan_id)
     if any(s.parent_step_id == step.id and s.status != "proposed" for s in steps):
         raise HTTPException(
             status.HTTP_409_CONFLICT, "This step is split into sub-steps; it has no artifact."
         )
-    parts = [
-        *await svc.step_grounding(session, plan, steps, step),
-        f"Step: {step.title}",
-    ]
-    if step.instruction:
-        parts.append(f"What this step must produce:\n{step.instruction}")
-    if step.artifact.strip():
-        parts.append(f"Current artifact (revise it):\n<<<ARTIFACT\n{step.artifact}\nARTIFACT>>>")
-    discussion = await _discussion(session, await _chat_id(session, step_id=step.id))
-    if discussion:
-        parts.append(f"Discussion about this step:\n<<<DISCUSSION\n{discussion}\nDISCUSSION>>>")
-    focus = (instructions or "").strip()
-    if focus:
-        parts.append(f"Extra guidance from the user: {focus}")
-    text = _unfence(
-        await _complete(session, plan, system=_ARTIFACT_SYSTEM, user="\n\n".join(parts))
+    chat = await svc.ensure_step_chat(session, step.id)
+    result = await run_chat_turn(
+        chat.id,
+        _visible_prompt("Draft the artifact for this step.", instructions),
+        llm_prompt=_llm_prompt(_ARTIFACT_DRAFT_PROMPT, instructions),
     )
-    if not text:
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "The model returned an empty artifact.")
+    session.expire_all()
+    if result.awaiting_approval:
+        return ArtifactDraft(await svc.get_step(session, step_id), "awaiting_approval")
+    deliverable = svc.extract_deliverable(result.reply or "")
+    if deliverable is None:
+        return ArtifactDraft(await svc.get_step(session, step_id), "discussion")
+    saved = await svc.write_artifact(
+        session, step_id, deliverable, author=AUTHOR_MODEL, mark=STEP_TO_VALIDATE
+    )
+    return ArtifactDraft(saved, "published")
+
+
+async def _chat_message(session: AsyncSession, chat_id: int | None, message_id: int) -> str:
+    msg = await session.get(Message, message_id)
+    if chat_id is None or msg is None or msg.chat_id != chat_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Message not found in this discussion.")
+    if msg.role != MessageRole.ASSISTANT or not msg.content.strip():
+        raise HTTPException(status.HTTP_409_CONFLICT, "Pick one of the assistant's replies.")
+    return msg.content
+
+
+async def use_message_as_artifact(session: AsyncSession, step_id: int, message_id: int) -> Step:
+    """Publish a reply the user picked: its marked deliverable, else all of it."""
+    chat_id = await _chat_id(session, step_id=step_id)
+    content = await _chat_message(session, chat_id, message_id)
+    text = svc.extract_deliverable(content) or content.strip()
     return await svc.write_artifact(
-        session, step.id, text, author=AUTHOR_MODEL, mark=STEP_TO_VALIDATE
+        session, step_id, text, author=AUTHOR_MODEL, mark=STEP_TO_VALIDATE
     )
 
 
@@ -364,7 +407,13 @@ async def generate_final(
     *,
     instructions: str | None = None,
     force: bool = False,
-) -> StepPlan:
+) -> FinalDraft:
+    """Ask the consolidation discussion for the final output.
+
+    With every working step validated the output is built from approved
+    artifacts only. Consolidating anyway also draws on unvalidated drafts and
+    the result is flagged provisional: a draft for review, not an approved one.
+    """
     plan = await svc.get_plan(session, plan_id)
     if plan.status == PLAN_DRAFTING:
         raise HTTPException(status.HTTP_409_CONFLICT, "Start the plan first.")
@@ -375,53 +424,76 @@ async def generate_final(
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             f"{len(pending)} step(s) aren't validated yet. Validate or cancel them, "
-            "or consolidate anyway.",
+            "or consolidate anyway (the result stays provisional).",
         )
-    artifacts = svc.render_artifacts(steps, include_unvalidated=force)
     if not any(s.artifact.strip() for s in leaves if force or s.status == STEP_VALIDATED):
         raise HTTPException(status.HTTP_409_CONFLICT, "No step has a result to consolidate yet.")
-    parts = [svc.plan_header(plan)]
-    if plan.output_instructions:
-        parts.append(f"Requested output:\n{plan.output_instructions}")
-    parts.append(f"Plan outline:\n{svc.render_outline(steps)}")
-    parts.append(f"Steps' artifacts, in plan order:\n<<<ARTIFACTS\n{artifacts}\nARTIFACTS>>>")
-    discussion = await _discussion(session, await _chat_id(session, plan_id=plan.id))
-    if discussion:
-        parts.append(
-            f"Discussion with the user about the consolidation (follow its guidance):\n"
-            f"<<<DISCUSSION\n{discussion}\nDISCUSSION>>>"
+    rules = _FINAL_DRAFT_PROMPT
+    if pending:
+        rules += (
+            "\n\nSome steps are NOT validated yet: use their drafts too, and list "
+            'those steps under "Points to check" as unvalidated.'
         )
-    focus = (instructions or "").strip()
-    if focus:
-        parts.append(f"Extra guidance from the user: {focus}")
-    text = _unfence(await _complete(session, plan, system=_FINAL_SYSTEM, user="\n\n".join(parts)))
-    if not text:
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "The model returned an empty output.")
-    return await save_final(session, plan.id, text)
+    else:
+        rules += "\n\nUse the validated artifacts only."
+    chat = await svc.ensure_consolidation_chat(session, plan.id)
+    result = await run_chat_turn(
+        chat.id,
+        _visible_prompt("Consolidate the plan into the final deliverable.", instructions),
+        llm_prompt=_llm_prompt(rules, instructions),
+    )
+    session.expire_all()
+    if result.awaiting_approval:
+        return FinalDraft(await svc.get_plan(session, plan_id), "awaiting_approval")
+    deliverable = svc.extract_deliverable(result.reply or "")
+    if deliverable is None:
+        return FinalDraft(await svc.get_plan(session, plan_id), "discussion")
+    return FinalDraft(await save_final(session, plan_id, deliverable), "published")
+
+
+async def use_message_as_final(session: AsyncSession, plan_id: int, message_id: int) -> StepPlan:
+    chat_id = await _chat_id(session, plan_id=plan_id)
+    content = await _chat_message(session, chat_id, message_id)
+    return await save_final(session, plan_id, svc.extract_deliverable(content) or content.strip())
 
 
 async def save_final(session: AsyncSession, plan_id: int, content: str) -> StepPlan:
     plan = await svc.get_plan(session, plan_id)
     if plan.status == PLAN_DRAFTING:
         raise HTTPException(status.HTTP_409_CONFLICT, "Start the plan first.")
+    steps = await svc.plan_steps(session, plan.id)
     plan.final_output = content.strip("\n") or None
     plan.final_stale = False
+    # Built while a working step is unapproved: a draft, not an approved result.
+    plan.final_provisional = bool(plan.final_output) and not svc.is_ready(steps)
     if plan.status == PLAN_ACTIVE and plan.final_output:
         plan.status = PLAN_CONSOLIDATING
     await session.commit()
     return plan
 
 
-def topic_note_content(plan: StepPlan, text: str) -> str:
-    return f"**From step-by-step plan: [{plan.title}](/steps/{plan.id})**\n\n{text.strip()}"
+def topic_note_content(plan: StepPlan, text: str, *, provisional: bool = False) -> str:
+    label = " (provisional — not every step was validated)" if provisional else ""
+    return f"**From step-by-step plan: [{plan.title}](/steps/{plan.id}){label}**\n\n{text.strip()}"
 
 
 async def send_to_topic(
-    session: AsyncSession, plan_id: int, text: str | None
+    session: AsyncSession, plan_id: int, text: str | None, *, force: bool = False
 ) -> tuple[StepPlan, MessageRead]:
-    """File the final output into the plan's topic as a user message, like a note."""
+    """File the final output into the plan's topic as a user message, like a note.
+
+    A provisional output is only filed on an explicit ``force``, labelled as
+    such, and doesn't complete the plan.
+    """
     plan = await svc.get_plan(session, plan_id)
     body = (text if text is not None else plan.final_output) or ""
+    provisional = plan.final_provisional or not svc.is_ready(await svc.plan_steps(session, plan.id))
+    if provisional and not force:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Not every step is validated: this output is provisional. Validate the "
+            "remaining steps, or send it anyway.",
+        )
     if not body.strip():
         raise HTTPException(status.HTTP_409_CONFLICT, "There's no final output to send yet.")
     if plan.source_topic_id is None:
@@ -429,13 +501,16 @@ async def send_to_topic(
     topic_id = plan.source_topic_id
     async with SessionLocal() as ws:
         msg = Message(
-            topic_id=topic_id, role=MessageRole.USER, content=topic_note_content(plan, body)
+            topic_id=topic_id,
+            role=MessageRole.USER,
+            content=topic_note_content(plan, body, provisional=provisional),
         )
         ws.add(msg)
         await ws.commit()
         await ws.refresh(msg, attribute_names=["attachments"])
         read = MessageRead.model_validate(msg, from_attributes=True)
-    plan.status = PLAN_DONE
+    if not provisional:
+        plan.status = PLAN_DONE
     await session.commit()
     await publish_message_changed(topic_id)
     return plan, read
@@ -443,6 +518,8 @@ async def send_to_topic(
 
 __all__ = [
     "PLAN_CONSOLIDATING",
+    "ArtifactDraft",
+    "FinalDraft",
     "extract_json",
     "generate_artifact",
     "generate_final",
@@ -451,4 +528,6 @@ __all__ = [
     "save_final",
     "send_to_topic",
     "suggest_steps",
+    "use_message_as_artifact",
+    "use_message_as_final",
 ]

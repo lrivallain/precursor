@@ -3019,6 +3019,8 @@ export interface StepPlan {
   output_instructions: string | null;
   final_output: string | null;
   final_stale: boolean;
+  /** The final output was written before every step was validated. */
+  final_provisional: boolean;
   ready_to_consolidate: boolean;
   consolidation_chat_id: number | null;
   consolidation_chat_slug: string | null;
@@ -3081,6 +3083,19 @@ export interface StepArtifactVersion {
   content: string;
   author: "user" | "model";
   created_at: string;
+}
+
+/** What a model draft turned into: saved as a version, kept in the discussion, or paused. */
+export type DraftOutcome = "published" | "discussion" | "awaiting_approval";
+
+export interface ArtifactDraftResult {
+  step: Step;
+  outcome: DraftOutcome;
+}
+
+export interface FinalDraftResult {
+  plan: StepPlan;
+  outcome: DraftOutcome;
 }
 
 export interface StepPlanReview {

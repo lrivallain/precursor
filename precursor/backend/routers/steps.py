@@ -16,7 +16,9 @@ from precursor.backend.models.step_plan import AUTHOR_USER
 from precursor.backend.schemas.chat import ChatRead
 from precursor.backend.schemas.message import MessageRead
 from precursor.backend.schemas.step_plan import (
+    ArtifactDraftResult,
     ConsolidateRequest,
+    FinalDraftResult,
     FinalWrite,
     SendToTopicRequest,
     StepArtifactRevert,
@@ -34,6 +36,7 @@ from precursor.backend.schemas.step_plan import (
     StepStartRequest,
     StepStatusUpdate,
     StepUpdate,
+    UseMessageRequest,
 )
 from precursor.backend.services import step_plan_llm as llm
 from precursor.backend.services import step_plans as svc
@@ -164,18 +167,27 @@ async def consolidation_chat(
     return await to_chat_read(session, chat)
 
 
-@router.post("/{plan_id}/consolidate/generate", response_model=StepPlanRead)
+@router.post("/{plan_id}/consolidate/generate", response_model=FinalDraftResult)
 async def generate_final(
     plan_id: int,
     payload: ConsolidateRequest | None = None,
     session: AsyncSession = Depends(get_session),
-) -> StepPlanRead:
-    await llm.generate_final(
+) -> FinalDraftResult:
+    draft = await llm.generate_final(
         session,
         plan_id,
         instructions=payload.instructions if payload else None,
         force=payload.force if payload else False,
     )
+    await publish_step_plan_changed(plan_id)
+    return FinalDraftResult(plan=await _plan(session, plan_id), outcome=draft.outcome)
+
+
+@router.post("/{plan_id}/final/from-message", response_model=StepPlanRead)
+async def final_from_message(
+    plan_id: int, payload: UseMessageRequest, session: AsyncSession = Depends(get_session)
+) -> StepPlanRead:
+    await llm.use_message_as_final(session, plan_id, payload.message_id)
     await publish_step_plan_changed(plan_id)
     return await _plan(session, plan_id)
 
@@ -195,7 +207,12 @@ async def send_to_topic(
     payload: SendToTopicRequest | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> MessageRead:
-    _, message = await llm.send_to_topic(session, plan_id, payload.text if payload else None)
+    _, message = await llm.send_to_topic(
+        session,
+        plan_id,
+        payload.text if payload else None,
+        force=payload.force if payload else False,
+    )
     await publish_step_plan_changed(plan_id)
     return message
 
@@ -269,15 +286,24 @@ async def revert_artifact(
     return await _step(session, step_id)
 
 
-@steps_router.post("/{step_id}/artifact/generate", response_model=StepRead)
+@steps_router.post("/{step_id}/artifact/generate", response_model=ArtifactDraftResult)
 async def generate_artifact(
     step_id: int,
     payload: StepGenerateRequest | None = None,
     session: AsyncSession = Depends(get_session),
-) -> StepRead:
-    step = await llm.generate_artifact(
+) -> ArtifactDraftResult:
+    draft = await llm.generate_artifact(
         session, step_id, instructions=payload.instructions if payload else None
     )
+    await publish_step_plan_changed(draft.step.plan_id)
+    return ArtifactDraftResult(step=await _step(session, step_id), outcome=draft.outcome)
+
+
+@steps_router.post("/{step_id}/artifact/from-message", response_model=StepRead)
+async def artifact_from_message(
+    step_id: int, payload: UseMessageRequest, session: AsyncSession = Depends(get_session)
+) -> StepRead:
+    step = await llm.use_message_as_artifact(session, step_id, payload.message_id)
     await publish_step_plan_changed(step.plan_id)
     return await _step(session, step_id)
 

@@ -17,12 +17,14 @@ from __future__ import annotations
 
 import logging
 import time
+from dataclasses import dataclass
 
 import anyio
 
 from precursor.backend.db import SessionLocal
-from precursor.backend.models import Message, MessageRole, Topic
+from precursor.backend.models import Chat, Message, MessageRole, Topic
 from precursor.backend.services import approvals as approval_service
+from precursor.backend.services import skills as skills_service
 from precursor.backend.services.conversation_turn import (
     clear_container_messages,
     persist_user_message,
@@ -30,9 +32,11 @@ from precursor.backend.services.conversation_turn import (
     snapshot_history,
 )
 from precursor.backend.services.events import (
-    publish_message_changed,
+    publish_approval_changed,
     publish_stream_ended,
+    publish_stream_ended_chat,
     publish_stream_started,
+    publish_stream_started_chat,
 )
 from precursor.backend.services.mcp.client import get_mcp_client_manager
 from precursor.backend.services.turn_engine import (
@@ -40,19 +44,33 @@ from precursor.backend.services.turn_engine import (
     AssistantFinalTurn,
     AssistantTextDelta,
     AssistantToolCallsTurn,
+    ContainerKind,
     RoundCapReached,
     ToolAuthRequired,
     ToolResultTurn,
+    apply_chat_system_prompt,
+    build_chat_system_context,
     build_system_context,
+    container_message_kwargs,
     persist_final_turn,
     persist_tool_calls_turn,
     persist_tool_result,
+    publish_container_changed,
     run_tool_loop,
 )
 from precursor.backend.services.unattended_approvals import announce_parked
 from precursor.backend.services.workspaces import WORKSPACE_READ_TOOLS, WORKSPACE_WRITE_TOOLS
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(slots=True)
+class TurnResult:
+    """What a headless turn left behind, for callers that act on the reply."""
+
+    user_message_id: int | None = None
+    reply: str | None = None
+    awaiting_approval: bool = False
 
 
 async def run_topic_turn(
@@ -74,39 +92,94 @@ async def run_topic_turn(
     turn only (the same ``prompt_override`` patch the stream routers apply, via
     :func:`~precursor.backend.services.conversation_turn.snapshot_history`).
     """
-    await publish_stream_started(topic_id)
-    try:
-        await _run(topic_id, prompt, clear_context=clear_context, llm_prompt=llm_prompt)
-    finally:
-        await publish_stream_ended(topic_id)
+    await run_container_turn(
+        "topic", topic_id, prompt, clear_context=clear_context, llm_prompt=llm_prompt
+    )
 
 
-async def _run(
-    topic_id: int,
+async def run_chat_turn(chat_id: int, prompt: str, *, llm_prompt: str | None = None) -> TurnResult:
+    """The same headless turn for a chat (a step's or a plan's discussion)."""
+    return await run_container_turn("chat", chat_id, prompt, llm_prompt=llm_prompt)
+
+
+async def run_container_turn(
+    kind: ContainerKind,
+    container_id: int,
     prompt: str,
     *,
     clear_context: bool = False,
     llm_prompt: str | None = None,
-) -> None:
+) -> TurnResult:
+    if kind == "topic":
+        await publish_stream_started(container_id)
+    else:
+        await publish_stream_started_chat(container_id)
+    try:
+        return await _run(
+            kind, container_id, prompt, clear_context=clear_context, llm_prompt=llm_prompt
+        )
+    finally:
+        if kind == "topic":
+            await publish_stream_ended(container_id)
+        else:
+            await publish_stream_ended_chat(container_id)
+
+
+async def _run(
+    kind: ContainerKind,
+    container_id: int,
+    prompt: str,
+    *,
+    clear_context: bool = False,
+    llm_prompt: str | None = None,
+) -> TurnResult:
     manager = get_mcp_client_manager()
+    result = TurnResult()
+    topic_id = container_id if kind == "topic" else None
 
     async with SessionLocal() as session:
-        topic = await session.get(Topic, topic_id)
-        if topic is None:
-            logger.warning("Scheduled run for missing topic %s", topic_id)
-            return
+        container: Topic | Chat | None
+        if kind == "topic":
+            container = await session.get(Topic, container_id)
+        else:
+            container = await session.get(Chat, container_id)
+        if container is None:
+            logger.warning("Headless run for missing %s %s", kind, container_id)
+            return result
 
         # Optionally wipe prior turns so each run is independent of history.
         if clear_context:
-            await clear_container_messages(session, "topic", topic_id)
+            await clear_container_messages(session, kind, container_id)
 
-        # Persist the scheduled prompt as the user turn so the transcript and
-        # the unread badge behave like a normal conversation.
-        await persist_user_message(session, "topic", topic_id, prompt)
+        # A chat left parked on an approval is moved on from: settle its open
+        # approvals so their "not run" rows land before the new prompt.
+        if kind == "chat" and await approval_service.abandon_open(session, kind, container_id):
+            await publish_approval_changed(chat_id=container_id)
 
-        system_prompt = await build_system_context(session, topic)
-        history = await snapshot_history(session, "topic", topic_id, prompt_override=llm_prompt)
-        settings = await resolve_turn_settings(session, topic_id=topic_id)
+        # Persist the prompt as the user turn so the transcript and the unread
+        # badge behave like a normal conversation.
+        user_msg = await persist_user_message(session, kind, container_id, prompt)
+        result.user_message_id = user_msg.id
+
+        if isinstance(container, Chat):
+            system_prompt = await build_chat_system_context(session, container)
+            history = await snapshot_history(
+                session, kind, container_id, prompt_override=llm_prompt
+            )
+            history = apply_chat_system_prompt(
+                container,
+                history,
+                description=await skills_service.expand_references(
+                    session, container.description or ""
+                ),
+            )
+            settings = await resolve_turn_settings(session, chat_id=container_id)
+        else:
+            system_prompt = await build_system_context(session, container)
+            history = await snapshot_history(
+                session, kind, container_id, prompt_override=llm_prompt
+            )
+            settings = await resolve_turn_settings(session, topic_id=container_id)
 
     async with manager.acquired(
         settings.enabled_servers, github_token=settings.github_token, advertise_cached=True
@@ -117,7 +190,7 @@ async def _run(
         # workspace file tools stay, as they did when they were a separate server.
         active.restrict_server_tools("precursor", WORKSPACE_READ_TOOLS | WORKSPACE_WRITE_TOOLS)
         for server_name, err in active.unavailable:
-            logger.warning("Scheduled run: MCP server %s unavailable: %s", server_name, err)
+            logger.warning("Headless run: MCP server %s unavailable: %s", server_name, err)
 
         turn_started = time.monotonic()
         last_assistant_id: int | None = None
@@ -138,13 +211,13 @@ async def _run(
             gate=settings.gate,
         ):
             if isinstance(ev, AssistantTextDelta):
-                # The scheduler doesn't stream deltas; it persists whole turns.
+                # Headless runs don't stream deltas; they persist whole turns.
                 continue
 
             if isinstance(ev, ToolAuthRequired):
                 from precursor.backend.services.events import publish_mcp_auth_required
 
-                logger.warning("Scheduled run: %s needs a sign-in for %s", ev.server, ev.tool)
+                logger.warning("Headless run: %s needs a sign-in for %s", ev.server, ev.tool)
                 await publish_mcp_auth_required(ev.server, ev.message, topic_id=topic_id)
                 continue
 
@@ -152,30 +225,35 @@ async def _run(
             # model, elapsed time, and a usage-ledger row per metered round).
             if isinstance(ev, AssistantFinalTurn):
                 elapsed_ms = int((time.monotonic() - turn_started) * 1000)
-                await persist_final_turn(
-                    "topic", topic_id, ev, model=ev.model or settings.model, elapsed_ms=elapsed_ms
+                answer = await persist_final_turn(
+                    kind, container_id, ev, model=ev.model or settings.model, elapsed_ms=elapsed_ms
                 )
-                return
+                result.reply = answer.text
+                return result
 
             if isinstance(ev, AssistantToolCallsTurn):
                 last_assistant_id = await persist_tool_calls_turn(
-                    "topic", topic_id, ev, model=ev.model or settings.model
+                    kind, container_id, ev, model=ev.model or settings.model
                 )
 
             elif isinstance(ev, ApprovalsRequested):
                 # Nobody is watching, so park: the cards (and the sidebar badge)
-                # wait for the user, who resumes the turn from the topic.
+                # wait for the user, who resumes the turn from the conversation.
                 async with SessionLocal() as ws:
                     rows = await approval_service.record_pending(
-                        ws, "topic", topic_id, last_assistant_id, ev.items
+                        ws, kind, container_id, last_assistant_id, ev.items
                     )
                     parked_ids = [r.id for r in rows]
-                # Starts the auto-deny clock and notifies the windows.
-                await announce_parked(topic_id, parked_ids)
-                return
+                result.awaiting_approval = True
+                if kind == "topic":
+                    # Starts the auto-deny clock and notifies the windows.
+                    await announce_parked(container_id, parked_ids)
+                else:
+                    await publish_approval_changed(chat_id=container_id)
+                return result
 
             elif isinstance(ev, ToolResultTurn):
-                await persist_tool_result("topic", topic_id, ev)
+                await persist_tool_result(kind, container_id, ev)
 
             elif isinstance(ev, RoundCapReached):
                 # Exhausted the tool-round budget without a final answer. This
@@ -184,17 +262,18 @@ async def _run(
                 async with SessionLocal() as ws:
                     ws.add(
                         Message(
-                            topic_id=topic_id,
                             role=MessageRole.ASSISTANT,
                             content=f"(Stopped after {ev.max_tool_rounds} tool rounds.)",
+                            **container_message_kwargs(kind, container_id),
                         )
                     )
                     await ws.commit()
-                await publish_message_changed(topic_id)
+                await publish_container_changed(kind, container_id)
+    return result
 
 
 # Re-exported for the scheduler's timeout wrapper.
-__all__ = ["run_topic_turn"]
+__all__ = ["TurnResult", "run_chat_turn", "run_topic_turn"]
 
 
 async def run_topic_turn_with_timeout(

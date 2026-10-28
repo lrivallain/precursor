@@ -18,8 +18,46 @@ def _run(fn: Any) -> Any:
     return anyio.run(fn)
 
 
+STEP_REPLY = "Here is a draft.\n<!-- artifact -->\nDrafted artifact\n<!-- /artifact -->\nOK?"
+FINAL_REPLY = "<!-- artifact -->\nFINAL ANSWER\n<!-- /artifact -->"
+# Every headless discussion turn the fake ran: chat, prompts and the system context.
+TURNS: list[dict[str, Any]] = []
+TURN_REPLIES: dict[str, Any] = {}
+
+
+def _fake_turns(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Replace the headless chat turn: persist the exchange, reply with a canned text."""
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import Chat, Message, MessageRole
+    from precursor.backend.services import step_plan_llm
+    from precursor.backend.services.turn import TurnResult
+    from precursor.backend.services.turn_engine import build_chat_system_context
+
+    TURNS.clear()
+    TURN_REPLIES.clear()
+
+    async def _turn(chat_id: int, prompt: str, *, llm_prompt: str | None = None) -> TurnResult:
+        async with SessionLocal() as session:
+            chat = await session.get(Chat, chat_id)
+            assert chat is not None
+            context = await build_chat_system_context(session, chat)
+            kind = "step" if chat.step_id is not None else "final"
+            reply = TURN_REPLIES.get(kind, STEP_REPLY if kind == "step" else FINAL_REPLY)
+            TURNS.append(
+                {"chat_id": chat_id, "prompt": prompt, "llm_prompt": llm_prompt, "context": context}
+            )
+            session.add(Message(chat_id=chat_id, role=MessageRole.USER, content=prompt))
+            if reply is not None:
+                session.add(Message(chat_id=chat_id, role=MessageRole.ASSISTANT, content=reply))
+            await session.commit()
+        return TurnResult(reply=reply, awaiting_approval=TURN_REPLIES.get("parked", False))
+
+    monkeypatch.setattr(step_plan_llm, "run_chat_turn", _turn)
+
+
 def _fake_llm(monkeypatch: pytest.MonkeyPatch, replies: dict[str, str] | None = None) -> list[dict]:
     """Route ``complete_once`` by which system prompt asked; record every call."""
+    _fake_turns(monkeypatch)
     from precursor.backend.services import step_plan_llm
     from precursor.backend.services.llm.base import UsageEvent
     from precursor.backend.services.llm.one_shot import OneShotResult
@@ -43,9 +81,7 @@ def _fake_llm(monkeypatch: pytest.MonkeyPatch, replies: dict[str, str] | None = 
             {"steps": [{"title": "Rollback", "instruction": "Describe rollback"}]}
         ),
         "split one step": json.dumps({"steps": [{"title": "A"}, {"title": "B"}]}),
-        "result (the": "Drafted artifact",
         "review a step-by-step": "**Not covered** — nothing",
-        "consolidate a step-by-step": "FINAL ANSWER",
         **(replies or {}),
     }
     calls: list[dict] = []
@@ -269,10 +305,10 @@ def test_the_user_adds_and_deletes_steps(monkeypatch: pytest.MonkeyPatch) -> Non
         assert set(_by_title(_get(client, plan["id"]))) == {"Quote", "Date", "Extra"}
 
 
-def test_the_model_drafts_an_artifact_from_the_step_discussion(
+def test_the_model_drafts_an_artifact_in_the_step_discussion(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls = _fake_llm(monkeypatch)
+    _fake_llm(monkeypatch)
     with TestClient(create_app()) as client:
         steps = _by_title(_started(client))
         sid = steps["Quote"]["id"]
@@ -280,16 +316,69 @@ def test_the_model_drafts_an_artifact_from_the_step_discussion(
             f"/api/steps/{sid}/artifact/generate", json={"instructions": "keep it short"}
         )
         assert res.status_code == 200, res.text
-        assert res.json()["artifact"] == "Drafted artifact"
-        assert res.json()["status"] == "to_validate"
-        assert res.json()["created_by"] == "model"
-        user = calls[-1]["user"]
-        assert ASK in user and "Quote the migration" in user and "keep it short" in user
+        body = res.json()
+        assert body["outcome"] == "published"
+        assert body["step"]["artifact"] == "Drafted artifact"
+        assert body["step"]["status"] == "to_validate"
+        assert body["step"]["created_by"] == "model"
+        turn = TURNS[-1]
+        # The visible turn is short; the rules go to the model only.
+        assert turn["prompt"] == "Draft the artifact for this step.\n\nkeep it short"
+        assert "<!-- artifact -->" in turn["llm_prompt"] and "keep it short" in turn["llm_prompt"]
+        assert ASK in turn["context"] and "Quote the migration" in turn["context"]
         versions = client.get(f"/api/steps/{sid}/versions").json()
         assert versions[0]["author"] == "model"
+        # The exchange is part of the step's discussion.
+        chat = client.post(f"/api/steps/{sid}/chat").json()
+        assert chat["id"] == turn["chat_id"]
+        texts = [m["content"] for m in client.get(f"/api/chats/{chat['id']}/messages").json()]
+        assert texts[0].startswith("Draft the artifact") and "Here is a draft." in texts[1]
         # A group has no artifact of its own.
         group = client.post(f"/api/steps/{steps['Risks']['id']}/artifact/generate", json={})
         assert group.status_code == 409
+
+
+def test_a_reply_without_a_deliverable_stays_in_the_discussion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_llm(monkeypatch)
+    with TestClient(create_app()) as client:
+        sid = _by_title(_started(client))["Quote"]["id"]
+        client.put(f"/api/steps/{sid}/artifact", json={"content": "my own text"})
+        TURN_REPLIES["step"] = "Which currency should I quote in? Two options: EUR or USD."
+        res = client.post(f"/api/steps/{sid}/artifact/generate", json={})
+        assert res.status_code == 200, res.text
+        assert res.json()["outcome"] == "discussion"
+        assert res.json()["step"]["artifact"] == "my own text"
+        assert res.json()["step"]["artifact_version"] == 1
+
+        TURN_REPLIES["parked"] = True
+        parked = client.post(f"/api/steps/{sid}/artifact/generate", json={}).json()
+        assert parked["outcome"] == "awaiting_approval"
+        assert parked["step"]["artifact"] == "my own text"
+
+
+def test_a_chosen_reply_can_become_the_artifact(monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_llm(monkeypatch)
+    with TestClient(create_app()) as client:
+        sid = _by_title(_started(client))["Quote"]["id"]
+        TURN_REPLIES["step"] = "Maybe quote 12k EUR, but tell me the scope first."
+        client.post(f"/api/steps/{sid}/artifact/generate", json={})
+        chat = client.post(f"/api/steps/{sid}/chat").json()
+        replies = [
+            m
+            for m in client.get(f"/api/chats/{chat['id']}/messages").json()
+            if m["role"] == "assistant"
+        ]
+        url = f"/api/steps/{sid}/artifact/from-message"
+        # The user picked it, so with no marker the whole reply is used.
+        res = client.post(url, json={"message_id": replies[-1]["id"]})
+        assert res.status_code == 200, res.text
+        assert res.json()["artifact"] == "Maybe quote 12k EUR, but tell me the scope first."
+        assert res.json()["status"] == "to_validate"
+        user_msg = client.get(f"/api/chats/{chat['id']}/messages").json()[0]
+        assert client.post(url, json={"message_id": user_msg["id"]}).status_code == 409
+        assert client.post(url, json={"message_id": 999999}).status_code == 404
 
 
 def test_the_step_chat_is_grounded_and_hidden_from_the_chat_list(
@@ -328,7 +417,7 @@ def test_the_step_chat_sees_the_topic_and_the_other_steps(
     from precursor.backend.models import Chat, Message, MessageRole
     from precursor.backend.services.turn_engine import build_chat_system_context
 
-    calls = _fake_llm(monkeypatch)
+    _fake_llm(monkeypatch)
     with TestClient(create_app()) as client:
         topic = client.post("/api/topics", json={"title": "Customer mail"}).json()
 
@@ -369,9 +458,9 @@ def test_the_step_chat_sees_the_topic_and_the_other_steps(
         assert "Plan progress:" in ctx
 
         client.post(f"/api/steps/{steps['Data']['id']}/artifact/generate", json={})
-        user = calls[-1]["user"]
-        assert "Quote: 12k EUR" in user
-        assert "Earlier we agreed the freeze starts in June." in user
+        context = TURNS[-1]["context"]
+        assert "Quote: 12k EUR" in context
+        assert "Earlier we agreed the freeze starts in June." in context
 
 
 def test_review_returns_text_and_changes_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -419,7 +508,7 @@ def test_a_step_with_an_artifact_cannot_be_split(monkeypatch: pytest.MonkeyPatch
 def test_consolidation_needs_validated_steps_unless_forced(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls = _fake_llm(monkeypatch)
+    _fake_llm(monkeypatch)
     with TestClient(create_app()) as client:
         plan = _started(client)
         steps = _by_title(plan)
@@ -432,25 +521,82 @@ def test_consolidation_needs_validated_steps_unless_forced(
         client.post(f"/api/steps/{steps['Date']['id']}/status", json={"status": "cancelled"})
         res = client.post(gen, json={"instructions": "formal tone"})
         assert res.status_code == 200, res.text
-        out = res.json()
+        assert res.json()["outcome"] == "published"
+        out = res.json()["plan"]
         assert out["final_output"] == "FINAL ANSWER"
         assert out["status"] == "consolidating"
         assert out["final_stale"] is False
-        user = calls[-1]["user"]
-        assert "Quote: 10k" in user and "Data risks" in user and "formal tone" in user
+        assert out["final_provisional"] is False
+        turn = TURNS[-1]
+        assert "Quote: 10k" in turn["context"] and "Data risks" in turn["context"]
+        assert (
+            "formal tone" in turn["llm_prompt"] and "validated artifacts only" in turn["llm_prompt"]
+        )
+        chat_id = out["consolidation_chat_id"]
+        texts = [m["content"] for m in client.get(f"/api/chats/{chat_id}/messages").json()]
+        assert texts[0].startswith("Consolidate the plan")
 
 
-def test_forcing_includes_unvalidated_artifacts(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls = _fake_llm(monkeypatch)
+def test_forcing_makes_a_provisional_final_that_cannot_complete_the_plan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_llm(monkeypatch)
     with TestClient(create_app()) as client:
-        plan = _started(client)
+        topic = client.post("/api/topics", json={"title": "Mail"}).json()
+        plan = _plan(client, topic_id=topic["id"])
+        plan = client.post(f"/api/step-plans/{plan['id']}/start", json={}).json()
         sid = _by_title(plan)["Quote"]["id"]
         client.put(f"/api/steps/{sid}/artifact", json={"content": "Draft quote"})
         res = client.post(
             f"/api/step-plans/{plan['id']}/consolidate/generate", json={"force": True}
         )
         assert res.status_code == 200, res.text
-        assert "Draft quote" in calls[-1]["user"]
+        out = res.json()["plan"]
+        assert out["final_provisional"] is True
+        assert out["status"] == "consolidating"
+        turn = TURNS[-1]
+        assert "Draft quote" in turn["context"] and "NOT validated" in turn["llm_prompt"]
+
+        send = f"/api/step-plans/{plan['id']}/send-to-topic"
+        assert client.post(send, json={}).status_code == 409
+        sent = client.post(send, json={"force": True})
+        assert sent.status_code == 200, sent.text
+        assert "provisional" in sent.json()["content"]
+        after = _get(client, plan["id"])
+        assert after["status"] == "consolidating" and after["final_provisional"] is True
+
+
+def test_validating_the_remaining_steps_makes_a_provisional_final_stale(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_llm(monkeypatch)
+    with TestClient(create_app()) as client:
+        plan = _started(client)
+        steps = _by_title(plan)
+        _validate(client, steps["Quote"]["id"])
+        client.post(f"/api/step-plans/{plan['id']}/consolidate/generate", json={"force": True})
+        assert _get(client, plan["id"])["final_provisional"] is True
+        _validate(client, steps["Data"]["id"])
+        _validate(client, steps["Date"]["id"])
+        assert _get(client, plan["id"])["final_stale"] is True
+        client.post(f"/api/step-plans/{plan['id']}/consolidate/generate", json={})
+        final = _get(client, plan["id"])
+        assert final["final_provisional"] is False and final["final_stale"] is False
+
+
+def test_a_consolidation_reply_without_a_deliverable_changes_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_llm(monkeypatch)
+    with TestClient(create_app()) as client:
+        plan = _started(client)
+        steps = _by_title(plan)
+        for title in ("Quote", "Data", "Date"):
+            _validate(client, steps[title]["id"])
+        TURN_REPLIES["final"] = "Do you want a formal tone?"
+        res = client.post(f"/api/step-plans/{plan['id']}/consolidate/generate", json={})
+        assert res.json()["outcome"] == "discussion"
+        assert res.json()["plan"]["final_output"] is None
 
 
 def test_changing_validated_work_marks_the_final_stale(monkeypatch: pytest.MonkeyPatch) -> None:

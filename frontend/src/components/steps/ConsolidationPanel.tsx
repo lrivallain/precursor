@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { CheckCircle2, FileText, Loader2, Save, Send } from "lucide-react";
+import { CheckCircle2, FileText, Loader2, MessageSquareQuote, Save, Send } from "lucide-react";
 import { api } from "../../lib/api";
 import { openTopic } from "../../lib/sideChats";
 import { hasUnsavedEdits } from "../../lib/stepPlans";
@@ -58,6 +58,8 @@ export function ConsolidationPanel({
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState<Message | null>(null);
   const [newer, setNewer] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [adopting, setAdopting] = useState(false);
   // The text the draft started from, so a model-written final output arriving
   // isn't mistaken for the user's unsaved edits.
   const [base, setBase] = useState(finalOutput);
@@ -113,22 +115,67 @@ export function ConsolidationPanel({
       });
       if (!ok) return;
     }
-    await mutate(() =>
+    setNotice(null);
+    const result = await mutate(() =>
       api.stepPlans.generateFinal(plan.id, { instructions: guidance || undefined, force: unvalidated }),
     );
-    setView("preview");
+    if (!result) return;
+    if (result.outcome === "published") setView("preview");
+    else if (result.outcome === "awaiting_approval") {
+      setNotice(
+        "The model is waiting for your approval of a tool call in the discussion. Approve or deny it there, then ask again.",
+      );
+    } else {
+      setNotice(
+        "The model answered in the discussion without a deliverable (a question or alternatives), so the final output is unchanged. Reply in the discussion, or use its reply as the final output.",
+      );
+    }
+  }
+
+  // Take the latest consolidation-discussion reply as the final output.
+  async function useLatestReply(): Promise<void> {
+    if (plan.consolidation_chat_id == null || adopting) return;
+    if (dirty) {
+      const ok = await confirm({
+        title: "Discard unsaved edits?",
+        message: "Your unsaved edits to the final output will be replaced by the discussion reply.",
+        confirmLabel: "Replace",
+        variant: "warning",
+      });
+      if (!ok) return;
+    }
+    setAdopting(true);
+    setNotice(null);
+    try {
+      const messages = await api.chats.listMessages(plan.consolidation_chat_id);
+      const reply = [...messages]
+        .reverse()
+        .find((m) => m.role === "assistant" && m.kind !== "step_plan" && m.content.trim());
+      if (!reply) {
+        setNotice("The discussion has no model reply to use yet.");
+        return;
+      }
+      const updated = await mutate(() => api.stepPlans.finalFromMessage(plan.id, reply.id));
+      if (updated) setView("preview");
+    } finally {
+      setAdopting(false);
+    }
   }
 
   async function sendToTopic(): Promise<void> {
+    const provisional = plan.final_provisional;
     const ok = await confirm({
-      title: "Send to topic?",
-      message: `The final output will be posted as a new message in “${plan.source_topic_title ?? "the source topic"}”.`,
-      confirmLabel: "Send",
+      title: provisional ? "Send a provisional output?" : "Send to topic?",
+      message: provisional
+        ? `Not every step was validated when this output was written. It will be posted in “${plan.source_topic_title ?? "the source topic"}” marked as provisional, and the plan will not be marked done.`
+        : `The final output will be posted as a new message in “${plan.source_topic_title ?? "the source topic"}”.`,
+      confirmLabel: provisional ? "Send as provisional" : "Send",
+      variant: provisional ? "warning" : undefined,
     });
     if (!ok) return;
     setSending(true);
     try {
-      const message = await mutate(() => api.stepPlans.sendToTopic(plan.id));
+      const message = await mutate(() => api.stepPlans.sendToTopic(plan.id, undefined, provisional));
       if (message) setSent(message);
     } finally {
       setSending(false);
@@ -147,8 +194,25 @@ export function ConsolidationPanel({
     <div className="flex h-full flex-col gap-4">
       <div className="flex items-center gap-2">
         <h2 className="min-w-0 flex-1 truncate text-base font-semibold">Final output</h2>
+        {plan.final_provisional && hasFinal && (
+          <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-300">
+            Provisional
+          </span>
+        )}
         {plan.final_stale && <StaleBadge />}
       </div>
+
+      {plan.final_provisional && hasFinal && (
+        <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
+          Provisional: this output was written before every step was validated, so it is not an
+          approved final and the plan stays open. Validate the remaining steps, then regenerate it.
+        </p>
+      )}
+      {notice && (
+        <p role="status" className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-muted">
+          {notice}
+        </p>
+      )}
 
       {unvalidated && (
         <p className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-muted">
@@ -181,7 +245,20 @@ export function ConsolidationPanel({
         busyLabel="Consolidating…"
         placeholder="e.g. start with a two-line summary, then one section per ask"
         onRun={generate}
-      />
+      >
+        {plan.consolidation_chat_id != null && (
+          <button
+            type="button"
+            className={BTN_SECONDARY}
+            disabled={adopting}
+            onClick={() => void useLatestReply()}
+            data-tooltip="Save the model's latest reply in the consolidation discussion as the final output"
+          >
+            {adopting ? <Loader2 size={14} className="animate-spin" /> : <MessageSquareQuote size={14} />}
+            Use latest discussion reply
+          </button>
+        )}
+      </GuidedAction>
 
       <WorkTabs
         ariaLabel="Consolidation"
