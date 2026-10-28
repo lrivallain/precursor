@@ -191,10 +191,10 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
 
   // Split the topic's latest ask into a step plan. The model call is slow, so a
   // note says so; a model failure still leaves an (empty) plan in Step by step.
-  async function runSteps(): Promise<void> {
+  async function runSteps(argument: string): Promise<void> {
     systemNote("Splitting the latest ask into steps… this can take a moment.");
     try {
-      await startStepPlanFromTopic(topic.id);
+      await startStepPlanFromTopic(topic.id, argument);
     } catch (err) {
       systemNote(`Couldn't split the ask into steps: ${apiErrorMessage(err)}`);
     }
@@ -259,7 +259,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
       return;
     }
     if (name === "steps") {
-      await runSteps();
+      await runSteps(argument);
       return;
     }
     if (name === "pin" || name === "unpin") {

@@ -74,7 +74,7 @@ export function StepPlanHeader({
           <button
             type="button"
             onClick={() => openTopic(plan.source_topic_id!)}
-            className="max-w-[16rem] truncate rounded-full border border-border px-2.5 py-0.5 text-xs text-muted hover:bg-surface hover:text-fg"
+            className="max-w-[16rem] truncate rounded-full border border-accent/30 bg-accent/[0.06] px-2.5 py-0.5 text-xs text-accent underline-offset-2 hover:border-accent/60 hover:bg-accent/10 hover:underline"
             data-tooltip={`Go to the topic this plan came from\n${plan.source_topic_title ?? ""}`}
           >
             {plan.source_topic_title ?? "Source topic"}

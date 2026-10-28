@@ -487,7 +487,8 @@ def test_the_final_can_be_edited_and_sent_to_the_topic(monkeypatch: pytest.Monke
 
         sent = client.post(f"/api/step-plans/{plan['id']}/send-to-topic", json={})
         assert sent.status_code == 200, sent.text
-        assert sent.json()["content"].startswith("**From step-by-step plan: ")
+        assert sent.json()["content"].startswith("**From step-by-step plan: [")
+        assert f"](/steps/{plan['id']})**" in sent.json()["content"]
         assert "Edited final" in sent.json()["content"]
         assert _get(client, plan["id"])["status"] == "done"
         messages = client.get(f"/api/topics/{topic['id']}/messages").json()
@@ -553,3 +554,49 @@ def test_a_pinned_model_is_used_for_the_model_actions(monkeypatch: pytest.Monkey
     with TestClient(create_app()) as client:
         plan = _plan(client, propose=False)
         assert plan["llm_selection"] is None
+
+
+def test_the_steps_command_is_not_part_of_the_title_or_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_llm(monkeypatch)
+    with TestClient(create_app()) as client:
+        plan = _plan(client, source_text="/steps Review the whole answer process", propose=False)
+        assert plan["title"] == "Review the whole answer process"
+        assert plan["source_text"] == "Review the whole answer process"
+
+
+def test_a_bare_steps_turn_falls_back_to_the_previous_ask(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_llm(monkeypatch)
+    with TestClient(create_app()) as client:
+        topic = client.post("/api/topics", json={"title": "Mail"}).json()
+
+        async def seed() -> None:
+            from precursor.backend.db import SessionLocal
+            from precursor.backend.models import Message, MessageRole
+
+            async with SessionLocal() as session:
+                for text in ("Please plan the migration", "/steps"):
+                    session.add(Message(topic_id=topic["id"], role=MessageRole.USER, content=text))
+                await session.commit()
+
+        _run(seed)
+        plan = client.post(
+            "/api/step-plans", json={"topic_id": topic["id"], "propose": False}
+        ).json()
+        assert plan["title"] == "Please plan the migration"
+
+
+def test_spawning_a_plan_leaves_a_trace_in_its_topic(monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_llm(monkeypatch)
+    with TestClient(create_app()) as client:
+        topic = client.post("/api/topics", json={"title": "Mail"}).json()
+        plan = _plan(client, topic_id=topic["id"], propose=False)
+        messages = client.get(f"/api/topics/{topic['id']}/messages").json()
+        trace = [m for m in messages if m["kind"] == "step_plan"]
+        assert len(trace) == 1
+        assert trace[0]["role"] == "system"
+        assert f"(/steps/{plan['id']})" in trace[0]["content"]
+        assert client.get(f"/api/step-plans?topic_id={topic['id']}").json()[0]["id"] == plan["id"]

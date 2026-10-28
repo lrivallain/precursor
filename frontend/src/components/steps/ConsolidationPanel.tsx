@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { CheckCircle2, FileText, Loader2, MessageSquare, Save, Send } from "lucide-react";
 import { api } from "../../lib/api";
 import { openTopic } from "../../lib/sideChats";
+import { hasUnsavedEdits } from "../../lib/stepPlans";
 import type { Message, StepPlan } from "../../lib/types";
 import { useConfirm } from "../ConfirmDialog";
 import { Markdown } from "../Markdown";
@@ -57,19 +58,26 @@ export function ConsolidationPanel({
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState<Message | null>(null);
   const [newer, setNewer] = useState(false);
-  const dirty = draft !== finalOutput;
+  // The text the draft started from, so a model-written final output arriving
+  // isn't mistaken for the user's unsaved edits.
+  const [base, setBase] = useState(finalOutput);
+  const dirty = hasUnsavedEdits(draft, base);
   const dirtyRef = useRef(dirty);
   dirtyRef.current = dirty;
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
   const planIdRef = useRef(plan.id);
 
   useEffect(() => {
-    if (dirtyRef.current && planIdRef.current === plan.id) {
+    const samePlan = planIdRef.current === plan.id;
+    planIdRef.current = plan.id;
+    if (samePlan && dirtyRef.current && finalOutput.trim() !== draftRef.current.trim()) {
       setNewer(true);
     } else {
       setDraft(finalOutput);
+      setBase(finalOutput);
       setNewer(false);
     }
-    planIdRef.current = plan.id;
   }, [plan.id, finalOutput]);
 
   const unvalidated = !plan.ready_to_consolidate;
@@ -251,6 +259,7 @@ export function ConsolidationPanel({
                 className="underline"
                 onClick={() => {
                   setDraft(finalOutput);
+                  setBase(finalOutput);
                   setNewer(false);
                 }}
               >

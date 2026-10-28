@@ -115,7 +115,8 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     name: "steps",
     label: "/steps",
     description:
-      "Split the latest ask in this topic into a tree of steps (the model proposes the first ones), then work each step with its own artifact and chat and consolidate a final answer. Opens the new plan in Step by step.",
+      "Split the latest ask in this topic into a tree of steps (the model proposes the first ones), then work each step with its own artifact and chat and consolidate a final answer. Opens the new plan in Step by step and leaves a link to it in the topic. Text after the command is used as the ask instead of the latest message.",
+    argumentHint: "the ask (optional)",
     kind: "builtin",
     surfaces: ["topic"],
   },

@@ -19,6 +19,7 @@ import { SvgBlock } from "./SvgBlock";
 import { MermaidBlock } from "./MermaidBlock";
 import { makeHighlightRehype, useSearchHighlight } from "../lib/searchHighlight";
 import { openChatBySlug } from "../lib/sideChats";
+import { openStepPlan } from "../lib/stepPlans";
 import { makeMarkdownCaretRehype, markdownCaretAtPoint } from "../lib/markdownCaret";
 
 interface MarkdownProps {
@@ -92,6 +93,13 @@ const TaskListItem: NonNullable<Components["li"]> = ({ node, children, ...props 
 function inAppChatSlug(href: string | undefined): string | null {
   const m = href?.match(/^\/chats\/([^/?#]+)$/);
   return m ? decodeURIComponent(m[1]) : null;
+}
+
+// An in-app step plan link (`/steps/<id>`, e.g. the note a plan files into its
+// topic) opens the plan in place.
+function inAppStepPlanId(href: string | undefined): number | null {
+  const m = href?.match(/^\/steps\/(\d+)$/);
+  return m ? Number(m[1]) : null;
 }
 
 function isExternalHref(href: string | undefined): boolean {
@@ -286,6 +294,7 @@ export const Markdown = memo(function Markdown({
           a({ href, children: linkChildren, ...props }) {
             const external = isExternalHref(href);
             const chatSlug = inAppChatSlug(href);
+            const stepPlanId = inAppStepPlanId(href);
             return (
               <a
                 href={href}
@@ -301,6 +310,15 @@ export const Markdown = memo(function Markdown({
                         void openChatBySlug(chatSlug).catch(() => {
                           window.location.assign(href ?? "/chats");
                         });
+                      },
+                    }
+                  : {})}
+                {...(stepPlanId != null
+                  ? {
+                      onClick: (e: React.MouseEvent<HTMLAnchorElement>) => {
+                        if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+                        e.preventDefault();
+                        openStepPlan(stepPlanId);
                       },
                     }
                   : {})}

@@ -12,6 +12,7 @@ import { parseToolMeta } from "../lib/toolMeta";
 import type { MessageDeletion, PendingDelete } from "../lib/useMessageDeletion";
 import { TURN_ANCHOR_ATTR } from "../lib/useTurnTimeline";
 import type { Message, SideChatItem, ToolApproval, ToolApprovalDecision } from "../lib/types";
+import { StepPlanTrace } from "./steps/StepPlanTrace";
 import type { PromptRewindActions } from "../lib/useConversation";
 import type { ReplyEditController } from "../lib/useReplyEdit";
 
@@ -109,6 +110,7 @@ function renderRow({
       />
     );
   }
+  if (m.kind === "step_plan") return <StepPlanTrace content={m.content} />;
   if (m.kind === "live_question") {
     // The question the Live assistant answered unattended; the suggestion follows.
     return (

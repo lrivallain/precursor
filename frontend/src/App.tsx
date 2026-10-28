@@ -857,7 +857,7 @@ export default function App() {
           ) : sidebarMode === "workflows" ? (
             <WorkflowsHeader />
           ) : sidebarMode === "steps" ? (
-            <StepsHeader controller={stepsCtl} />
+            <StepsHeader />
           ) : (
             <AgentsHeader
               controller={agentsCtl}

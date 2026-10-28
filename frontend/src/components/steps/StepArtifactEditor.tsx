@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { History, Loader2, Save } from "lucide-react";
 import { api, apiErrorMessage } from "../../lib/api";
+import { hasUnsavedEdits } from "../../lib/stepPlans";
 import type { Step, StepArtifactVersion } from "../../lib/types";
 import { useConfirm } from "../ConfirmDialog";
 import { Markdown } from "../Markdown";
@@ -17,25 +18,33 @@ type Mutate = <T>(action: () => Promise<T>) => Promise<T | undefined>;
 export function StepArtifactEditor({ step, mutate }: { step: Step; mutate: Mutate }) {
   const confirm = useConfirm();
   const [draft, setDraft] = useState(step.artifact);
+  // What the draft started from: edits are measured against this, not the live
+  // artifact, so a new version arriving (e.g. a model draft) isn't mistaken for
+  // unsaved edits.
+  const [base, setBase] = useState(step.artifact);
   const [view, setView] = useState<"edit" | "preview">("edit");
   const [saving, setSaving] = useState(false);
   const [newerVersion, setNewerVersion] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const dirty = draft !== step.artifact;
+  const dirty = hasUnsavedEdits(draft, base);
   const dirtyRef = useRef(dirty);
   dirtyRef.current = dirty;
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
   const lastStepId = useRef(step.id);
 
   // A different step, or a new version of this one: follow it unless that
   // would discard unsaved edits.
   useEffect(() => {
-    if (dirtyRef.current && step.id === lastStepId.current) {
+    const sameStep = step.id === lastStepId.current;
+    lastStepId.current = step.id;
+    if (sameStep && dirtyRef.current && step.artifact.trim() !== draftRef.current.trim()) {
       setNewerVersion(true);
     } else {
       setDraft(step.artifact);
+      setBase(step.artifact);
       setNewerVersion(false);
     }
-    lastStepId.current = step.id;
   }, [step.id, step.artifact_version, step.artifact]);
 
   async function save(): Promise<void> {
@@ -116,6 +125,7 @@ export function StepArtifactEditor({ step, mutate }: { step: Step; mutate: Mutat
             className="underline"
             onClick={() => {
               setDraft(step.artifact);
+              setBase(step.artifact);
               setNewerVersion(false);
             }}
           >

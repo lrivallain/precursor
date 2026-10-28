@@ -21,6 +21,7 @@ subtree (and their chats) explicitly.
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from collections.abc import Iterable
 from uuid import uuid4
@@ -65,6 +66,7 @@ from precursor.backend.schemas.step_plan import (
 )
 from precursor.backend.services import roles as roles_service
 from precursor.backend.services.conversation_llm import validate_selection
+from precursor.backend.services.events import publish_message_changed
 from precursor.backend.services.slugs import allocate_unique_slug
 
 MAX_STEPS_PER_PLAN = 200
@@ -302,7 +304,16 @@ async def list_plans(session: AsyncSession, topic_id: int | None = None) -> list
 # --- plans --------------------------------------------------------------------
 
 
+_STEPS_COMMAND = re.compile(r"^\s*/steps\b[ \t]*", re.IGNORECASE)
+
+
+def _strip_steps_command(text: str) -> str:
+    """Drop a leading ``/steps`` — the command that spawned the plan isn't the ask."""
+    return _STEPS_COMMAND.sub("", text, count=1).strip()
+
+
 def _title_from(text: str) -> str:
+    text = _strip_steps_command(text)
     for line in text.splitlines():
         line = line.strip().lstrip("#>*- ").strip()
         if line:
@@ -316,7 +327,7 @@ async def _source_for(session: AsyncSession, payload: StepPlanCreate) -> tuple[s
         topic = await session.get(Topic, payload.topic_id)
         if topic is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
-    text = (payload.source_text or "").strip()
+    text = _strip_steps_command(payload.source_text or "")
     if not text and topic is not None:
         if payload.message_id is not None:
             msg = await session.get(Message, payload.message_id)
@@ -324,7 +335,7 @@ async def _source_for(session: AsyncSession, payload: StepPlanCreate) -> tuple[s
                 raise HTTPException(status.HTTP_404_NOT_FOUND, "Message not found")
             text = msg.content.strip()
         else:
-            row = await session.execute(
+            rows = await session.execute(
                 select(Message.content)
                 .where(
                     Message.topic_id == topic.id,
@@ -332,9 +343,14 @@ async def _source_for(session: AsyncSession, payload: StepPlanCreate) -> tuple[s
                     Message.kind.is_(None),
                 )
                 .order_by(Message.id.desc())
-                .limit(1)
+                .limit(20)
             )
-            text = (row.scalar_one_or_none() or "").strip()
+            # A bare "/steps" turn carries no ask of its own: fall back to the
+            # latest message that does.
+            text = next(
+                (t for c in rows.scalars() if (t := _strip_steps_command(c or ""))),
+                "",
+            )
     if not text:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -366,7 +382,26 @@ async def create_plan(session: AsyncSession, payload: StepPlanCreate) -> StepPla
     )
     session.add(plan)
     await session.commit()
+    if topic is not None:
+        await _trace_in_topic(session, plan, topic.id)
     return plan
+
+
+STEP_PLAN_TRACE_KIND = "step_plan"
+
+
+async def _trace_in_topic(session: AsyncSession, plan: StepPlan, topic_id: int) -> None:
+    """Leave a UI-only note in the topic so the spawned plan stays traceable."""
+    session.add(
+        Message(
+            topic_id=topic_id,
+            role=MessageRole.SYSTEM,
+            kind=STEP_PLAN_TRACE_KIND,
+            content=f"Started step by step: [{plan.title}](/steps/{plan.id})",
+        )
+    )
+    await session.commit()
+    await publish_message_changed(topic_id)
 
 
 async def update_plan(session: AsyncSession, plan_id: int, payload: StepPlanUpdate) -> StepPlan:

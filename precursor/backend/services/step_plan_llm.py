@@ -413,7 +413,7 @@ async def save_final(session: AsyncSession, plan_id: int, content: str) -> StepP
 
 
 def topic_note_content(plan: StepPlan, text: str) -> str:
-    return f"**From step-by-step plan: {plan.title}**\n\n{text.strip()}"
+    return f"**From step-by-step plan: [{plan.title}](/steps/{plan.id})**\n\n{text.strip()}"
 
 
 async def send_to_topic(

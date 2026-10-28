@@ -274,8 +274,22 @@ export function openStepPlan(planId: number): void {
  * keeps the (empty) plan but answers 502, so the caller reports the error and
  * the plan shows up in the section's list.
  */
-export async function startStepPlanFromTopic(topicId: number): Promise<StepPlan> {
-  const plan = await api.stepPlans.create({ topic_id: topicId, propose: true });
+export async function startStepPlanFromTopic(
+  topicId: number,
+  sourceText?: string,
+): Promise<StepPlan> {
+  const text = sourceText?.trim();
+  const plan = await api.stepPlans.create({
+    topic_id: topicId,
+    propose: true,
+    ...(text ? { source_text: text } : {}),
+  });
   openStepPlan(plan.id);
   return plan;
+}
+
+/** Whether `draft` differs from `base` in a way worth warning about (blank ≈ blank). */
+export function hasUnsavedEdits(draft: string, base: string): boolean {
+  if (draft === base) return false;
+  return !(draft.trim() === "" && base.trim() === "");
 }

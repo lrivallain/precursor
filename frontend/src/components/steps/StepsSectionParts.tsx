@@ -7,13 +7,9 @@ import { StepPlansOverview } from "./StepPlansOverview";
 // The step-by-step section's pieces of the app shell: header, main pane and
 // sidebar slot, all reading the section controller.
 
-export function StepsHeader({ controller }: { controller: StepPlansController }) {
-  const plan = controller.plans.find((p) => p.id === controller.activePlanId);
-  return (
-    <span className="truncate font-medium min-w-0 flex-1">
-      {plan ? plan.title : "Step by step"}
-    </span>
-  );
+// The plan's own title lives in its header; repeating it here doubled it up.
+export function StepsHeader() {
+  return <span className="truncate font-medium min-w-0 flex-1">Step by step</span>;
 }
 
 export function StepsMain({ controller }: { controller: StepPlansController }) {
