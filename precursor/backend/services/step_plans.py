@@ -21,6 +21,8 @@ subtree (and their chats) explicitly.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from collections import defaultdict
 from collections.abc import Iterable
@@ -43,6 +45,7 @@ from precursor.backend.models import (
 from precursor.backend.models.step_plan import (
     AUTHOR_MODEL,
     AUTHOR_USER,
+    AUTO_RUNNING,
     PLAN_ACTIVE,
     PLAN_CONSOLIDATING,
     PLAN_DONE,
@@ -55,6 +58,7 @@ from precursor.backend.models.step_plan import (
     STEP_VALIDATED,
 )
 from precursor.backend.schemas.step_plan import (
+    Assessment,
     StepArtifactVersionRead,
     StepCreate,
     StepPlanCreate,
@@ -68,6 +72,11 @@ from precursor.backend.services import roles as roles_service
 from precursor.backend.services.conversation_llm import validate_selection
 from precursor.backend.services.events import publish_message_changed
 from precursor.backend.services.slugs import allocate_unique_slug
+
+# Plans whose automated run is alive in this process. ``auto_state`` in the
+# database survives a restart, this set doesn't: that is how an interrupted run
+# reads as paused instead of running forever.
+RUNNING: set[int] = set()
 
 MAX_STEPS_PER_PLAN = 200
 MAX_DEPTH = 6
@@ -220,9 +229,44 @@ def _depth(steps: list[Step], step_id: int | None) -> int:
     return depth
 
 
+def is_approved(step: Step) -> bool:
+    """Validated by the user and still valid for the current ask and instruction."""
+    return step.status == STEP_VALIDATED and not step.needs_review
+
+
 def is_ready(steps: list[Step]) -> bool:
     leaves = working_leaves(steps)
-    return bool(leaves) and all(s.status == STEP_VALIDATED for s in leaves)
+    return bool(leaves) and all(is_approved(s) for s in leaves)
+
+
+# --- assessments --------------------------------------------------------------
+#
+# An assessment is tied to a signature of what it looked at; the signature is
+# recomputed on read, so a changed artifact, instruction or ask marks it stale
+# without any bookkeeping on the write paths.
+
+
+def _sig(*parts: str) -> str:
+    digest = hashlib.sha1("\x00".join(parts).encode("utf-8"), usedforsecurity=False)
+    return digest.hexdigest()
+
+
+def step_signature(plan: StepPlan, step: Step) -> str:
+    return _sig(plan.source_text, step.instruction, step.artifact)
+
+
+def plan_signature(plan: StepPlan, steps: list[Step]) -> str:
+    leaves = [f"{s.id}:{step_signature(plan, s)}" for s in working_leaves(steps)]
+    return _sig(plan.source_text, plan.output_instructions or "", *leaves)
+
+
+def parse_assessment(raw: str | None) -> Assessment | None:
+    if not raw:
+        return None
+    try:
+        return Assessment.model_validate(json.loads(raw))
+    except ValueError:
+        return None
 
 
 # --- read models --------------------------------------------------------------
@@ -253,16 +297,31 @@ async def _chat_links(
 
 
 _STEP_FIELDS = tuple(
-    f for f in StepRead.model_fields if f not in {"effective_status", "chat_id", "chat_slug"}
+    f
+    for f in StepRead.model_fields
+    if f
+    not in {
+        "effective_status",
+        "chat_id",
+        "chat_slug",
+        "assessment",
+        "assessment_stale",
+    }
 )
 
 
-def _step_read(step: Step, effective: str, chat: tuple[int, str] | None) -> StepRead:
+def _step_read(
+    step: Step, effective: str, chat: tuple[int, str] | None, plan: StepPlan
+) -> StepRead:
     read = StepRead.model_validate(
         {**{f: getattr(step, f) for f in _STEP_FIELDS}, "effective_status": effective}
     )
     if chat is not None:
         read.chat_id, read.chat_slug = chat
+    read.assessment = parse_assessment(step.assessment_json)
+    read.assessment_stale = read.assessment is not None and step.assessed_sig != step_signature(
+        plan, step
+    )
     return read
 
 
@@ -281,7 +340,15 @@ async def to_plan_read(session: AsyncSession, plan: StepPlan) -> StepPlanRead:
     read.ready_to_consolidate = is_ready(steps)
     if consolidation is not None:
         read.consolidation_chat_id, read.consolidation_chat_slug = consolidation
-    read.steps = [_step_read(s, effective[s.id], step_chats.get(s.id)) for s, _ in ordered(steps)]
+    read.steps = [
+        _step_read(s, effective[s.id], step_chats.get(s.id), plan) for s, _ in ordered(steps)
+    ]
+    read.assessment = parse_assessment(plan.assessment_json)
+    read.assessment_stale = read.assessment is not None and plan.assessed_sig != plan_signature(
+        plan, steps
+    )
+    if plan.auto_state == AUTO_RUNNING and plan.id not in RUNNING:
+        read.auto_state = "paused"
     return read
 
 
@@ -289,7 +356,8 @@ async def read_step(session: AsyncSession, step: Step) -> StepRead:
     steps = await plan_steps(session, step.plan_id)
     effective = effective_statuses(steps)
     chats, _ = await _chat_links(session, step_ids=[step.id], plan_id=step.plan_id)
-    return _step_read(step, effective[step.id], chats.get(step.id))
+    plan = await get_plan(session, step.plan_id)
+    return _step_read(step, effective[step.id], chats.get(step.id), plan)
 
 
 async def list_plans(session: AsyncSession, topic_id: int | None = None) -> list[StepPlanItem]:
@@ -319,7 +387,7 @@ async def list_plans(session: AsyncSession, topic_id: int | None = None) -> list
                 source_topic_id=p.source_topic_id,
                 source_topic_title=titles.get(p.source_topic_id) if p.source_topic_id else None,
                 step_count=len(leaves),
-                validated_count=sum(1 for s in leaves if s.status == STEP_VALIDATED),
+                validated_count=sum(1 for s in leaves if is_approved(s)),
                 final_stale=p.final_stale,
                 created_at=p.created_at,
                 updated_at=p.updated_at,
@@ -399,6 +467,7 @@ async def create_plan(session: AsyncSession, payload: StepPlanCreate) -> StepPla
         title=(payload.title or "").strip() or _title_from(text),
         source_text=text,
         status=PLAN_DRAFTING,
+        automation_mode=payload.automation_mode,
         source_topic_id=topic.id if topic else None,
         role=role,
         llm_selection=(
@@ -439,7 +508,12 @@ async def update_plan(session: AsyncSession, plan_id: int, payload: StepPlanUpda
     if payload.source_text is not None:
         if not payload.source_text.strip():
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "The ask can't be empty.")
-        plan.source_text = payload.source_text.strip()
+        new_text = payload.source_text.strip()
+        if new_text != plan.source_text:
+            plan.source_text = new_text
+            await _flag_for_review(session, plan)
+    if payload.automation_mode is not None:
+        plan.automation_mode = payload.automation_mode
     if "role" in fields:
         plan.role = await roles_service.require_role(session, payload.role)
     if "llm_selection" in fields:
@@ -490,6 +564,14 @@ async def detach_topic(session: AsyncSession, topic_id: int) -> list[int]:
     for plan in plans:
         plan.source_topic_id = None
     return [p.id for p in plans]
+
+
+async def _flag_for_review(session: AsyncSession, plan: StepPlan) -> None:
+    """The ask changed: every approval and the final output must be looked at again."""
+    for step in working_leaves(await plan_steps(session, plan.id)):
+        if step.status == STEP_VALIDATED:
+            step.needs_review = True
+    _reopen_plan(plan)
 
 
 def _reopen_plan(plan: StepPlan) -> None:
@@ -562,8 +644,13 @@ async def update_step(session: AsyncSession, step_id: int, payload: StepUpdate) 
     step = await get_step(session, step_id)
     if payload.title is not None:
         step.title = payload.title.strip()[:_TITLE_MAX]
-    if payload.instruction is not None:
+    if payload.instruction is not None and payload.instruction.strip() != step.instruction:
         step.instruction = payload.instruction.strip()
+        if step.artifact.strip():
+            # What was approved or filed no longer matches what the step asks for.
+            if step.status == STEP_VALIDATED:
+                step.needs_review = True
+            _reopen_plan(await get_plan(session, step.plan_id))
     await session.commit()
     return step
 
@@ -732,6 +819,7 @@ async def set_step_status(session: AsyncSession, step_id: int, new_status: str) 
             raise HTTPException(status.HTTP_409_CONFLICT, "There's no artifact to validate yet.")
         previous = step.status
         step.status = new_status
+        step.needs_review = False
         if previous != new_status and (
             STEP_VALIDATED in (previous, new_status) or STEP_CANCELLED in (previous, new_status)
         ):
@@ -781,7 +869,11 @@ async def write_artifact(
             step.status = STEP_TO_VALIDATE
         elif step.status == STEP_OPEN:
             step.status = STEP_IN_PROGRESS
-    if was_validated and (changed or step.status != STEP_VALIDATED):
+    if step.status != STEP_VALIDATED:
+        step.needs_review = False
+    if (was_validated and (changed or step.status != STEP_VALIDATED)) or (
+        changed and (plan.final_output or "").strip()
+    ):
         _reopen_plan(plan)
     await session.commit()
     return step
@@ -894,9 +986,9 @@ def render_artifacts(steps: list[Step], *, include_unvalidated: bool = False) ->
         if _accepted_children(kids, s.id):
             blocks.append(f"{heading} {s.title}")
             continue
-        if s.status != STEP_VALIDATED and not (include_unvalidated and s.artifact.strip()):
+        if not is_approved(s) and not (include_unvalidated and s.artifact.strip()):
             continue
-        note = "" if s.status == STEP_VALIDATED else " (not validated yet)"
+        note = "" if is_approved(s) else " (not validated yet)"
         blocks.append(f"{heading} {s.title}{note}\n\n{_cap(s.artifact, _ARTIFACT_CAP)}")
     return "\n\n".join(blocks)
 
@@ -906,7 +998,7 @@ def render_drafts(steps: list[Step]) -> str:
     kids = children_by_parent(steps)
     blocks: list[str] = []
     for s, depth in ordered(steps):
-        if s.status in (STEP_PROPOSED, STEP_CANCELLED, STEP_VALIDATED):
+        if s.status in (STEP_PROPOSED, STEP_CANCELLED) or is_approved(s):
             continue
         if _accepted_children(kids, s.id) or not s.artifact.strip():
             continue

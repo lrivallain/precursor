@@ -39,6 +39,7 @@ from precursor.backend.schemas.step_plan import (
     UseMessageRequest,
 )
 from precursor.backend.services import step_plan_llm as llm
+from precursor.backend.services import step_plan_runner as runner
 from precursor.backend.services import step_plans as svc
 from precursor.backend.services.events import publish_step_plan_changed
 from precursor.backend.services.side_chats import to_chat_read
@@ -138,6 +139,30 @@ async def start_plan(
     await svc.start_plan(
         session, plan_id, accept_proposed=payload.accept_proposed if payload else True
     )
+    await publish_step_plan_changed(plan_id)
+    return await _plan(session, plan_id)
+
+
+@router.post("/{plan_id}/auto/start", response_model=StepPlanRead)
+async def start_auto(plan_id: int, session: AsyncSession = Depends(get_session)) -> StepPlanRead:
+    """Start (or resume) the automated run: it drafts and scores, never validates."""
+    await runner.start(session, plan_id)
+    await publish_step_plan_changed(plan_id)
+    return await _plan(session, plan_id)
+
+
+@router.post("/{plan_id}/auto/pause", response_model=StepPlanRead)
+async def pause_auto(plan_id: int, session: AsyncSession = Depends(get_session)) -> StepPlanRead:
+    """Stop the run once the step in flight is done."""
+    await runner.pause(session, plan_id)
+    await publish_step_plan_changed(plan_id)
+    return await _plan(session, plan_id)
+
+
+@router.post("/{plan_id}/assess", response_model=StepPlanRead)
+async def assess_plan(plan_id: int, session: AsyncSession = Depends(get_session)) -> StepPlanRead:
+    """Model self-assessment of the whole result against the original ask."""
+    await llm.assess_plan(session, plan_id)
     await publish_step_plan_changed(plan_id)
     return await _plan(session, plan_id)
 
@@ -297,6 +322,14 @@ async def generate_artifact(
     )
     await publish_step_plan_changed(draft.step.plan_id)
     return ArtifactDraftResult(step=await _step(session, step_id), outcome=draft.outcome)
+
+
+@steps_router.post("/{step_id}/assess", response_model=StepRead)
+async def assess_step(step_id: int, session: AsyncSession = Depends(get_session)) -> StepRead:
+    """Model self-assessment of this step's artifact."""
+    step = await llm.assess_step(session, step_id)
+    await publish_step_plan_changed(step.plan_id)
+    return await _step(session, step_id)
 
 
 @steps_router.post("/{step_id}/artifact/from-message", response_model=StepRead)

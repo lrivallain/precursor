@@ -44,6 +44,21 @@ STEP_STATUSES = (
     STEP_CANCELLED,
 )
 
+# How much the model does on its own. ``manual``: nothing unless asked.
+# ``assisted``: a model draft is assessed right away. ``auto``: the model can also
+# draft every untouched step and build a provisional final in a background run.
+# In every mode a person validates; the model only drafts and scores.
+AUTOMATION_MANUAL = "manual"
+AUTOMATION_ASSISTED = "assisted"
+AUTOMATION_AUTO = "auto"
+AUTOMATION_MODES = (AUTOMATION_MANUAL, AUTOMATION_ASSISTED, AUTOMATION_AUTO)
+
+# State of the automated run. ``running`` is only trusted while the process holds
+# the run (see ``step_plans.RUNNING``); otherwise it reads as ``paused``.
+AUTO_IDLE = "idle"
+AUTO_RUNNING = "running"
+AUTO_PAUSED = "paused"
+
 AUTHOR_USER = "user"
 AUTHOR_MODEL = "model"
 
@@ -77,6 +92,16 @@ class StepPlan(Base, TimestampMixin):
     final_provisional: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="0"
     )
+    automation_mode: Mapped[str] = mapped_column(
+        String(12), nullable=False, default=AUTOMATION_MANUAL, server_default=AUTOMATION_MANUAL
+    )
+    auto_state: Mapped[str] = mapped_column(
+        String(12), nullable=False, default=AUTO_IDLE, server_default=AUTO_IDLE
+    )
+    # The model's self-assessment of the whole result (JSON), and the signature
+    # of the inputs it looked at: when they change the assessment is stale.
+    assessment_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    assessed_sig: Mapped[str | None] = mapped_column(String(40), nullable=True)
 
 
 class Step(Base, TimestampMixin):
@@ -105,6 +130,15 @@ class Step(Base, TimestampMixin):
     )
     created_by: Mapped[str] = mapped_column(
         String(8), nullable=False, default=AUTHOR_USER, server_default=AUTHOR_USER
+    )
+    # The model's self-assessment of this step's artifact (JSON) and the signature
+    # (ask + instruction + artifact) it was made against.
+    assessment_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    assessed_sig: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    # The ask or this step's instruction changed after it was validated: the
+    # approval is kept but no longer counts until the user re-approves it.
+    needs_review: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
     )
 
 

@@ -14,6 +14,25 @@ StepStatus = Literal["proposed", "open", "in_progress", "to_validate", "validate
 # What a client may set directly; ``proposed`` only comes from the model.
 SettableStepStatus = Literal["open", "in_progress", "to_validate", "validated", "cancelled"]
 Author = Literal["user", "model"]
+AutomationMode = Literal["manual", "assisted", "auto"]
+AutoState = Literal["idle", "running", "paused"]
+
+
+class Assessment(BaseModel):
+    """A model's self-assessment of a result. Not a calibrated probability."""
+
+    # 0-100: how well the result seems to answer what it was asked.
+    score: int = Field(ge=0, le=100)
+    summary: str = ""
+    # Requirements of the ask / instruction the result addresses.
+    covered: list[str] = Field(default_factory=list)
+    # Where the support comes from (a source, a quoted line, a step), if known.
+    evidence: list[str] = Field(default_factory=list)
+    assumptions: list[str] = Field(default_factory=list)
+    # Requirements not (fully) covered, missing facts, open questions.
+    gaps: list[str] = Field(default_factory=list)
+    # Plan level only: places where two steps disagree.
+    contradictions: list[str] = Field(default_factory=list)
 
 
 class StepRead(BaseModel):
@@ -35,6 +54,11 @@ class StepRead(BaseModel):
     # The step's discussion, once started (see ``POST /api/steps/{id}/chat``).
     chat_id: int | None = None
     chat_slug: str | None = None
+    # The ask or this instruction changed after validation: re-approve to count it.
+    needs_review: bool = False
+    assessment: Assessment | None = None
+    # The artifact (or the ask / instruction) changed since it was assessed.
+    assessment_stale: bool = False
     created_at: UtcDateTime
     updated_at: UtcDateTime
 
@@ -58,6 +82,12 @@ class StepPlanRead(ConversationLLMFields):
     ready_to_consolidate: bool = False
     consolidation_chat_id: int | None = None
     consolidation_chat_slug: str | None = None
+    automation_mode: AutomationMode = "manual"
+    # ``running`` only while the run is alive in this process.
+    auto_state: AutoState = "idle"
+    # Coverage of the original ask by the whole result (not an average of steps).
+    assessment: Assessment | None = None
+    assessment_stale: bool = False
     steps: list[StepRead] = Field(default_factory=list)
     created_at: UtcDateTime
     updated_at: UtcDateTime
@@ -92,6 +122,7 @@ class StepPlanCreate(ConversationLLMFields):
     role: str | None = None
     # Have the model propose the first steps right away.
     propose: bool = True
+    automation_mode: AutomationMode = "manual"
 
 
 class StepPlanUpdate(ConversationLLMFields):
@@ -99,6 +130,7 @@ class StepPlanUpdate(ConversationLLMFields):
     source_text: str | None = Field(default=None, max_length=200_000)
     role: str | None = None
     output_instructions: str | None = Field(default=None, max_length=20_000)
+    automation_mode: AutomationMode | None = None
 
 
 class StepCreate(BaseModel):

@@ -12,6 +12,7 @@ artifact version, always landing in ``to_validate`` — the model never validate
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -22,24 +23,29 @@ from precursor.backend.db import SessionLocal
 from precursor.backend.models import Chat, Message, MessageRole, Step, StepPlan
 from precursor.backend.models.step_plan import (
     AUTHOR_MODEL,
+    AUTOMATION_MANUAL,
     PLAN_ACTIVE,
     PLAN_CONSOLIDATING,
     PLAN_DONE,
     PLAN_DRAFTING,
     STEP_TO_VALIDATE,
-    STEP_VALIDATED,
 )
 from precursor.backend.schemas.conversation_llm import ConversationLLMSelection
 from precursor.backend.schemas.message import MessageRead
-from precursor.backend.schemas.step_plan import StepCreate
+from precursor.backend.schemas.step_plan import Assessment, StepCreate
 from precursor.backend.services import step_plans as svc
 from precursor.backend.services.compaction import render_transcript
 from precursor.backend.services.conversation_turn import load_model_history
-from precursor.backend.services.events import publish_message_changed
+from precursor.backend.services.events import (
+    publish_message_changed,
+    publish_message_changed_chat,
+)
 from precursor.backend.services.llm.one_shot import complete_once
 from precursor.backend.services.turn import run_chat_turn
 
 from sqlalchemy import select  # isort: skip
+
+log = logging.getLogger(__name__)
 
 USAGE_SOURCE = "/step-by-step"
 _DISCUSSION_CAP = 40_000
@@ -109,6 +115,46 @@ instruction.
 
 Be specific and brief; quote step titles. Say so plainly when the plan looks \
 sound. Write in the language of the original ask."""
+
+_SELF_ASSESSMENT = """\
+Be a strict, honest reviewer of the work, not its cheerleader. Your score is a \
+self-assessment, not a measured probability: 90+ only when every requirement is \
+clearly covered and supported; below 50 when something essential is missing or \
+unsupported. Never reward length or confident tone. Facts that appear in neither \
+the ask nor the material are assumptions, not evidence."""
+
+_ASSESS_STEP_SYSTEM = f"""\
+You assess how well ONE step's artifact answers what that step asked for, in the \
+context of the original ask. {_SELF_ASSESSMENT}
+
+Reply with JSON only, no prose and no code fence:
+{{"score": 0-100, "summary": "one or two sentences", "covered": ["requirement \
+addressed", "..."], "evidence": ["where the support comes from: a quoted line, a \
+source, a figure from the ask; leave empty if there is none"], "assumptions": \
+["unverified statement the artifact relies on"], "gaps": ["requirement not \
+covered, missing fact or open question"]}}
+
+Each list holds short items (under 160 characters), at most 8. "covered" and \
+"gaps" must refer to the requirements of the step's instruction and of the ask \
+it serves. {_LANGUAGE}"""
+
+_ASSESS_PLAN_SYSTEM = f"""\
+You assess the WHOLE result of a step-by-step plan against the original ask: \
+does the set of artifacts answer every request, and does it hold together? \
+{_SELF_ASSESSMENT}
+
+Do NOT average the steps' scores. Go through the original ask request by \
+request, then look across the steps for omissions and contradictions.
+
+Reply with JSON only, no prose and no code fence:
+{{"score": 0-100, "summary": "one or two sentences", "covered": ["request of the \
+ask that is answered", "..."], "evidence": ["which step(s) support it"], \
+"assumptions": ["unverified statement the result relies on"], "gaps": ["request \
+of the ask that no artifact answers, or answers only in part"], "contradictions": \
+["two steps that disagree: name both and the point"]}}
+
+Each list holds short items (under 200 characters), at most 10. Steps without an \
+artifact count as gaps. {_LANGUAGE}"""
 
 _FINAL_DRAFT_PROMPT = f"""\
 Consolidate the plan into ONE final deliverable now.
@@ -366,6 +412,7 @@ async def generate_artifact(
     saved = await svc.write_artifact(
         session, step_id, deliverable, author=AUTHOR_MODEL, mark=STEP_TO_VALIDATE
     )
+    await _assess_after_draft(session, saved)
     return ArtifactDraft(saved, "published")
 
 
@@ -383,9 +430,11 @@ async def use_message_as_artifact(session: AsyncSession, step_id: int, message_i
     chat_id = await _chat_id(session, step_id=step_id)
     content = await _chat_message(session, chat_id, message_id)
     text = svc.extract_deliverable(content) or content.strip()
-    return await svc.write_artifact(
+    saved = await svc.write_artifact(
         session, step_id, text, author=AUTHOR_MODEL, mark=STEP_TO_VALIDATE
     )
+    await _assess_after_draft(session, saved)
+    return saved
 
 
 async def review_plan(session: AsyncSession, plan_id: int) -> str:
@@ -396,6 +445,150 @@ async def review_plan(session: AsyncSession, plan_id: int) -> str:
     if artifacts:
         user += f"\n\nSteps' artifacts:\n<<<ARTIFACTS\n{artifacts}\nARTIFACTS>>>"
     return await _complete(session, plan, system=_REVIEW_SYSTEM, user=user)
+
+
+# --- assessments --------------------------------------------------------------
+
+_ITEM_CAP = 300
+_LIST_CAP = 10
+
+
+def _items(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    out = [str(v).strip()[:_ITEM_CAP] for v in value if str(v).strip()]
+    return out[:_LIST_CAP]
+
+
+def parse_assessment(text: str) -> Assessment:
+    data = extract_json(text)
+    if not isinstance(data, dict):
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY, "The model didn't return a usable assessment. Try again."
+        )
+    try:
+        score = round(float(data.get("score") or 0))
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY, "The model didn't return a score. Try again."
+        ) from None
+    return Assessment(
+        score=max(0, min(100, score)),
+        summary=str(data.get("summary") or "").strip()[:600],
+        covered=_items(data.get("covered")),
+        evidence=_items(data.get("evidence")),
+        assumptions=_items(data.get("assumptions")),
+        gaps=_items(data.get("gaps")),
+        contradictions=_items(data.get("contradictions")),
+    )
+
+
+def _assessment_note(subject: str, a: Assessment, *, version: int | None = None) -> str:
+    where = f" of version {version}" if version else ""
+    lines = [
+        f"Model self-assessment{where} — {subject}: **{a.score}/100** "
+        "(an estimate by the model, not a measured probability)."
+    ]
+    if a.summary:
+        lines.append(a.summary)
+    if a.gaps:
+        lines.append("Gaps: " + "; ".join(a.gaps))
+    if a.contradictions:
+        lines.append("Contradictions: " + "; ".join(a.contradictions))
+    return "\n\n".join(lines)
+
+
+async def trace_in_chat(session: AsyncSession, chat_id: int | None, text: str) -> None:
+    """Leave a UI-only note in a plan chat so an automated action stays traceable."""
+    if chat_id is None:
+        return
+    session.add(
+        Message(
+            chat_id=chat_id,
+            role=MessageRole.SYSTEM,
+            kind=svc.STEP_PLAN_TRACE_KIND,
+            content=text,
+        )
+    )
+    await session.commit()
+    await publish_message_changed_chat(chat_id)
+
+
+async def assess_step(session: AsyncSession, step_id: int) -> Step:
+    """Have the model assess one step's artifact; the score is tied to that content."""
+    step = await svc.get_step(session, step_id)
+    plan = await svc.get_plan(session, step.plan_id)
+    steps = await svc.plan_steps(session, plan.id)
+    if not step.artifact.strip():
+        raise HTTPException(status.HTTP_409_CONFLICT, "There's no artifact to assess yet.")
+    if any(s.parent_step_id == step.id and s.status != "proposed" for s in steps):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "This step is split into sub-steps; assess those instead."
+        )
+    user = (
+        f"{svc.plan_header(plan)}\n\nPlan outline:\n{svc.render_outline(steps, mark=step.id)}"
+        f"\n\nStep: {step.title}\nWhat it must produce:\n{step.instruction or '(no instruction)'}"
+        f"\n\nIts artifact:\n<<<ARTIFACT\n{step.artifact}\nARTIFACT>>>"
+    )
+    sig = svc.step_signature(plan, step)
+    assessment = parse_assessment(
+        await _complete(session, plan, system=_ASSESS_STEP_SYSTEM, user=user)
+    )
+    step = await svc.get_step(session, step_id)
+    step.assessment_json = assessment.model_dump_json()
+    step.assessed_sig = sig
+    await session.commit()
+    await trace_in_chat(
+        session,
+        await _chat_id(session, step_id=step.id),
+        _assessment_note(step.title, assessment, version=step.artifact_version),
+    )
+    return step
+
+
+async def assess_plan(session: AsyncSession, plan_id: int) -> StepPlan:
+    """Have the model assess the whole result against the original ask."""
+    plan = await svc.get_plan(session, plan_id)
+    steps = await svc.plan_steps(session, plan.id)
+    leaves = svc.working_leaves(steps)
+    if not any(s.artifact.strip() for s in leaves):
+        raise HTTPException(status.HTTP_409_CONFLICT, "No step has a result to assess yet.")
+    blocks = []
+    for s in leaves:
+        state = "validated" if svc.is_approved(s) else f"NOT validated ({s.status})"
+        body = s.artifact.strip() or "(no artifact yet)"
+        blocks.append(f"### {s.title} [{state}]\nAsked: {s.instruction or '-'}\n\n{body}")
+    user = f"{svc.plan_header(plan)}\n\nSteps and their artifacts:\n" + "\n\n".join(blocks)
+    sig = svc.plan_signature(plan, steps)
+    assessment = parse_assessment(
+        await _complete(session, plan, system=_ASSESS_PLAN_SYSTEM, user=user)
+    )
+    plan = await svc.get_plan(session, plan_id)
+    plan.assessment_json = assessment.model_dump_json()
+    plan.assessed_sig = sig
+    await session.commit()
+    await trace_in_chat(
+        session,
+        await _chat_id(session, plan_id=plan.id),
+        _assessment_note("whole plan", assessment),
+    )
+    return plan
+
+
+async def _assess_after_draft(session: AsyncSession, step: Step) -> None:
+    """In assisted and automated plans a model draft is scored right away.
+
+    A failed assessment never loses the draft: it just stays unassessed.
+    """
+    plan = await svc.get_plan(session, step.plan_id)
+    if plan.automation_mode == AUTOMATION_MANUAL:
+        return
+    try:
+        await assess_step(session, step.id)
+    except HTTPException as exc:
+        log.warning("Step assessment failed for step %s: %s", step.id, exc.detail)
+    except Exception:
+        log.exception("Step assessment failed for step %s", step.id)
 
 
 # --- consolidation ------------------------------------------------------------
@@ -419,14 +612,14 @@ async def generate_final(
         raise HTTPException(status.HTTP_409_CONFLICT, "Start the plan first.")
     steps = await svc.plan_steps(session, plan.id)
     leaves = svc.working_leaves(steps)
-    pending = [s for s in leaves if s.status != STEP_VALIDATED]
+    pending = [s for s in leaves if not svc.is_approved(s)]
     if pending and not force:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             f"{len(pending)} step(s) aren't validated yet. Validate or cancel them, "
             "or consolidate anyway (the result stays provisional).",
         )
-    if not any(s.artifact.strip() for s in leaves if force or s.status == STEP_VALIDATED):
+    if not any(s.artifact.strip() for s in leaves if force or svc.is_approved(s)):
         raise HTTPException(status.HTTP_409_CONFLICT, "No step has a result to consolidate yet.")
     rules = _FINAL_DRAFT_PROMPT
     if pending:
@@ -448,7 +641,20 @@ async def generate_final(
     deliverable = svc.extract_deliverable(result.reply or "")
     if deliverable is None:
         return FinalDraft(await svc.get_plan(session, plan_id), "discussion")
-    return FinalDraft(await save_final(session, plan_id, deliverable), "published")
+    saved = await save_final(session, plan_id, deliverable)
+    await _assess_plan_quietly(session, saved)
+    return FinalDraft(saved, "published")
+
+
+async def _assess_plan_quietly(session: AsyncSession, plan: StepPlan) -> None:
+    if plan.automation_mode == AUTOMATION_MANUAL:
+        return
+    try:
+        await assess_plan(session, plan.id)
+    except HTTPException as exc:
+        log.warning("Plan assessment failed for plan %s: %s", plan.id, exc.detail)
+    except Exception:
+        log.exception("Plan assessment failed for plan %s", plan.id)
 
 
 async def use_message_as_final(session: AsyncSession, plan_id: int, message_id: int) -> StepPlan:
@@ -520,6 +726,8 @@ __all__ = [
     "PLAN_CONSOLIDATING",
     "ArtifactDraft",
     "FinalDraft",
+    "assess_plan",
+    "assess_step",
     "extract_json",
     "generate_artifact",
     "generate_final",
@@ -528,6 +736,7 @@ __all__ = [
     "save_final",
     "send_to_topic",
     "suggest_steps",
+    "trace_in_chat",
     "use_message_as_artifact",
     "use_message_as_final",
 ]

@@ -746,3 +746,276 @@ def test_spawning_a_plan_leaves_a_trace_in_its_topic(monkeypatch: pytest.MonkeyP
         assert trace[0]["role"] == "system"
         assert f"(/steps/{plan['id']})" in trace[0]["content"]
         assert client.get(f"/api/step-plans?topic_id={topic['id']}").json()[0]["id"] == plan["id"]
+
+
+# --- automation and assessments -------------------------------------------------
+
+STEP_ASSESSMENT = json.dumps(
+    {
+        "score": 140,
+        "summary": "Mostly covered.",
+        "covered": ["quote"],
+        "evidence": ["ask line 1"],
+        "assumptions": ["10k is right"],
+        "gaps": ["no date"],
+    }
+)
+PLAN_ASSESSMENT = json.dumps(
+    {
+        "score": 61.4,
+        "summary": "Two of three asks answered.",
+        "covered": ["quote", "risks"],
+        "evidence": ["Quote step"],
+        "assumptions": [],
+        "gaps": ["date"],
+        "contradictions": ["Quote says 10k, Risks says 12k"],
+    }
+)
+ASSESS_REPLIES = {"ONE step's artifact": STEP_ASSESSMENT, "WHOLE result": PLAN_ASSESSMENT}
+
+
+def _mode(client: TestClient, plan_id: int, mode: str) -> dict[str, Any]:
+    res = client.patch(f"/api/step-plans/{plan_id}", json={"automation_mode": mode})
+    assert res.status_code == 200, res.text
+    data: dict[str, Any] = res.json()
+    return data
+
+
+def _await_run(client: TestClient, plan_id: int) -> dict[str, Any]:
+    import time
+
+    for _ in range(200):
+        plan = _get(client, plan_id)
+        if plan["auto_state"] != "running":
+            return plan
+        time.sleep(0.05)
+    raise AssertionError("the automated run never ended")
+
+
+def test_an_assessment_is_clamped_explained_and_goes_stale(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_llm(monkeypatch, ASSESS_REPLIES)
+    with TestClient(create_app()) as client:
+        plan = _started(client)
+        sid = _by_title(plan)["Quote"]["id"]
+        assert client.post(f"/api/steps/{sid}/assess").status_code == 409  # nothing to assess
+        client.put(f"/api/steps/{sid}/artifact", json={"content": "Quote: 10k"})
+        step = client.post(f"/api/steps/{sid}/assess").json()
+        a = step["assessment"]
+        assert a["score"] == 100 and a["gaps"] == ["no date"] and a["evidence"] == ["ask line 1"]
+        assert step["assessment_stale"] is False
+        # Editing the artifact, the instruction or the ask invalidates the score.
+        client.put(f"/api/steps/{sid}/artifact", json={"content": "Quote: 12k"})
+        assert _by_title(_get(client, plan["id"]))["Quote"]["assessment_stale"] is True
+        client.post(f"/api/steps/{sid}/assess")
+        client.patch(f"/api/steps/{sid}", json={"instruction": "Quote it in euros"})
+        assert _by_title(_get(client, plan["id"]))["Quote"]["assessment_stale"] is True
+        client.post(f"/api/steps/{sid}/assess")
+        client.patch(f"/api/step-plans/{plan['id']}", json={"source_text": ASK + " Also: euros."})
+        assert _by_title(_get(client, plan["id"]))["Quote"]["assessment_stale"] is True
+
+
+def test_the_global_assessment_covers_the_ask_and_goes_stale(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _fake_llm(monkeypatch, ASSESS_REPLIES)
+    with TestClient(create_app()) as client:
+        plan = _started(client)
+        steps = _by_title(plan)
+        url = f"/api/step-plans/{plan['id']}/assess"
+        assert client.post(url).status_code == 409
+        client.put(f"/api/steps/{steps['Quote']['id']}/artifact", json={"content": "Quote: 10k"})
+        out = client.post(url).json()
+        assert out["assessment"]["score"] == 61
+        assert out["assessment"]["contradictions"] == ["Quote says 10k, Risks says 12k"]
+        assert out["assessment_stale"] is False
+        system = next(c["system"] for c in calls if "WHOLE result" in c["system"])
+        assert "Do NOT average" in system and "not a measured probability" in system
+        client.put(f"/api/steps/{steps['Quote']['id']}/artifact", json={"content": "Quote: 11k"})
+        assert _get(client, plan["id"])["assessment_stale"] is True
+
+
+def test_a_garbled_assessment_is_a_502(monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_llm(monkeypatch, {"ONE step's artifact": "no idea"})
+    with TestClient(create_app()) as client:
+        sid = _by_title(_started(client))["Quote"]["id"]
+        client.put(f"/api/steps/{sid}/artifact", json={"content": "x"})
+        assert client.post(f"/api/steps/{sid}/assess").status_code == 502
+
+
+def test_assisted_drafts_are_scored_and_manual_ones_are_not(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_llm(monkeypatch, ASSESS_REPLIES)
+    with TestClient(create_app()) as client:
+        plan = _started(client)
+        steps = _by_title(plan)
+        manual = client.post(f"/api/steps/{steps['Quote']['id']}/artifact/generate", json={})
+        assert manual.json()["step"]["assessment"] is None
+        _mode(client, plan["id"], "assisted")
+        res = client.post(f"/api/steps/{steps['Date']['id']}/artifact/generate", json={})
+        step = res.json()["step"]
+        assert step["assessment"]["score"] == 100
+        # The model drafts and scores; it never validates.
+        assert step["status"] == "to_validate"
+
+
+def test_a_failed_quiet_assessment_keeps_the_draft(monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_llm(monkeypatch, {"ONE step's artifact": "garbled"})
+    with TestClient(create_app()) as client:
+        plan = _started(client)
+        _mode(client, plan["id"], "assisted")
+        sid = _by_title(plan)["Quote"]["id"]
+        res = client.post(f"/api/steps/{sid}/artifact/generate", json={})
+        assert res.status_code == 200
+        assert res.json()["step"]["artifact"] == "Drafted artifact"
+        assert res.json()["step"]["assessment"] is None
+
+
+def test_changing_validated_work_flags_the_approval_for_review(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_llm(monkeypatch)
+    with TestClient(create_app()) as client:
+        plan = _started(client)
+        steps = _by_title(plan)
+        for title in ("Quote", "Data", "Date"):
+            _validate(client, steps[title]["id"], f"{title} ok")
+        pid = plan["id"]
+        gen = f"/api/step-plans/{pid}/consolidate/generate"
+        assert client.post(gen, json={}).json()["plan"]["final_provisional"] is False
+
+        sid = steps["Quote"]["id"]
+        client.patch(f"/api/steps/{sid}", json={"instruction": "Quote in euros"})
+        after = _get(client, pid)
+        quote = _by_title(after)["Quote"]
+        # Still validated, but not approved any more: it needs another look.
+        assert quote["status"] == "validated" and quote["needs_review"] is True
+        assert after["final_stale"] is True and after["status"] == "active"
+        assert client.post(gen, json={}).status_code == 409
+        # Re-approving clears it.
+        client.post(f"/api/steps/{sid}/status", json={"status": "validated"})
+        assert _by_title(_get(client, pid))["Quote"]["needs_review"] is False
+        assert client.post(gen, json={}).status_code == 200
+
+        # A changed ask flags every approval.
+        client.patch(f"/api/step-plans/{pid}", json={"source_text": ASK + " And budget."})
+        flagged = _by_title(_get(client, pid))
+        assert all(flagged[t]["needs_review"] for t in ("Quote", "Data", "Date"))
+
+
+def test_the_run_drafts_empty_steps_scores_them_and_validates_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_llm(monkeypatch, ASSESS_REPLIES)
+    with TestClient(create_app()) as client:
+        topic = client.post("/api/topics", json={"title": "Mail"}).json()
+        plan = _plan(client, topic_id=topic["id"], automation_mode="auto")
+        plan = client.post(f"/api/step-plans/{plan['id']}/start", json={}).json()
+        pid, steps = plan["id"], _by_title(plan)
+        # The user already approved one step and wrote another: the run leaves both alone.
+        _validate(client, steps["Quote"]["id"], "Quote: approved")
+        client.put(f"/api/steps/{steps['Data']['id']}/artifact", json={"content": "My own data"})
+
+        assert client.post(f"/api/step-plans/{pid}/auto/start").status_code == 200
+        done = _await_run(client, pid)
+        by = _by_title(done)
+        assert done["auto_state"] == "idle"
+        assert by["Quote"]["artifact"] == "Quote: approved" and by["Quote"]["status"] == "validated"
+        assert by["Data"]["artifact"] == "My own data"
+        assert (
+            by["Date"]["artifact"] == "Drafted artifact" and by["Date"]["status"] == "to_validate"
+        )
+        assert by["Date"]["assessment"]["score"] == 100
+        # The synthesis is provisional and the plan is not complete.
+        assert done["final_output"] == "FINAL ANSWER" and done["final_provisional"] is True
+        assert done["assessment"]["score"] == 61
+        assert done["status"] != "done"
+        chat = client.post(f"/api/step-plans/{pid}/consolidation/chat").json()
+        notes = [
+            m["content"]
+            for m in client.get(f"/api/chats/{chat['id']}/messages").json()
+            if m["kind"] == "step_plan"
+        ]
+        assert any("Automated run started" in n for n in notes)
+        assert any("Automated run finished" in n for n in notes)
+        assert any("self-assessment" in n for n in notes)
+
+
+def test_the_run_never_replaces_an_existing_final_and_needs_auto_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_llm(monkeypatch, ASSESS_REPLIES)
+    with TestClient(create_app()) as client:
+        plan = _started(client)
+        pid = plan["id"]
+        assert client.post(f"/api/step-plans/{pid}/auto/start").status_code == 409
+        _mode(client, pid, "auto")
+        client.put(f"/api/step-plans/{pid}/final", json={"content": "My final"})
+        client.post(f"/api/step-plans/{pid}/auto/start")
+        done = _await_run(client, pid)
+        assert done["final_output"] == "My final"
+
+
+def test_pausing_stops_after_the_step_in_flight_and_resume_continues(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_llm(monkeypatch, ASSESS_REPLIES)
+    from precursor.backend.services import step_plan_llm
+
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.services import step_plan_runner
+
+    real = step_plan_llm.run_chat_turn
+    paused: list[bool] = []
+    plan_ids: list[int] = []
+
+    async def _pausing(chat_id: int, prompt: str, *, llm_prompt: str | None = None) -> Any:
+        result = await real(chat_id, prompt, llm_prompt=llm_prompt)
+        if not paused and "Draft the artifact" in prompt:
+            paused.append(True)
+            async with SessionLocal() as session:
+                await step_plan_runner.pause(session, plan_ids[0])
+        return result
+
+    monkeypatch.setattr(step_plan_llm, "run_chat_turn", _pausing)
+    with TestClient(create_app()) as client:
+        plan = _started(client)
+        pid = plan["id"]
+        plan_ids.append(pid)
+        _mode(client, pid, "auto")
+        client.post(f"/api/step-plans/{pid}/auto/start")
+        mid = _await_run(client, pid)
+        assert mid["auto_state"] == "paused"
+        drafted = [s for s in mid["steps"] if s["artifact"]]
+        assert len(drafted) == 1
+        assert mid["final_output"] in (None, "")
+
+        client.post(f"/api/step-plans/{pid}/auto/start")
+        end = _await_run(client, pid)
+        assert end["auto_state"] == "idle"
+        leaves = [s for s in end["steps"] if s["title"] in ("Quote", "Data", "Date")]
+        assert all(s["artifact"] == "Drafted artifact" for s in leaves)
+        assert end["final_provisional"] is True
+
+
+def test_a_run_that_died_with_the_process_reads_as_paused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_llm(monkeypatch)
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models.step_plan import StepPlan
+
+    with TestClient(create_app()) as client:
+        pid = _started(client)["id"]
+
+        async def _stale() -> None:
+            async with SessionLocal() as session:
+                plan = await session.get(StepPlan, pid)
+                assert plan is not None
+                plan.auto_state = "running"
+                await session.commit()
+
+        _run(_stale)
+        assert _get(client, pid)["auto_state"] == "paused"
