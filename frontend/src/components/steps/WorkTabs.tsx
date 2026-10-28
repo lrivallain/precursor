@@ -1,9 +1,16 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Columns2 } from "lucide-react";
+import { ArrowLeft, Columns2, Loader2 } from "lucide-react";
 import { useResizableWidth } from "../../lib/useResizableWidth";
 import { ResizeHandle } from "../ResizeHandle";
 
 type Tab = "work" | "discussion";
+
+/** Moves the model's latest discussion reply into the work pane. Resolves true once it landed. */
+export type Transfer = {
+  label: string;
+  tooltip: string;
+  onClick: () => Promise<boolean | void>;
+};
 
 const SPLIT_KEY = "precursor.steps.split";
 
@@ -27,13 +34,16 @@ export function WorkTabs({
   work,
   discussion,
   ariaLabel,
+  transfer,
 }: {
   workLabel: string;
   workIcon: ReactNode;
   work: ReactNode;
   discussion: ReactNode;
   ariaLabel: string;
+  transfer?: Transfer;
 }) {
+  const [transferring, setTransferring] = useState(false);
   const [tab, setTab] = useState<Tab>("work");
   const [split, setSplit] = useState(readSplit);
   const [seen, setSeen] = useState(false);
@@ -57,6 +67,17 @@ export function WorkTabs({
   useEffect(() => {
     if (showDiscussion) setSeen(true);
   }, [showDiscussion]);
+
+  async function runTransfer(): Promise<void> {
+    if (!transfer || transferring) return;
+    setTransferring(true);
+    try {
+      const landed = await transfer.onClick();
+      if (landed && !split) setTab("work");
+    } finally {
+      setTransferring(false);
+    }
+  }
 
   const tabs: [Tab, string, ReactNode][] = [
     ["work", workLabel, workIcon],
@@ -105,6 +126,18 @@ export function WorkTabs({
         {split && (
           <div className="relative hidden w-px shrink-0 bg-border lg:block">
             <ResizeHandle onMouseDown={onMouseDown} side="right" />
+            {transfer && (
+              <button
+                type="button"
+                onClick={() => void runTransfer()}
+                disabled={transferring}
+                aria-label={transfer.label}
+                data-tooltip={transfer.tooltip}
+                className="absolute left-1/2 top-24 z-10 flex h-12 w-12 -translate-x-1/2 items-center justify-center rounded-full bg-accent text-white shadow-lg ring-4 ring-bg transition hover:scale-105 disabled:opacity-60"
+              >
+                {transferring ? <Loader2 size={22} className="animate-spin" /> : <ArrowLeft size={24} strokeWidth={2.5} />}
+              </button>
+            )}
           </div>
         )}
         {seen && (
@@ -114,7 +147,21 @@ export function WorkTabs({
             } ${showDiscussion ? "" : "hidden"} ${split ? "" : "flex-1"}`}
             style={split ? ({ "--discussion-w": `${width}px` } as React.CSSProperties) : undefined}
           >
-            {discussion}
+            <div className="flex h-full min-h-0 flex-col">
+              {transfer && (
+                <button
+                  type="button"
+                  onClick={() => void runTransfer()}
+                  disabled={transferring}
+                  data-tooltip={transfer.tooltip}
+                  className="mb-2 inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-lg bg-accent/10 px-3 py-2 text-sm font-medium text-accent hover:bg-accent/20 disabled:opacity-60"
+                >
+                  {transferring ? <Loader2 size={16} className="animate-spin" /> : <ArrowLeft size={16} strokeWidth={2.5} />}
+                  {transfer.label}
+                </button>
+              )}
+              <div className="min-h-0 flex-1">{discussion}</div>
+            </div>
           </div>
         )}
       </div>

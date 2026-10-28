@@ -85,8 +85,10 @@ A reply is a conversation, so it can hold questions or alternatives. When you as
 discussion to write or change the artifact, the model marks the deliverable with
 `<!-- artifact -->…<!-- /artifact -->` (always the whole artifact), and the app saves it at
 once as a new version in *To validate*, scored in the background. The discussion notes what
-happened. A reply without the markers changes nothing, and **Use latest reply** promotes one
-by hand.
+happened. A reply without the markers changes nothing: **Send the latest reply to the artifact**
+promotes one by hand. It is the big arrow on the divider between the two panes when they
+sit side by side, and a bar at the top of the discussion otherwise (the consolidation has
+the same, towards the final output).
 
 Nothing is overwritten silently: your unsaved edits stay in the editor (a banner offers the
 newer version), and a **validated** step is never changed by the discussion — reopen it first.

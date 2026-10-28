@@ -33,7 +33,9 @@ are the per-version history; releasing does not rewrite this file.
   consolidation's discussion to write or change the artifact now saves it as a new
   unvalidated version, traced in the chat (a validated step is left alone).
   Assessments are collapsed to their score, and the plan header moves into the
-  app's top bar.
+  app's top bar. *Use latest reply* became a
+  prominent *Send the latest reply to the artifact* arrow from the discussion to
+  the artifact.
 
 - **Step by step.** A new section splits a long ask (a customer email, a brief)
   into a tree of steps. Each step has its own Markdown artifact with version

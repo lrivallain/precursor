@@ -43,6 +43,24 @@ export function StepDetail({
   const suggested = node.children.filter((c) => c.step.status === "proposed").length;
   const [draftNote, setDraftNote] = useState<string | null>(null);
 
+  // The model's latest reply in this step's discussion becomes a new artifact
+  // version; unsaved edits in the editor are kept behind its "newer version" banner.
+  async function sendLatestReply(): Promise<boolean> {
+    if (step.chat_id == null) return false;
+    setDraftNote(null);
+    const messages = await api.chats.listMessages(step.chat_id);
+    const reply = [...messages]
+      .reverse()
+      .find((m) => m.role === "assistant" && m.kind !== "step_plan" && m.content.trim());
+    if (!reply) {
+      setDraftNote("The discussion has no model reply to send yet.");
+      return false;
+    }
+    const updated = await mutate(() => api.stepPlans.artifactFromMessage(step.id, reply.id));
+    if (updated) setDraftNote(`Sent the latest reply to the artifact as version ${updated.artifact_version}. Review it, then validate.`);
+    return !!updated;
+  }
+
   async function setStatus(action: StatusAction): Promise<void> {
     if (action.status === "cancelled") {
       const ok = await confirm({
@@ -180,6 +198,16 @@ export function StepDetail({
           ariaLabel="Step work"
           workLabel="Artifact"
           workIcon={<FileText size={14} />}
+          transfer={
+            step.chat_id != null
+              ? {
+                  label: "Send the latest reply to the artifact",
+                  tooltip:
+                    "Save the model's latest reply in this discussion as a new artifact version. Your unsaved edits are kept.",
+                  onClick: sendLatestReply,
+                }
+              : undefined
+          }
           work={<StepArtifactEditor step={step} mutate={mutate} />}
           discussion={
             <PlanChat

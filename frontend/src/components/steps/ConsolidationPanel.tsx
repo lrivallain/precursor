@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { CheckCircle2, FileText, Loader2, MessageSquareQuote, Save, Send } from "lucide-react";
+import { CheckCircle2, FileText, Loader2, Save, Send } from "lucide-react";
 import { api } from "../../lib/api";
 import { openTopic } from "../../lib/sideChats";
 import { hasUnsavedEdits } from "../../lib/stepPlans";
@@ -134,8 +134,8 @@ export function ConsolidationPanel({
   }
 
   // Take the latest consolidation-discussion reply as the final output.
-  async function useLatestReply(): Promise<void> {
-    if (plan.consolidation_chat_id == null || adopting) return;
+  async function useLatestReply(): Promise<boolean> {
+    if (plan.consolidation_chat_id == null || adopting) return false;
     if (dirty) {
       const ok = await confirm({
         title: "Discard unsaved edits?",
@@ -143,7 +143,7 @@ export function ConsolidationPanel({
         confirmLabel: "Replace",
         variant: "warning",
       });
-      if (!ok) return;
+      if (!ok) return false;
     }
     setAdopting(true);
     setNotice(null);
@@ -153,11 +153,12 @@ export function ConsolidationPanel({
         .reverse()
         .find((m) => m.role === "assistant" && m.kind !== "step_plan" && m.content.trim());
       if (!reply) {
-        setNotice("The discussion has no model reply to use yet.");
-        return;
+        setNotice("The discussion has no model reply to send yet.");
+        return false;
       }
       const updated = await mutate(() => api.stepPlans.finalFromMessage(plan.id, reply.id));
       if (updated) setView("preview");
+      return !!updated;
     } finally {
       setAdopting(false);
     }
@@ -254,25 +255,22 @@ export function ConsolidationPanel({
         busyLabel="Consolidating…"
         placeholder="e.g. start with a two-line summary, then one section per ask"
         onRun={generate}
-      >
-        {plan.consolidation_chat_id != null && (
-          <button
-            type="button"
-            className={BTN_SECONDARY}
-            disabled={adopting}
-            onClick={() => void useLatestReply()}
-            data-tooltip="Save the model's latest reply in the consolidation discussion as the final output"
-          >
-            {adopting ? <Loader2 size={14} className="animate-spin" /> : <MessageSquareQuote size={14} />}
-            Use latest discussion reply
-          </button>
-        )}
-      </GuidedAction>
+      />
 
       <WorkTabs
         ariaLabel="Consolidation"
         workLabel="Final output"
         workIcon={<FileText size={14} />}
+        transfer={
+          plan.consolidation_chat_id != null
+            ? {
+                label: "Send the latest reply to the final output",
+                tooltip:
+                  "Save the model's latest reply in the consolidation discussion as the final output (provisional until every step is validated).",
+                onClick: useLatestReply,
+              }
+            : undefined
+        }
         discussion={<PlanChat open={() => api.stepPlans.consolidationChat(plan.id)} onOpened={() => void reload()} />}
         work={
         <div className="space-y-3">
