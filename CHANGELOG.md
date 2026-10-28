@@ -21,7 +21,10 @@ are the per-version history; releasing does not rewrite this file.
   chat; the model can propose, add or split steps. Once the steps are validated,
   one consolidated answer is built and can be sent back to the source topic.
   Start one with `/steps` in a topic or from the section. See
-  [Step by step](website/features/step-by-step.md).
+  [Step by step](website/features/step-by-step.md). A step's chat and drafting
+  also see the source topic's conversation, the requested output and the other
+  steps' work; the discussion gets more room and "Split" is a compact button
+  beside the status actions.
 
 - **Live insights are easier to scan.** Insight categories now have clearer
   visual grouping, and proactive suggestions lead with a short recommendation

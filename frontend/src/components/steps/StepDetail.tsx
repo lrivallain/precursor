@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { MessageSquare, FileText, Scissors } from "lucide-react";
+import { MessageSquare, FileText, Loader2, Scissors } from "lucide-react";
 import { api } from "../../lib/api";
 import {
   addChildBlocker,
@@ -13,7 +13,7 @@ import { useConfirm } from "../ConfirmDialog";
 import { PlanChat } from "./PlanChat";
 import { StepArtifactEditor } from "./StepArtifactEditor";
 import { StepEditor } from "./StepEditor";
-import { BTN_PRIMARY, BTN_SECONDARY, GuidedAction, StepStatusPill } from "./StepUi";
+import { BTN_PRIMARY, BTN_SECONDARY, INPUT, StepStatusPill } from "./StepUi";
 
 type Mutate = <T>(action: () => Promise<T>) => Promise<T | undefined>;
 
@@ -78,8 +78,10 @@ export function StepDetail({
   const splitBlocker = addChildBlocker(node);
   const { done, total } = progressOf(node);
 
+  const chatting = !group && tab === "discussion";
+
   return (
-    <div className="space-y-4">
+    <div className={chatting ? "flex h-full flex-col gap-4" : "space-y-4"}>
       <StepHeading title={step.title} status={step.effective_status} />
 
       <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Step status actions">
@@ -95,9 +97,25 @@ export function StepDetail({
             {action.label}
           </button>
         ))}
+        {!group && (
+          <SplitButton
+            blocker={splitBlocker}
+            suggested={suggested}
+            onRun={(guidance) => mutate(() => api.stepPlans.suggestSubsteps(step.id, guidance || undefined))}
+          />
+        )}
       </div>
 
-      <StepEditor step={step} mutate={mutate} />
+      {chatting ? (
+        <details className="rounded-lg border border-border px-3 py-2">
+          <summary className="cursor-pointer text-xs font-medium text-muted">Title and instruction</summary>
+          <div className="pt-2">
+            <StepEditor step={step} mutate={mutate} compact />
+          </div>
+        </details>
+      ) : (
+        <StepEditor step={step} mutate={mutate} />
+      )}
 
       {group ? (
         <section className="space-y-2 rounded-lg border border-border p-3" aria-label="Sub-steps">
@@ -150,7 +168,7 @@ export function StepDetail({
           {tab === "artifact" ? (
             <StepArtifactEditor step={step} mutate={mutate} />
           ) : (
-            <div className="h-[34rem] max-h-[70vh] overflow-hidden rounded-lg border border-border">
+            <div className="min-h-[28rem] flex-1 overflow-hidden rounded-lg border border-border">
               <PlanChat
                 key={step.id}
                 open={() => api.stepPlans.stepChat(step.id)}
@@ -158,26 +176,6 @@ export function StepDetail({
               />
             </div>
           )}
-
-          <section className="space-y-2 rounded-lg border border-dashed border-border p-3" aria-label="Split into sub-steps">
-            <h4 className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted">
-              <Scissors size={13} /> Split into sub-steps
-            </h4>
-            <p className="text-xs text-muted">
-              {splitBlocker ??
-                (suggested > 0
-                  ? `${suggested} suggested sub-step${suggested === 1 ? " is" : "s are"} waiting in the tree: accept the ones you want.`
-                  : "Too big for one artifact? The model suggests smaller steps; accept the ones you want and this step becomes a group.")}
-            </p>
-            <GuidedAction
-              label="Suggest sub-steps"
-              busyLabel="Thinking…"
-              secondary
-              disabled={splitBlocker !== null}
-              disabledReason={splitBlocker ?? undefined}
-              onRun={(guidance) => mutate(() => api.stepPlans.suggestSubsteps(step.id, guidance || undefined))}
-            />
-          </section>
         </>
       )}
     </div>
@@ -189,6 +187,81 @@ function StepHeading({ title, status }: { title: string; status: Parameters<type
     <div className="flex items-center gap-2">
       <h2 className="min-w-0 flex-1 truncate text-base font-semibold">{title}</h2>
       <StepStatusPill status={status} />
+    </div>
+  );
+}
+
+/** "Split" in the action row: a popover with the optional steer, so it takes no room in the page. */
+function SplitButton({
+  blocker,
+  suggested,
+  onRun,
+}: {
+  blocker: string | null;
+  suggested: number;
+  onRun: (guidance: string) => Promise<unknown>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [guidance, setGuidance] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function run(): Promise<void> {
+    setBusy(true);
+    try {
+      await onRun(guidance.trim());
+      setOpen(false);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="relative ml-auto">
+      <button
+        type="button"
+        disabled={blocker !== null}
+        data-tooltip={blocker ?? "Too big for one artifact? Ask the model for smaller steps."}
+        aria-label="Split into sub-steps"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className={BTN_SECONDARY}
+      >
+        <Scissors size={14} /> Split
+        {suggested > 0 && (
+          <span className="rounded-full bg-accent/15 px-1.5 text-xs text-accent">{suggested}</span>
+        )}
+      </button>
+      {open && blocker === null && (
+        <div
+          role="dialog"
+          aria-label="Split into sub-steps"
+          className="absolute right-0 z-20 mt-2 w-80 space-y-2 rounded-lg border border-border bg-bg p-3 shadow-lg"
+        >
+          <p className="text-xs text-muted">
+            {suggested > 0
+              ? `${suggested} suggested sub-step${suggested === 1 ? " is" : "s are"} waiting in the tree: accept the ones you want, or ask again.`
+              : "The model suggests smaller steps; accept the ones you want and this step becomes a group."}
+          </p>
+          <textarea
+            value={guidance}
+            onChange={(e) => setGuidance(e.target.value)}
+            rows={2}
+            disabled={busy}
+            placeholder="How to split it (optional)"
+            aria-label="Guidance for the model"
+            className={INPUT}
+          />
+          <div className="flex justify-end gap-2">
+            <button type="button" className={BTN_SECONDARY} disabled={busy} onClick={() => setOpen(false)}>
+              Close
+            </button>
+            <button type="button" className={BTN_PRIMARY} disabled={busy} onClick={() => void run()}>
+              {busy && <Loader2 size={14} className="animate-spin" />}
+              {busy ? "Thinking…" : "Suggest sub-steps"}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

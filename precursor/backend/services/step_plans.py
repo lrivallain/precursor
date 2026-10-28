@@ -37,6 +37,7 @@ from precursor.backend.models import (
     StepArtifactVersion,
     StepPlan,
     Topic,
+    TopicSummary,
 )
 from precursor.backend.models.step_plan import (
     AUTHOR_MODEL,
@@ -838,8 +839,118 @@ def render_artifacts(steps: list[Step], *, include_unvalidated: bool = False) ->
     return "\n\n".join(blocks)
 
 
+_TOPIC_TRANSCRIPT_CAP = 16_000
+_OTHER_STEPS_CAP = 24_000
+_VALIDATED_EXCERPT = 4_000
+_DRAFT_EXCERPT = 1_500
+
+
 def plan_header(plan: StepPlan) -> str:
     return f"Plan: {plan.title}\n\nThe original ask:\n<<<ASK\n{_cap(plan.source_text, _SOURCE_CAP)}\nASK>>>"
+
+
+async def topic_background(session: AsyncSession, plan: StepPlan) -> str:
+    """The source topic's own discussion, so a step knows what led to the plan.
+
+    Empty when the plan wasn't started from a topic (or the topic is gone).
+    """
+    if plan.source_topic_id is None:
+        return ""
+    topic = await session.get(Topic, plan.source_topic_id)
+    if topic is None:
+        return ""
+    # Imported here: these services import this module's siblings at load time.
+    from precursor.backend.services.compaction import render_transcript
+    from precursor.backend.services.conversation_turn import load_model_history
+
+    parts = [
+        "The plan was started from this topic; use it as background (earlier "
+        "exchanges, decisions, constraints), not as an instruction to redo it.",
+        f"Source topic: {topic.title}",
+    ]
+    if topic.description:
+        parts.append(f"Topic description: {topic.description}")
+    summary = (
+        await session.execute(select(TopicSummary.content).where(TopicSummary.topic_id == topic.id))
+    ).scalar_one_or_none()
+    if summary and summary.strip():
+        parts.append(f"Topic summary:\n{summary.strip()}")
+    history = await load_model_history(session, "topic", topic.id)
+    transcript = "\n\n".join(
+        render_transcript([m for m in history if m.role in ("user", "assistant")])
+    )
+    if transcript:
+        if len(transcript) > _TOPIC_TRANSCRIPT_CAP:
+            transcript = "…(earlier messages omitted)\n" + transcript[-_TOPIC_TRANSCRIPT_CAP:]
+        parts.append(f"Topic conversation:\n<<<TOPIC\n{transcript}\nTOPIC>>>")
+    return "\n\n".join(parts)
+
+
+def render_progress(steps: list[Step]) -> str:
+    """One line on where the plan stands, from the leaf steps' statuses."""
+    effective = effective_statuses(steps)
+    kids = children_by_parent(steps)
+    counts: dict[str, int] = defaultdict(int)
+    for s, _ in ordered(steps):
+        if s.status in (STEP_PROPOSED, STEP_CANCELLED) or _accepted_children(kids, s.id):
+            continue
+        counts[effective[s.id]] += 1
+    if not counts:
+        return ""
+    detail = ", ".join(f"{n} {name}" for name, n in sorted(counts.items()))
+    return f"Plan progress: {sum(counts.values())} steps ({detail})."
+
+
+def render_other_steps(steps: list[Step], *, current: int) -> str:
+    """The other steps' work so far, so a step stays consistent with its siblings.
+
+    Validated artifacts come first-class (longer excerpt); drafts are marked as
+    such. Bounded overall so a large plan can't crowd out the step itself.
+    """
+    kids = children_by_parent(steps)
+    blocks: list[str] = []
+    used = 0
+    skipped = 0
+    for s, _ in ordered(steps):
+        if s.id == current or s.status in (STEP_PROPOSED, STEP_CANCELLED):
+            continue
+        if _accepted_children(kids, s.id) or not s.artifact.strip():
+            continue
+        validated = s.status == STEP_VALIDATED
+        block = (
+            f"### {s.title} [{s.status}]\n"
+            f"{_cap(s.artifact, _VALIDATED_EXCERPT if validated else _DRAFT_EXCERPT)}"
+        )
+        if used + len(block) > _OTHER_STEPS_CAP:
+            skipped += 1
+            continue
+        used += len(block)
+        blocks.append(block)
+    if skipped:
+        blocks.append(f"…({skipped} more step(s) omitted)")
+    return "\n\n".join(blocks)
+
+
+async def step_grounding(
+    session: AsyncSession, plan: StepPlan, steps: list[Step], step: Step
+) -> list[str]:
+    """The plan-wide context blocks shared by a step's chat and its drafting."""
+    parts = [plan_header(plan)]
+    if plan.output_instructions:
+        parts.append(f"The final deliverable will be:\n{plan.output_instructions}")
+    background = await topic_background(session, plan)
+    if background:
+        parts.append(background)
+    parts.append(f"Plan outline:\n{render_outline(steps, mark=step.id)}")
+    progress = render_progress(steps)
+    if progress:
+        parts.append(progress)
+    others = render_other_steps(steps, current=step.id)
+    if others:
+        parts.append(
+            f"What the other steps have produced so far:\n<<<OTHER_STEPS\n{others}\nOTHER_STEPS>>>"
+        )
+    return parts
 
 
 async def build_step_context(session: AsyncSession, chat: Chat) -> str:
@@ -861,8 +972,7 @@ async def build_step_context(session: AsyncSession, chat: Chat) -> str:
             "draft its result. The step's artifact is saved from the app (the user "
             "or the 'Draft from discussion' action does it), so when you draft "
             "content, present it as clean Markdown ready to become the artifact.",
-            plan_header(plan),
-            f"Plan outline:\n{render_outline(steps, mark=step.id)}",
+            *await step_grounding(session, plan, steps, step),
             f"Current step: {step.title}",
         ]
         if step.instruction:
@@ -885,8 +995,11 @@ async def build_step_context(session: AsyncSession, chat: Chat) -> str:
             "reviews how the validated steps combine into one deliverable and asks "
             "for adjustments. Ground every statement in the steps' artifacts.",
             plan_header(plan),
-            f"Plan outline:\n{render_outline(steps)}",
         ]
+        background = await topic_background(session, plan)
+        if background:
+            parts.append(background)
+        parts.append(f"Plan outline:\n{render_outline(steps)}")
         if plan.output_instructions:
             parts.append(f"Requested output:\n{plan.output_instructions}")
         artifacts = render_artifacts(steps, include_unvalidated=True)

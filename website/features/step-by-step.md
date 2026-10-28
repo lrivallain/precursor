@@ -34,12 +34,15 @@ Each step has:
 
 - an **instruction** — what it must produce;
 - a Markdown **artifact**, with an editor, preview and **version history** you can revert to;
-- a **Discussion** tab: a chat that knows the ask, the plan outline and the artifacts of the
-  other steps, so you can refine the result without reloading everything.
+- a **Discussion** tab: a chat with room to breathe (the title and instruction fold away
+  above it). It knows the ask, the **source topic** (its summary and recent conversation),
+  the requested output, where the plan stands, and what the **other steps** have produced
+  so far (validated artifacts in full, drafts as excerpts), so you can refine the result
+  without reloading everything. The same context grounds **Draft from discussion**.
 
 The model can **draft the artifact**, and can **suggest sub-steps** when a step should be
-split. A step that has sub-steps becomes a **group**: its status is derived from its
-children.
+split: use **Split** next to the status buttons (add a steer in its popover if you want).
+A step that has sub-steps becomes a **group**: its status is derived from its children.
 
 | Status | Meaning |
 | --- | --- |

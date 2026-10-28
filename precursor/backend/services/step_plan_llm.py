@@ -322,8 +322,7 @@ async def generate_artifact(
             status.HTTP_409_CONFLICT, "This step is split into sub-steps; it has no artifact."
         )
     parts = [
-        svc.plan_header(plan),
-        f"Plan outline:\n{svc.render_outline(steps, mark=step.id)}",
+        *await svc.step_grounding(session, plan, steps, step),
         f"Step: {step.title}",
     ]
     if step.instruction:

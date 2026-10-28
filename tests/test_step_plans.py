@@ -321,6 +321,59 @@ def test_the_step_chat_is_grounded_and_hidden_from_the_chat_list(
         assert "Quote the migration" in ctx
 
 
+def test_the_step_chat_sees_the_topic_and_the_other_steps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import Chat, Message, MessageRole
+    from precursor.backend.services.turn_engine import build_chat_system_context
+
+    calls = _fake_llm(monkeypatch)
+    with TestClient(create_app()) as client:
+        topic = client.post("/api/topics", json={"title": "Customer mail"}).json()
+
+        async def _seed() -> None:
+            async with SessionLocal() as session:
+                session.add(Message(topic_id=topic["id"], role=MessageRole.USER, content=ASK))
+                session.add(
+                    Message(
+                        topic_id=topic["id"],
+                        role=MessageRole.ASSISTANT,
+                        content="Earlier we agreed the freeze starts in June.",
+                    )
+                )
+                await session.commit()
+
+        _run(_seed)
+        plan = client.post("/api/step-plans", json={"topic_id": topic["id"]}).json()
+        client.patch(
+            f"/api/step-plans/{plan['id']}", json={"output_instructions": "A short reply email"}
+        )
+        client.post(f"/api/step-plans/{plan['id']}/start", json={})
+        steps = _by_title(_get(client, plan["id"]))
+        _validate(client, steps["Quote"]["id"], "Quote: 12k EUR")
+        client.put(f"/api/steps/{steps['Date']['id']}/artifact", json={"content": "Draft: June 3"})
+        chat = client.post(f"/api/steps/{steps['Data']['id']}/chat").json()
+
+        async def _ctx() -> str:
+            async with SessionLocal() as session:
+                row = await session.get(Chat, chat["id"])
+                assert row is not None
+                return await build_chat_system_context(session, row)
+
+        ctx = anyio.run(_ctx)
+        assert "Earlier we agreed the freeze starts in June." in ctx
+        assert "A short reply email" in ctx
+        assert "Quote: 12k EUR" in ctx
+        assert "Draft: June 3" in ctx
+        assert "Plan progress:" in ctx
+
+        client.post(f"/api/steps/{steps['Data']['id']}/artifact/generate", json={})
+        user = calls[-1]["user"]
+        assert "Quote: 12k EUR" in user
+        assert "Earlier we agreed the freeze starts in June." in user
+
+
 def test_review_returns_text_and_changes_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
     _fake_llm(monkeypatch)
     with TestClient(create_app()) as client:
