@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { MessageSquare, FileText, Loader2, Scissors } from "lucide-react";
+import { FileText, Loader2, Scissors } from "lucide-react";
 import { api } from "../../lib/api";
 import {
   addChildBlocker,
@@ -13,6 +13,7 @@ import { useConfirm } from "../ConfirmDialog";
 import { PlanChat } from "./PlanChat";
 import { StepArtifactEditor } from "./StepArtifactEditor";
 import { StepEditor } from "./StepEditor";
+import { WorkTabs } from "./WorkTabs";
 import { BTN_PRIMARY, BTN_SECONDARY, INPUT, StepStatusPill } from "./StepUi";
 
 type Mutate = <T>(action: () => Promise<T>) => Promise<T | undefined>;
@@ -34,7 +35,6 @@ export function StepDetail({
   const { step } = node;
   const group = isGroup(node);
   const confirm = useConfirm();
-  const [tab, setTab] = useState<"artifact" | "discussion">("artifact");
   const suggested = node.children.filter((c) => c.step.status === "proposed").length;
 
   async function setStatus(action: StatusAction): Promise<void> {
@@ -78,10 +78,8 @@ export function StepDetail({
   const splitBlocker = addChildBlocker(node);
   const { done, total } = progressOf(node);
 
-  const chatting = !group && tab === "discussion";
-
   return (
-    <div className={chatting ? "flex h-full flex-col gap-4" : "space-y-4"}>
+    <div className="flex h-full flex-col gap-4">
       <StepHeading title={step.title} status={step.effective_status} />
 
       <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Step status actions">
@@ -106,15 +104,15 @@ export function StepDetail({
         )}
       </div>
 
-      {chatting ? (
-        <details className="rounded-lg border border-border px-3 py-2">
+      {group ? (
+        <StepEditor step={step} mutate={mutate} />
+      ) : (
+        <details className="rounded-lg border border-border px-3 py-2" open>
           <summary className="cursor-pointer text-xs font-medium text-muted">Title and instruction</summary>
           <div className="pt-2">
             <StepEditor step={step} mutate={mutate} compact />
           </div>
         </details>
-      ) : (
-        <StepEditor step={step} mutate={mutate} />
       )}
 
       {group ? (
@@ -141,42 +139,19 @@ export function StepDetail({
           </ul>
         </section>
       ) : (
-        <>
-          <div className="flex gap-1 border-b border-border" role="tablist" aria-label="Step work">
-            {(
-              [
-                ["artifact", "Artifact", <FileText key="a" size={14} />],
-                ["discussion", "Discussion", <MessageSquare key="d" size={14} />],
-              ] as const
-            ).map(([id, label, icon]) => (
-              <button
-                key={id}
-                type="button"
-                role="tab"
-                aria-selected={tab === id}
-                onClick={() => setTab(id)}
-                className={`-mb-px inline-flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm ${
-                  tab === id
-                    ? "border-accent font-medium text-accent"
-                    : "border-transparent text-muted hover:text-fg"
-                }`}
-              >
-                {icon} {label}
-              </button>
-            ))}
-          </div>
-          {tab === "artifact" ? (
-            <StepArtifactEditor step={step} mutate={mutate} />
-          ) : (
-            <div className="min-h-[28rem] flex-1 overflow-hidden rounded-lg border border-border">
-              <PlanChat
-                key={step.id}
-                open={() => api.stepPlans.stepChat(step.id)}
-                onOpened={() => void reload()}
-              />
-            </div>
-          )}
-        </>
+        <WorkTabs
+          ariaLabel="Step work"
+          workLabel="Artifact"
+          workIcon={<FileText size={14} />}
+          work={<StepArtifactEditor step={step} mutate={mutate} />}
+          discussion={
+            <PlanChat
+              key={step.id}
+              open={() => api.stepPlans.stepChat(step.id)}
+              onOpened={() => void reload()}
+            />
+          }
+        />
       )}
     </div>
   );

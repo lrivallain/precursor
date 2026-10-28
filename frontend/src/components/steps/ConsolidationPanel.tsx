@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { CheckCircle2, FileText, Loader2, MessageSquare, Save, Send } from "lucide-react";
+import { CheckCircle2, FileText, Loader2, Save, Send } from "lucide-react";
 import { api } from "../../lib/api";
 import { openTopic } from "../../lib/sideChats";
 import { hasUnsavedEdits } from "../../lib/stepPlans";
@@ -8,6 +8,7 @@ import { useConfirm } from "../ConfirmDialog";
 import { Markdown } from "../Markdown";
 import { RefineTextarea } from "../RefineTextarea";
 import { PlanChat } from "./PlanChat";
+import { WorkTabs } from "./WorkTabs";
 import { BTN_PRIMARY, BTN_SECONDARY, GuidedAction, INPUT, StaleBadge } from "./StepUi";
 
 type Mutate = <T>(action: () => Promise<T>) => Promise<T | undefined>;
@@ -53,7 +54,6 @@ export function ConsolidationPanel({
   const finalOutput = plan.final_output ?? "";
   const [draft, setDraft] = useState(finalOutput);
   const [view, setView] = useState<"edit" | "preview">(finalOutput ? "preview" : "edit");
-  const [tab, setTab] = useState<"output" | "discussion">("output");
   const [saving, setSaving] = useState(false);
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState<Message | null>(null);
@@ -144,7 +144,7 @@ export function ConsolidationPanel({
         : null;
 
   return (
-    <div className="space-y-4">
+    <div className="flex h-full flex-col gap-4">
       <div className="flex items-center gap-2">
         <h2 className="min-w-0 flex-1 truncate text-base font-semibold">Final output</h2>
         {plan.final_stale && <StaleBadge />}
@@ -183,33 +183,12 @@ export function ConsolidationPanel({
         onRun={generate}
       />
 
-      <div className="flex gap-1 border-b border-border" role="tablist" aria-label="Consolidation">
-        {(
-          [
-            ["output", "Final output", <FileText key="o" size={14} />],
-            ["discussion", "Discussion", <MessageSquare key="d" size={14} />],
-          ] as const
-        ).map(([id, label, icon]) => (
-          <button
-            key={id}
-            type="button"
-            role="tab"
-            aria-selected={tab === id}
-            onClick={() => setTab(id)}
-            className={`-mb-px inline-flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm ${
-              tab === id ? "border-accent font-medium text-accent" : "border-transparent text-muted hover:text-fg"
-            }`}
-          >
-            {icon} {label}
-          </button>
-        ))}
-      </div>
-
-      {tab === "discussion" ? (
-        <div className="h-[34rem] max-h-[70vh] overflow-hidden rounded-lg border border-border">
-          <PlanChat open={() => api.stepPlans.consolidationChat(plan.id)} onOpened={() => void reload()} />
-        </div>
-      ) : (
+      <WorkTabs
+        ariaLabel="Consolidation"
+        workLabel="Final output"
+        workIcon={<FileText size={14} />}
+        discussion={<PlanChat open={() => api.stepPlans.consolidationChat(plan.id)} onOpened={() => void reload()} />}
+        work={
         <div className="space-y-3">
           <div className="flex flex-wrap items-center gap-2">
             <div className="inline-flex overflow-hidden rounded-lg border border-border text-xs" role="tablist" aria-label="Final output view">
@@ -291,7 +270,8 @@ export function ConsolidationPanel({
             </div>
           )}
         </div>
-      )}
+        }
+      />
     </div>
   );
 }

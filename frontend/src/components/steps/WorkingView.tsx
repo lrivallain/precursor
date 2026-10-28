@@ -1,8 +1,10 @@
-import { useMemo } from "react";
+import { useMemo, type CSSProperties } from "react";
 import { FileCheck2 } from "lucide-react";
 import { api } from "../../lib/api";
 import { buildStepTree, flattenTree, workingLeaves } from "../../lib/stepPlans";
 import type { StepPlan } from "../../lib/types";
+import { useResizableWidth } from "../../lib/useResizableWidth";
+import { ResizeHandle } from "../ResizeHandle";
 import { BTN_SECONDARY, GuidedAction, StaleBadge } from "./StepUi";
 import { ConsolidationPanel } from "./ConsolidationPanel";
 import { StepDetail } from "./StepDetail";
@@ -29,6 +31,12 @@ export function WorkingView({
   selected: StepSelection;
   onSelect: (selection: StepSelection) => void;
 }) {
+  const { width: treeWidth, onMouseDown: onTreeResize } = useResizableWidth({
+    storageKey: "precursor.steps.treeWidth",
+    defaultWidth: 368,
+    min: 240,
+    max: 640,
+  });
   const roots = useMemo(() => buildStepTree(plan.steps), [plan.steps]);
   const selectedNode =
     typeof selected === "number" ? flattenTree(roots).find((n) => n.step.id === selected) : undefined;
@@ -48,8 +56,12 @@ export function WorkingView({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
+      <div
+        className="relative shrink-0 lg:w-[var(--tree-w)]"
+        style={{ "--tree-w": `${treeWidth}px` } as CSSProperties}
+      >
       <aside
-        className="shrink-0 border-b border-border p-3 lg:w-[23rem] lg:overflow-y-auto lg:border-b-0 lg:border-r"
+        className="h-full border-b border-border p-3 lg:overflow-y-auto lg:border-b-0 lg:border-r"
         aria-label="Plan steps"
       >
         <StepTree
@@ -97,6 +109,10 @@ export function WorkingView({
           }
         />
       </aside>
+      <div className="hidden lg:block">
+        <ResizeHandle onMouseDown={onTreeResize} side="right" />
+      </div>
+      </div>
       <section className="min-w-0 flex-1 p-5 lg:overflow-y-auto" aria-label="Step detail">
         {selected === "final" ? (
           <ConsolidationPanel plan={plan} mutate={mutate} reload={reload} />
