@@ -962,10 +962,8 @@ def test_pausing_stops_after_the_step_in_flight_and_resume_continues(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _fake_llm(monkeypatch, ASSESS_REPLIES)
-    from precursor.backend.services import step_plan_llm
-
     from precursor.backend.db import SessionLocal
-    from precursor.backend.services import step_plan_runner
+    from precursor.backend.services import step_plan_llm, step_plan_runner
 
     real = step_plan_llm.run_chat_turn
     paused: list[bool] = []

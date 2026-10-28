@@ -15,6 +15,19 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **Step by step: automation, assessments and a tracked discussion.** A topic's
+  side panel lists its step plans and keeps a trace of the plan it spawned (and
+  the plan links back to the topic); the plan header no longer repeats its title
+  or carries `/steps`. Drafting and consolidating are now real turns of the
+  step's chat, with the plan's model, role and tools, and the deliverable is
+  picked out of the reply. An Automation choice (manual, assisted, automated)
+  lets the model draft and score steps and a provisional final output, with
+  pause/resume; the model never validates. Each draft and the whole result get a
+  model self-assessment (score, coverage, evidence, assumptions, gaps,
+  contradictions) that goes out of date when the work changes. The artifact and
+  discussion can sit side by side, and the steps tree and that split are
+  resizable. See [Step by step](website/features/step-by-step.md).
+
 - **Step by step.** A new section splits a long ask (a customer email, a brief)
   into a tree of steps. Each step has its own Markdown artifact with version
   history, a status (open, in progress, to validate, validated, cancelled) and a

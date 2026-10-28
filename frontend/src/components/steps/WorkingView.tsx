@@ -1,7 +1,7 @@
 import { useMemo, type CSSProperties } from "react";
 import { FileCheck2 } from "lucide-react";
 import { api } from "../../lib/api";
-import { buildStepTree, flattenTree, workingLeaves } from "../../lib/stepPlans";
+import { buildStepTree, flattenTree, isApprovedStep, workingLeaves } from "../../lib/stepPlans";
 import type { StepPlan } from "../../lib/types";
 import { useResizableWidth } from "../../lib/useResizableWidth";
 import { ResizeHandle } from "../ResizeHandle";
@@ -41,7 +41,7 @@ export function WorkingView({
   const selectedNode =
     typeof selected === "number" ? flattenTree(roots).find((n) => n.step.id === selected) : undefined;
   const leaves = roots.flatMap(workingLeaves);
-  const pending = leaves.length - leaves.filter((l) => l.step.status === "validated").length;
+  const pending = leaves.length - leaves.filter((l) => isApprovedStep(l.step)).length;
   const hasFinal = (plan.final_output ?? "").trim().length > 0;
 
   const finalHint = plan.status === "done"

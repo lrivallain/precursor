@@ -2988,6 +2988,23 @@ export type StepStatus =
 /** Statuses a user can set directly (a `proposed` step is accepted or dismissed). */
 export type SettableStepStatus = Exclude<StepStatus, "proposed">;
 
+/** Who drives the work: the user, the model drafts for review, or a full model run. */
+export type AutomationMode = "manual" | "assisted" | "auto";
+export type AutoState = "idle" | "running" | "paused";
+
+/** A model's self-assessment of a result. Not a calibrated probability. */
+export interface Assessment {
+  /** 0-100: how well the result seems to answer what it was asked. */
+  score: number;
+  summary: string;
+  covered: string[];
+  evidence: string[];
+  assumptions: string[];
+  gaps: string[];
+  /** Plan level only: places where two steps disagree. */
+  contradictions: string[];
+}
+
 export interface Step {
   id: number;
   plan_id: number;
@@ -3000,6 +3017,11 @@ export interface Step {
   effective_status: StepStatus;
   artifact: string;
   artifact_version: number;
+  /** A validated artifact whose ask or instruction changed: re-review it. */
+  needs_review: boolean;
+  assessment: Assessment | null;
+  /** The artifact, instruction or ask changed since it was assessed. */
+  assessment_stale: boolean;
   created_by: "user" | "model";
   chat_id: number | null;
   chat_slug: string | null;
@@ -3021,6 +3043,10 @@ export interface StepPlan {
   final_stale: boolean;
   /** The final output was written before every step was validated. */
   final_provisional: boolean;
+  automation_mode: AutomationMode;
+  auto_state: AutoState;
+  assessment: Assessment | null;
+  assessment_stale: boolean;
   ready_to_consolidate: boolean;
   consolidation_chat_id: number | null;
   consolidation_chat_slug: string | null;
@@ -3050,11 +3076,13 @@ export interface StepPlanCreate {
   role?: string | null;
   /** Ask the model for the initial step list (slow). Defaults to true server-side. */
   propose?: boolean;
+  automation_mode?: AutomationMode;
   llm_selection?: ConversationLLMSelection | null;
 }
 
 export interface StepPlanUpdate {
   title?: string;
+  automation_mode?: AutomationMode;
   source_text?: string;
   role?: string | null;
   output_instructions?: string | null;

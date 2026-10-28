@@ -7,6 +7,7 @@ import type { Message, StepPlan } from "../../lib/types";
 import { useConfirm } from "../ConfirmDialog";
 import { Markdown } from "../Markdown";
 import { RefineTextarea } from "../RefineTextarea";
+import { AssessmentPanel } from "./AssessmentPanel";
 import { PlanChat } from "./PlanChat";
 import { WorkTabs } from "./WorkTabs";
 import { BTN_PRIMARY, BTN_SECONDARY, GuidedAction, INPUT, StaleBadge } from "./StepUi";
@@ -237,6 +238,14 @@ export function ConsolidationPanel({
           </button>
         </p>
       )}
+
+      <AssessmentPanel
+        title="Overall assessment"
+        assessment={plan.assessment}
+        stale={plan.assessment_stale}
+        disabledReason={plan.steps.length === 0 ? "Add steps first." : null}
+        onAssess={() => mutate(() => api.stepPlans.assessPlan(plan.id))}
+      />
 
       <OutputInstructions plan={plan} mutate={mutate} />
 

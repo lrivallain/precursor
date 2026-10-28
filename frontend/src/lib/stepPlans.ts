@@ -104,22 +104,27 @@ export function workingLeaves(node: StepNode): StepNode[] {
   return kids.flatMap(workingLeaves);
 }
 
+/** Validated, and not flagged for re-review since (the backend's `is_approved`). */
+export function isApprovedStep(step: Step): boolean {
+  return step.status === "validated" && !step.needs_review;
+}
+
 export function progressOf(node: StepNode): { done: number; total: number } {
   const leaves = workingLeaves(node);
-  return { done: leaves.filter((l) => l.step.status === "validated").length, total: leaves.length };
+  return { done: leaves.filter((l) => isApprovedStep(l.step)).length, total: leaves.length };
 }
 
 export function planProgress(plan: StepPlan): { done: number; total: number } {
   const roots = buildStepTree(plan.steps);
   const leaves = roots.flatMap(workingLeaves);
-  return { done: leaves.filter((l) => l.step.status === "validated").length, total: leaves.length };
+  return { done: leaves.filter((l) => isApprovedStep(l.step)).length, total: leaves.length };
 }
 
 /** The step to show first once a plan is working: the first leaf still to do, else the first step. */
 export function stepStartSelection(plan: StepPlan): number | null {
   const flat = flattenTree(buildStepTree(plan.steps)).filter((n) => n.step.status !== "proposed");
   const leaves = flat.filter((n) => acceptedChildren(n).length === 0);
-  const todo = leaves.find((n) => n.step.status !== "validated" && n.step.status !== "cancelled");
+  const todo = leaves.find((n) => !isApprovedStep(n.step) && n.step.status !== "cancelled");
   return (todo ?? flat[0])?.step.id ?? null;
 }
 
@@ -242,6 +247,7 @@ export function statusActions(node: StepNode): StatusAction[] {
       ];
     case "validated":
       return [
+        ...(step.needs_review ? [{ status: "validated" as const, label: "Validate again" }] : []),
         { status: "in_progress", label: "Reopen" },
         { status: "cancelled", label: "Cancel" },
       ];

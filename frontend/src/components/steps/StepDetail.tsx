@@ -14,7 +14,8 @@ import { PlanChat } from "./PlanChat";
 import { StepArtifactEditor } from "./StepArtifactEditor";
 import { StepEditor } from "./StepEditor";
 import { WorkTabs } from "./WorkTabs";
-import { BTN_PRIMARY, BTN_SECONDARY, INPUT, StepStatusPill } from "./StepUi";
+import { AssessmentPanel } from "./AssessmentPanel";
+import { BTN_PRIMARY, BTN_SECONDARY, INPUT, NeedsReviewBadge, StepStatusPill } from "./StepUi";
 
 type Mutate = <T>(action: () => Promise<T>) => Promise<T | undefined>;
 
@@ -80,7 +81,13 @@ export function StepDetail({
 
   return (
     <div className="flex h-full flex-col gap-4">
-      <StepHeading title={step.title} status={step.effective_status} />
+      <StepHeading title={step.title} status={step.effective_status} needsReview={step.needs_review} />
+      {step.needs_review && (
+        <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
+          The ask or this step's instruction changed after you validated it, so the approval no
+          longer counts. Review the artifact, then validate it again.
+        </p>
+      )}
 
       <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Step status actions">
         {actions.map((action) => (
@@ -139,6 +146,14 @@ export function StepDetail({
           </ul>
         </section>
       ) : (
+        <>
+        <AssessmentPanel
+          title="Assessment"
+          assessment={step.assessment}
+          stale={step.assessment_stale}
+          disabledReason={step.artifact.trim() ? null : "Write or generate the artifact first."}
+          onAssess={() => mutate(() => api.stepPlans.assessStep(step.id))}
+        />
         <WorkTabs
           ariaLabel="Step work"
           workLabel="Artifact"
@@ -152,15 +167,25 @@ export function StepDetail({
             />
           }
         />
+        </>
       )}
     </div>
   );
 }
 
-function StepHeading({ title, status }: { title: string; status: Parameters<typeof StepStatusPill>[0]["status"] }) {
+function StepHeading({
+  title,
+  status,
+  needsReview = false,
+}: {
+  title: string;
+  status: Parameters<typeof StepStatusPill>[0]["status"];
+  needsReview?: boolean;
+}) {
   return (
     <div className="flex items-center gap-2">
       <h2 className="min-w-0 flex-1 truncate text-base font-semibold">{title}</h2>
+      {needsReview && <NeedsReviewBadge />}
       <StepStatusPill status={status} />
     </div>
   );

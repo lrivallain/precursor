@@ -27,7 +27,8 @@ import {
   type StepNode,
 } from "../../lib/stepPlans";
 import { useConfirm } from "../ConfirmDialog";
-import { StepStatusPill } from "./StepUi";
+import { ScoreChip } from "./AssessmentPanel";
+import { NeedsReviewBadge, StepStatusPill } from "./StepUi";
 
 type Mutate = <T>(action: () => Promise<T>) => Promise<T | undefined>;
 type DropZone = "before" | "after" | "inside";
@@ -209,6 +210,8 @@ export function StepTree({
                   {progress.done}/{progress.total}
                 </span>
               )}
+              {step.needs_review && <NeedsReviewBadge />}
+              {step.assessment && <ScoreChip assessment={step.assessment} stale={step.assessment_stale} />}
               <StepStatusPill status={step.effective_status} />
             </button>
             {proposed && (

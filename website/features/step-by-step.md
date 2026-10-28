@@ -21,6 +21,12 @@ work each one on its own with the model, validate the results one at a time, and
 The ask is frozen into the plan, so every later model call is grounded in it — and the
 plan keeps working even if the topic is edited or deleted.
 
+**The topic keeps the trail.** Starting a plan (with `/steps` or the button) leaves a note in
+the topic's discussion, linking to the plan, and the topic's side panel lists its plans — like
+side chats — with their progress. In the other direction, the plan header shows a blue link
+back to the topic, and a final output sent to the topic links to the plan. The plan takes its
+title from the ask: the `/steps` command is not part of it.
+
 ## Drafting the tree
 
 Model suggestions are **proposed** until you **accept** or dismiss them; only accepted steps
@@ -34,8 +40,10 @@ Each step has:
 
 - an **instruction** — what it must produce;
 - a Markdown **artifact**, with an editor, preview and **version history** you can revert to;
-- a **Discussion** tab: a chat with room to breathe (the title and instruction fold away
-  above it). It knows the ask, the **source topic** (its summary and recent conversation),
+- a **Discussion** next to the artifact: a chat with room to breathe (the title and
+  instruction fold away above it). **Show side by side** puts it beside the artifact with a
+  draggable divider, as in a live session; the tree is resizable too, and both widths are
+  remembered. It knows the ask, the **source topic** (its summary and recent conversation),
   the requested output, where the plan stands, and what the **other steps** have produced
   so far (validated artifacts in full, drafts as excerpts), so you can refine the result
   without reloading everything. The same context grounds **Draft from discussion**.
@@ -55,20 +63,70 @@ A step that has sub-steps becomes a **group**: its status is derived from its ch
 
 Editing or reverting a validated artifact sends it back to *To validate* and marks the final
 output **stale**, so you always know when the consolidation no longer matches the steps.
+Changing the ask or a step's instruction after you validated it flags the step **Review**:
+the approval no longer counts until you validate it again.
+
+## Drafting with the model
+
+**Draft from discussion** (and the automated run) is a real turn of the step's chat, not a
+hidden one-shot call: the request and the reply are recorded in the discussion, and the step
+inherits what the chat can do — the plan's model and role, and its tools, with the usual
+approval prompts. If a tool needs your approval, the draft waits for it in the discussion.
+
+A reply is a conversation, so it can hold questions or alternatives. The model marks the
+deliverable with `<!-- artifact -->…<!-- /artifact -->`; only that part becomes a new
+artifact version, always landing in *To validate*. A reply without the markers stays in the
+discussion, and **Use latest discussion reply** promotes it by hand. Your
+unsaved edits are never replaced silently: the editor asks first.
+
+## Automation
+
+The plan header has an **Automation** choice:
+
+| Mode | Who does what |
+| --- | --- |
+| Manual | You write and validate. The model answers when you ask; nothing is scored automatically. |
+| Assisted | The model drafts when you ask and scores each draft. You review and validate. |
+| Automated | **Run** drafts and scores every step that has no artifact, then a provisional final output and a global score. |
+
+Whatever the mode, **the model never validates**: drafts land in *To validate* and approval
+stays yours, step by step. The run skips validated steps, steps that already have an
+artifact, and an existing final output, so it can't overwrite your work. **Pause** stops it
+after the step in flight and **Resume** carries on; a run interrupted by a restart reads as
+paused. Everything the run does is traced in the plan's discussion, where you can talk to the
+model. You can add, split or reopen steps and edit instructions at any time.
+
+### Assessments
+
+The model **self-assesses** each draft and the whole result: a 0–100 score with what the
+result covers, its evidence or sources, its assumptions and the gaps left. The score is the
+model's own read, **not a calibrated probability** — read the reasons, not just the number.
+The overall assessment judges the *original ask*: what it covers, what it misses and where
+steps contradict each other — it is not an average of the step scores.
+
+An assessment is tied to the work it saw. When the artifact, the instruction or the ask
+changes, it is shown as **Out of date** (and the overall one as soon as any step changes)
+until you assess again.
 
 ## Consolidating
 
 **Review plan** asks the model to check the steps against the original ask and point out gaps.
 Once every step is validated or cancelled, **Consolidate** drafts the final output from the
-validated artifacts (following the output instructions you set, such as tone or format). Edit
+approved artifacts (following the output instructions you set, such as tone or format). Edit
 it by hand or discuss it in the consolidation chat, then **Send to topic** to file it back
 into the topic the plan came from.
+
+Consolidating before every step is approved — the automated run does it — is allowed but
+**provisional**: the output is labelled so, the plan is not marked done, and sending it to the
+topic needs an explicit confirmation and is marked provisional there. Validate the remaining
+steps and regenerate for the reviewed final.
 
 ## Good to know
 
 - Plans have at most 200 steps, nested up to 6 levels deep.
-- Model actions are one-shot and tool-less; a garbled reply shows an error and leaves the plan
-  untouched. They use the default model, not a conversation's model preset.
+- Proposing and splitting steps, and the review, are one-shot model calls: a garbled reply
+  shows an error and leaves the plan untouched. Drafting and consolidating are chat turns
+  (see above), so they use the plan's model, role and tools.
 - Step chats stay out of your chat list; they live inside their step.
 - Deleting a topic keeps its plans; they simply lose their link.
 - Plans are listed under **Step by step** in the sidebar and the command palette, and the

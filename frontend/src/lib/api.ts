@@ -827,6 +827,14 @@ export const api = {
         method: "POST",
         body: JSON.stringify({ accept_proposed: acceptProposed }),
       }),
+    startAuto: (id: number) =>
+      request<StepPlan>(`/api/step-plans/${id}/auto/start`, { method: "POST" }),
+    pauseAuto: (id: number) =>
+      request<StepPlan>(`/api/step-plans/${id}/auto/pause`, { method: "POST" }),
+    assessPlan: (id: number) =>
+      request<StepPlan>(`/api/step-plans/${id}/assess`, { method: "POST" }),
+    assessStep: (stepId: number) =>
+      request<Step>(`/api/steps/${stepId}/assess`, { method: "POST" }),
     review: (id: number) =>
       request<StepPlanReview>(`/api/step-plans/${id}/review`, { method: "POST" }),
     createStep: (id: number, payload: StepCreate) =>

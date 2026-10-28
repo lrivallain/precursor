@@ -7,7 +7,8 @@ import type { StepPlan } from "../../lib/types";
 import { useConfirm } from "../ConfirmDialog";
 import { InlineTitle } from "../InlineTitle";
 import { Markdown } from "../Markdown";
-import { BTN_SECONDARY, ErrorBanner, PlanStatusPill, StaleBadge } from "./StepUi";
+import { AutomationBar } from "./AutomationBar";
+import { BTN_SECONDARY, ErrorBanner, PlanStatusPill, ProvisionalBadge, StaleBadge } from "./StepUi";
 
 type Mutate = <T>(action: () => Promise<T>) => Promise<T | undefined>;
 
@@ -64,6 +65,7 @@ export function StepPlanHeader({
           inputClassName="min-w-0 flex-1 rounded border border-accent/60 bg-bg px-1.5 py-0.5 text-lg font-semibold outline-none"
         />
         <PlanStatusPill status={plan.status} />
+        {plan.final_provisional && (plan.final_output ?? "").trim() !== "" && <ProvisionalBadge />}
         {plan.final_stale && <StaleBadge />}
         {plan.status !== "drafting" && (
           <span className="text-xs tabular-nums text-muted" data-tooltip="Working steps validated">
@@ -106,6 +108,8 @@ export function StepPlanHeader({
           </button>
         </div>
       </div>
+
+      {plan.status !== "cancelled" && <AutomationBar plan={plan} mutate={mutate} />}
 
       {reviewError && (
         <div className="mt-3">

@@ -1,0 +1,105 @@
+import { useState } from "react";
+import { Loader2, Pause, Play } from "lucide-react";
+import { api } from "../../lib/api";
+import type { AutomationMode, StepPlan } from "../../lib/types";
+import { BTN_PRIMARY, BTN_SECONDARY } from "./StepUi";
+
+type Mutate = <T>(action: () => Promise<T>) => Promise<T | undefined>;
+
+const MODES: { value: AutomationMode; label: string; hint: string }[] = [
+  {
+    value: "manual",
+    label: "Manual",
+    hint: "You write and validate everything. The model only answers when you ask.",
+  },
+  {
+    value: "assisted",
+    label: "Assisted",
+    hint: "The model drafts a step when you ask and scores it. You review and validate.",
+  },
+  {
+    value: "auto",
+    label: "Automated",
+    hint: "The model drafts and scores every step, then a provisional final output. It never validates: you review step by step.",
+  },
+];
+
+/** How much of the work the model does, and the run controls for the automated mode. */
+export function AutomationBar({ plan, mutate }: { plan: StepPlan; mutate: Mutate }) {
+  const [busy, setBusy] = useState(false);
+  const mode = plan.automation_mode;
+  const running = plan.auto_state === "running";
+  const paused = plan.auto_state === "paused";
+  const workable = plan.status === "active" || plan.status === "consolidating";
+  const hint = MODES.find((m) => m.value === mode)?.hint;
+
+  async function run(action: () => Promise<unknown>): Promise<void> {
+    setBusy(true);
+    try {
+      await mutate(action);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2" data-testid="automation-bar">
+      <span className="text-xs font-medium text-muted">Automation</span>
+      <div
+        className="inline-flex overflow-hidden rounded-lg border border-border text-xs"
+        role="radiogroup"
+        aria-label="Automation mode"
+      >
+        {MODES.map((m) => (
+          <button
+            key={m.value}
+            type="button"
+            role="radio"
+            aria-checked={mode === m.value}
+            disabled={busy || running}
+            onClick={() => void run(() => api.stepPlans.update(plan.id, { automation_mode: m.value }))}
+            data-tooltip={m.hint}
+            className={`px-3 py-1.5 disabled:cursor-not-allowed ${
+              mode === m.value ? "bg-accent/15 font-medium text-accent" : "text-muted hover:bg-surface"
+            }`}
+          >
+            {m.label}
+          </button>
+        ))}
+      </div>
+      {mode === "auto" && workable && (
+        <>
+          {running ? (
+            <button
+              type="button"
+              className={BTN_SECONDARY}
+              disabled={busy}
+              onClick={() => void run(() => api.stepPlans.pauseAuto(plan.id))}
+              data-tooltip="Stop after the step in flight. Nothing is lost."
+            >
+              <Pause size={14} /> Pause
+            </button>
+          ) : (
+            <button
+              type="button"
+              className={BTN_PRIMARY}
+              disabled={busy}
+              onClick={() => void run(() => api.stepPlans.startAuto(plan.id))}
+              data-tooltip="Draft and score the steps that have no artifact yet. Validated steps and your edits are never touched."
+            >
+              {busy ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
+              {paused ? "Resume" : "Run"}
+            </button>
+          )}
+          {running && (
+            <span className="inline-flex items-center gap-1.5 text-xs text-muted" role="status">
+              <Loader2 size={12} className="animate-spin" /> Running: drafting and scoring…
+            </span>
+          )}
+          {paused && <span className="text-xs text-amber-700 dark:text-amber-300">Paused</span>}
+        </>
+      )}
+      <span className="basis-full text-xs text-muted">{hint}</span>
+    </div>
+  );
+}

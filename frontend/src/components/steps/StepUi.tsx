@@ -40,6 +40,28 @@ export function StaleBadge({ className = "" }: { className?: string }) {
   );
 }
 
+export function NeedsReviewBadge({ className = "" }: { className?: string }) {
+  return (
+    <span
+      className={`inline-flex shrink-0 items-center rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-300 ${className}`}
+      data-tooltip={"Re-review needed\nThe ask or instruction changed after this was validated, so the approval no longer counts."}
+    >
+      Review
+    </span>
+  );
+}
+
+export function ProvisionalBadge() {
+  return (
+    <span
+      className="inline-flex shrink-0 items-center rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-300"
+      data-tooltip={"Provisional\nWritten before every step was validated: not an approved final."}
+    >
+      Provisional
+    </span>
+  );
+}
+
 export function ErrorBanner({ message, onDismiss }: { message: string; onDismiss?: () => void }) {
   return (
     <div
