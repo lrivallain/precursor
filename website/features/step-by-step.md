@@ -23,8 +23,8 @@ plan keeps working even if the topic is edited or deleted.
 
 **The topic keeps the trail.** Starting a plan (with `/steps` or the button) leaves a note in
 the topic's discussion, linking to the plan, and the topic's side panel lists its plans — like
-side chats — with their progress. In the other direction, the plan header shows a blue link
-back to the topic, and a final output sent to the topic links to the plan. The plan takes its
+side chats — with their progress. In the other direction, the plan's bar (which takes the place of the app's top bar) shows a
+blue link back to the topic, and a final output sent to the topic links to the plan. The plan takes its
 title from the ask: the `/steps` command is not part of it.
 
 ## Drafting the tree
@@ -68,20 +68,33 @@ the approval no longer counts until you validate it again.
 
 ## Drafting with the model
 
-**Draft from discussion** (and the automated run) is a real turn of the step's chat, not a
-hidden one-shot call: the request and the reply are recorded in the discussion, and the step
-inherits what the chat can do — the plan's model and role, and its tools, with the usual
-approval prompts. If a tool needs your approval, the draft waits for it in the discussion.
+**Draft with model** sits in each step's action row (**Redraft** once it has an artifact; the
+caret adds a steer for this run). It is the step-level trigger of the automation: in an
+assisted or automated plan it is the main action of a step with nothing yet, and a hint line
+says what comes next (draft, review, validate). Redrafting a validated step asks first, since
+the step goes back to *To validate*.
 
-A reply is a conversation, so it can hold questions or alternatives. The model marks the
-deliverable with `<!-- artifact -->…<!-- /artifact -->`; only that part becomes a new
-artifact version, always landing in *To validate*. A reply without the markers stays in the
-discussion, and **Use latest discussion reply** promotes it by hand. Your
-unsaved edits are never replaced silently: the editor asks first.
+The draft (and the automated run) is a real turn of the step's chat, not a hidden one-shot
+call: the request and the reply are recorded in the discussion, and the step inherits what the
+chat can do — the plan's model and role, and its tools, with the usual approval prompts. If a
+tool needs your approval, the draft waits for it in the discussion.
+
+### The discussion changes the artifact
+
+A reply is a conversation, so it can hold questions or alternatives. When you ask in the
+discussion to write or change the artifact, the model marks the deliverable with
+`<!-- artifact -->…<!-- /artifact -->` (always the whole artifact), and the app saves it at
+once as a new version in *To validate*, scored in the background. The discussion notes what
+happened. A reply without the markers changes nothing, and **Use latest reply** promotes one
+by hand.
+
+Nothing is overwritten silently: your unsaved edits stay in the editor (a banner offers the
+newer version), and a **validated** step is never changed by the discussion — reopen it first.
+The consolidation discussion works the same way and saves a provisional final output.
 
 ## Automation
 
-The plan header has an **Automation** choice:
+The plan bar has an **Automation** choice:
 
 | Mode | Who does what |
 | --- | --- |
@@ -106,7 +119,7 @@ steps contradict each other — it is not an average of the step scores.
 
 An assessment is tied to the work it saw. When the artifact, the instruction or the ask
 changes, it is shown as **Out of date** (and the overall one as soon as any step changes)
-until you assess again.
+until you assess again. The assessment shows its score first; open it to read the reasons.
 
 ## Consolidating
 

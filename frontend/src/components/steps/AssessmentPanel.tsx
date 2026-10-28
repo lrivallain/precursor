@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Gauge, Loader2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Gauge, Loader2 } from "lucide-react";
 import type { Assessment } from "../../lib/types";
 import { BTN_SMALL } from "./StepUi";
 
@@ -50,7 +50,8 @@ function Section({ label, items }: { label: string; items: string[] }) {
 /**
  * A model self-assessment: score plus the reasons behind it (what it covers,
  * the evidence, assumptions, gaps and, for a whole plan, contradictions).
- * Shown as out of date when the work changed after it was written.
+ * Collapsed to its score until opened, since the reasons are long; shown as
+ * out of date when the work changed after it was written.
  */
 export function AssessmentPanel({
   title,
@@ -58,14 +59,18 @@ export function AssessmentPanel({
   stale,
   disabledReason,
   onAssess,
+  defaultOpen = false,
 }: {
   title: string;
   assessment: Assessment | null;
   stale: boolean;
   disabledReason?: string | null;
   onAssess: () => Promise<unknown>;
+  defaultOpen?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
+  const Chevron = open ? ChevronDown : ChevronRight;
 
   async function run(): Promise<void> {
     setBusy(true);
@@ -78,27 +83,38 @@ export function AssessmentPanel({
 
   return (
     <section
-      className="space-y-2 rounded-lg border border-border bg-surface/40 p-3"
+      className="rounded-lg border border-border bg-surface/40 px-3 py-2"
       aria-label={title}
       data-testid="assessment-panel"
     >
       <div className="flex flex-wrap items-center gap-2">
-        <Gauge size={14} className="text-muted" aria-hidden />
-        <h4 className="text-xs font-medium uppercase tracking-wide text-muted">{title}</h4>
-        {assessment && (
-          <>
-            <ScoreChip assessment={assessment} stale={stale} />
-            <span className="text-xs text-muted">/ 100</span>
-          </>
-        )}
-        {assessment && stale && (
-          <span
-            className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-300"
-            data-tooltip="The work changed after this was assessed. Assess it again."
-          >
-            Out of date
-          </span>
-        )}
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          data-tooltip={open ? "Hide the reasons" : "Show the reasons behind the score"}
+          className="flex min-w-0 items-center gap-2 rounded text-left hover:text-fg"
+        >
+          <Chevron size={14} className="shrink-0 text-muted" aria-hidden />
+          <Gauge size={14} className="shrink-0 text-muted" aria-hidden />
+          <h4 className="text-xs font-medium uppercase tracking-wide text-muted">{title}</h4>
+          {assessment ? (
+            <>
+              <ScoreChip assessment={assessment} stale={stale} />
+              <span className="text-xs text-muted">/ 100</span>
+            </>
+          ) : (
+            <span className="text-xs text-muted">not assessed yet</span>
+          )}
+          {assessment && stale && (
+            <span
+              className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-300"
+              data-tooltip="The work changed after this was assessed. Assess it again."
+            >
+              Out of date
+            </span>
+          )}
+        </button>
         <button
           type="button"
           onClick={() => void run()}
@@ -110,21 +126,25 @@ export function AssessmentPanel({
           {busy ? "Assessing…" : assessment ? "Re-assess" : "Assess"}
         </button>
       </div>
-      <p className="text-[11px] text-muted">
-        The model's own read of how well this answers the ask: a self-assessment, not a calibrated
-        probability. Read the reasons, not just the number.
-      </p>
-      {assessment ? (
-        <div className={`space-y-2 ${stale ? "opacity-70" : ""}`}>
-          {assessment.summary && <p className="text-sm">{assessment.summary}</p>}
-          <Section label="Covered" items={assessment.covered} />
-          <Section label="Evidence" items={assessment.evidence} />
-          <Section label="Assumptions" items={assessment.assumptions} />
-          <Section label="Gaps" items={assessment.gaps} />
-          <Section label="Contradictions" items={assessment.contradictions} />
+      {open && (
+        <div className="mt-2 space-y-2">
+          <p className="text-[11px] text-muted">
+            The model's own read of how well this answers the ask: a self-assessment, not a
+            calibrated probability. Read the reasons, not just the number.
+          </p>
+          {assessment ? (
+            <div className={`space-y-2 ${stale ? "opacity-70" : ""}`}>
+              {assessment.summary && <p className="text-sm">{assessment.summary}</p>}
+              <Section label="Covered" items={assessment.covered} />
+              <Section label="Evidence" items={assessment.evidence} />
+              <Section label="Assumptions" items={assessment.assumptions} />
+              <Section label="Gaps" items={assessment.gaps} />
+              <Section label="Contradictions" items={assessment.contradictions} />
+            </div>
+          ) : (
+            <p className="text-sm text-muted">Not assessed yet.</p>
+          )}
         </div>
-      ) : (
-        <p className="text-sm text-muted">Not assessed yet.</p>
       )}
     </section>
   );

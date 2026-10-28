@@ -2,11 +2,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { History, Loader2, MessageSquareQuote, Save } from "lucide-react";
 import { api, apiErrorMessage } from "../../lib/api";
 import { hasUnsavedEdits } from "../../lib/stepPlans";
-import type { DraftOutcome, Step, StepArtifactVersion } from "../../lib/types";
+import type { Step, StepArtifactVersion } from "../../lib/types";
 import { useConfirm } from "../ConfirmDialog";
 import { Markdown } from "../Markdown";
 import { RefineTextarea } from "../RefineTextarea";
-import { BTN_SECONDARY, BTN_SMALL, ErrorBanner, GuidedAction } from "./StepUi";
+import { BTN_SECONDARY, BTN_SMALL, ErrorBanner } from "./StepUi";
 
 type Mutate = <T>(action: () => Promise<T>) => Promise<T | undefined>;
 
@@ -69,14 +69,6 @@ export function StepArtifactEditor({ step, mutate }: { step: Step; mutate: Mutat
     });
   }
 
-  // A model draft lands as a new version, never over the editor: unsaved edits
-  // stay put and the "newer version" banner offers the swap.
-  async function generate(guidance: string): Promise<void> {
-    setNotice(null);
-    const result = await mutate(() => api.stepPlans.generateArtifact(step.id, guidance || undefined));
-    if (result) setNotice(draftNotice(result.outcome, result.step.artifact_version));
-  }
-
   // Take the latest discussion reply as the artifact: the model's answer to a
   // question in the discussion, kept as a version you can still review.
   async function useLatestReply(): Promise<void> {
@@ -121,6 +113,18 @@ export function StepArtifactEditor({ step, mutate }: { step: Step; mutate: Mutat
           {dirty ? " · unsaved edits" : ""}
         </span>
         <div className="ml-auto flex items-center gap-2">
+          {step.chat_id != null && (
+            <button
+              type="button"
+              className={BTN_SMALL}
+              disabled={adopting}
+              onClick={() => void useLatestReply()}
+              data-tooltip="Save the model's latest reply in this step's discussion as a new artifact version"
+            >
+              {adopting ? <Loader2 size={13} className="animate-spin" /> : <MessageSquareQuote size={13} />}
+              Use latest reply
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setHistoryOpen((v) => !v)}
@@ -183,7 +187,7 @@ export function StepArtifactEditor({ step, mutate }: { step: Step; mutate: Mutat
               void save();
             }
           }}
-          placeholder="Write this step's result in Markdown, or generate it with the model."
+          placeholder="Write this step's result in Markdown, or draft it with the model (button above)."
           aria-label="Artifact (Markdown)"
           className="w-full resize-y rounded-lg border border-border bg-bg px-3 py-2 font-mono text-sm outline-none focus:border-accent/60"
         />
@@ -197,43 +201,11 @@ export function StepArtifactEditor({ step, mutate }: { step: Step; mutate: Mutat
         </div>
       )}
 
-      <GuidedAction
-        label={step.artifact.trim() ? "Regenerate with model" : "Generate with model"}
-        busyLabel="Generating…"
-        secondary
-        placeholder="e.g. keep it under 200 words, answer in French, cite the contract clause…"
-        onRun={generate}
-      >
-        {step.chat_id != null && (
-          <button
-            type="button"
-            className={BTN_SMALL}
-            disabled={adopting}
-            onClick={() => void useLatestReply()}
-            data-tooltip="Save the model's latest reply in this step's discussion as a new artifact version"
-          >
-            {adopting ? <Loader2 size={13} className="animate-spin" /> : <MessageSquareQuote size={13} />}
-            Use latest discussion reply
-          </button>
-        )}
-      </GuidedAction>
-
       {historyOpen && step.artifact_version > 0 && (
         <VersionHistory step={step} mutate={mutate} confirmDiscard={confirmDiscard} />
       )}
     </div>
   );
-}
-
-function draftNotice(outcome: DraftOutcome, version: number): string {
-  switch (outcome) {
-    case "published":
-      return `The model wrote version ${version} from the discussion. It still needs your review before you validate it.`;
-    case "awaiting_approval":
-      return "The model is waiting for your approval of a tool call in the discussion. Approve or deny it there, then ask again.";
-    default:
-      return "The model answered in the discussion without a deliverable (a question or alternatives), so the artifact is unchanged. Reply in the discussion, or use its reply as the artifact.";
-  }
 }
 
 function VersionHistory({

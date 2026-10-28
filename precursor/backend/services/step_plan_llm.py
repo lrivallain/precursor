@@ -11,6 +11,7 @@ artifact version, always landing in ``to_validate`` — the model never validate
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass
@@ -28,7 +29,9 @@ from precursor.backend.models.step_plan import (
     PLAN_CONSOLIDATING,
     PLAN_DONE,
     PLAN_DRAFTING,
+    STEP_CANCELLED,
     STEP_TO_VALIDATE,
+    STEP_VALIDATED,
 )
 from precursor.backend.schemas.conversation_llm import ConversationLLMSelection
 from precursor.backend.schemas.message import MessageRead
@@ -39,6 +42,7 @@ from precursor.backend.services.conversation_turn import load_model_history
 from precursor.backend.services.events import (
     publish_message_changed,
     publish_message_changed_chat,
+    publish_step_plan_changed,
 )
 from precursor.backend.services.llm.one_shot import complete_once
 from precursor.backend.services.turn import run_chat_turn
@@ -437,6 +441,95 @@ async def use_message_as_artifact(session: AsyncSession, step_id: int, message_i
     return saved
 
 
+_background: set[asyncio.Task[None]] = set()
+
+
+def _spawn(coro: Any) -> None:
+    task = asyncio.ensure_future(coro)
+    _background.add(task)
+    task.add_done_callback(_background.discard)
+
+
+async def _assess_later(step_id: int | None, plan_id: int) -> None:
+    """Score a discussion edit off the request path: it's a slow model call."""
+    async with SessionLocal() as session:
+        if step_id is not None:
+            step = await svc.get_step(session, step_id)
+            await _assess_after_draft(session, step)
+        else:
+            await _assess_plan_quietly(session, await svc.get_plan(session, plan_id))
+    await publish_step_plan_changed(plan_id)
+
+
+async def apply_chat_reply(chat_id: int, reply: str) -> None:
+    """Apply the deliverable of a live discussion reply to the artifact.
+
+    Called once an interactive reply in a step's (or the consolidation) chat is
+    saved, so asking the model in the discussion to write or change the
+    artifact takes effect without a separate click. Only a marked deliverable
+    counts; it lands as a new unvalidated version, so the model still never
+    approves anything, and a validated artifact is left alone (the user
+    reopens the step first). Never raises: the reply is already saved.
+    """
+    deliverable = svc.extract_deliverable(reply)
+    if deliverable is None:
+        return
+    try:
+        async with SessionLocal() as session:
+            chat = await session.get(Chat, chat_id)
+            if chat is None or (chat.step_id is None and chat.step_plan_id is None):
+                return
+            if chat.step_id is not None:
+                plan_id = await _apply_to_step(session, chat_id, chat.step_id, deliverable)
+                step_id: int | None = chat.step_id
+            else:
+                assert chat.step_plan_id is not None
+                plan_id = chat.step_plan_id
+                await save_final(session, plan_id, deliverable)
+                await trace_in_chat(
+                    session, chat_id, "Saved as the consolidated draft (from this reply)."
+                )
+                step_id = None
+        if plan_id is not None:
+            await publish_step_plan_changed(plan_id)
+            _spawn(_assess_later(step_id, plan_id))
+    except HTTPException as exc:
+        async with SessionLocal() as session:
+            await trace_in_chat(session, chat_id, f"Not applied to the artifact: {exc.detail}")
+    except Exception:
+        log.exception("Applying a discussion reply failed for chat %s", chat_id)
+
+
+async def _apply_to_step(
+    session: AsyncSession, chat_id: int, step_id: int, deliverable: str
+) -> int | None:
+    step = await svc.get_step(session, step_id)
+    if step.status == STEP_VALIDATED:
+        await trace_in_chat(
+            session,
+            chat_id,
+            "Not applied: this step is validated. Reopen it to let the discussion "
+            "change its artifact.",
+        )
+        return None
+    if step.status == STEP_CANCELLED:
+        return None
+    before = step.artifact_version
+    saved = await svc.write_artifact(
+        session, step_id, deliverable, author=AUTHOR_MODEL, mark=STEP_TO_VALIDATE
+    )
+    if saved.artifact_version == before:
+        await trace_in_chat(session, chat_id, "This reply matches the current artifact: unchanged.")
+        return None
+    await trace_in_chat(
+        session,
+        chat_id,
+        f"Applied to the artifact as version {saved.artifact_version}, to validate. "
+        "Your unsaved edits in the editor are kept.",
+    )
+    return saved.plan_id
+
+
 async def review_plan(session: AsyncSession, plan_id: int) -> str:
     plan = await svc.get_plan(session, plan_id)
     steps = await svc.plan_steps(session, plan.id)
@@ -726,6 +819,7 @@ __all__ = [
     "PLAN_CONSOLIDATING",
     "ArtifactDraft",
     "FinalDraft",
+    "apply_chat_reply",
     "assess_plan",
     "assess_step",
     "extract_json",

@@ -1185,6 +1185,11 @@ async def run_message_stream(
                     answer = await persist_final_turn(
                         kind, container_id, ev, model=actual_model, elapsed_ms=elapsed_ms
                     )
+                    if kind == "chat":
+                        # Imported here: step_plan_llm runs turns through this module.
+                        from precursor.backend.services.step_plan_llm import apply_chat_reply
+
+                        await apply_chat_reply(container_id, answer.text)
                     if ev.usage is not None:
                         yield usage_event(answer.message_id, ev.usage)
                     yield {

@@ -24,14 +24,13 @@ const MODES: { value: AutomationMode; label: string; hint: string }[] = [
   },
 ];
 
-/** How much of the work the model does, and the run controls for the automated mode. */
+/** How much of the work the model does, and the run controls for the automated mode. Sized for the top bar. */
 export function AutomationBar({ plan, mutate }: { plan: StepPlan; mutate: Mutate }) {
   const [busy, setBusy] = useState(false);
   const mode = plan.automation_mode;
   const running = plan.auto_state === "running";
   const paused = plan.auto_state === "paused";
   const workable = plan.status === "active" || plan.status === "consolidating";
-  const hint = MODES.find((m) => m.value === mode)?.hint;
 
   async function run(action: () => Promise<unknown>): Promise<void> {
     setBusy(true);
@@ -43,8 +42,7 @@ export function AutomationBar({ plan, mutate }: { plan: StepPlan; mutate: Mutate
   }
 
   return (
-    <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2" data-testid="automation-bar">
-      <span className="text-xs font-medium text-muted">Automation</span>
+    <div className="flex shrink-0 items-center gap-2" data-testid="automation-bar">
       <div
         className="inline-flex overflow-hidden rounded-lg border border-border text-xs"
         role="radiogroup"
@@ -59,7 +57,7 @@ export function AutomationBar({ plan, mutate }: { plan: StepPlan; mutate: Mutate
             disabled={busy || running}
             onClick={() => void run(() => api.stepPlans.update(plan.id, { automation_mode: m.value }))}
             data-tooltip={m.hint}
-            className={`px-3 py-1.5 disabled:cursor-not-allowed ${
+            className={`px-2.5 py-1 disabled:cursor-not-allowed ${
               mode === m.value ? "bg-accent/15 font-medium text-accent" : "text-muted hover:bg-surface"
             }`}
           >
@@ -92,14 +90,17 @@ export function AutomationBar({ plan, mutate }: { plan: StepPlan; mutate: Mutate
             </button>
           )}
           {running && (
-            <span className="inline-flex items-center gap-1.5 text-xs text-muted" role="status">
-              <Loader2 size={12} className="animate-spin" /> Running: drafting and scoring…
+            <span
+              className="inline-flex items-center gap-1.5 text-xs text-muted"
+              role="status"
+              data-tooltip="Drafting and scoring the steps that have no artifact yet"
+            >
+              <Loader2 size={12} className="animate-spin" /> Running
             </span>
           )}
           {paused && <span className="text-xs text-amber-700 dark:text-amber-300">Paused</span>}
         </>
       )}
-      <span className="basis-full text-xs text-muted">{hint}</span>
     </div>
   );
 }

@@ -21,6 +21,7 @@ subtree (and their chats) explicitly.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import re
@@ -905,52 +906,62 @@ async def revert_artifact(session: AsyncSession, step_id: int, version: int) -> 
 # --- chats --------------------------------------------------------------------
 
 
+# Creating a chat is check-then-insert, and the SPA asks for it from several
+# places at once (a remounting panel, a draft button). Without a lock both
+# callers see "none yet" and the step ends up with two discussions, one of them
+# empty. The lock is taken before the session reads anything, so the second
+# caller's snapshot already includes the first one's chat.
+_chat_locks: dict[tuple[str, int], asyncio.Lock] = defaultdict(asyncio.Lock)
+
+
 async def ensure_step_chat(session: AsyncSession, step_id: int) -> Chat:
     """The step's discussion, created on first use."""
-    step = await get_step(session, step_id)
-    if step.status == STEP_PROPOSED:
-        raise HTTPException(status.HTTP_409_CONFLICT, "Accept this suggestion first.")
-    existing = (
-        await session.execute(
-            select(Chat).where(Chat.step_id == step.id).order_by(Chat.id).limit(1)
+    async with _chat_locks["step", step_id]:
+        step = await get_step(session, step_id)
+        if step.status == STEP_PROPOSED:
+            raise HTTPException(status.HTTP_409_CONFLICT, "Accept this suggestion first.")
+        existing = (
+            await session.execute(
+                select(Chat).where(Chat.step_id == step.id).order_by(Chat.id).limit(1)
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            return existing
+        plan = await get_plan(session, step.plan_id)
+        chat = Chat(
+            title=step.title[:_TITLE_MAX],
+            slug=await allocate_unique_slug(session, uuid4().hex, Chat),
+            role=plan.role,
+            llm_selection=plan.llm_selection,
+            step_id=step.id,
         )
-    ).scalar_one_or_none()
-    if existing is not None:
-        return existing
-    plan = await get_plan(session, step.plan_id)
-    chat = Chat(
-        title=step.title[:_TITLE_MAX],
-        slug=await allocate_unique_slug(session, uuid4().hex, Chat),
-        role=plan.role,
-        llm_selection=plan.llm_selection,
-        step_id=step.id,
-    )
-    session.add(chat)
-    if step.status == STEP_OPEN:
-        step.status = STEP_IN_PROGRESS
-    await session.commit()
-    return chat
+        session.add(chat)
+        if step.status == STEP_OPEN:
+            step.status = STEP_IN_PROGRESS
+        await session.commit()
+        return chat
 
 
 async def ensure_consolidation_chat(session: AsyncSession, plan_id: int) -> Chat:
-    plan = await get_plan(session, plan_id)
-    existing = (
-        await session.execute(
-            select(Chat).where(Chat.step_plan_id == plan.id).order_by(Chat.id).limit(1)
+    async with _chat_locks["plan", plan_id]:
+        plan = await get_plan(session, plan_id)
+        existing = (
+            await session.execute(
+                select(Chat).where(Chat.step_plan_id == plan.id).order_by(Chat.id).limit(1)
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            return existing
+        chat = Chat(
+            title=f"{CONSOLIDATION_CHAT_TITLE}: {plan.title}"[:_TITLE_MAX],
+            slug=await allocate_unique_slug(session, uuid4().hex, Chat),
+            role=plan.role,
+            llm_selection=plan.llm_selection,
+            step_plan_id=plan.id,
         )
-    ).scalar_one_or_none()
-    if existing is not None:
-        return existing
-    chat = Chat(
-        title=f"{CONSOLIDATION_CHAT_TITLE}: {plan.title}"[:_TITLE_MAX],
-        slug=await allocate_unique_slug(session, uuid4().hex, Chat),
-        role=plan.role,
-        llm_selection=plan.llm_selection,
-        step_plan_id=plan.id,
-    )
-    session.add(chat)
-    await session.commit()
-    return chat
+        session.add(chat)
+        await session.commit()
+        return chat
 
 
 # --- prompt grounding ---------------------------------------------------------
@@ -1137,11 +1148,19 @@ async def build_step_context(session: AsyncSession, chat: Chat) -> str:
         parts = [
             "This chat works on ONE step of a larger step-by-step plan. Stay on "
             "this step: help the user think it through, answer their questions and "
-            "draft its result. The step's artifact is saved from the app, not by "
-            "you. When you draft or revise the whole artifact, put it between the "
-            f"lines `{ARTIFACT_OPEN}` and `{ARTIFACT_CLOSE}` (nothing but the "
-            "deliverable inside) so the app can tell it from the discussion; keep "
-            "questions, alternatives and notes outside the markers.",
+            "draft its result. When the user asks you to write, redo or change the "
+            f"artifact, put the WHOLE artifact between the lines `{ARTIFACT_OPEN}` "
+            f"and `{ARTIFACT_CLOSE}` (nothing but the deliverable inside, never a "
+            "diff or an excerpt): the app saves exactly that as a new, unvalidated "
+            "version of the step's artifact right away. Don't use the markers for "
+            "anything else; questions, alternatives, explanations and notes stay "
+            "outside them, and a reply without markers leaves the artifact untouched."
+            + (
+                " This step is validated, so a marked artifact is NOT applied until "
+                "the user reopens the step: say so instead of promising a change."
+                if step.status == STEP_VALIDATED
+                else ""
+            ),
             *await step_grounding(session, plan, steps, step),
             f"Current step: {step.title}",
         ]
@@ -1163,10 +1182,12 @@ async def build_step_context(session: AsyncSession, chat: Chat) -> str:
         parts = [
             "This chat is the final consolidation of a step-by-step plan: the user "
             "reviews how the validated steps combine into one deliverable and asks "
-            "for adjustments. Ground every statement in the steps' artifacts. When you "
-            f"write the whole deliverable, put it between the lines `{ARTIFACT_OPEN}` "
-            f"and `{ARTIFACT_CLOSE}` (nothing but the deliverable inside); keep "
-            "questions and notes outside the markers.",
+            "for adjustments. Ground every statement in the steps' artifacts. When the "
+            "user asks you to write or change the deliverable, put the WHOLE "
+            f"deliverable between the lines `{ARTIFACT_OPEN}` and `{ARTIFACT_CLOSE}` "
+            "(nothing but the deliverable inside, never a diff): the app saves it "
+            "right away as the consolidated draft. Keep questions and notes outside "
+            "the markers; a reply without markers changes nothing.",
             plan_header(plan),
         ]
         background = await topic_background(session, plan)

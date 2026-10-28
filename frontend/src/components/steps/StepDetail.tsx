@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { FileText, Loader2, Scissors } from "lucide-react";
 import { api } from "../../lib/api";
+import type { AutomationMode } from "../../lib/types";
 import {
   addChildBlocker,
   isGroup,
@@ -15,6 +16,7 @@ import { StepArtifactEditor } from "./StepArtifactEditor";
 import { StepEditor } from "./StepEditor";
 import { WorkTabs } from "./WorkTabs";
 import { AssessmentPanel } from "./AssessmentPanel";
+import { StepDraftButton } from "./StepDraftButton";
 import { BTN_PRIMARY, BTN_SECONDARY, INPUT, NeedsReviewBadge, StepStatusPill } from "./StepUi";
 
 type Mutate = <T>(action: () => Promise<T>) => Promise<T | undefined>;
@@ -24,11 +26,13 @@ const PRIMARY_STATUS = new Set(["in_progress", "validated"]);
 /** The selected step: edit it, move it through its statuses, and work its artifact or chat. */
 export function StepDetail({
   node,
+  mode,
   mutate,
   reload,
   onSelect,
 }: {
   node: StepNode;
+  mode: AutomationMode;
   mutate: Mutate;
   reload: () => Promise<void>;
   onSelect: (id: number) => void;
@@ -37,6 +41,7 @@ export function StepDetail({
   const group = isGroup(node);
   const confirm = useConfirm();
   const suggested = node.children.filter((c) => c.step.status === "proposed").length;
+  const [draftNote, setDraftNote] = useState<string | null>(null);
 
   async function setStatus(action: StatusAction): Promise<void> {
     if (action.status === "cancelled") {
@@ -90,6 +95,9 @@ export function StepDetail({
       )}
 
       <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Step status actions">
+        {!group && (
+          <StepDraftButton step={step} mode={mode} mutate={mutate} onNotice={setDraftNote} />
+        )}
         {actions.map((action) => (
           <button
             key={action.status + action.label}
@@ -110,6 +118,20 @@ export function StepDetail({
           />
         )}
       </div>
+
+      {!group && (
+        <>
+          <p className="-mt-2 text-xs text-muted">{nextHint(step, mode)}</p>
+          {draftNote && (
+            <p
+              role="status"
+              className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-muted"
+            >
+              {draftNote}
+            </p>
+          )}
+        </>
+      )}
 
       {group ? (
         <StepEditor step={step} mutate={mutate} />
@@ -171,6 +193,20 @@ export function StepDetail({
       )}
     </div>
   );
+}
+
+/** What to do next with this step, so the flow (draft, review, validate) is never a guess. */
+function nextHint(step: StepNode["step"], mode: AutomationMode): string {
+  if (step.status === "validated") return "Validated. Reopen the step to change it.";
+  if (step.status === "cancelled") return "Cancelled. Reopen the step to work on it again.";
+  if (step.artifact.trim() === "") {
+    return mode === "manual"
+      ? "Next: write the artifact yourself, or ask the model to draft it."
+      : "Next: draft it with the model. It scores the draft; you review and validate.";
+  }
+  return step.created_by === "model"
+    ? "Next: review the model's draft (edit it, discuss it, redraft it), then validate."
+    : "Next: review the artifact, then validate. The model can redraft it from the discussion.";
 }
 
 function StepHeading({

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -1017,3 +1018,150 @@ def test_a_run_that_died_with_the_process_reads_as_paused(
 
         _run(_stale)
         assert _get(client, pid)["auto_state"] == "paused"
+
+
+# --- the live discussion ------------------------------------------------------
+
+
+class _ScriptedProvider:
+    """A live-chat provider whose next reply the test sets."""
+
+    name = "scripted"
+
+    def __init__(self) -> None:
+        self.reply = ""
+
+    async def stream_chat(self, *, model, messages, reasoning_effort=None):
+        yield ""
+
+    async def stream_chat_with_tools(self, *, model, messages, tools, reasoning_effort=None):
+        from precursor.backend.services.llm.base import TextDeltaEvent, TurnDoneEvent
+
+        yield TextDeltaEvent(content=self.reply)
+        yield TurnDoneEvent(finish_reason="stop")
+
+    async def list_models(self):
+        return []
+
+
+def _live(monkeypatch: pytest.MonkeyPatch) -> _ScriptedProvider:
+    """Live chat replies come from the scripted provider; assessments stay out of the way."""
+    from precursor.backend.services import conversation_turn, step_plan_llm, turn_engine
+
+    provider = _ScriptedProvider()
+
+    async def _get(_session: Any) -> _ScriptedProvider:
+        return provider
+
+    async def _no_usage(*args: Any, **kwargs: Any) -> None:
+        return None
+
+    def _drop(coro: Any) -> None:
+        coro.close()
+
+    monkeypatch.setattr(conversation_turn, "get_llm_provider", _get)
+    monkeypatch.setattr(turn_engine, "record_usage", _no_usage)
+    monkeypatch.setattr(step_plan_llm, "_spawn", _drop)
+    return provider
+
+
+def _say(client: TestClient, chat_id: int, text: str) -> list[dict[str, Any]]:
+    res = client.post(
+        f"/api/chats/{chat_id}/messages/stream",
+        json={"content": text},
+        headers={"Accept": "text/event-stream"},
+    )
+    assert res.status_code == 200, res.text
+    return client.get(f"/api/chats/{chat_id}/messages").json()  # type: ignore[no-any-return]
+
+
+def test_asking_in_the_discussion_updates_the_artifact(monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_llm(monkeypatch)
+    provider = _live(monkeypatch)
+    with TestClient(create_app()) as client:
+        plan = _started(client)
+        sid = _by_title(plan)["Quote"]["id"]
+        chat = client.post(f"/api/steps/{sid}/chat").json()
+
+        provider.reply = "Sure.\n<!-- artifact -->\nQuote v1\n<!-- /artifact -->\nBetter?"
+        msgs = _say(client, chat["id"], "Please write the quote")
+        step = _by_title(_get(client, plan["id"]))["Quote"]
+        assert step["artifact"] == "Quote v1"
+        assert step["status"] == "to_validate" and step["created_by"] == "model"
+        assert any("Applied to the artifact as version 1" in m["content"] for m in msgs)
+
+        # A question or a plain answer leaves the artifact alone.
+        provider.reply = "Do you prefer a table?"
+        _say(client, chat["id"], "what format?")
+        assert _by_title(_get(client, plan["id"]))["Quote"]["artifact"] == "Quote v1"
+
+        # The same text again isn't a new version.
+        provider.reply = "<!-- artifact -->\nQuote v1\n<!-- /artifact -->"
+        msgs = _say(client, chat["id"], "again")
+        assert len(client.get(f"/api/steps/{sid}/versions").json()) == 1
+        assert any("unchanged" in m["content"] for m in msgs)
+
+
+def test_the_discussion_never_overwrites_a_validated_artifact(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_llm(monkeypatch)
+    provider = _live(monkeypatch)
+    with TestClient(create_app()) as client:
+        plan = _started(client)
+        sid = _by_title(plan)["Quote"]["id"]
+        _validate(client, sid, "approved text")
+        chat = client.post(f"/api/steps/{sid}/chat").json()
+        provider.reply = "<!-- artifact -->\nSneaky rewrite\n<!-- /artifact -->"
+        msgs = _say(client, chat["id"], "rewrite it")
+        step = _by_title(_get(client, plan["id"]))["Quote"]
+        assert step["artifact"] == "approved text" and step["status"] == "validated"
+        assert any("Not applied" in m["content"] and "validated" in m["content"] for m in msgs)
+
+
+def test_asking_in_the_consolidation_chat_saves_a_provisional_draft(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_llm(monkeypatch)
+    provider = _live(monkeypatch)
+    with TestClient(create_app()) as client:
+        plan = _started(client)
+        chat = client.post(f"/api/step-plans/{plan['id']}/consolidation/chat").json()
+        provider.reply = "<!-- artifact -->\nEARLY SYNTHESIS\n<!-- /artifact -->"
+        _say(client, chat["id"], "write the final")
+        data = _get(client, plan["id"])
+        assert data["final_output"] == "EARLY SYNTHESIS"
+        assert data["final_provisional"] is True and data["status"] != "done"
+
+
+def test_concurrent_requests_create_one_discussion_per_step(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_llm(monkeypatch)
+    from sqlalchemy import func, select
+
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import Chat
+    from precursor.backend.services import step_plans
+
+    with TestClient(create_app()) as client:
+        plan = _started(client)
+        sid = _by_title(plan)["Quote"]["id"]
+
+        async def _race() -> int:
+            async def _one() -> int:
+                async with SessionLocal() as session:
+                    return (await step_plans.ensure_step_chat(session, sid)).id
+
+            ids = await asyncio.gather(*(_one() for _ in range(6)))
+            assert len(set(ids)) == 1
+            async with SessionLocal() as session:
+                return int(
+                    (
+                        await session.execute(
+                            select(func.count()).select_from(Chat).where(Chat.step_id == sid)
+                        )
+                    ).scalar_one()
+                )
+
+        assert _run(_race) == 1

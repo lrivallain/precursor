@@ -27,6 +27,13 @@ are the per-version history; releasing does not rewrite this file.
   contradictions) that goes out of date when the work changes. The artifact and
   discussion can sit side by side, and the steps tree and that split are
   resizable. See [Step by step](website/features/step-by-step.md).
+- **Step by step: draft a step from its own button, and the discussion edits the
+  artifact.** Each step has a *Draft with model* / *Redraft* button (with an
+  optional steer) and a hint on what to do next; asking in the step's or the
+  consolidation's discussion to write or change the artifact now saves it as a new
+  unvalidated version, traced in the chat (a validated step is left alone).
+  Assessments are collapsed to their score, and the plan header moves into the
+  app's top bar.
 
 - **Step by step.** A new section splits a long ask (a customer email, a brief)
   into a tree of steps. Each step has its own Markdown artifact with version
@@ -437,6 +444,9 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Fixed
 
+- **Step by step: "Regenerate with model" ignored the discussion.** A race
+  could create two discussions for the same step, so the model drafted from one
+  while the panel showed the other. A step has one discussion again.
 - **Deleted roles stay cleared in files mode.** Role deletion now removes
   matching assignments from agent and workflow definition files, including
   definitions with stale database columns or no database row yet. Reloads and

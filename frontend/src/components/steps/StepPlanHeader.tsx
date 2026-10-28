@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useLayoutEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { ClipboardCheck, Loader2, Trash2, X } from "lucide-react";
 import { api, apiErrorMessage } from "../../lib/api";
 import { planProgress } from "../../lib/stepPlans";
@@ -8,7 +9,8 @@ import { useConfirm } from "../ConfirmDialog";
 import { InlineTitle } from "../InlineTitle";
 import { Markdown } from "../Markdown";
 import { AutomationBar } from "./AutomationBar";
-import { BTN_SECONDARY, ErrorBanner, PlanStatusPill, ProvisionalBadge, StaleBadge } from "./StepUi";
+import { STEPS_HEADER_SLOT } from "./StepsSectionParts";
+import { ErrorBanner, PlanStatusPill, ProvisionalBadge, StaleBadge } from "./StepUi";
 
 type Mutate = <T>(action: () => Promise<T>) => Promise<T | undefined>;
 
@@ -27,6 +29,8 @@ export function StepPlanHeader({
   const [reviewing, setReviewing] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
   const { done, total } = planProgress(plan);
+  const [slot, setSlot] = useState<HTMLElement | null>(null);
+  useLayoutEffect(() => setSlot(document.getElementById(STEPS_HEADER_SLOT)), []);
 
   async function runReview(): Promise<void> {
     setReviewing(true);
@@ -55,89 +59,97 @@ export function StepPlanHeader({
     if (result) onDeleted();
   }
 
-  return (
-    <div className="border-b border-border px-5 py-3">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <InlineTitle
-          title={plan.title}
-          onRename={(title) => void mutate(() => api.stepPlans.update(plan.id, { title }))}
-          className="min-w-0 max-w-full truncate text-lg font-semibold"
-          inputClassName="min-w-0 flex-1 rounded border border-accent/60 bg-bg px-1.5 py-0.5 text-lg font-semibold outline-none"
-        />
-        <PlanStatusPill status={plan.status} />
-        {plan.final_provisional && (plan.final_output ?? "").trim() !== "" && <ProvisionalBadge />}
-        {plan.final_stale && <StaleBadge />}
-        {plan.status !== "drafting" && (
-          <span className="text-xs tabular-nums text-muted" data-tooltip="Working steps validated">
-            {done}/{total} validated
-          </span>
-        )}
-        {plan.source_topic_id != null && (
-          <button
-            type="button"
-            onClick={() => openTopic(plan.source_topic_id!)}
-            className="max-w-[16rem] truncate rounded-full border border-accent/30 bg-accent/[0.06] px-2.5 py-0.5 text-xs text-accent underline-offset-2 hover:border-accent/60 hover:bg-accent/10 hover:underline"
-            data-tooltip={`Go to the topic this plan came from\n${plan.source_topic_title ?? ""}`}
-          >
-            {plan.source_topic_title ?? "Source topic"}
-          </button>
-        )}
-        <div className="ml-auto flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => void runReview()}
-            disabled={reviewing || plan.steps.length === 0}
-            className={BTN_SECONDARY}
-            data-tooltip={
-              plan.steps.length === 0
-                ? "Add steps first"
-                : "Ask the model whether the plan covers the whole ask"
-            }
-          >
-            {reviewing ? <Loader2 size={14} className="animate-spin" /> : <ClipboardCheck size={14} />}
-            Review plan
-          </button>
-          <button
-            type="button"
-            onClick={() => void remove()}
-            className="rounded-lg p-2 text-muted hover:bg-red-500/10 hover:text-red-500"
-            aria-label="Delete plan"
-            data-tooltip="Delete this plan"
-          >
-            <Trash2 size={16} />
-          </button>
-        </div>
-      </div>
-
-      {plan.status !== "cancelled" && <AutomationBar plan={plan} mutate={mutate} />}
-
-      {reviewError && (
-        <div className="mt-3">
-          <ErrorBanner message={reviewError} onDismiss={() => setReviewError(null)} />
-        </div>
-      )}
-      {review !== null && (
-        <section
-          className="mt-3 rounded-xl border border-border bg-surface p-4"
-          aria-label="Plan review"
+  const bar = (
+    <div className="flex min-w-0 flex-1 items-center gap-2" data-testid="plan-header">
+      <InlineTitle
+        title={plan.title}
+        onRename={(title) => void mutate(() => api.stepPlans.update(plan.id, { title }))}
+        className="min-w-0 flex-1 truncate font-medium"
+        inputClassName="min-w-0 flex-1 rounded border border-accent/60 bg-bg px-1.5 py-0.5 font-medium outline-none"
+      />
+      <PlanStatusPill status={plan.status} />
+      {plan.final_provisional && (plan.final_output ?? "").trim() !== "" && <ProvisionalBadge />}
+      {plan.final_stale && <StaleBadge />}
+      {plan.status !== "drafting" && (
+        <span
+          className="hidden shrink-0 text-xs tabular-nums text-muted md:inline"
+          data-tooltip="Working steps validated"
         >
-          <div className="mb-2 flex items-center gap-2">
-            <h3 className="flex-1 text-sm font-semibold">Plan review</h3>
-            <button
-              type="button"
-              onClick={() => setReview(null)}
-              className="rounded p-1 text-muted hover:bg-bg hover:text-fg"
-              aria-label="Dismiss the review"
-              data-tooltip="Dismiss"
-            >
-              <X size={14} />
-            </button>
-          </div>
-          <div className="max-h-72 overflow-y-auto">
-            <Markdown>{review}</Markdown>
-          </div>
-        </section>
+          {done}/{total} validated
+        </span>
       )}
+      {plan.source_topic_id != null && (
+        <button
+          type="button"
+          onClick={() => openTopic(plan.source_topic_id!)}
+          className="hidden max-w-[14rem] shrink truncate rounded-full border border-accent/30 bg-accent/[0.06] px-2.5 py-0.5 text-xs text-accent underline-offset-2 hover:border-accent/60 hover:bg-accent/10 hover:underline lg:inline"
+          data-tooltip={`Go to the topic this plan came from\n${plan.source_topic_title ?? ""}`}
+        >
+          {plan.source_topic_title ?? "Source topic"}
+        </button>
+      )}
+      {plan.status !== "cancelled" && <AutomationBar plan={plan} mutate={mutate} />}
+      <button
+        type="button"
+        onClick={() => void runReview()}
+        disabled={reviewing || plan.steps.length === 0}
+        className="shrink-0 rounded-lg p-2 text-muted hover:bg-surface hover:text-fg disabled:opacity-50"
+        aria-label="Review plan"
+        data-tooltip={
+          plan.steps.length === 0
+            ? "Add steps first"
+            : "Review plan: ask the model whether it covers the whole ask"
+        }
+      >
+        {reviewing ? <Loader2 size={16} className="animate-spin" /> : <ClipboardCheck size={16} />}
+      </button>
+      <button
+        type="button"
+        onClick={() => void remove()}
+        className="shrink-0 rounded-lg p-2 text-muted hover:bg-red-500/10 hover:text-red-500"
+        aria-label="Delete plan"
+        data-tooltip="Delete this plan"
+      >
+        <Trash2 size={16} />
+      </button>
     </div>
+  );
+
+  const hasBody = reviewError !== null || review !== null;
+  return (
+    <>
+      {slot ? createPortal(bar, slot) : <div className="border-b border-border px-5 py-3">{bar}</div>}
+      {hasBody && (
+        <div className="border-b border-border px-5 pb-3">
+        {reviewError && (
+          <div className="mt-3">
+            <ErrorBanner message={reviewError} onDismiss={() => setReviewError(null)} />
+          </div>
+        )}
+        {review !== null && (
+          <section
+            className="mt-3 rounded-xl border border-border bg-surface p-4"
+            aria-label="Plan review"
+          >
+            <div className="mb-2 flex items-center gap-2">
+              <h3 className="flex-1 text-sm font-semibold">Plan review</h3>
+              <button
+                type="button"
+                onClick={() => setReview(null)}
+                className="rounded p-1 text-muted hover:bg-bg hover:text-fg"
+                aria-label="Dismiss the review"
+                data-tooltip="Dismiss"
+              >
+                <X size={14} />
+              </button>
+            </div>
+            <div className="max-h-72 overflow-y-auto">
+              <Markdown>{review}</Markdown>
+            </div>
+          </section>
+        )}
+        </div>
+      )}
+    </>
   );
 }

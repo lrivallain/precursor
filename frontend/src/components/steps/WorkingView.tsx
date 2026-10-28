@@ -120,6 +120,7 @@ export function WorkingView({
           <StepDetail
             key={selectedNode.step.id}
             node={selectedNode}
+            mode={plan.automation_mode}
             mutate={mutate}
             reload={reload}
             onSelect={onSelect}
