@@ -28,7 +28,7 @@ from precursor.backend.schemas.schedule import (
 )
 from precursor.backend.services import approvals as approval_service
 from precursor.backend.services import roles as roles_service
-from precursor.backend.services import side_chats
+from precursor.backend.services import side_chats, step_plans
 from precursor.backend.services.collections import (
     move_subtree_to_collection,
     resolve_collection_default_role,
@@ -38,6 +38,7 @@ from precursor.backend.services.events import (
     publish_chat_changed,
     publish_message_changed,
     publish_read_changed,
+    publish_step_plan_changed,
     publish_topic_changed,
     set_current_client_id,
 )
@@ -343,9 +344,12 @@ async def delete_topic(topic_id: int, session: AsyncSession = Depends(get_sessio
         update(Topic).where(Topic.parent_id == topic_id).values(parent_id=new_parent_id)
     )
     detached = await side_chats.detach_topic(session, topic_id)
+    detached_plans = await step_plans.detach_topic(session, topic_id)
     await session.delete(topic)
     await session.commit()
     await publish_topic_changed(topic_id)
+    for plan_id in detached_plans:
+        await publish_step_plan_changed(plan_id)
     for chat_id in detached:
         await publish_chat_changed(chat_id)
 

@@ -52,7 +52,7 @@ async def list_chats(
     """
     stmt = (
         select(Chat)
-        .where(Chat.archived_at.is_(None))
+        .where(Chat.archived_at.is_(None), Chat.step_id.is_(None), Chat.step_plan_id.is_(None))
         .order_by(Chat.created_at.desc(), Chat.id.desc())
     )
     if q:
@@ -78,7 +78,9 @@ async def list_archived_chats(
 ) -> list[ChatRead]:
     """Flat list of archived chats, most recently archived first."""
     result = await session.execute(
-        select(Chat).where(Chat.archived_at.is_not(None)).order_by(Chat.archived_at.desc())
+        select(Chat)
+        .where(Chat.archived_at.is_not(None), Chat.step_id.is_(None), Chat.step_plan_id.is_(None))
+        .order_by(Chat.archived_at.desc())
     )
     return await to_chat_reads(session, list(result.scalars().all()))
 

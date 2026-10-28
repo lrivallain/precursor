@@ -60,6 +60,7 @@ RELAYABLE_EVENT_TYPES: frozenset[str] = frozenset(
         "agent.changed",
         "meeting.changed",
         "workflow.changed",
+        "step-plan.changed",
     }
 )
 
@@ -93,6 +94,8 @@ class Event(TypedDict, total=False):
     # Carried by ``workflow.changed``: which pipeline changed, and the run state
     # + name the client needs to raise a notification without re-fetching.
     workflow_id: int | None
+    # Carried by ``step-plan.changed``: which step-by-step plan changed.
+    step_plan_id: int | None
     status: str | None
     name: str | None
     # Carried by ``approval.parked``: what a notification needs to name the
@@ -205,6 +208,7 @@ class EventBus:
             "message": event.get("message"),
             "url": event.get("url"),
             "workflow_id": event.get("workflow_id"),
+            "step_plan_id": event.get("step_plan_id"),
             "status": event.get("status"),
             "name": event.get("name"),
             "title": event.get("title"),
@@ -506,3 +510,8 @@ async def publish_workflow_changed(
             "name": name,
         }
     )
+
+
+async def publish_step_plan_changed(step_plan_id: int | None = None) -> None:
+    """Signal that a step-by-step plan (or one of its steps) changed."""
+    await _bus.publish({"type": "step-plan.changed", "step_plan_id": step_plan_id})

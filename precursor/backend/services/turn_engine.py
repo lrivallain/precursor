@@ -31,7 +31,7 @@ from precursor.backend.models.tool_approval import APPROVAL_KIND_TOOL
 from precursor.backend.services import approval_rules as approval_rules_service
 from precursor.backend.services import approvals as approval_service
 from precursor.backend.services import memories as memory_service
-from precursor.backend.services import side_chats
+from precursor.backend.services import side_chats, step_plans
 from precursor.backend.services import skills as skills_service
 from precursor.backend.services.app_settings import DEFAULT_LLM_MAX_ATTACHMENT_CHARS
 from precursor.backend.services.artifacts import artifacts_prompt, record_written_file
@@ -181,6 +181,11 @@ async def build_chat_system_context(session: AsyncSession, chat: Chat) -> str:
     parent_context = await side_chats.build_parent_topic_context(session, chat)
     if parent_context:
         parts.append(parent_context)
+
+    # A step (or consolidation) chat stays grounded in its plan's ask and steps.
+    step_context = await step_plans.build_step_context(session, chat)
+    if step_context:
+        parts.append(step_context)
 
     # When this chat is attached to a live meeting session, fold in the current
     # meeting grounding (transcript/insights/notes/…), rebuilt every turn.
