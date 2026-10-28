@@ -279,6 +279,19 @@ const scenes = {
     },
   },
 
+  // A step plan mid-way: the tree with its statuses on the left, the artifact
+  // of a step waiting for validation on the right.
+  "step-by-step": {
+    viewport: { width: 1440, height: 900 },
+    async go(page) {
+      await page.goto(`${BASE}/steps/1`, { waitUntil: "networkidle" });
+      await page.getByTestId("step-plan-view").waitFor();
+      await page.getByText("Confirm EU data residency", { exact: true }).first().click();
+      await sleep(1200);
+      return undefined;
+    },
+  },
+
   chats: {
     viewport: { width: 1440, height: 1000 },
     async go(page) {

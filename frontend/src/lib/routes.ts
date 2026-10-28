@@ -12,6 +12,7 @@ import { topicSlugPath } from "./topicTree";
 //   /live/<slug>                                         → live meeting sessions
 //   /agents/<public-id>                                  → agents
 //   /workflows/<id>[/run/<n|latest>]                     → workflows
+//   /steps[/<id>]                                        → step by step
 //   /iq                                                  → ask Precursor IQ
 //   /ws/<slug>/<file/path>[?chat=<slug>|?topic=<public-id>] → workspaces (+ discussion)
 //   /<plugin-section>/<opaque…>[#hash]                   → plugin sections
@@ -59,6 +60,8 @@ export interface AppRoute {
   // The run segment (`/workflows/<id>/run/<n|latest>`): a run number as a string
   // or the literal "latest" to track the live/newest run; null when absent.
   workflowRunRef: string | null;
+  // The step plan id segment (`/steps/<id>`); null on the overview route.
+  stepPlanRef: number | null;
   // For a plugin-contributed section: the path segments after its root, and the
   // raw hash. Core treats both as opaque and hands them to the section.
   pluginSegments: string[];
@@ -105,6 +108,7 @@ export function parseAppRoute(): AppRoute {
     agentRef: null,
     workflowRef: null,
     workflowRunRef: null,
+    stepPlanRef: null,
     pluginSegments: [],
     pluginHash: "",
   };
@@ -126,6 +130,14 @@ export function parseAppRoute(): AppRoute {
       mode: "workflows",
       workflowRef: Number.isSafeInteger(raw) && raw > 0 ? raw : null,
       workflowRunRef: runRef,
+    };
+  }
+  if (segs[0] === "steps") {
+    const raw = segs[1] ? Number.parseInt(decodeURIComponent(segs[1]), 10) : NaN;
+    return {
+      ...base,
+      mode: "steps",
+      stepPlanRef: Number.isSafeInteger(raw) && raw > 0 ? raw : null,
     };
   }
   if (segs[0] === "iq") return { ...base, mode: "iq" };
@@ -175,6 +187,7 @@ const CORE_MODES: ReadonlySet<string> = new Set([
   "workspaces",
   "agents",
   "workflows",
+  "steps",
   "iq",
 ]);
 
@@ -235,6 +248,11 @@ export function workflowUrl(workflowId: number | null, runSeg: string | null = n
   if (workflowId == null) return "/workflows";
   if (runSeg) return `/workflows/${workflowId}/run/${runSeg}`;
   return `/workflows/${workflowId}`;
+}
+
+/** `/steps` (overview) or `/steps/<id>`. */
+export function stepPlanUrl(planId: number | null): string {
+  return planId == null ? "/steps" : `/steps/${planId}`;
 }
 
 /** `/ws`, `/ws/<slug>`, or `/ws/<slug>/<file/path>` for an open file, plus the open discussion. */

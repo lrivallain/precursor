@@ -42,6 +42,7 @@ import {
   WorkflowsMain,
   WorkflowsSidebarSlot,
 } from "./components/WorkflowsSectionParts";
+import { StepsHeader, StepsMain, StepsSidebarSlot } from "./components/steps/StepsSectionParts";
 import {
   WorkspacesCreateModal,
   WorkspacesHeader,
@@ -85,6 +86,7 @@ import { useTopicsController } from "./lib/useTopicsController";
 import { useDocumentTitle } from "./lib/useDocumentTitle";
 import { pageTitle } from "./lib/pageTitle";
 import { useWorkflowsController } from "./lib/useWorkflowsController";
+import { useStepPlansController } from "./lib/useStepPlansController";
 import { useWorkspacesController } from "./lib/useWorkspacesController";
 import type { SearchResult } from "./lib/types";
 import { isHomePath, isPluginMode, navigate, parseAppRoute } from "./lib/routes";
@@ -281,6 +283,10 @@ export default function App() {
         workflowsCtl.syncFromRoute(r);
         return;
       }
+      if (r.mode === "steps") {
+        stepsCtl.syncFromRoute(r);
+        return;
+      }
       if (r.mode === "agents") {
         agentsCtl.syncFromRoute(r);
         return;
@@ -346,6 +352,18 @@ export default function App() {
     confirmLeaveRecording,
   });
   const { activeAgentId, agentsUnread, agentsWaiting } = agentsCtl;
+
+  // ---- Step by step -----------------------------------------------------
+  // Same ordering constraint as the workflows controller below.
+  const stepsCtl = useStepPlansController({
+    sidebarMode,
+    atHome,
+    setSidebarMode,
+    setAtHome,
+    closeWsRoute: wsCtl.closeRoute,
+    closeMobileNav,
+    confirmLeaveRecording,
+  });
 
   // ---- Workflows --------------------------------------------------------
   // Called after the mount `syncFromUrl` for the same reason as the agents
@@ -413,7 +431,7 @@ export default function App() {
   async function changeMode(next: SidebarMode): Promise<void> {
     // Clicking the active mode's tab while on the home launcher still needs to
     // leave home, so only short-circuit when we're already showing that mode.
-    if (next === sidebarMode && !atHome && next !== "agents" && next !== "workflows") return;
+    if (next === sidebarMode && !atHome && next !== "agents" && next !== "workflows" && next !== "steps") return;
     if (!(await confirmLeaveRecording())) return;
     setAtHome(false);
     let target = "/topics";
@@ -430,6 +448,9 @@ export default function App() {
     } else if (next === "workflows") {
       workflowsCtl.enterOverview();
       target = "/workflows";
+    } else if (next === "steps") {
+      stepsCtl.enterOverview();
+      target = "/steps";
     } else if (next === "iq") {
       target = "/iq";
     } else if (isPluginMode(next)) {
@@ -443,7 +464,7 @@ export default function App() {
     else wsCtl.closeRoute();
     setSidebarMode(next);
     // These section buttons explicitly select the overview, like a list item.
-    if (next === "agents" || next === "workflows") closeMobileNav();
+    if (next === "agents" || next === "workflows" || next === "steps") closeMobileNav();
   }
 
   // ⌘⇧K: jump to the IQ section, seeding the question with the selection.
@@ -501,6 +522,10 @@ export default function App() {
       workflowsCtl.startNew();
       navigate("/workflows");
       setSidebarMode("workflows");
+    } else if (mode === "steps") {
+      stepsCtl.startNew();
+      navigate("/steps");
+      setSidebarMode("steps");
     } else {
       navigate("/ws");
       setSidebarMode("workspaces");
@@ -608,6 +633,7 @@ export default function App() {
     else if (sidebarMode === "live") liveCtl.startNew();
     else if (sidebarMode === "agents") agentsCtl.startNew();
     else if (sidebarMode === "workflows") workflowsCtl.startNew();
+    else if (sidebarMode === "steps") stepsCtl.startNew();
     // Core owns the button; the section owns what it means. A section with no
     // `onNew` has no "+" either (see `supportsNew` in Sidebar).
     else if (isPluginMode(sidebarMode)) {
@@ -625,6 +651,7 @@ export default function App() {
       live: liveCtl,
       agents: agentsCtl,
       workflows: workflowsCtl,
+      steps: stepsCtl,
       workspaces: wsCtl,
       pluginItem: pluginsCtl.pageTitle,
     }),
@@ -687,6 +714,10 @@ export default function App() {
           agents={agentsCtl.agents ?? []}
           onOpenAgent={(id) => {
             void agentsCtl.openAgent(id);
+            setPaletteOpen(false);
+          }}
+          onNewStepPlan={() => {
+            void changeMode("steps").then(() => stepsCtl.startNew());
             setPaletteOpen(false);
           }}
           liveEnabled={liveEnabled}
@@ -761,6 +792,9 @@ export default function App() {
               onOverview={() => void changeMode("workflows")}
             />
           ),
+          steps: (
+            <StepsSidebarSlot controller={stepsCtl} onOverview={() => void changeMode("steps")} />
+          ),
           iq: <IQSidebar />,
           plugin: activeSection ? <activeSection.Sidebar host={sectionHost} /> : null,
         }}
@@ -822,6 +856,8 @@ export default function App() {
             <span className="truncate font-medium min-w-0 flex-1">IQ</span>
           ) : sidebarMode === "workflows" ? (
             <WorkflowsHeader />
+          ) : sidebarMode === "steps" ? (
+            <StepsHeader controller={stepsCtl} />
           ) : (
             <AgentsHeader
               controller={agentsCtl}
@@ -883,6 +919,8 @@ export default function App() {
               seed={iqSeed}
               onOpenResult={(result, query) => void openSearchResult(result, query)}
             />
+          ) : sidebarMode === "steps" ? (
+            <StepsMain controller={stepsCtl} />
           ) : sidebarMode === "workflows" ? (
             <WorkflowsMain
               controller={workflowsCtl}

@@ -67,6 +67,7 @@ from precursor.backend.models.message import (  # noqa: E402
 from precursor.backend.models.role import Role  # noqa: E402
 from precursor.backend.models.settings import AppSetting  # noqa: E402
 from precursor.backend.models.skill import Skill  # noqa: E402
+from precursor.backend.models.step_plan import Step, StepArtifactVersion, StepPlan  # noqa: E402
 from precursor.backend.models.topic import Topic  # noqa: E402
 from precursor.backend.models.topic_schedule import TopicSchedule  # noqa: E402
 from precursor.backend.models.topic_summary import TopicSummary  # noqa: E402
@@ -907,6 +908,106 @@ async def _seed_edited_reply_chat(s: AsyncSession) -> None:
     await s.flush()
 
 
+_STEP_PLAN_ASK = (
+    "Hi team,\n\nBefore we renew we need answers on five points: (1) the p95 latency "
+    "regression on search, (2) a data-residency statement for the EU region, (3) the "
+    "price impact of moving to the reserved tier, (4) the SSO migration timeline, and "
+    "(5) who our escalation contact is during the cut-over.\n\nThanks, Morgan"
+)
+
+# (title, instruction, status, artifact, parent index in this list)
+_STEP_PLAN_STEPS: list[tuple[str, str, str, str, int | None]] = [
+    (
+        "Explain the search latency regression",
+        "Say what changed, how bad it is and when it is fixed.",
+        "validated",
+        "p95 doubled after the 2026.7 indexing change: the new analyzer re-tokenises "
+        "every query. A fix is in review and ships in 2026.8; until then, enabling the "
+        "query cache brings p95 back to its previous level.",
+        None,
+    ),
+    (
+        "Confirm EU data residency",
+        "State where customer data is stored and processed.",
+        "to_validate",
+        "All customer data for EU tenants stays in `westeurope` and `northeurope`; "
+        "backups are replicated between the two. Support access is logged and limited "
+        "to EU-based staff.",
+        None,
+    ),
+    (
+        "Price the reserved tier",
+        "Compare the current plan with the reserved tier over 12 months.",
+        "in_progress",
+        "",
+        None,
+    ),
+    (
+        "Plan the SSO migration",
+        "Give the customer a realistic timeline.",
+        "open",
+        "",
+        None,
+    ),
+    (
+        "Name the cut-over escalation contact",
+        "Who they call, and when.",
+        "open",
+        "",
+        None,
+    ),
+    (
+        "Inventory the identity providers in use",
+        "List the providers and which tenants use each.",
+        "validated",
+        "Two providers: Entra ID (14 tenants) and a legacy SAML IdP (3 tenants).",
+        3,
+    ),
+    (
+        "Schedule the SAML cut-over",
+        "Pick a window that avoids the release freeze.",
+        "open",
+        "",
+        3,
+    ),
+]
+
+
+async def _seed_step_plan(s: AsyncSession, topic_id: int) -> None:
+    """A plan mid-way: one step validated, one awaiting review, three to go."""
+    plan = StepPlan(
+        title="Answer the renewal questions",
+        source_text=_STEP_PLAN_ASK,
+        status="active",
+        source_topic_id=topic_id,
+        output_instructions="A short, friendly reply, one section per question.",
+    )
+    s.add(plan)
+    await s.flush()
+    ids: list[int] = []
+    positions: dict[int | None, int] = {}
+    for title, instruction, status, artifact, parent in _STEP_PLAN_STEPS:
+        position = positions.get(parent, 0)
+        positions[parent] = position + 1
+        step = Step(
+            plan_id=plan.id,
+            parent_step_id=None if parent is None else ids[parent],
+            position=position,
+            title=title,
+            instruction=instruction,
+            status=status,
+            artifact=artifact,
+            artifact_version=1 if artifact else 0,
+            created_by="model",
+        )
+        s.add(step)
+        await s.flush()
+        ids.append(step.id)
+        if artifact:
+            s.add(StepArtifactVersion(step_id=step.id, version=1, content=artifact, author="model"))
+    await s.flush()
+
+
 async def seed() -> None:
     await init_db()
 
@@ -1178,6 +1279,7 @@ async def seed() -> None:
         await _seed_edited_reply_chat(s)
         # A topic with side chats started from it and from its replies.
         await seed_side_chats(s, platform.id)
+        await _seed_step_plan(s, t_release.id)
 
         # ---------------- chats ----------------
         c_regex = Chat(title="Regex for semver tags", slug="regex-for-semver-tags")

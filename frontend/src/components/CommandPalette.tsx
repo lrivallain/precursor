@@ -10,6 +10,7 @@ import {
   Home,
   Keyboard,
   Lightbulb,
+  ListChecks,
   Loader2,
   Paperclip,
   NotebookText,
@@ -80,6 +81,8 @@ interface Props {
   /** Jump straight to a specific agent session. */
   onOpenAgent?: (id: number) => void;
   liveEnabled?: boolean;
+  /** Open Step by step on its "new plan" dialog. */
+  onNewStepPlan?: () => void;
   /** Plugin-contributed sections, listed after core's own. */
   pluginSections?: SectionPlugin[];
   /**
@@ -198,6 +201,7 @@ export function CommandPalette({
   agents = [],
   onOpenAgent,
   liveEnabled = true,
+  onNewStepPlan,
   pluginSections = [],
   initialQuery = "",
 }: Props) {
@@ -317,6 +321,31 @@ export function CommandPalette({
         run: nav("workflows"),
       },
       {
+        id: "steps",
+        label: "Step by step",
+        hint: "Split a long ask into steps",
+        keywords: "steps step by step plan split ask email consolidate breakdown",
+        icon: ListChecks,
+        mode: "steps",
+        run: nav("steps"),
+      },
+      ...(onNewStepPlan
+        ? [
+            {
+              id: "steps-new",
+              label: "New step plan",
+              hint: "Start a step-by-step plan from pasted text",
+              keywords: "new create step plan steps split ask email",
+              icon: ListChecks,
+              mode: "steps" as const,
+              run: () => {
+                onNewStepPlan();
+                onClose();
+              },
+            },
+          ]
+        : []),
+      {
         id: "iq",
         label: "IQ",
         hint: "Ask questions about your data (⌘⇧K)",
@@ -362,7 +391,7 @@ export function CommandPalette({
         : []),
     ];
     return all;
-  }, [liveEnabled, pluginSections, onNavigate, onGoHome, onClose, onOpenShortcuts, agents, onOpenAgent]);
+  }, [liveEnabled, pluginSections, onNewStepPlan, onNavigate, onGoHome, onClose, onOpenShortcuts, agents, onOpenAgent]);
 
   const sections = useMemo(() => {
     const q = query.trim().toLowerCase();

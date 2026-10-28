@@ -112,6 +112,14 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     surfaces: ["topic"],
   },
   {
+    name: "steps",
+    label: "/steps",
+    description:
+      "Split the latest ask in this topic into a tree of steps (the model proposes the first ones), then work each step with its own artifact and chat and consolidate a final answer. Opens the new plan in Step by step.",
+    kind: "builtin",
+    surfaces: ["topic"],
+  },
+  {
     name: "send-to-topic",
     label: "/send-to-topic",
     description:

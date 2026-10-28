@@ -69,6 +69,7 @@ class EventPublish(BaseModel):
     agent_session_id: int | None = None
     meeting_session_id: int | None = None
     workflow_id: int | None = None
+    step_plan_id: int | None = None
     status: str | None = Field(default=None, max_length=64)
     name: str | None = Field(default=None, max_length=200)
 
@@ -110,6 +111,7 @@ async def publish_relayed_event(payload: EventPublish, request: Request) -> None
         "agent_session_id": payload.agent_session_id,
         "meeting_session_id": payload.meeting_session_id,
         "workflow_id": payload.workflow_id,
+        "step_plan_id": payload.step_plan_id,
         "status": payload.status,
         "name": payload.name,
         # Relayed writes originate from a tool call, not from a browser. Keeping

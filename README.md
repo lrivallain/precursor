@@ -74,6 +74,9 @@ offline.
 - **Workflows** (opt-in): chain agents into a reusable, named pipeline that a
   coordinator runs unattended — with quality gates, human approval checkpoints,
   and schedule/webhook triggers
+- **Step by step**: split a long ask (a customer email, a brief) into a tree of
+  steps, work and validate each in its own chat, then consolidate one answer
+  back into the topic
 - Single uvicorn process in production — FastAPI serves the API and mounts the
   built React SPA
 - **Runs in the background**: one-command install, a login item, a menu-bar icon

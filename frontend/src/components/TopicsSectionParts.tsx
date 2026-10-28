@@ -14,6 +14,7 @@ import { TopicStartHero } from "./StartHero";
 import { TopicSettingsPanel } from "./TopicSettingsPanel";
 import { api } from "../lib/api";
 import { startSideChat } from "../lib/sideChats";
+import { StartStepPlanButton } from "./steps/StartStepPlanButton";
 import { toggleTopicSummary } from "../lib/summaryOpen";
 import { topicAncestors } from "../lib/topicTree";
 import type { TopicsController } from "../lib/useTopicsController";
@@ -108,6 +109,7 @@ export function TopicsHeader({
           <MessageSquarePlus size={18} />
         </button>
       )}
+      {activeTopic && <StartStepPlanButton topicId={activeTopic.id} />}
       {activeTopic && (
         <button
           className="p-2 rounded hover:bg-surface shrink-0"

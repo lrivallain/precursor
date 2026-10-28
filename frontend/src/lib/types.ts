@@ -2971,3 +2971,118 @@ export interface RefineResponse {
   text: string;
   model: string;
 }
+
+// ── Step by step ────────────────────────────────────────────────────────────
+// Mirrors precursor/backend/schemas/step_plan.py
+
+export type StepPlanStatus = "drafting" | "active" | "consolidating" | "done" | "cancelled";
+
+export type StepStatus =
+  | "proposed"
+  | "open"
+  | "in_progress"
+  | "to_validate"
+  | "validated"
+  | "cancelled";
+
+/** Statuses a user can set directly (a `proposed` step is accepted or dismissed). */
+export type SettableStepStatus = Exclude<StepStatus, "proposed">;
+
+export interface Step {
+  id: number;
+  plan_id: number;
+  parent_step_id: number | null;
+  position: number;
+  title: string;
+  instruction: string;
+  status: StepStatus;
+  /** Roll-up for groups (derived from their children); equals `status` for leaves. */
+  effective_status: StepStatus;
+  artifact: string;
+  artifact_version: number;
+  created_by: "user" | "model";
+  chat_id: number | null;
+  chat_slug: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StepPlan {
+  id: number;
+  title: string;
+  source_text: string;
+  status: StepPlanStatus;
+  source_topic_id: number | null;
+  source_topic_title: string | null;
+  role: string | null;
+  llm_selection: ConversationLLMSelection | null;
+  output_instructions: string | null;
+  final_output: string | null;
+  final_stale: boolean;
+  ready_to_consolidate: boolean;
+  consolidation_chat_id: number | null;
+  consolidation_chat_slug: string | null;
+  steps: Step[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StepPlanItem {
+  id: number;
+  title: string;
+  status: StepPlanStatus;
+  source_topic_id: number | null;
+  source_topic_title: string | null;
+  step_count: number;
+  validated_count: number;
+  final_stale: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StepPlanCreate {
+  title?: string | null;
+  topic_id?: number | null;
+  message_id?: number | null;
+  source_text?: string | null;
+  role?: string | null;
+  /** Ask the model for the initial step list (slow). Defaults to true server-side. */
+  propose?: boolean;
+  llm_selection?: ConversationLLMSelection | null;
+}
+
+export interface StepPlanUpdate {
+  title?: string;
+  source_text?: string;
+  role?: string | null;
+  output_instructions?: string | null;
+  llm_selection?: ConversationLLMSelection | null;
+}
+
+export interface StepCreate {
+  title: string;
+  instruction?: string;
+  parent_step_id?: number | null;
+  position?: number | null;
+}
+
+export interface StepUpdate {
+  title?: string;
+  instruction?: string;
+}
+
+export interface StepMove {
+  parent_step_id: number | null;
+  position: number;
+}
+
+export interface StepArtifactVersion {
+  version: number;
+  content: string;
+  author: "user" | "model";
+  created_at: string;
+}
+
+export interface StepPlanReview {
+  text: string;
+}

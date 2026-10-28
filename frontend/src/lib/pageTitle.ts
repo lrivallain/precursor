@@ -3,6 +3,7 @@ import { sectionLabel } from "./sections";
 import type { AgentsController } from "./useAgentsController";
 import type { ChatsController } from "./useChatsController";
 import type { LiveSessionsController } from "./useLiveSessionsController";
+import type { StepPlansController } from "./useStepPlansController";
 import type { TopicsController } from "./useTopicsController";
 import type { WorkflowsController } from "./useWorkflowsController";
 import type { WorkspacesController } from "./useWorkspacesController";
@@ -23,6 +24,7 @@ export interface PageTitleSources {
   live: Pick<LiveSessionsController, "activeSession">;
   agents: Pick<AgentsController, "activeAgent">;
   workflows: Pick<WorkflowsController, "activeWorkflowId" | "workflowCollection">;
+  steps: Pick<StepPlansController, "activePlanId" | "plans">;
   workspaces: Pick<WorkspacesController, "activeWorkspace" | "workspaceInitialPath">;
   /** What the open plugin section reported through `SectionHost.setPageTitle`. */
   pluginItem: string | null;
@@ -60,6 +62,10 @@ function itemParts(s: PageTitleSources): Array<string | null | undefined> {
     case "workflows": {
       const id = s.workflows.activeWorkflowId;
       return [s.workflows.workflowCollection.workflows.find((w) => w.id === id)?.name];
+    }
+    case "steps": {
+      const id = s.steps.activePlanId;
+      return [s.steps.plans.find((p) => p.id === id)?.title];
     }
     case "iq":
       return [];

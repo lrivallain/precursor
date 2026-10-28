@@ -85,6 +85,17 @@ class Chat(Base, TimestampMixin):
     # its grounding after the source turn is rewound or deleted.
     seed_content: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # Step-by-step links (see services/step_plans.py): the step this chat works
+    # on, or — for a plan's consolidation chat — the plan itself. Such chats are
+    # reached through their plan and kept out of the main chat list. SQLite
+    # doesn't enforce SET NULL; the plan delete paths remove these chats.
+    step_id: Mapped[int | None] = mapped_column(
+        ForeignKey("steps.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    step_plan_id: Mapped[int | None] = mapped_column(
+        ForeignKey("step_plans.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+
     messages: Mapped[list[Message]] = relationship(
         "Message",
         back_populates="chat",
