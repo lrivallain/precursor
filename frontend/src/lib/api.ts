@@ -1,4 +1,15 @@
 import type {
+  Step,
+  StepArtifactVersion,
+  StepCreate,
+  StepMove,
+  StepPlan,
+  StepPlanCreate,
+  StepPlanItem,
+  StepPlanReview,
+  StepPlanUpdate,
+  SettableStepStatus,
+  StepUpdate,
   AgentArtifact,
   ContextEstimate,
   RewindResult,
@@ -779,6 +790,110 @@ export const api = {
       request<void>(`/api/agents/${id}/triggers/${triggerId}`, {
         method: "DELETE",
       }),
+  },
+
+  stepPlans: {
+    // Step by step: a topic's long ask split into an editable tree of steps, each
+    // with a versioned Markdown artifact and its own chat, then consolidated into
+    // one final output. Model-backed calls (create with propose, propose,
+    // suggest-*, generate) are slow and answer 502 when the model fails.
+    list: (topicId?: number) =>
+      request<StepPlanItem[]>(
+        `/api/step-plans${topicId != null ? `?topic_id=${topicId}` : ""}`,
+      ),
+    create: (payload: StepPlanCreate) =>
+      request<StepPlan>(`/api/step-plans`, { method: "POST", body: JSON.stringify(payload) }),
+    get: (id: number) => request<StepPlan>(`/api/step-plans/${id}`),
+    update: (id: number, payload: StepPlanUpdate) =>
+      request<StepPlan>(`/api/step-plans/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+      }),
+    remove: (id: number) => request<void>(`/api/step-plans/${id}`, { method: "DELETE" }),
+    propose: (id: number, instructions?: string) =>
+      request<StepPlan>(`/api/step-plans/${id}/propose`, {
+        method: "POST",
+        body: JSON.stringify({ instructions: instructions || null }),
+      }),
+    suggestMissing: (id: number, instructions?: string) =>
+      request<StepPlan>(`/api/step-plans/${id}/suggest-missing`, {
+        method: "POST",
+        body: JSON.stringify({ instructions: instructions || null }),
+      }),
+    start: (id: number, acceptProposed = true) =>
+      request<StepPlan>(`/api/step-plans/${id}/start`, {
+        method: "POST",
+        body: JSON.stringify({ accept_proposed: acceptProposed }),
+      }),
+    review: (id: number) =>
+      request<StepPlanReview>(`/api/step-plans/${id}/review`, { method: "POST" }),
+    createStep: (id: number, payload: StepCreate) =>
+      request<Step>(`/api/step-plans/${id}/steps`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }),
+    consolidationChat: (id: number) =>
+      request<Chat>(`/api/step-plans/${id}/consolidation/chat`, { method: "POST" }),
+    generateFinal: (id: number, opts?: { instructions?: string; force?: boolean }) =>
+      request<StepPlan>(`/api/step-plans/${id}/consolidate/generate`, {
+        method: "POST",
+        body: JSON.stringify({
+          instructions: opts?.instructions || null,
+          force: opts?.force ?? false,
+        }),
+      }),
+    writeFinal: (id: number, content: string) =>
+      request<StepPlan>(`/api/step-plans/${id}/final`, {
+        method: "PUT",
+        body: JSON.stringify({ content }),
+      }),
+    sendToTopic: (id: number, text?: string) =>
+      request<Message>(`/api/step-plans/${id}/send-to-topic`, {
+        method: "POST",
+        body: JSON.stringify({ text: text ?? null }),
+      }),
+    updateStep: (stepId: number, payload: StepUpdate) =>
+      request<Step>(`/api/steps/${stepId}`, {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+      }),
+    removeStep: (stepId: number) => request<void>(`/api/steps/${stepId}`, { method: "DELETE" }),
+    moveStep: (stepId: number, payload: StepMove) =>
+      request<Step>(`/api/steps/${stepId}/move`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }),
+    acceptStep: (stepId: number) =>
+      request<Step>(`/api/steps/${stepId}/accept`, { method: "POST" }),
+    setStepStatus: (stepId: number, status: SettableStepStatus) =>
+      request<Step>(`/api/steps/${stepId}/status`, {
+        method: "POST",
+        body: JSON.stringify({ status }),
+      }),
+    writeArtifact: (stepId: number, content: string) =>
+      request<Step>(`/api/steps/${stepId}/artifact`, {
+        method: "PUT",
+        body: JSON.stringify({ content }),
+      }),
+    versions: (stepId: number) =>
+      request<StepArtifactVersion[]>(`/api/steps/${stepId}/versions`),
+    revertArtifact: (stepId: number, version: number) =>
+      request<Step>(`/api/steps/${stepId}/artifact/revert`, {
+        method: "POST",
+        body: JSON.stringify({ version }),
+      }),
+    generateArtifact: (stepId: number, instructions?: string) =>
+      request<Step>(`/api/steps/${stepId}/artifact/generate`, {
+        method: "POST",
+        body: JSON.stringify({ instructions: instructions || null }),
+      }),
+    suggestSubsteps: (stepId: number, instructions?: string) =>
+      request<StepPlan>(`/api/steps/${stepId}/suggest-substeps`, {
+        method: "POST",
+        body: JSON.stringify({ instructions: instructions || null }),
+      }),
+    stepChat: (stepId: number) =>
+      request<Chat>(`/api/steps/${stepId}/chat`, { method: "POST" }),
   },
 
   workflows: {

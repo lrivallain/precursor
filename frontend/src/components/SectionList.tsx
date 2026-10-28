@@ -10,6 +10,8 @@ export interface SectionListItem {
   dot: string;
   unread?: number;
   group?: string;
+  /** Extra chips/badges rendered under the detail line. */
+  extra?: ReactNode;
 }
 
 interface Props {
@@ -121,6 +123,7 @@ export function SectionList({
                           {item.label}
                         </span>
                         <span className="block truncate text-xs text-muted">{item.detail}</span>
+                        {item.extra}
                       </span>
                       {!!item.unread && item.id !== activeId && (
                         <span aria-label={`${item.unread} unread`} className="shrink-0 rounded-full bg-accent px-1.5 text-xs text-white">

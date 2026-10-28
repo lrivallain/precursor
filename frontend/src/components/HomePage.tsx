@@ -4,6 +4,7 @@ import {
   ArrowRight,
   Bot,
   FolderGit2,
+  ListChecks,
   MessageSquarePlus,
   MessagesSquare,
   Radio,
@@ -239,6 +240,15 @@ export function HomePage({
         "Chain agents into a reusable pipeline that runs itself — with gates, approvals and a full run history.",
       openLabel: "Browse workflows",
       icon: <WorkflowIcon size={20} />,
+    },
+    {
+      mode: "steps",
+      title: "Step by step",
+      description:
+        "Split a long ask into a tree of steps, work each one with its own artifact and chat, then consolidate a single answer.",
+      newLabel: "New step plan",
+      openLabel: "Browse step plans",
+      icon: <ListChecks size={20} />,
     },
     {
       mode: "workspaces",

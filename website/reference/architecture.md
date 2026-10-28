@@ -396,6 +396,19 @@ them; literal pathspecs, no terminal prompts); `services/workspace_fs.py` does s
 through `safe_join`, which rejects traversal outside the workspace root and blocks
 `.git`. The same sandbox backs the workspace tools of the `precursor` MCP server and the `drawio` server; `services/workspaces.py` holds the create/allocate logic shared by the REST router and those tools.
 
+## Step plans
+
+A `StepPlan` freezes an ask and owns a tree of `Step` rows, each with a Markdown artifact
+and its `StepArtifactVersion` history (`models/step_plan.py`; no ORM relationships — the
+services query by id). `services/step_plans.py` holds the tree and status rules (a step
+with accepted children is a group whose status is derived) and the prompt grounding that
+`turn_engine.build_chat_system_context` injects into step chats, which are ordinary `Chat`
+rows linked by `step_id`/`step_plan_id`. `services/step_plan_llm.py` runs the one-shot,
+tool-less model actions (propose, sub-steps, artifact draft, review, consolidation) through
+`complete_once`. SQLite doesn't enforce foreign keys, so deleting a plan or step removes its
+chats and versions explicitly, and deleting a topic detaches its plans. Changes publish
+`step-plan.changed`. See [Step by step](/features/step-by-step).
+
 ## SPA
 
 Vite + React 19 + Tailwind, built to `frontend/dist` and bundled inside the wheel.

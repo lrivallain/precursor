@@ -15,6 +15,14 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **Step by step.** A new section splits a long ask (a customer email, a brief)
+  into a tree of steps. Each step has its own Markdown artifact with version
+  history, a status (open, in progress, to validate, validated, cancelled) and a
+  chat; the model can propose, add or split steps. Once the steps are validated,
+  one consolidated answer is built and can be sent back to the source topic.
+  Start one with `/steps` in a topic or from the section. See
+  [Step by step](website/features/step-by-step.md).
+
 - **Live insights are easier to scan.** Insight categories now have clearer
   visual grouping, and proactive suggestions lead with a short recommendation
   followed by concise bullets for alternatives or next steps when useful. See

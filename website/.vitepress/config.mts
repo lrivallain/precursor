@@ -122,6 +122,7 @@ export default withMermaid(
                 { text: "Authoring spec (for AI agents)", link: "/reference/workflow-authoring" },
               ],
             },
+            { text: "Step by step", link: "/features/step-by-step" },
             { text: "Import & export", link: "/features/transfer" },
             { text: "Definition files (WIP)", link: "/features/definitions" },
             { text: "Workspaces & files", link: "/features/workspaces" },

@@ -11,11 +11,12 @@ import { ChatStatsPanel } from "./ChatStatsPanel";
 import { useSideChats } from "./SideChatsSection";
 import { TopicSeedCard } from "./SideChatSeedCard";
 import { SelectionActions } from "./SelectionActions";
-import { api } from "../lib/api";
+import { api, apiErrorMessage } from "../lib/api";
 import { GITHUB_SLASH_COMMANDS } from "../lib/commands";
 import { detachedDraftStore } from "../lib/detachedDraftStore";
 import { useSettings } from "../lib/settingsStore";
 import { archiveTopic, hasPendingJump, startSideChat, takePendingJump } from "../lib/sideChats";
+import { startStepPlanFromTopic } from "../lib/stepPlans";
 import { useConfirm } from "./ConfirmDialog";
 import { convKey, streamStore } from "../lib/streamStore";
 import { useResizableWidth } from "../lib/useResizableWidth";
@@ -188,6 +189,17 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
     }
   }
 
+  // Split the topic's latest ask into a step plan. The model call is slow, so a
+  // note says so; a model failure still leaves an (empty) plan in Step by step.
+  async function runSteps(): Promise<void> {
+    systemNote("Splitting the latest ask into steps… this can take a moment.");
+    try {
+      await startStepPlanFromTopic(topic.id);
+    } catch (err) {
+      systemNote(`Couldn't split the ask into steps: ${apiErrorMessage(err)}`);
+    }
+  }
+
   // Arrived from a side chat's "Open in topic": scroll to its source reply's
   // turn once the turn index knows it.
   const { turns: timelineTurns, jumpTo } = conv.timeline;
@@ -244,6 +256,10 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
     }
     if (name === "side-chat") {
       await runSideChat(null, argument);
+      return;
+    }
+    if (name === "steps") {
+      await runSteps();
       return;
     }
     if (name === "pin" || name === "unpin") {

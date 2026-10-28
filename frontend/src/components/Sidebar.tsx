@@ -13,6 +13,7 @@ import {
   FolderGit2,
   Home,
   Layers,
+  ListChecks,
   MessageSquare,
   MessageSquarePlus,
   Mail,
@@ -69,6 +70,7 @@ export type CoreSidebarMode =
   | "workspaces"
   | "agents"
   | "workflows"
+  | "steps"
   | "iq";
 
 /**
@@ -92,6 +94,8 @@ function newActionLabel(mode: SidebarMode, section: SectionPlugin | null): strin
       return "New agent";
     case "workflows":
       return "New workflow";
+    case "steps":
+      return "New step plan";
     case "topics":
       return "New topic";
     default:
@@ -141,6 +145,7 @@ export interface SidebarSlots {
   workspaces?: ReactNode;
   agents?: ReactNode;
   workflows?: ReactNode;
+  steps?: ReactNode;
   iq?: ReactNode;
   /** Rendered when a plugin section is active (its own list). */
   plugin?: ReactNode;
@@ -340,7 +345,7 @@ export function Sidebar({
             className="rounded-md shrink-0"
           />
           <span className="flex-1 truncate font-semibold tracking-tight">
-            {mode === "agents" ? "Agents" : mode === "workflows" ? "Workflows" : "Precursor"}
+            {mode === "agents" ? "Agents" : mode === "workflows" ? "Workflows" : mode === "steps" ? "Step by step" : "Precursor"}
           </span>
         </button>
         {!narrow && (
@@ -435,6 +440,8 @@ export function Sidebar({
         slots.agents
       ) : mode === "workflows" ? (
         slots.workflows
+      ) : mode === "steps" ? (
+        slots.steps
       ) : mode === "iq" ? (
         slots.iq
       ) : activeSection ? (
@@ -911,6 +918,7 @@ const CORE_MODES: ModeDef[] = [
   { mode: "workspaces", label: SECTION_LABELS.workspaces, Icon: FolderGit2 },
   { mode: "agents", label: SECTION_LABELS.agents, Icon: Bot },
   { mode: "workflows", label: SECTION_LABELS.workflows, Icon: WorkflowIcon },
+  { mode: "steps", label: SECTION_LABELS.steps, Icon: ListChecks },
   { mode: "iq", label: SECTION_LABELS.iq, Icon: Sparkles },
 ];
 

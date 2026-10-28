@@ -65,6 +65,14 @@ features:
       webhook triggers.
     link: /features/workflows
     linkText: About workflows
+  - icon: ✅
+    title: Step by step
+    details: >-
+      Split a long ask into a tree of steps, work and validate each one in its
+      own chat, then consolidate the results into one answer filed back into
+      the topic.
+    link: /features/step-by-step
+    linkText: About step plans
   - icon: 🗂️
     title: Workspaces & files
     details: >-
