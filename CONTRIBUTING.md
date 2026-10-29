@@ -130,6 +130,10 @@ role-filing markers, refreshes the overlay cache, then restores the incoming
 settings and cache in `finally`. Snapshot/restore alone does not establish a
 test's starting state; do not make wizard tests depend on their predecessor.
 
+For background-run tests, join the task on the TestClient event loop before
+asserting its output. A persisted `paused` state can precede the in-flight
+draft's save and task cleanup; status polling alone is not a completion barrier.
+
 Main-push CI also gates rolling Nightly publication at that exact commit,
 including manual retries. Website deployment stays independent; see
 [RELEASING.md](RELEASING.md#the-nightly-channel).

@@ -936,14 +936,16 @@ def _mode(client: TestClient, plan_id: int, mode: str) -> dict[str, Any]:
 
 
 def _await_run(client: TestClient, plan_id: int) -> dict[str, Any]:
-    import time
+    from precursor.backend.services import step_plan_runner
 
-    for _ in range(200):
-        plan = _get(client, plan_id)
-        if plan["auto_state"] != "running":
-            return plan
-        time.sleep(0.05)
-    raise AssertionError("the automated run never ended")
+    async def _join() -> None:
+        # Paused is persisted before the in-flight draft and task cleanup finish.
+        async with asyncio.timeout(10):
+            await step_plan_runner.join(plan_id)
+
+    assert client.portal is not None
+    client.portal.call(_join)
+    return _get(client, plan_id)
 
 
 def test_an_assessment_is_clamped_explained_and_goes_stale(
