@@ -12,7 +12,9 @@ explicitly.
 
 from __future__ import annotations
 
-from sqlalchemy import Boolean, ForeignKey, Integer, String, Text
+from datetime import datetime
+
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from precursor.backend.models.base import Base, TimestampMixin
@@ -83,6 +85,10 @@ class StepPlan(Base, TimestampMixin):
     # What the final output should be (format, tone, language…).
     output_instructions: Mapped[str | None] = mapped_column(Text, nullable=True)
     final_output: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Which of ``StepPlanFinalVersion`` the final output is (0: none yet).
+    final_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
     # A validated artifact changed after the final output was built.
     final_stale: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="0"
@@ -152,3 +158,20 @@ class StepArtifactVersion(Base, TimestampMixin):
     version: Mapped[int] = mapped_column(Integer, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False, default="")
     author: Mapped[str] = mapped_column(String(8), nullable=False, default=AUTHOR_USER)
+
+
+class StepPlanFinalVersion(Base, TimestampMixin):
+    """One distinct text the plan's final output has had, like a step's versions."""
+
+    __tablename__ = "step_plan_final_versions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    plan_id: Mapped[int] = mapped_column(
+        ForeignKey("step_plans.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    author: Mapped[str] = mapped_column(String(8), nullable=False, default=AUTHOR_USER)
+    # When this version was last filed into the topic, and as which message.
+    posted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    posted_message_id: Mapped[int | None] = mapped_column(Integer, nullable=True)

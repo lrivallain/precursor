@@ -1,4 +1,5 @@
 import type {
+  FinalVersion,
   Step,
   StepArtifactVersion,
   StepCreate,
@@ -856,6 +857,13 @@ export const api = {
       request<StepPlan>(`/api/step-plans/${id}/final`, {
         method: "PUT",
         body: JSON.stringify({ content }),
+      }),
+    finalVersions: (id: number) =>
+      request<FinalVersion[]>(`/api/step-plans/${id}/final/versions`),
+    revertFinal: (id: number, version: number) =>
+      request<StepPlan>(`/api/step-plans/${id}/final/revert`, {
+        method: "POST",
+        body: JSON.stringify({ version }),
       }),
     finalFromMessage: (id: number, messageId: number) =>
       request<StepPlan>(`/api/step-plans/${id}/final/from-message`, {

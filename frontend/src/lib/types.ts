@@ -3054,6 +3054,11 @@ export interface StepPlan {
   llm_selection: ConversationLLMSelection | null;
   output_instructions: string | null;
   final_output: string | null;
+  /** Which version of the final output this is (0: none yet). */
+  final_version: number;
+  /** The latest version filed into the topic, if any. */
+  final_posted_version: number | null;
+  final_posted_at: string | null;
   final_stale: boolean;
   /** The final output was written before every step was validated. */
   final_provisional: boolean;
@@ -3129,6 +3134,12 @@ export interface StepArtifactVersion {
   content: string;
   author: "user" | "model";
   created_at: string;
+}
+
+export interface FinalVersion extends StepArtifactVersion {
+  /** Set when this version was filed into the topic. */
+  posted_at: string | null;
+  posted_message_id: number | null;
 }
 
 /** What a model draft turned into: saved as a version, kept in the discussion, or paused. */

@@ -88,6 +88,11 @@ class StepPlanRead(ConversationLLMFields):
     role: str | None = None
     output_instructions: str | None = None
     final_output: str | None = None
+    # Which version of the final output this is (0: none yet), and the latest
+    # version filed into the topic, if any.
+    final_version: int = 0
+    final_posted_version: int | None = None
+    final_posted_at: UtcDateTime | None = None
     final_stale: bool = False
     # Built before every working step was validated: a draft, not an approved result.
     final_provisional: bool = False
@@ -183,6 +188,18 @@ class StepArtifactVersionRead(BaseModel):
     content: str
     author: Author
     created_at: UtcDateTime
+
+
+class FinalVersionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    version: int
+    content: str
+    author: Author
+    created_at: UtcDateTime
+    # Set when this version was filed into the topic (the latest time, if more than once).
+    posted_at: UtcDateTime | None = None
+    posted_message_id: int | None = None
 
 
 class StepArtifactRevert(BaseModel):

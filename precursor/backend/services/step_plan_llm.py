@@ -24,6 +24,7 @@ from precursor.backend.db import SessionLocal
 from precursor.backend.models import Chat, Message, MessageRole, Step, StepPlan
 from precursor.backend.models.step_plan import (
     AUTHOR_MODEL,
+    AUTHOR_USER,
     AUTOMATION_MANUAL,
     PLAN_ACTIVE,
     PLAN_CONSOLIDATING,
@@ -810,7 +811,7 @@ async def generate_final(
     deliverable = svc.extract_deliverable(result.reply or "")
     if deliverable is None:
         return FinalDraft(await svc.get_plan(session, plan_id), "discussion")
-    saved = await save_final(session, plan_id, deliverable, complete=complete)
+    saved = await save_final(session, plan_id, deliverable, complete=complete, author=AUTHOR_MODEL)
     await _assess_plan_quietly(session, saved)
     return FinalDraft(saved, "published")
 
@@ -832,24 +833,43 @@ async def use_message_as_final(
     chat_id = await _chat_id(session, plan_id=plan_id)
     content = await _chat_message(session, chat_id, message_id)
     return await save_final(
-        session, plan_id, svc.extract_deliverable(content) or content.strip(), complete=complete
+        session,
+        plan_id,
+        svc.extract_deliverable(content) or content.strip(),
+        complete=complete,
+        author=AUTHOR_MODEL,
     )
 
 
+async def revert_final(session: AsyncSession, plan_id: int, version: int) -> StepPlan:
+    """Make an earlier version the final output again (no new version is created)."""
+    versions = await svc.list_final_versions(session, plan_id)
+    row = next((v for v in versions if v.version == version), None)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Version not found")
+    return await save_final(session, plan_id, row.content)
+
+
 async def save_final(
-    session: AsyncSession, plan_id: int, content: str, *, complete: bool = False
+    session: AsyncSession,
+    plan_id: int,
+    content: str,
+    *,
+    complete: bool = False,
+    author: str = AUTHOR_USER,
 ) -> StepPlan:
     """Keep ``content`` as the final output.
 
     ``complete`` is for a user's own request: an output built from approved
     steps then finishes the plan. The automated run and discussion edits never
-    pass it, so a model can't finish a plan on its own.
+    pass it, so a model can't finish a plan on its own. Every distinct text is
+    kept as a version (see ``step_plans.record_final_version``).
     """
     plan = await svc.get_plan(session, plan_id)
     if plan.status == PLAN_DRAFTING:
         raise HTTPException(status.HTTP_409_CONFLICT, "Start the plan first.")
     steps = await svc.plan_steps(session, plan.id)
-    plan.final_output = content.strip("\n") or None
+    await svc.record_final_version(session, plan, content.strip("\n"), author=author)
     plan.final_stale = False
     # Built while a working step is unapproved: a draft, not an approved result.
     plan.final_provisional = bool(plan.final_output) and not svc.is_ready(steps)
@@ -861,9 +881,15 @@ async def save_final(
     return plan
 
 
-def topic_note_content(plan: StepPlan, text: str, *, provisional: bool = False) -> str:
+def topic_note_content(
+    plan: StepPlan, text: str, *, provisional: bool = False, version: int | None = None
+) -> str:
     label = " (provisional — not every step was validated)" if provisional else ""
-    return f"**From step-by-step plan: [{plan.title}](/steps/{plan.id}){label}**\n\n{text.strip()}"
+    which = f" · final output v{version}" if version else ""
+    return (
+        f"**From step-by-step plan: [{plan.title}](/steps/{plan.id}){which}{label}**"
+        f"\n\n{text.strip()}"
+    )
 
 
 async def send_to_topic(
@@ -901,12 +927,18 @@ async def send_to_topic(
         msg = Message(
             topic_id=topic_id,
             role=MessageRole.USER,
-            content=topic_note_content(plan, body, provisional=provisional),
+            content=topic_note_content(
+                plan,
+                body,
+                provisional=provisional,
+                version=plan.final_version if body.strip("\n") == plan.final_output else None,
+            ),
         )
         ws.add(msg)
         await ws.commit()
         await ws.refresh(msg, attribute_names=["attachments"])
         read = MessageRead.model_validate(msg, from_attributes=True)
+    await svc.mark_final_posted(session, plan.id, body.strip("\n"), read.id)
     if not provisional:
         plan.status = PLAN_DONE
     await session.commit()
@@ -925,6 +957,7 @@ __all__ = [
     "generate_artifact",
     "generate_final",
     "parse_steps",
+    "revert_final",
     "review_plan",
     "save_final",
     "send_to_topic",

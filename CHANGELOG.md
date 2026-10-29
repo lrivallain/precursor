@@ -15,6 +15,11 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **Step by step: versions for the final output.** Like a step's artifact, the
+  final output keeps a numbered history (*you* or *model* authored) with *View*
+  and *Restore*; restoring or re-saving an earlier text records no duplicate.
+  The version sent to the topic is marked *posted* in the history and the
+  version label, and the note in the topic names it.
 - **Step by step: no lost drafts, no stale final, an honest assessment scope.**
   Unsaved artifact and final-output edits now survive moving between steps, the
   final output and other sections (an amber dot marks them, and a reload asks

@@ -54,7 +54,12 @@ from precursor.backend.models.reminder import Reminder
 from precursor.backend.models.role import Role
 from precursor.backend.models.settings import AppSetting
 from precursor.backend.models.skill import Skill
-from precursor.backend.models.step_plan import Step, StepArtifactVersion, StepPlan
+from precursor.backend.models.step_plan import (
+    Step,
+    StepArtifactVersion,
+    StepPlan,
+    StepPlanFinalVersion,
+)
 from precursor.backend.models.tool_approval import ToolApproval
 from precursor.backend.models.topic import Topic
 from precursor.backend.models.topic_schedule import TopicSchedule
@@ -129,6 +134,7 @@ __all__ = [
     "Step",
     "StepArtifactVersion",
     "StepPlan",
+    "StepPlanFinalVersion",
     "ToolApproval",
     "Topic",
     "TopicSchedule",

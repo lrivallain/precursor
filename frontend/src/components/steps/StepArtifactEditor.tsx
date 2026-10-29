@@ -1,13 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { History, Loader2, Save } from "lucide-react";
-import { api, apiErrorMessage } from "../../lib/api";
+import { api } from "../../lib/api";
 import { draftKey, useStoredDraft } from "../../lib/stepDrafts";
 import { hasUnsavedEdits } from "../../lib/stepPlans";
-import type { Step, StepArtifactVersion } from "../../lib/types";
+import type { Step } from "../../lib/types";
 import { useConfirm } from "../ConfirmDialog";
 import { Markdown } from "../Markdown";
 import { RefineTextarea } from "../RefineTextarea";
-import { BTN_SECONDARY, BTN_SMALL, ErrorBanner } from "./StepUi";
+import { BTN_SECONDARY, BTN_SMALL } from "./StepUi";
+import { VersionHistory } from "./VersionHistory";
 
 type Mutate = <T>(action: () => Promise<T>) => Promise<T | undefined>;
 
@@ -157,95 +158,16 @@ export function StepArtifactEditor({ step, mutate }: { step: Step; mutate: Mutat
       )}
 
       {historyOpen && step.artifact_version > 0 && (
-        <VersionHistory step={step} mutate={mutate} confirmDiscard={confirmDiscard} />
+        <VersionHistory
+          load={() => api.stepPlans.versions(step.id)}
+          refreshKey={`${step.id}:${step.artifact_version}`}
+          current={step.artifact_version}
+          onRestore={async (v) => {
+            if (!(await confirmDiscard(`you restore version ${v.version}`))) return;
+            await mutate(() => api.stepPlans.revertArtifact(step.id, v.version));
+          }}
+        />
       )}
     </div>
-  );
-}
-
-function VersionHistory({
-  step,
-  mutate,
-  confirmDiscard,
-}: {
-  step: Step;
-  mutate: Mutate;
-  confirmDiscard: (what: string) => Promise<boolean>;
-}) {
-  const [versions, setVersions] = useState<StepArtifactVersion[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [shown, setShown] = useState<number | null>(null);
-
-  const load = useCallback(async () => {
-    try {
-      setVersions(await api.stepPlans.versions(step.id));
-      setError(null);
-    } catch (err) {
-      setError(apiErrorMessage(err, "Could not load the history."));
-    }
-  }, [step.id]);
-
-  useEffect(() => {
-    void load();
-  }, [load, step.artifact_version]);
-
-  async function revert(v: StepArtifactVersion): Promise<void> {
-    if (!(await confirmDiscard(`you restore version ${v.version}`))) return;
-    await mutate(() => api.stepPlans.revertArtifact(step.id, v.version));
-  }
-
-  return (
-    <section className="space-y-2 rounded-lg border border-border p-3" aria-label="Version history">
-      <h4 className="text-xs font-medium uppercase tracking-wide text-muted">Version history</h4>
-      {error && <ErrorBanner message={error} />}
-      {!versions && !error && (
-        <p className="flex items-center gap-2 text-sm text-muted">
-          <Loader2 size={14} className="animate-spin" /> Loading…
-        </p>
-      )}
-      <ul className="space-y-1.5">
-        {versions?.map((v) => (
-          <li key={v.version} className="rounded-lg border border-border">
-            <div className="flex flex-wrap items-center gap-2 px-3 py-1.5 text-sm">
-              <span className="font-medium">v{v.version}</span>
-              <span className="text-xs text-muted">
-                {v.author === "model" ? "model" : "you"} · {new Date(v.created_at).toLocaleString()}
-              </span>
-              {v.version === step.artifact_version && (
-                <span className="rounded-full bg-accent/15 px-2 py-0.5 text-[11px] text-accent">current</span>
-              )}
-              <span className="ml-auto flex gap-1.5">
-                <button
-                  type="button"
-                  className={BTN_SMALL}
-                  aria-expanded={shown === v.version}
-                  onClick={() => setShown(shown === v.version ? null : v.version)}
-                >
-                  {shown === v.version ? "Hide" : "View"}
-                </button>
-                <button
-                  type="button"
-                  className={BTN_SMALL}
-                  disabled={v.version === step.artifact_version}
-                  data-tooltip={
-                    v.version === step.artifact_version
-                      ? "This is the current version"
-                      : "Make this the current version (no new version is created)"
-                  }
-                  onClick={() => void revert(v)}
-                >
-                  Restore
-                </button>
-              </span>
-            </div>
-            {shown === v.version && (
-              <div className="max-h-72 overflow-y-auto border-t border-border px-4 py-2">
-                <Markdown>{v.content}</Markdown>
-              </div>
-            )}
-          </li>
-        ))}
-      </ul>
-    </section>
   );
 }

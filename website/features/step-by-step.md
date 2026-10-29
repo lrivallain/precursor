@@ -160,6 +160,15 @@ the approved artifacts (following the *Options* you set: standing output instruc
 tone or format, and guidance for one run). Edit it by hand or discuss it in the consolidation
 chat, then **Send to topic** to file it back into the topic the plan came from.
 
+The final output is versioned like a step's artifact. Every distinct text you save, or that the
+model generates, becomes the next **Version N** (shown beside the *Edit / Preview* tabs, with
+*you* or *model* as its author), and **History** lists them, each with *View* and *Restore*.
+Restoring an older version only moves the *current* marker, and saving a text that matches an
+earlier version points back at it, so neither adds a duplicate. When you **Send to topic**, the
+version that was filed gets a green **posted** badge in the history and next to the version
+number, and the note in the topic names it (*final output v2*). Later versions don't move the
+badge: it stays on the version that was actually posted.
+
 If a step changes after the final output was written, the final output is **out of date**, even
 once you approve the step again. It cannot be sent to the topic or complete the plan until you
 regenerate it, or read it and click **Mark as reviewed** (or save your edits). The server enforces

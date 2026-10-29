@@ -27,6 +27,7 @@ import json
 import re
 from collections import defaultdict
 from collections.abc import Iterable
+from datetime import UTC, datetime
 from typing import Literal
 from uuid import uuid4
 
@@ -41,6 +42,7 @@ from precursor.backend.models import (
     Step,
     StepArtifactVersion,
     StepPlan,
+    StepPlanFinalVersion,
     Topic,
     TopicSummary,
 )
@@ -62,6 +64,7 @@ from precursor.backend.models.step_plan import (
 from precursor.backend.schemas.step_plan import (
     ActivityNote,
     Assessment,
+    FinalVersionRead,
     StepArtifactVersionRead,
     StepCreate,
     StepPlanCreate,
@@ -363,6 +366,9 @@ async def to_plan_read(session: AsyncSession, plan: StepPlan) -> StepPlanRead:
     )
     if plan.auto_state == AUTO_RUNNING and plan.id not in RUNNING:
         read.auto_state = "paused"
+    posted = await latest_posted_final(session, plan.id)
+    if posted is not None:
+        read.final_posted_version, read.final_posted_at = posted.version, posted.posted_at
     read.auto_step_id = CURRENT_STEP.get(plan.id) if plan.id in RUNNING else None
     read.activity = await _recent_activity(session, plan.id, [s.id for s in steps])
     return read
@@ -588,6 +594,9 @@ async def delete_plan(session: AsyncSession, plan_id: int) -> None:
             delete(StepArtifactVersion).where(StepArtifactVersion.step_id == s.id)
         )
         await session.delete(s)
+    await session.execute(
+        delete(StepPlanFinalVersion).where(StepPlanFinalVersion.plan_id == plan_id)
+    )
     await session.delete(plan)
     await session.commit()
 
@@ -1005,6 +1014,107 @@ async def revert_artifact(session: AsyncSession, step_id: int, version: int) -> 
     _settle_artifact(plan, step, changed=changed, mark=None)
     await session.commit()
     return step
+
+
+# --- final output versions ----------------------------------------------------
+
+
+async def record_final_version(
+    session: AsyncSession, plan: StepPlan, text: str, *, author: str = AUTHOR_USER
+) -> None:
+    """Point the plan's final output at ``text``, as a version.
+
+    Mirrors a step's artifact history: a text the output already had points back
+    at that version instead of recording a duplicate, so restoring an older
+    version (or saving unchanged text) never creates a new one.
+    """
+    if not text.strip():
+        plan.final_output, plan.final_version = None, 0
+        return
+    known = (
+        (
+            await session.execute(
+                select(StepPlanFinalVersion)
+                .where(
+                    StepPlanFinalVersion.plan_id == plan.id, StepPlanFinalVersion.content == text
+                )
+                .order_by(StepPlanFinalVersion.version.desc())
+            )
+        )
+        .scalars()
+        .first()
+    )
+    plan.final_output = text
+    if known is not None:
+        plan.final_version = known.version
+        return
+    latest = (
+        await session.execute(
+            select(func.max(StepPlanFinalVersion.version)).where(
+                StepPlanFinalVersion.plan_id == plan.id
+            )
+        )
+    ).scalar() or 0
+    plan.final_version = max(latest, plan.final_version) + 1
+    session.add(
+        StepPlanFinalVersion(
+            plan_id=plan.id, version=plan.final_version, content=text, author=author
+        )
+    )
+
+
+async def list_final_versions(session: AsyncSession, plan_id: int) -> list[FinalVersionRead]:
+    await get_plan(session, plan_id)
+    rows = await session.execute(
+        select(StepPlanFinalVersion)
+        .where(StepPlanFinalVersion.plan_id == plan_id)
+        .order_by(StepPlanFinalVersion.version.desc())
+    )
+    return [FinalVersionRead.model_validate(v) for v in rows.scalars().all()]
+
+
+async def latest_posted_final(session: AsyncSession, plan_id: int) -> StepPlanFinalVersion | None:
+    """The version filed into the topic most recently."""
+    return (
+        (
+            await session.execute(
+                select(StepPlanFinalVersion)
+                .where(
+                    StepPlanFinalVersion.plan_id == plan_id,
+                    StepPlanFinalVersion.posted_at.is_not(None),
+                )
+                .order_by(
+                    StepPlanFinalVersion.posted_at.desc(), StepPlanFinalVersion.version.desc()
+                )
+                .limit(1)
+            )
+        )
+        .scalars()
+        .first()
+    )
+
+
+async def mark_final_posted(
+    session: AsyncSession, plan_id: int, text: str, message_id: int
+) -> StepPlanFinalVersion | None:
+    """Flag the version holding ``text`` as filed into the topic (none when it matches no version)."""
+    row = (
+        (
+            await session.execute(
+                select(StepPlanFinalVersion)
+                .where(
+                    StepPlanFinalVersion.plan_id == plan_id, StepPlanFinalVersion.content == text
+                )
+                .order_by(StepPlanFinalVersion.version.desc())
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if row is not None:
+        row.posted_at = datetime.now(UTC)
+        row.posted_message_id = message_id
+    return row
 
 
 # --- chats --------------------------------------------------------------------

@@ -19,6 +19,7 @@ from precursor.backend.schemas.step_plan import (
     ArtifactDraftResult,
     ConsolidateRequest,
     FinalDraftResult,
+    FinalVersionRead,
     FinalWrite,
     SendToTopicRequest,
     StepArtifactRevert,
@@ -233,6 +234,22 @@ async def write_final(
     plan_id: int, payload: FinalWrite, session: AsyncSession = Depends(get_session)
 ) -> StepPlanRead:
     await llm.save_final(session, plan_id, payload.content)
+    await publish_step_plan_changed(plan_id)
+    return await _plan(session, plan_id)
+
+
+@router.get("/{plan_id}/final/versions", response_model=list[FinalVersionRead])
+async def list_final_versions(
+    plan_id: int, session: AsyncSession = Depends(get_session)
+) -> list[FinalVersionRead]:
+    return await svc.list_final_versions(session, plan_id)
+
+
+@router.post("/{plan_id}/final/revert", response_model=StepPlanRead)
+async def revert_final(
+    plan_id: int, payload: StepArtifactRevert, session: AsyncSession = Depends(get_session)
+) -> StepPlanRead:
+    await llm.revert_final(session, plan_id, payload.version)
     await publish_step_plan_changed(plan_id)
     return await _plan(session, plan_id)
 

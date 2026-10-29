@@ -651,7 +651,7 @@ def test_the_final_can_be_edited_and_sent_to_the_topic(monkeypatch: pytest.Monke
         sent = client.post(f"/api/step-plans/{plan['id']}/send-to-topic", json={})
         assert sent.status_code == 200, sent.text
         assert sent.json()["content"].startswith("**From step-by-step plan: [")
-        assert f"](/steps/{plan['id']})**" in sent.json()["content"]
+        assert f"](/steps/{plan['id']}) · final output v" in sent.json()["content"]
         assert "Edited final" in sent.json()["content"]
         assert _get(client, plan["id"])["status"] == "done"
         messages = client.get(f"/api/topics/{topic['id']}/messages").json()
@@ -1372,3 +1372,125 @@ def test_concurrent_requests_create_one_discussion_per_step(
                 )
 
         assert _run(_race) == 1
+
+
+def _final_versions(client: TestClient, pid: int) -> list[dict[str, Any]]:
+    res = client.get(f"/api/step-plans/{pid}/final/versions")
+    assert res.status_code == 200, res.text
+    data: list[dict[str, Any]] = res.json()
+    return data
+
+
+def test_every_distinct_final_output_is_a_version_and_a_repeat_is_not(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_llm(monkeypatch)
+    with TestClient(create_app()) as client:
+        _, ctx = _approved_and_filed_setup(client)
+        pid = ctx["plan"]["id"]
+        assert _get(client, pid)["final_version"] == 0
+        assert _final_versions(client, pid) == []
+
+        generated = client.post(f"/api/step-plans/{pid}/consolidate/generate", json={}).json()
+        assert generated["plan"]["final_version"] == 1
+        put = f"/api/step-plans/{pid}/final"
+        assert client.put(put, json={"content": "Edited"}).json()["final_version"] == 2
+        # Saving the same text again records nothing.
+        assert client.put(put, json={"content": "Edited"}).json()["final_version"] == 2
+        # Going back to an earlier text points at it instead of adding a version.
+        assert client.put(put, json={"content": "FINAL ANSWER"}).json()["final_version"] == 1
+
+        versions = _final_versions(client, pid)
+        assert [(v["version"], v["author"]) for v in versions] == [(2, "user"), (1, "model")]
+        assert all(v["posted_at"] is None for v in versions)
+
+
+def test_restoring_a_final_version_creates_no_new_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_llm(monkeypatch)
+    with TestClient(create_app()) as client:
+        _, ctx = _approved_and_filed_setup(client)
+        pid = ctx["plan"]["id"]
+        client.post(f"/api/step-plans/{pid}/consolidate/generate", json={})
+        client.put(f"/api/step-plans/{pid}/final", json={"content": "Edited"})
+
+        restored = client.post(f"/api/step-plans/{pid}/final/revert", json={"version": 1})
+        assert restored.status_code == 200, restored.text
+        assert restored.json()["final_output"] == "FINAL ANSWER"
+        assert restored.json()["final_version"] == 1
+        assert len(_final_versions(client, pid)) == 2
+        assert (
+            client.post(f"/api/step-plans/{pid}/final/revert", json={"version": 9}).status_code
+            == 404
+        )
+
+
+def test_the_version_filed_into_the_topic_is_marked_posted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_llm(monkeypatch)
+    with TestClient(create_app()) as client:
+        topic, ctx = _approved_and_filed_setup(client)
+        pid = ctx["plan"]["id"]
+        client.post(f"/api/step-plans/{pid}/consolidate/generate", json={})
+        client.put(f"/api/step-plans/{pid}/final", json={"content": "Edited"})
+        assert _get(client, pid)["final_posted_version"] is None
+
+        sent = client.post(f"/api/step-plans/{pid}/send-to-topic", json={})
+        assert sent.status_code == 200, sent.text
+        assert f"](/steps/{pid}) · final output v2**" in sent.json()["content"]
+
+        plan = _get(client, pid)
+        assert plan["final_posted_version"] == 2 and plan["final_posted_at"]
+        by_version = {v["version"]: v for v in _final_versions(client, pid)}
+        assert by_version[2]["posted_message_id"] == sent.json()["id"]
+        assert by_version[1]["posted_at"] is None
+
+        # Editing afterwards leaves the posted marker on the version that was filed.
+        edited = client.put(f"/api/step-plans/{pid}/final", json={"content": "Edited again"}).json()
+        assert edited["final_version"] == 3 and edited["final_posted_version"] == 2
+        assert _topic_texts(client, topic["id"])
+
+
+def test_a_provisional_post_marks_its_version_too(monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_llm(monkeypatch)
+    with TestClient(create_app()) as client:
+        topic = client.post("/api/topics", json={"title": "Mail"}).json()
+        plan = _plan(client, topic_id=topic["id"])
+        plan = client.post(f"/api/step-plans/{plan['id']}/start", json={}).json()
+        sid = _by_title(plan)["Quote"]["id"]
+        client.put(f"/api/steps/{sid}/artifact", json={"content": "Draft quote"})
+        client.post(f"/api/step-plans/{plan['id']}/consolidate/generate", json={"force": True})
+        sent = client.post(f"/api/step-plans/{plan['id']}/send-to-topic", json={"force": True})
+        assert sent.status_code == 200, sent.text
+        assert "final output v1 (provisional" in sent.json()["content"]
+        assert _get(client, plan["id"])["final_posted_version"] == 1
+
+
+def test_deleting_a_plan_removes_its_final_versions(monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_llm(monkeypatch)
+    from sqlalchemy import func, select
+
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import StepPlanFinalVersion
+
+    with TestClient(create_app()) as client:
+        _, ctx = _approved_and_filed_setup(client)
+        pid = ctx["plan"]["id"]
+        client.post(f"/api/step-plans/{pid}/consolidate/generate", json={})
+        assert client.delete(f"/api/step-plans/{pid}").status_code == 204
+
+        async def _count() -> int:
+            async with SessionLocal() as session:
+                return int(
+                    (
+                        await session.execute(
+                            select(func.count())
+                            .select_from(StepPlanFinalVersion)
+                            .where(StepPlanFinalVersion.plan_id == pid)
+                        )
+                    ).scalar_one()
+                )
+
+        assert _run(_count) == 0

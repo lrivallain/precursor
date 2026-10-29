@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { CheckCircle2, ChevronDown, ChevronRight, FileText, Loader2, Save, Send, Sparkles } from "lucide-react";
+import { CheckCircle2, ChevronDown, ChevronRight, FileText, History, Loader2, Save, Send, Sparkles } from "lucide-react";
 import { api } from "../../lib/api";
 import { openTopic } from "../../lib/sideChats";
 import { dropDraft, draftKey, markFailed, planFieldKey, useFieldDraft, useStoredDraft } from "../../lib/stepDrafts";
 import { hasUnsavedEdits } from "../../lib/stepPlans";
-import type { Message, StepPlan } from "../../lib/types";
+import type { FinalVersion, Message, StepPlan } from "../../lib/types";
 import { useConfirm } from "../ConfirmDialog";
 import { Markdown } from "../Markdown";
 import { RefineTextarea } from "../RefineTextarea";
@@ -13,6 +13,7 @@ import type { AppliedInfo } from "./ArtifactCard";
 import { PlanChat } from "./PlanChat";
 import { WorkTabs } from "./WorkTabs";
 import { BTN_PRIMARY, BTN_SECONDARY, INPUT, OverflowMenu, StaleBadge } from "./StepUi";
+import { VersionHistory } from "./VersionHistory";
 
 type Mutate = <T>(action: () => Promise<T>) => Promise<T | undefined>;
 
@@ -82,19 +83,36 @@ export function ConsolidationPanel({
     setProposals((all) => [...all.filter((p) => p.id !== messageId), { id: messageId, artifact }]);
     return () => setProposals((all) => all.filter((p) => p.id !== messageId));
   }, []);
-  // The final output keeps no history: a proposal is "applied" while it is
-  // the text on file.
+  const [versions, setVersions] = useState<FinalVersion[]>([]);
+  const [history, setHistory] = useState(false);
+  // Versions are matched by content, so "applied" survives a reload and also
+  // covers text that was applied from another window.
+  useEffect(() => {
+    let cancelled = false;
+    api.stepPlans
+      .finalVersions(plan.id)
+      .then((rows) => {
+        if (!cancelled) setVersions(rows);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [plan.id, plan.final_version, plan.final_output, plan.final_posted_version]);
   const appliedInfo = useCallback(
-    (artifact: string): AppliedInfo | null =>
-      artifact.trim() !== "" && artifact.trim() === finalOutput.trim()
-        ? { label: "Applied to the final output", current: true }
-        : null,
-    [finalOutput],
+    (artifact: string): AppliedInfo | null => {
+      const text = artifact.trim();
+      const match = text ? versions.find((v) => v.content.trim() === text) : undefined;
+      return match
+        ? { label: `Applied as v${match.version}`, current: match.version === plan.final_version }
+        : null;
+    },
+    [versions, plan.final_version],
   );
   // The proposal the divider arrow carries: the newest finished reply, unless
   // it is already the final output.
   const newest = proposals.reduce<{ id: number; artifact: string } | null>((a, p) => (!a || p.id > a.id ? p : a), null);
-  const latestProposal = newest && !appliedInfo(newest.artifact) ? newest.id : null;
+  const latestProposal = newest && !appliedInfo(newest.artifact)?.current ? newest.id : null;
   // The text the draft started from, so a model-written final output arriving
   // isn't mistaken for the user's unsaved edits.
   // Both outlive this panel (see stepDrafts): leaving for a step keeps them.
@@ -203,17 +221,32 @@ export function ConsolidationPanel({
     }
   }
 
+  async function restore(v: { version: number }): Promise<void> {
+    if (dirty) {
+      const ok = await confirm({
+        title: "Discard unsaved edits?",
+        message: `Your unsaved edits to the final output will be replaced by version ${v.version}.`,
+        confirmLabel: "Restore",
+        variant: "warning",
+      });
+      if (!ok) return;
+    }
+    const updated = await mutate(() => api.stepPlans.revertFinal(plan.id, v.version));
+    if (updated) setView("preview");
+  }
+
   async function markDone(): Promise<void> {
     await mutate(() => api.stepPlans.complete(plan.id));
   }
 
   async function sendToTopic(): Promise<void> {
     const provisional = plan.final_provisional;
+    const again = plan.final_posted_version === plan.final_version;
     const ok = await confirm({
       title: provisional ? "Send a provisional output?" : "Send to topic?",
       message: provisional
         ? `Not every step was approved when this output was written. It will be posted in “${plan.source_topic_title ?? "the source topic"}” marked as provisional, and the plan will not be marked done.`
-        : `The final output will be posted as a new message in “${plan.source_topic_title ?? "the source topic"}”.`,
+        : `Version ${plan.final_version} of the final output will be posted as a new message in “${plan.source_topic_title ?? "the source topic"}”.${again ? " This version was already posted once." : ""}`,
       confirmLabel: provisional ? "Send as provisional" : "Send",
       variant: provisional ? "warning" : undefined,
     });
@@ -285,7 +318,8 @@ export function ConsolidationPanel({
       ) : null}
       {sent && plan.source_topic_id && (
         <p className="flex flex-wrap items-center gap-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-300">
-          <CheckCircle2 size={16} /> Sent to “{plan.source_topic_title}”.
+          <CheckCircle2 size={16} /> Sent to “{plan.source_topic_title}”
+          {plan.final_posted_version ? ` as version ${plan.final_posted_version}` : ""}.
           <button
             type="button"
             className="underline"
@@ -396,8 +430,35 @@ export function ConsolidationPanel({
                 </button>
               ))}
             </div>
+            {hasFinal && plan.final_version > 0 && (
+              <span className="inline-flex items-center gap-1.5 text-xs text-muted">
+                <span className="font-medium text-fg">Version {plan.final_version}</span>
+                {plan.final_posted_version != null && (
+                  <span
+                    className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] text-emerald-700 dark:text-emerald-300"
+                    data-tooltip={`Version ${plan.final_posted_version} was posted in the topic${plan.final_posted_at ? ` on ${new Date(plan.final_posted_at).toLocaleString()}` : ""}`}
+                  >
+                    <Send size={10} />
+                    {plan.final_posted_version === plan.final_version
+                      ? "posted"
+                      : `v${plan.final_posted_version} posted`}
+                  </span>
+                )}
+              </span>
+            )}
             {dirty && <span className="text-xs text-muted">unsaved edits</span>}
             <div className="ml-auto flex items-center gap-2">
+              {versions.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setHistory((v) => !v)}
+                  aria-expanded={history}
+                  className={BTN_SECONDARY}
+                  data-tooltip="Earlier versions of the final output"
+                >
+                  <History size={14} /> History
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => void save()}
@@ -441,6 +502,15 @@ export function ConsolidationPanel({
               )}
             </div>
           </div>
+
+          {history && versions.length > 0 && (
+            <VersionHistory
+              load={async () => versions}
+              refreshKey={versions}
+              current={plan.final_version}
+              onRestore={restore}
+            />
+          )}
 
           {newer && (
             <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
