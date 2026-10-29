@@ -20,18 +20,34 @@ combines them into a single final output you can file back into the topic.
   **topic**: its discussion becomes context for the model, and with no ask typed the topic's
   latest message is used.
 
-The ask is frozen into the plan, so every later model call is grounded in it — and the
-plan keeps working even if the topic is edited or deleted.
+The ask is copied into the plan, so every later model call is grounded in it — and the
+plan keeps working even if the topic is edited or deleted. You can edit the plan's ask
+later; its original topic trace stays unchanged.
 
-**The topic keeps the trail.** Starting a plan (with `/steps` or the button) leaves a note in
-the topic's discussion, linking to the plan, and the topic's side panel lists its plans — like
-side chats — with their progress. In the other direction, the plan's bar (which takes the place of the app's top bar) shows a
+**The topic keeps the trail.** Starting a plan (with `/steps` or the button) leaves an
+artifact-style card in the topic's discussion, with a link to the plan and an immutable
+copy of the **original prompt**. Text after `/steps` is the submitted ask (without the
+command prefix); a bare `/steps` or the topic button uses the latest non-empty user ask
+and labels the snapshot **From topic message**. The card records the full effective text,
+not a reconstruction from the plan's later ask.
+
+Short prompts are readable immediately. Longer ones show a compact excerpt with **Show
+all** / **Show less**, including keyboard activation; nothing is truncated in storage.
+Prompt text is shown literally, so Markdown, HTML and plan-like headers remain part of
+the prompt rather than changing the card. Older link-only traces still open their plans
+and explain that no original prompt was recorded; they are not backfilled from a mutable ask.
+
+<Screenshot src="/screenshots/step-plan-traces.png" alt="Topic trace cards with a short submitted prompt and a longer prompt copied from the topic, with a Show all control" caption="The original prompt stays beside the process link, even when the plan's ask is edited later." />
+
+The topic's side panel lists its plans — like side chats — with their progress. In the
+other direction, the plan's bar (which takes the place of the app's top bar) shows a
 blue link back to the topic, and a final output sent to the topic links to the plan. The plan takes its
 title from the ask: the `/steps` command is not part of it.
 
 A plan created on its own can be tied to a topic later: use **Link a topic** in the bar (or
 *Change the topic…* / *Unlink the topic* in **⋯ Plan tools**). The topic then gets the same
-note and side-panel entry, and its discussion feeds later drafts and chats. While a plan has no
+link card and side-panel entry, and its discussion feeds later drafts and chats. A link added
+after creation does not claim to record the original prompt. While a plan has no
 topic, *Send to topic* is not shown. Relinking to another topic does not move the *posted*
 marker of a final output already filed in the first one.
 

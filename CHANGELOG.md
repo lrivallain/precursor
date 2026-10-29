@@ -15,6 +15,13 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Changed
 
+- **Step by step: keep the original prompt beside the process link.** Creating
+  a plan from a topic now saves the full effective ask in an immutable topic
+  trace, including asks derived by a bare `/steps` or the topic button. The
+  trace reuses the filed-artifact header and shows short prompts immediately,
+  with accessible *Show all / Show less* for long ones. Plan edits never change
+  the snapshot, prompt syntax stays literal, and historical link-only traces
+  remain navigable without pretending to recover their original ask.
 - **Step by step: a clearer header on the final output filed in a topic.** The
   note now opens with a coloured band that splits its metadata from the
   content: a *Step by step · Final output* eyebrow, the plan title as a blue

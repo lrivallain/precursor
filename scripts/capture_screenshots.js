@@ -292,6 +292,23 @@ const scenes = {
     },
   },
 
+  "step-plan-traces": {
+    viewport: { width: 1200, height: 1100 },
+    async go(page) {
+      await page.goto(`${BASE}/topics/step-prompt-audit`, { waitUntil: "networkidle" });
+      const cards = page.getByTestId("step-plan-trace");
+      await cards.last().waitFor();
+      await cards.first().scrollIntoViewIfNeeded();
+      const first = await cards.first().boundingBox();
+      const last = await cards.last().boundingBox();
+      return {
+        x: Math.floor(first.x - 8), y: Math.floor(first.y - 8),
+        width: Math.ceil(first.width + 16),
+        height: Math.ceil(last.y + last.height - first.y + 16),
+      };
+    },
+  },
+
   chats: {
     viewport: { width: 1440, height: 1000 },
     async go(page) {

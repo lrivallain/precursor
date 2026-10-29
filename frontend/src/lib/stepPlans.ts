@@ -1,5 +1,5 @@
 import { api } from "./api";
-import type { Step, StepPlan, StepPlanStatus } from "./types";
+import type { Step, StepPlan, StepPlanStatus, StepPlanTraceData } from "./types";
 
 export const PLAN_STATUS_LABEL: Record<StepPlanStatus, string> = {
   drafting: "Drafting",
@@ -300,6 +300,56 @@ export const OPEN_STEP_PLAN_EVENT = "precursor:open-step-plan";
 
 export interface OpenStepPlanDetail {
   planId: number;
+}
+
+interface StepPlanTrace {
+  planId: number;
+  title: string;
+  action: "Started" | "Linked";
+  snapshot: StepPlanTraceData | null;
+}
+
+const TRACE_LINK = /^(Started|Linked) step by step: \[([\s\S]*)\]\(\/steps\/([1-9]\d*)\)$/;
+
+/** Snapshot payloads are decoded as a whole; prompt text is never parsed as a header. */
+export function parseStepPlanTrace(content: string): StepPlanTrace | null {
+  if (content.startsWith("{")) {
+    let data: unknown;
+    try {
+      data = JSON.parse(content);
+    } catch {
+      return null;
+    }
+    if (
+      typeof data === "object" && data !== null &&
+      "kind" in data && data.kind === "step_plan_trace" &&
+      "version" in data && data.version === 1 &&
+      "plan_id" in data && typeof data.plan_id === "number" &&
+      Number.isSafeInteger(data.plan_id) && data.plan_id > 0 &&
+      "title" in data && typeof data.title === "string" &&
+      "prompt" in data && typeof data.prompt === "string" &&
+      "source" in data && (data.source === "submitted" || data.source === "topic_message")
+    ) {
+      return {
+        planId: data.plan_id,
+        title: data.title,
+        action: "Started",
+        snapshot: {
+          kind: data.kind, version: data.version, plan_id: data.plan_id,
+          title: data.title, prompt: data.prompt, source: data.source,
+        },
+      };
+    }
+    return null;
+  }
+  const legacy = TRACE_LINK.exec(content);
+  if (!legacy || !Number.isSafeInteger(Number(legacy[3]))) return null;
+  return {
+    planId: Number(legacy[3]),
+    title: legacy[2],
+    action: legacy[1] === "Linked" ? "Linked" : "Started",
+    snapshot: null,
+  };
 }
 
 /** A final output filed into a topic by a plan (see step_plan_llm.topic_note_content). */

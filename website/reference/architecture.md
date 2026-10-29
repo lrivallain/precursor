@@ -409,6 +409,15 @@ tool-less model actions (propose, sub-steps, artifact draft, review, consolidati
 chats and versions explicitly, and deleting a topic detaches its plans. Changes publish
 `step-plan.changed`. See [Step by step](/features/step-by-step).
 
+Creating a topic-linked plan commits the plan and a UI-only `Message(kind="step_plan")`
+together. Its content is a versioned `StepPlanTraceData` JSON snapshot of the effective
+ask, its submitted/topic-message provenance, and the plan's id and title at creation.
+`StepPlanTrace` decodes the whole payload and displays the ask as plain text, never as
+Markdown or metadata. It shares the filed-output header, with a bounded preview and
+accessible expansion. Legacy Markdown link traces and later linking notes remain
+navigable, but carry no original-prompt claim; reads never reconstruct one from
+`StepPlan.source_text`.
+
 ## SPA
 
 Vite + React 19 + Tailwind, built to `frontend/dist` and bundled inside the wheel.

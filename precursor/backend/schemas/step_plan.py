@@ -16,6 +16,18 @@ SettableStepStatus = Literal["open", "in_progress", "to_validate", "validated", 
 Author = Literal["user", "model"]
 AutomationMode = Literal["manual", "assisted", "auto"]
 AutoState = Literal["idle", "running", "paused"]
+PromptSource = Literal["submitted", "topic_message"]
+
+
+class StepPlanTraceData(BaseModel):
+    """Immutable creation snapshot stored in a topic's step_plan message content."""
+
+    kind: Literal["step_plan_trace"] = "step_plan_trace"
+    version: Literal[1] = 1
+    plan_id: int
+    title: str
+    prompt: str
+    source: PromptSource
 
 
 class Assessment(BaseModel):

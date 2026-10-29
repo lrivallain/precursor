@@ -116,6 +116,17 @@ The browser suite mocks catalogue/credential metadata and never provisions the
 SDK, sends inference or writes real settings. It covers per-conversation
 provider selection and the unified model picker.
 
+For step-plan topic traces, use that seeded demo and run:
+
+```bash
+DEMO_PORT=8899 NODE_PATH=.demo/node_modules node scripts/test_step_prompt_traces.js
+```
+
+It exercises `/steps`, bare `/steps`, and the topic button without model calls,
+immutable full-text snapshots, keyboard expansion, historical links, literal
+prompt syntax, and light/dark narrow layouts. Retake its synthetic documentation
+scene with `node scripts/capture_screenshots.js step-plan-traces`.
+
 The suite is hermetic: the root `conftest.py` points the app at a throwaway
 database, skills and data directory, and keeps the LLM provider on the offline
 `MockProvider` by hiding any GitHub token from it. So `make check` behaves the
