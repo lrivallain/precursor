@@ -15,6 +15,10 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Changed
 
+- **Nightly waits for green CI.** Rolling builds publish only after successful
+  main-push CI on the exact source commit, including manual retries. Checkout,
+  tag and manifest stay pinned to that commit, and superseded builds cannot
+  roll the channel back. Website deployment remains independent.
 - **Step by step: a clearer header on the final output filed in a topic.** The
   note now opens with a coloured band that splits its metadata from the
   content: a *Step by step · Final output* eyebrow, the plan title as a blue

@@ -1,4 +1,4 @@
-"""Plan and resume immutable stable releases. All network writes are explicit subcommands."""
+"""Gate nightly builds and resume stable releases. Network writes are explicit subcommands."""
 
 from __future__ import annotations
 
@@ -133,11 +133,14 @@ def find_release(repo: str, tag: str) -> dict[str, Any] | None:
     return next((release for release in list_releases(repo) if release["tag_name"] == tag), None)
 
 
-def require_green_ci(runs: list[dict[str, Any]], sha: str) -> None:
+def require_green_ci(runs: list[dict[str, Any]], sha: str, *, repo: str | None = None) -> None:
     matching = [
         run
         for run in runs
-        if run["head_sha"] == sha and run["head_branch"] == "main" and run["event"] == "push"
+        if run["head_sha"] == sha
+        and run["head_branch"] == "main"
+        and run["event"] == "push"
+        and (repo is None or (run.get("head_repository") or {}).get("full_name") == repo)
     ]
     latest = max(matching, key=lambda run: run["id"], default=None)
     if latest is None or latest["status"] != "completed" or latest["conclusion"] != "success":
@@ -158,6 +161,21 @@ def output(**values: str) -> None:
         with Path(path).open("a") as stream:
             for key, value in values.items():
                 stream.write(f"{key}={value}\n")
+
+
+def plan_nightly(repo: str, sha: str) -> None:
+    if run("git", "rev-parse", "HEAD") != sha:
+        raise ReleaseError("The nightly checkout does not match the candidate commit.")
+    if api(repo, "git/ref/heads/main")["object"]["sha"] != sha:
+        print(f"::notice::Skipping superseded nightly commit {sha}; main has moved.")
+        output(publish="false", sha=sha)
+        return
+    runs = api(
+        repo,
+        f"actions/workflows/ci.yml/runs?branch=main&event=push&head_sha={sha}&per_page=100",
+    )
+    require_green_ci(runs["workflow_runs"], sha, repo=repo)
+    output(publish="true", sha=sha)
 
 
 def plan_release(repo: str, manual_tag: str) -> None:
@@ -409,7 +427,9 @@ def finish_release(repo: str, tag: str, sha: str, dist: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["plan", "recover", "stage", "pypi", "finish"])
+    parser.add_argument(
+        "command", choices=["plan", "nightly", "recover", "stage", "pypi", "finish"]
+    )
     parser.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY"))
     parser.add_argument("--tag", default="")
     parser.add_argument("--sha", default="")
@@ -422,9 +442,12 @@ def main() -> None:
     if args.command == "plan":
         plan_release(args.repo, args.tag)
         return
-    version_key(args.tag)
     if not re.fullmatch(r"[0-9a-f]{40}", args.sha):
         parser.error("--sha must be a full commit SHA")
+    if args.command == "nightly":
+        plan_nightly(args.repo, args.sha)
+        return
+    version_key(args.tag)
     if args.command == "recover":
         output(restored=str(recover_assets(args.repo, args.tag, args.sha, args.dist)).lower())
     elif args.command == "stage":

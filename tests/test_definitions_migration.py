@@ -21,7 +21,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select, text
 
 from precursor.backend.main import create_app
-from tests.definitions_support import mark_database, restore_database, wipe_agents_and_workflows
+from tests.definitions_support import isolated_migration_database
 
 
 def _uid() -> str:
@@ -31,31 +31,20 @@ def _uid() -> str:
 @pytest.fixture
 async def env(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Path]:
     from precursor.backend.config import get_settings
-    from precursor.backend.db import SessionLocal
-    from precursor.backend.models import AppSetting
     from precursor.backend.services.definitions import overlay
 
-    mark = await mark_database()
-    await wipe_agents_and_workflows()
-    async with SessionLocal() as session:
-        for key, value in (("agents_enabled", True), ("definitions_source", "database")):
-            row = await session.get(AppSetting, key)
-            if row is None:
-                session.add(AppSetting(key=key, value=json.dumps(value)))
-            else:
-                row.value = json.dumps(value)
-        await session.commit()
-        await overlay.refresh_source(session)
-    settings = get_settings()
-    monkeypatch.setattr(settings, "definitions_source", "database")
-    root = Path(settings.definitions_dir)
-    shutil.rmtree(root, ignore_errors=True)
-    overlay.invalidate()
-    yield root
-    overlay.invalidate()
-    overlay._pins.clear()
-    shutil.rmtree(root, ignore_errors=True)
-    await restore_database(mark)
+    async with isolated_migration_database():
+        settings = get_settings()
+        monkeypatch.setattr(settings, "definitions_source", "database")
+        root = Path(settings.definitions_dir)
+        shutil.rmtree(root, ignore_errors=True)
+        overlay.invalidate()
+        try:
+            yield root
+        finally:
+            overlay.invalidate()
+            overlay._pins.clear()
+            shutil.rmtree(root, ignore_errors=True)
 
 
 def _write(root: Path, rel: str, content: dict[str, Any] | str) -> None:

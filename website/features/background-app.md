@@ -301,7 +301,7 @@ restarts the previous build.
 
 | Channel | Tracks | Chosen when |
 | --- | --- | --- |
-| `nightly` | a rolling prerelease built from every push to `main` | you're running a dev build |
+| `nightly` | a rolling prerelease of `main` after CI succeeds on that exact commit | you're running a dev build |
 | `stable` | the latest tagged release | you're running a tagged version |
 
 Pin one explicitly with `PRECURSOR_UPDATE_CHANNEL`.

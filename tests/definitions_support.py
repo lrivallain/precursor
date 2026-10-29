@@ -7,16 +7,18 @@ Agents mode on, so they hand the database back the way they found it.
 
 from __future__ import annotations
 
+import json
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
-# App settings these tests change, restored afterwards.
-_SETTINGS = (
-    "agents_enabled",
-    "definitions_source",
+_MIGRATION_SETTINGS = (
     "definitions_migrated",
     "definitions_finalized",
     "definitions_roles_filed",
 )
+# App settings these tests change, restored afterwards.
+_SETTINGS = ("agents_enabled", "definitions_source", *_MIGRATION_SETTINGS)
 
 
 @dataclass
@@ -92,6 +94,31 @@ async def restore_database(mark: DatabaseMark) -> None:
         from precursor.backend.services.definitions import overlay
 
         await overlay.refresh_source(session)
+
+
+@asynccontextmanager
+async def isolated_migration_database() -> AsyncIterator[None]:
+    """Model an unfinalized database install, then restore the incoming settings."""
+    from sqlalchemy import delete
+
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AppSetting
+    from precursor.backend.services.definitions import overlay
+
+    mark = await mark_database()
+    try:
+        await wipe_agents_and_workflows()
+        async with SessionLocal() as session:
+            # A saved marker belongs to the preceding test's install, not this
+            # wizard. Refresh the overlay only after all three markers are gone.
+            await session.execute(delete(AppSetting).where(AppSetting.key.in_(_MIGRATION_SETTINGS)))
+            for key, value in (("agents_enabled", True), ("definitions_source", "database")):
+                await session.merge(AppSetting(key=key, value=json.dumps(value)))
+            await session.commit()
+            await overlay.refresh_source(session)
+        yield
+    finally:
+        await restore_database(mark)
 
 
 async def wipe_agents_and_workflows() -> None:

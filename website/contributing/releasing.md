@@ -87,9 +87,36 @@ stable tags or overwrite completed draft assets to force a retry.
 Failures surface in Actions and its workflow notifications. Fix CI and rerun,
 or let the next scheduled run retry. A bad published release needs a new version.
 
-The rolling `nightly` prerelease still follows every push independently.
 Publishing a release does not automatically update running installations or
 change the installer's default rolling channel.
+
+## Rolling Nightly builds
+
+The **Nightly** workflow publishes after **CI** succeeds on `main`, independently
+of stable releases. It listens for completed CI runs rather than publishing
+directly on a push. Only a successful push run on this repository's `main` is
+eligible; pull-request, foreign-repository, failed and cancelled runs cannot
+publish.
+
+Before building, the workflow requires the latest main-push `ci.yml` run for
+the **exact candidate commit** to be complete and successful. Checkout, package
+version, tag, release notes and `version.json` all refer to that tested commit,
+not a newer `main` head. Superseded commits are skipped, with main and CI checked
+again immediately before publication. Publication is serialized without
+cancelling an in-progress release replacement.
+
+To retry, use **Actions → Nightly → Run workflow** on **main**, or:
+
+```bash
+gh workflow run nightly.yml --ref main
+```
+
+This manual path enforces the same gate: missing, pending, cancelled or failing
+CI cannot publish, and an older green commit cannot replace the current rolling
+build while a newer `main` commit is awaiting CI.
+
+**Website deployment stays independent.** `pages.yml` still deploys directly
+on relevant main pushes; it does not wait for CI or Nightly.
 
 ## PyPI Trusted Publishing (one-time setup)
 
