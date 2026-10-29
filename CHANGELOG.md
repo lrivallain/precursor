@@ -424,6 +424,12 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Fixed
 
+- **Agents and workflows keep valid WorkIQ access.** Attaching WorkIQ to an
+  agent no longer forces an OAuth refresh of a still-valid access token. That
+  unnecessary refresh could be refused by Entra's token-protection policy,
+  leaving workflows without mailbox tools even while chat worked. The
+  keep-alive still explicitly renews credentials when renewal is due.
+
 - **Deleted roles stay cleared in files mode.** Role deletion now removes
   matching assignments from agent and workflow definition files, including
   definitions with stale database columns or no database row yet. Reloads and

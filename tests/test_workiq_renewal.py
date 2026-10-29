@@ -16,6 +16,9 @@ no auth header at all, and the resulting 401 escalates to a browser grant.
 from __future__ import annotations
 
 import time
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
@@ -97,6 +100,58 @@ async def test_a_normal_provider_leaves_a_still_valid_token_alone(_primed) -> No
     await provider._initialize()
 
     assert provider.context.is_token_valid() is True
+
+
+@pytest.mark.anyio
+async def test_agent_attach_keeps_a_valid_token_when_refresh_would_be_refused(
+    _primed, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    storage = _MemoryStorage()
+    monkeypatch.setattr(wp, "DbTokenStorage", lambda _profile: storage)
+
+    @asynccontextmanager
+    async def _client(_url, *, auth):
+        await auth._initialize()
+        if not auth.context.is_token_valid():
+            raise wp.WorkIQAuthRequiredError("token refresh refused by conditional access")
+        yield SimpleNamespace(initialize=AsyncMock())
+
+    monkeypatch.setattr(wp, "streamable_http_session", _client)
+
+    resolved = await wp.resolve_workiq_bearer_token(caller="agent attach")
+
+    assert resolved is not None
+    assert resolved[0] == "stale"
+    assert resolved[1] is not None
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("renew_now", [False, True])
+async def test_bearer_renews_expired_tokens_or_when_explicitly_requested(
+    _primed, monkeypatch: pytest.MonkeyPatch, renew_now: bool
+) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    storage = _MemoryStorage()
+    monkeypatch.setattr(wp, "DbTokenStorage", lambda _profile: storage)
+
+    async def _expiry(_token, _profile=None):
+        return datetime.now(UTC) + timedelta(seconds=3600 if renew_now else -1)
+
+    @asynccontextmanager
+    async def _client(_url, *, auth):
+        await auth._initialize()
+        assert auth.context.is_token_valid() is False
+        await storage.set_tokens(OAuthToken(access_token="renewed", token_type="Bearer"))
+        yield SimpleNamespace(initialize=AsyncMock())
+
+    monkeypatch.setattr(wp, "_stored_token_expiry", _expiry)
+    monkeypatch.setattr(wp, "streamable_http_session", _client)
+
+    resolved = await wp.resolve_workiq_bearer_token(renew_now=renew_now)
+
+    assert resolved is not None
+    assert resolved[0] == "renewed"
 
 
 @pytest.mark.anyio

@@ -1825,6 +1825,7 @@ async def resolve_workiq_bearer_token(
     profile: WorkIQOAuthProfile = PREVIEW_PROFILE,
     *,
     caller: str = "unspecified",
+    renew_now: bool = False,
 ) -> tuple[str, datetime | None] | None:
     """Resolve a current WorkIQ access token plus its expiry, or ``None``.
 
@@ -1845,11 +1846,11 @@ async def resolve_workiq_bearer_token(
     (``caller`` naming who asked). They used to be indistinguishable, which made
     "the token could not be renewed" unfalsifiable from the outside.
 
-    Every caller reaches here having already concluded the credential is due, so
-    the provider is built with ``renew_now=True``: without it the SDK's own
-    freshness check silently vetoes the refresh for any token that is close to
-    expiry but not yet past it, and the untouched token reads back looking
-    renewed.
+    Agent attachment uses the normal expiry check, preserving a valid access
+    token even when Entra would refuse an unnecessary refresh. A caller that
+    already determined renewal is due must pass ``renew_now=True``: otherwise
+    the SDK's own freshness check can veto an early renewal and return the
+    unchanged token as if it had been renewed.
     """
     storage = DbTokenStorage(profile)
     if await storage.get_tokens() is None:
@@ -1858,7 +1859,7 @@ async def resolve_workiq_bearer_token(
         )
         return None
     try:
-        provider = build_oauth_provider(profile=profile, interactive=False, renew_now=True)
+        provider = build_oauth_provider(profile=profile, interactive=False, renew_now=renew_now)
         async with streamable_http_session(profile.url, auth=provider) as session:
             await session.initialize()
     except Exception as exc:  # pragma: no cover - network/transport dependent

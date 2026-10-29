@@ -70,8 +70,9 @@ def patched(monkeypatch: pytest.MonkeyPatch) -> dict:
         return state["expiry"]
 
     async def _resolve_bearer(
-        _profile: object = None, *, caller: str = ""
+        _profile: object = None, *, caller: str = "", renew_now: bool = False
     ) -> tuple[str, datetime | None] | None:
+        assert renew_now is True
         state["refresh_calls"] += 1
         state["refresh_callers"].append(caller)
         return state["refresh_result"]
