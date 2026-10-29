@@ -403,7 +403,7 @@ Two consequences worth knowing:
   without the optional pieces, and the summary names what it gave up rather than
   reporting success.
 - **A nightly host moves to the current nightly.** The `nightly` release is
-  replaced on every push to main, deleting the wheel a nightly install was
+  replaced as main passes CI, deleting the wheel a nightly install was
   pinned to, so restating that pin would fail with a 404. Adding or removing a
   plugin therefore re-points it at the wheel the release publishes now — the
   only build of that channel still downloadable — and the Settings panel says

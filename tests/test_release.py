@@ -46,6 +46,7 @@ def ci_run(**overrides):
         "event": "push",
         "status": "completed",
         "conclusion": "success",
+        "head_repository": {"full_name": "owner/repo"},
         **overrides,
     }
 
@@ -170,6 +171,99 @@ def test_newest_ci_run_wins_over_earlier_success():
 def test_missing_ci_fails_closed():
     with pytest.raises(release.ReleaseError, match="CI must succeed"):
         release.require_green_ci([], HEAD)
+
+
+@pytest.mark.parametrize("repository", [None, {}, {"full_name": "foreign/repo"}])
+def test_nightly_ci_must_come_from_the_publishing_repository(repository):
+    with pytest.raises(release.ReleaseError, match="CI must succeed"):
+        release.require_green_ci([ci_run(head_repository=repository)], HEAD, repo="owner/repo")
+
+
+@pytest.fixture
+def nightly_gate(monkeypatch):
+    responses = {
+        "git/ref/heads/main": {"object": {"sha": HEAD}},
+        f"actions/workflows/ci.yml/runs?branch=main&event=push&head_sha={HEAD}&per_page=100": {
+            "workflow_runs": [ci_run()]
+        },
+    }
+
+    def run(*args):
+        assert args == ("git", "rev-parse", "HEAD")
+        return HEAD
+
+    def api(repo, endpoint):
+        assert repo == "owner/repo"
+        return responses[endpoint]
+
+    monkeypatch.setattr(release, "run", run)
+    monkeypatch.setattr(release, "api", api)
+    outputs = {}
+    monkeypatch.setattr(release, "output", lambda **values: outputs.update(values))
+    return responses, outputs
+
+
+def test_nightly_only_emits_the_exact_green_current_main_sha(nightly_gate):
+    _, outputs = nightly_gate
+    release.plan_nightly("owner/repo", HEAD)
+    assert outputs == {"publish": "true", "sha": HEAD}
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"head_sha": OLD},
+        {"head_branch": "feature"},
+        {"event": "pull_request"},
+        {"event": "workflow_dispatch"},
+        {"status": "in_progress", "conclusion": None},
+        {"conclusion": "failure"},
+        {"conclusion": "cancelled"},
+        {"conclusion": "skipped"},
+        {"head_repository": {"full_name": "foreign/repo"}},
+    ],
+)
+def test_nightly_rechecks_ci_without_a_manual_bypass(nightly_gate, overrides):
+    responses, outputs = nightly_gate
+    endpoint = next(key for key in responses if key.startswith("actions/"))
+    responses[endpoint]["workflow_runs"] = [ci_run(**overrides)]
+    with pytest.raises(release.ReleaseError, match="CI must succeed"):
+        release.plan_nightly("owner/repo", HEAD)
+    assert outputs == {}
+
+
+def test_missing_nightly_ci_fails_closed(nightly_gate):
+    responses, outputs = nightly_gate
+    endpoint = next(key for key in responses if key.startswith("actions/"))
+    responses[endpoint]["workflow_runs"] = []
+    with pytest.raises(release.ReleaseError, match="CI must succeed"):
+        release.plan_nightly("owner/repo", HEAD)
+    assert outputs == {}
+
+
+def test_nightly_does_not_use_an_earlier_green_run(nightly_gate):
+    responses, outputs = nightly_gate
+    endpoint = next(key for key in responses if key.startswith("actions/"))
+    responses[endpoint]["workflow_runs"] = [ci_run(), ci_run(id=11, conclusion="failure")]
+    with pytest.raises(release.ReleaseError, match="CI must succeed"):
+        release.plan_nightly("owner/repo", HEAD)
+    assert outputs == {}
+
+
+def test_nightly_rechecks_supersession_after_building(nightly_gate):
+    responses, outputs = nightly_gate
+    release.plan_nightly("owner/repo", HEAD)
+    assert outputs["publish"] == "true"
+    responses["git/ref/heads/main"]["object"]["sha"] = OLD
+    release.plan_nightly("owner/repo", HEAD)
+    assert outputs == {"publish": "false", "sha": HEAD}
+
+
+def test_a_mismatched_nightly_checkout_fails_closed(nightly_gate):
+    _, outputs = nightly_gate
+    with pytest.raises(release.ReleaseError, match="checkout"):
+        release.plan_nightly("owner/repo", OLD)
+    assert outputs == {}
 
 
 def test_plan_only_reads_and_pins_the_candidate(monkeypatch, tmp_path):
@@ -442,3 +536,69 @@ def test_workflow_keeps_publish_order_and_no_approval_free_bypass():
     assert "release.py pypi" in steps[2]["run"]
     assert steps[3]["uses"] == "pypa/gh-action-pypi-publish@release/v1"
     assert "release.py finish" in steps[4]["run"]
+
+
+def test_nightly_workflow_gates_every_publication_on_the_tested_commit():
+    workflow = yaml.load(
+        (ROOT / ".github/workflows/nightly.yml").read_text(), Loader=yaml.BaseLoader
+    )
+    assert workflow["on"] == {
+        "workflow_run": {"workflows": ["CI"], "types": ["completed"], "branches": ["main"]},
+        "workflow_dispatch": "",
+    }
+    assert workflow["env"]["UV_FROZEN"] == "1"
+    # Ineligible completions must not even queue a publishing job or run code
+    # from a PR checkout with the workflow_run token.
+    gate = workflow["jobs"]["gate"]
+    assert gate["if"] == (
+        "(github.event_name == 'workflow_run' &&\n"
+        " github.event.workflow_run.conclusion == 'success' &&\n"
+        " github.event.workflow_run.event == 'push' &&\n"
+        " github.event.workflow_run.head_branch == 'main' &&\n"
+        " github.event.workflow_run.head_repository.full_name == github.repository) ||\n"
+        "(github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')"
+    )
+    assert gate["permissions"] == {"actions": "read", "contents": "read"}
+    assert gate["outputs"] == {
+        "publish": "${{ steps.gate.outputs.publish }}",
+        "sha": "${{ steps.gate.outputs.sha }}",
+    }
+    checkout, check = gate["steps"]
+    candidate = "${{ github.event.workflow_run.head_sha || github.sha }}"
+    assert checkout["with"]["ref"] == candidate
+    assert check["env"]["TESTED_SHA"] == candidate
+    assert check["run"] == 'python3 scripts/release.py nightly --sha "$TESTED_SHA"'
+
+    nightly = workflow["jobs"]["nightly"]
+    assert nightly["needs"] == "gate"
+    assert nightly["if"] == "needs.gate.outputs.publish == 'true'"
+    assert nightly["concurrency"] == {"group": "nightly", "cancel-in-progress": "false"}
+    assert "concurrency" not in workflow
+    tested_sha = "${{ needs.gate.outputs.sha }}"
+    assert nightly["env"]["TESTED_SHA"] == tested_sha
+    assert nightly["steps"][0]["with"]["ref"] == tested_sha
+    assert nightly["steps"][0]["with"]["fetch-depth"] == "0"
+    assert nightly["permissions"] == {"actions": "read", "contents": "write"}
+
+    steps = nightly["steps"]
+    recheck_index = next(i for i, step in enumerate(steps) if step.get("id") == "recheck")
+    assert steps[recheck_index]["run"] == check["run"]
+    assert any(step.get("name") == "Build wheel + sdist" for step in steps[:recheck_index])
+    for step in steps[recheck_index + 1 :]:
+        assert step["if"] == "steps.recheck.outputs.publish == 'true'"
+        assert "$GITHUB_SHA" not in step["run"]
+        assert "$TESTED_SHA" in step["run"]
+    publish = steps[recheck_index + 1]["run"]
+    assert "${TESTED_SHA:0:9}" in publish
+    assert '-f sha="$TESTED_SHA"' in publish
+    assert "--verify-tag" in publish
+
+
+def test_pages_deployment_still_runs_independently_on_main_pushes():
+    pages = yaml.load((ROOT / ".github/workflows/pages.yml").read_text(), Loader=yaml.BaseLoader)
+    assert "workflow_run" not in pages["on"]
+    assert pages["on"]["push"] == {
+        "branches": ["main"],
+        "paths": ["website/**", ".github/workflows/pages.yml"],
+    }
+    assert pages["jobs"]["deploy"]["needs"] == "build"

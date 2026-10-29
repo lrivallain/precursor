@@ -99,6 +99,16 @@ npm --prefix frontend run build
 
 All of these run in CI (`.github/workflows/ci.yml`) on every PR and must pass.
 
+Parallel workers each reuse a scratch database. Wizard tests use
+`tests.definitions_support.isolated_migration_database()` to start in database
+mode with migration, finalization and role-filing markers cleared, then restore
+the incoming settings and overlay cache even on failure. Snapshot/restore alone
+does not establish an unfinalized install.
+
+Successful main-push CI gates [rolling Nightly publication](/contributing/releasing#rolling-nightly-builds)
+on the exact tested commit, including manual retries. Website deployment remains
+independent.
+
 ## Code style
 
 - **Python** — ruff config in `pyproject.toml` (line length 100, target 3.12).

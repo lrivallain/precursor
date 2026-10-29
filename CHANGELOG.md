@@ -22,6 +22,10 @@ are the per-version history; releasing does not rewrite this file.
   with accessible *Show all / Show less* for long ones. Plan edits never change
   the snapshot, prompt syntax stays literal, and historical link-only traces
   remain navigable without pretending to recover their original ask.
+- **Nightly waits for green CI.** Rolling builds publish only after successful
+  main-push CI on the exact source commit, including manual retries. Checkout,
+  tag and manifest stay pinned to that commit, and superseded builds cannot
+  roll the channel back. Website deployment remains independent.
 - **Step by step: a clearer header on the final output filed in a topic.** The
   note now opens with a coloured band that splits its metadata from the
   content: a *Step by step · Final output* eyebrow, the plan title as a blue
