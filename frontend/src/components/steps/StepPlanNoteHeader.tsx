@@ -2,22 +2,24 @@ import { ArrowUpRight, ListChecks } from "lucide-react";
 import { openStepPlan, type StepPlanNote } from "../../lib/stepPlans";
 
 /**
- * The metadata band of a final output filed into a topic: where it comes from
- * (the plan, as a link), which version, whether it is provisional. It sits
- * flush against the top of the message bubble and splits it from the content.
+ * The shared metadata band of topic-filed outputs and creation snapshots.
+ * The plan link stays separate from the body; outputs also name their version.
  */
-export function StepPlanNoteHeader({ note }: { note: StepPlanNote }) {
+export function StepPlanNoteHeader({ note, label = "Final output" }: {
+  note: Pick<StepPlanNote, "planId" | "title"> & Partial<Pick<StepPlanNote, "version" | "provisional">>;
+  label?: "Final output" | "Started" | "Linked";
+}) {
   return (
     <div
       className="-mx-3 -mt-2 mb-2.5 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-t-[7px] border-b border-accent/25 bg-accent/10 px-3 py-2"
-      data-testid="step-plan-note-header"
+      data-testid={label === "Final output" ? "step-plan-note-header" : undefined}
     >
       <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-accent/20 text-accent">
         <ListChecks size={14} aria-hidden />
       </span>
       <div className="min-w-0 flex-1">
         <div className="text-[10px] font-semibold uppercase tracking-wider text-accent">
-          Step by step · Final output
+          Step by step · {label}
         </div>
         <button
           type="button"

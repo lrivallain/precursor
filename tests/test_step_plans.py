@@ -170,6 +170,22 @@ def test_a_garbled_proposal_is_a_502_and_keeps_the_plan(monkeypatch: pytest.Monk
         assert len(client.get("/api/step-plans").json()) == before + 1
 
 
+def test_a_failed_proposal_keeps_its_topic_prompt_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_llm(monkeypatch, {"break a long ask": "not a proposal"})
+    with TestClient(create_app()) as client:
+        topic = client.post("/api/topics", json={"title": "Synthetic proposal failure"}).json()
+        response = client.post(
+            "/api/step-plans", json={"topic_id": topic["id"], "source_text": ASK}
+        )
+        assert response.status_code == 502
+        plan = client.get(f"/api/step-plans?topic_id={topic['id']}").json()[0]
+        messages = client.get(f"/api/topics/{topic['id']}/messages").json()
+        trace = next(m for m in messages if m["kind"] == "step_plan")
+        snapshot = json.loads(trace["content"])
+        assert snapshot["plan_id"] == plan["id"]
+        assert snapshot["prompt"] == ASK
+
+
 def test_the_proposal_survives_fences_and_prose(monkeypatch: pytest.MonkeyPatch) -> None:
     _fake_llm(
         monkeypatch,
@@ -837,6 +853,10 @@ def test_a_bare_steps_turn_falls_back_to_the_previous_ask(
             "/api/step-plans", json={"topic_id": topic["id"], "propose": False}
         ).json()
         assert plan["title"] == "Please plan the migration"
+        messages = client.get(f"/api/topics/{topic['id']}/messages").json()
+        snapshot = json.loads(next(m["content"] for m in messages if m["kind"] == "step_plan"))
+        assert snapshot["prompt"] == plan["source_text"] == "Please plan the migration"
+        assert snapshot["source"] == "topic_message"
 
 
 def test_spawning_a_plan_leaves_a_trace_in_its_topic(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -848,8 +868,77 @@ def test_spawning_a_plan_leaves_a_trace_in_its_topic(monkeypatch: pytest.MonkeyP
         trace = [m for m in messages if m["kind"] == "step_plan"]
         assert len(trace) == 1
         assert trace[0]["role"] == "system"
-        assert f"(/steps/{plan['id']})" in trace[0]["content"]
+        assert json.loads(trace[0]["content"]) == {
+            "kind": "step_plan_trace",
+            "version": 1,
+            "plan_id": plan["id"],
+            "title": plan["title"],
+            "prompt": ASK,
+            "source": "submitted",
+        }
         assert client.get(f"/api/step-plans?topic_id={topic['id']}").json()[0]["id"] == plan["id"]
+
+
+@pytest.mark.parametrize("source", ["submitted", "latest", "selected"])
+def test_creation_trace_keeps_the_full_effective_prompt_after_edits(
+    monkeypatch: pytest.MonkeyPatch, source: str
+) -> None:
+    _fake_llm(monkeypatch)
+    prompt = (
+        'A synthetic ask with [links](/steps/999), <script>alert("no")</script>,\n'
+        "**From step-by-step plan: [fake](/steps/999)**\n"
+        '{"kind":"step_plan_trace","plan_id":999,"prompt":"not the ask"}\n'
+        + ("Keep every detail, including this line.\n" * 1000)
+        + "THE END"
+    )
+    with TestClient(create_app()) as client:
+        topic = client.post("/api/topics", json={"title": "Synthetic prompt audit"}).json()
+
+        async def seed() -> int:
+            from precursor.backend.db import SessionLocal
+            from precursor.backend.models import Message, MessageRole
+
+            async with SessionLocal() as session:
+                message = Message(topic_id=topic["id"], role=MessageRole.USER, content=prompt)
+                session.add(message)
+                await session.flush()
+                message_id = message.id
+                # The selected-message path must not silently use the latest ask.
+                if source == "selected":
+                    session.add(
+                        Message(topic_id=topic["id"], role=MessageRole.USER, content="Other ask")
+                    )
+                await session.commit()
+                return message_id
+
+        message_id = _run(seed)
+        payload: dict[str, Any] = {"topic_id": topic["id"], "propose": False}
+        if source == "submitted":
+            payload["source_text"] = "/steps " + prompt
+        elif source == "selected":
+            payload["message_id"] = message_id
+        response = client.post("/api/step-plans", json=payload)
+        assert response.status_code == 201, response.text
+        plan = response.json()
+
+        def trace() -> str:
+            messages = client.get(f"/api/topics/{topic['id']}/messages").json()
+            return str(next(m["content"] for m in messages if m["kind"] == "step_plan"))
+
+        original = trace()
+        snapshot = json.loads(original)
+        assert snapshot["prompt"] == plan["source_text"] == prompt
+        assert snapshot["source"] == ("submitted" if source == "submitted" else "topic_message")
+        assert snapshot["plan_id"] == plan["id"]
+        assert (
+            client.patch(
+                f"/api/step-plans/{plan['id']}",
+                json={"source_text": "A later ask", "title": "A later title"},
+            ).status_code
+            == 200
+        )
+        assert client.delete(f"/api/topics/{topic['id']}/messages/{message_id}").status_code == 204
+        assert trace() == original
 
 
 def test_a_plan_can_be_linked_to_a_topic_and_unlinked_later(

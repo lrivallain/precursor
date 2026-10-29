@@ -2975,6 +2975,15 @@ export interface RefineResponse {
 // ── Step by step ────────────────────────────────────────────────────────────
 // Mirrors precursor/backend/schemas/step_plan.py
 
+export interface StepPlanTraceData {
+  kind: "step_plan_trace";
+  version: 1;
+  plan_id: number;
+  title: string;
+  prompt: string;
+  source: "submitted" | "topic_message";
+}
+
 export type StepPlanStatus = "drafting" | "active" | "consolidating" | "done" | "cancelled";
 
 export type StepStatus =

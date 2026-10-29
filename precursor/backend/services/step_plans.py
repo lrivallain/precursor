@@ -65,11 +65,13 @@ from precursor.backend.schemas.step_plan import (
     ActivityNote,
     Assessment,
     FinalVersionRead,
+    PromptSource,
     StepArtifactVersionRead,
     StepCreate,
     StepPlanCreate,
     StepPlanItem,
     StepPlanRead,
+    StepPlanTraceData,
     StepPlanUpdate,
     StepRead,
     StepUpdate,
@@ -461,14 +463,18 @@ def _title_from(text: str) -> str:
     return "Step by step"
 
 
-async def _source_for(session: AsyncSession, payload: StepPlanCreate) -> tuple[str, Topic | None]:
+async def _source_for(
+    session: AsyncSession, payload: StepPlanCreate
+) -> tuple[str, Topic | None, PromptSource]:
     topic = None
     if payload.topic_id is not None:
         topic = await session.get(Topic, payload.topic_id)
         if topic is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
     text = _strip_steps_command(payload.source_text or "")
+    source: PromptSource = "submitted"
     if not text and topic is not None:
+        source = "topic_message"
         if payload.message_id is not None:
             msg = await session.get(Message, payload.message_id)
             if msg is None or msg.topic_id != topic.id:
@@ -496,11 +502,11 @@ async def _source_for(session: AsyncSession, payload: StepPlanCreate) -> tuple[s
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             "There's nothing to break down yet — paste the text to work through.",
         )
-    return text, topic
+    return text, topic, source
 
 
 async def create_plan(session: AsyncSession, payload: StepPlanCreate) -> StepPlan:
-    text, topic = await _source_for(session, payload)
+    text, topic, source = await _source_for(session, payload)
     selection = payload.llm_selection
     await validate_selection(session, selection)
     role = (
@@ -522,9 +528,12 @@ async def create_plan(session: AsyncSession, payload: StepPlanCreate) -> StepPla
         ),
     )
     session.add(plan)
-    await session.commit()
+    await session.flush()
     if topic is not None:
-        await _trace_in_topic(session, plan, topic.id)
+        snapshot = StepPlanTraceData(plan_id=plan.id, title=plan.title, prompt=text, source=source)
+        await _trace_in_topic(session, plan, topic.id, snapshot=snapshot)
+    else:
+        await session.commit()
     return plan
 
 
@@ -532,7 +541,12 @@ STEP_PLAN_TRACE_KIND = "step_plan"
 
 
 async def _trace_in_topic(
-    session: AsyncSession, plan: StepPlan, topic_id: int, verb: str = "Started"
+    session: AsyncSession,
+    plan: StepPlan,
+    topic_id: int,
+    verb: str = "Started",
+    *,
+    snapshot: StepPlanTraceData | None = None,
 ) -> None:
     """Leave a UI-only note in the topic so the spawned plan stays traceable."""
     session.add(
@@ -540,7 +554,11 @@ async def _trace_in_topic(
             topic_id=topic_id,
             role=MessageRole.SYSTEM,
             kind=STEP_PLAN_TRACE_KIND,
-            content=f"{verb} step by step: [{plan.title}](/steps/{plan.id})",
+            content=(
+                snapshot.model_dump_json()
+                if snapshot is not None
+                else f"{verb} step by step: [{plan.title}](/steps/{plan.id})"
+            ),
         )
     )
     await session.commit()

@@ -15,6 +15,13 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Changed
 
+- **Step by step: keep the original prompt beside the process link.** Creating
+  a plan from a topic now saves the full effective ask in an immutable topic
+  trace, including asks derived by a bare `/steps` or the topic button. The
+  trace reuses the filed-artifact header and shows short prompts immediately,
+  with accessible *Show all / Show less* for long ones. Plan edits never change
+  the snapshot, prompt syntax stays literal, and historical link-only traces
+  remain navigable without pretending to recover their original ask.
 - **Nightly waits for green CI.** Rolling builds publish only after successful
   main-push CI on the exact source commit, including manual retries. Checkout,
   tag and manifest stay pinned to that commit, and superseded builds cannot

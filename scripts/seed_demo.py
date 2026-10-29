@@ -973,6 +973,45 @@ _STEP_PLAN_STEPS: list[tuple[str, str, str, str, int | None]] = [
 ]
 
 
+async def _seed_step_prompt_traces(s: AsyncSession, collection_id: int) -> None:
+    from precursor.backend.schemas.step_plan import StepPlanTraceData
+
+    topic = Topic(
+        title="Step by step prompt audit",
+        slug="step-prompt-audit",
+        collection_id=collection_id,
+    )
+    s.add(topic)
+    await s.flush()
+    long_prompt = (
+        "Prepare a small release-readiness plan using only this synthetic example.\n\n"
+        "1. Summarise the change: a demo search endpoint now returns results in pages.\n"
+        "2. List the checks: empty results, the last page, and a repeated request.\n"
+        "3. Draft a short rollout note with an owner and a rollback condition.\n"
+        "4. Keep assumptions separate from confirmed facts.\n\n"
+        "Use plain language. Do not invent dates, customer names, or production metrics. "
+        "For each step, state the expected deliverable and how a reviewer can check it. "
+        "Finish with a concise go/no-go checklist."
+    )
+    s.add(Message(topic_id=topic.id, role=MessageRole.USER, content=long_prompt))
+    for title, prompt, source in (
+        ("Count from 1 to 3", "Count from 1 to 3, with one number per step.", "submitted"),
+        ("Prepare the demo release", long_prompt, "topic_message"),
+    ):
+        plan = StepPlan(title=title, source_text=prompt, source_topic_id=topic.id)
+        s.add(plan)
+        await s.flush()
+        snapshot = StepPlanTraceData(plan_id=plan.id, title=title, prompt=prompt, source=source)
+        s.add(
+            Message(
+                topic_id=topic.id,
+                role=MessageRole.SYSTEM,
+                kind="step_plan",
+                content=snapshot.model_dump_json(),
+            )
+        )
+
+
 async def _seed_step_plan(s: AsyncSession, topic_id: int) -> None:
     """A plan mid-way: one step validated, one awaiting review, three to go."""
     plan = StepPlan(
@@ -1324,6 +1363,7 @@ async def seed() -> None:
         # A topic with side chats started from it and from its replies.
         await seed_side_chats(s, platform.id)
         await _seed_step_plan(s, t_release.id)
+        await _seed_step_prompt_traces(s, platform.id)
 
         # ---------------- chats ----------------
         c_regex = Chat(title="Regex for semver tags", slug="regex-for-semver-tags")
