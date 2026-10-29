@@ -15,6 +15,8 @@ interface DraftEntry {
 
 const entries = new Map<string, DraftEntry>();
 const listeners = new Set<() => void>();
+// Fields whose last autosave failed: their text is kept and a retry is offered.
+const failed = new Set<string>();
 let version = 0;
 
 function emit(): void {
@@ -51,16 +53,50 @@ export function putDraft(key: string, draft: string, base: string): void {
 }
 
 export function dropDraft(key: string): void {
-  if (entries.delete(key)) emit();
+  const hadFailure = failed.delete(key);
+  if (entries.delete(key) || hadFailure) emit();
 }
 
 export function dropPlanDrafts(planId: number): void {
   let changed = false;
-  for (const key of [...entries.keys()]) {
+  for (const key of [...entries.keys(), ...failed]) {
+    if (key.startsWith(`${planId}/`) && failed.delete(key)) changed = true;
     if (key.startsWith(`${planId}/`)) {
       entries.delete(key);
       changed = true;
     }
+  }
+  if (changed) emit();
+}
+
+/**
+ * `<planId>/step/<stepId>/title|instruction`, `<planId>/instructions` (the
+ * output instructions) or `<planId>/ask`: the autosaved text fields.
+ */
+export type FieldName = "title" | "instruction";
+export function stepFieldKey(planId: number, stepId: number, field: FieldName): string {
+  return `${planId}/step/${stepId}/${field}`;
+}
+export function planFieldKey(planId: number, field: "instructions" | "ask"): string {
+  return `${planId}/${field}`;
+}
+
+/** Whether any text of a step (its artifact, title or instruction) is unsaved. */
+export function stepHasUnsaved(unsaved: ReadonlySet<string>, planId: number, stepId: number): boolean {
+  return (
+    unsaved.has(draftKey(planId, stepId)) ||
+    unsaved.has(stepFieldKey(planId, stepId, "title")) ||
+    unsaved.has(stepFieldKey(planId, stepId, "instruction"))
+  );
+}
+
+export function markFailed(keys: string[], isFailed: boolean): void {
+  let changed = false;
+  for (const key of keys) {
+    if (isFailed && entries.has(key) && !failed.has(key)) {
+      failed.add(key);
+      changed = true;
+    } else if (!isFailed && failed.delete(key)) changed = true;
   }
   if (changed) emit();
 }
@@ -97,4 +133,36 @@ export function useUnsavedGuard(): void {
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);
   }, [handler]);
+}
+
+/**
+ * An autosaved text field (saved on blur) whose typed text outlives the
+ * component. `saved` is the server's value; the text differs from it (ignoring
+ * surrounding whitespace unless `exact`) only while it's unsaved. A failed
+ * save leaves it that way, so nothing typed is lost: see `markFailed`.
+ */
+export function useFieldDraft(key: string, saved: string, exact = false) {
+  const same = (a: string, b: string) => (exact ? a === b : a.trim() === b);
+  const [value, setValue] = useState(() => getDraft(key)?.draft ?? saved);
+  const [seenKey, setSeenKey] = useState(key);
+  if (seenKey !== key) {
+    setSeenKey(key);
+    setValue(getDraft(key)?.draft ?? saved);
+  }
+  // Follow the server unless there's text of the user's to protect.
+  useEffect(() => {
+    if (!getDraft(key)) setValue(saved);
+  }, [key, saved]);
+  useEffect(() => {
+    if (same(value, saved)) {
+      if (entries.delete(key) || failed.delete(key)) emit();
+    } else if (getDraft(key)?.draft !== value || getDraft(key)?.base !== saved) {
+      entries.set(key, { draft: value, base: saved });
+      emit();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, value, saved, exact]);
+  const seen = useSyncExternalStore(subscribe, () => version);
+  const isFailed = useMemo(() => failed.has(key), [seen, key]); // eslint-disable-line react-hooks/exhaustive-deps
+  return { value, setValue, failed: isFailed };
 }

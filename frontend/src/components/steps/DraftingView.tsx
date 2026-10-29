@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { ChevronDown, ChevronRight, Play } from "lucide-react";
 import { api } from "../../lib/api";
+import { dropDraft, markFailed, planFieldKey, useFieldDraft } from "../../lib/stepDrafts";
 import { buildStepTree } from "../../lib/stepPlans";
 import type { StepPlan } from "../../lib/types";
 import { OutputInstructions } from "./ConsolidationPanel";
@@ -29,10 +30,17 @@ export function DraftingView({
   const proposed = plan.steps.filter((s) => s.status === "proposed").length;
   const accepted = plan.steps.length - proposed;
   const [askOpen, setAskOpen] = useState(plan.steps.length === 0);
-  const [ask, setAsk] = useState(plan.source_text);
+  const askKey = planFieldKey(plan.id, "ask");
+  const askField = useFieldDraft(askKey, plan.source_text, true);
+  const ask = askField.value;
   const [starting, setStarting] = useState(false);
 
-  useEffect(() => setAsk(plan.source_text), [plan.id, plan.source_text]);
+  async function saveAsk(): Promise<void> {
+    if (ask === plan.source_text) return;
+    const saved = await mutate(() => api.stepPlans.update(plan.id, { source_text: ask }));
+    if (saved === undefined) markFailed([askKey], true);
+    else dropDraft(askKey);
+  }
 
   async function start(acceptProposed: boolean): Promise<void> {
     setStarting(true);
@@ -62,16 +70,20 @@ export function DraftingView({
           <div className="px-4 pb-4">
             <textarea
               value={ask}
-              onChange={(e) => setAsk(e.target.value)}
-              onBlur={() => {
-                if (ask !== plan.source_text) {
-                  void mutate(() => api.stepPlans.update(plan.id, { source_text: ask }));
-                }
-              }}
+              onChange={(e) => askField.setValue(e.target.value)}
+              onBlur={() => void saveAsk()}
               rows={10}
               aria-label="The ask"
               className={`${INPUT} resize-y font-normal`}
             />
+            {askField.failed && (
+              <p role="alert" className="mt-1 flex items-center gap-2 text-xs text-amber-600 dark:text-amber-400">
+                Not saved: your text is kept here.
+                <button type="button" className="underline" onClick={() => void saveAsk()}>
+                  Retry
+                </button>
+              </p>
+            )}
             <p className="mt-1 text-xs text-muted">
               The text the steps are drawn from. Edits apply the next time the model proposes steps.
             </p>

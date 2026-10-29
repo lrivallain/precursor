@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { CheckCircle2, ChevronDown, ChevronRight, FileText, Loader2, Save, Send, Sparkles } from "lucide-react";
 import { api } from "../../lib/api";
 import { openTopic } from "../../lib/sideChats";
-import { draftKey, useStoredDraft } from "../../lib/stepDrafts";
+import { dropDraft, draftKey, markFailed, planFieldKey, useFieldDraft, useStoredDraft } from "../../lib/stepDrafts";
 import { hasUnsavedEdits } from "../../lib/stepPlans";
 import type { Message, StepPlan } from "../../lib/types";
 import { useConfirm } from "../ConfirmDialog";
@@ -18,24 +18,36 @@ type Mutate = <T>(action: () => Promise<T>) => Promise<T | undefined>;
 
 /** Plan-level guidance for the consolidation, saved when the field loses focus. */
 export function OutputInstructions({ plan, mutate }: { plan: StepPlan; mutate: Mutate }) {
-  const [value, setValue] = useState(plan.output_instructions ?? "");
-  useEffect(() => setValue(plan.output_instructions ?? ""), [plan.id, plan.output_instructions]);
+  const key = planFieldKey(plan.id, "instructions");
+  const field = useFieldDraft(key, plan.output_instructions ?? "");
+
+  async function commit(): Promise<void> {
+    const next = field.value.trim();
+    if (next === (plan.output_instructions ?? "")) return;
+    const saved = await mutate(() => api.stepPlans.update(plan.id, { output_instructions: next || null }));
+    if (saved === undefined) markFailed([key], true);
+    else dropDraft(key);
+  }
+
   return (
     <label className="block text-xs font-medium text-muted">
       Output instructions
       <textarea
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        onBlur={() => {
-          const next = value.trim();
-          if (next !== (plan.output_instructions ?? "")) {
-            void mutate(() => api.stepPlans.update(plan.id, { output_instructions: next || null }));
-          }
-        }}
+        value={field.value}
+        onChange={(e) => field.setValue(e.target.value)}
+        onBlur={() => void commit()}
         rows={3}
         placeholder="How the final answer should read: tone, language, length, structure…"
         className={`${INPUT} mt-1 resize-y font-normal`}
       />
+      {field.failed && (
+        <span role="alert" className="mt-1 flex items-center gap-2 text-xs text-amber-600 dark:text-amber-400">
+          Not saved: your text is kept here.
+          <button type="button" className="underline" onClick={() => void commit()}>
+            Retry
+          </button>
+        </span>
+      )}
     </label>
   );
 }

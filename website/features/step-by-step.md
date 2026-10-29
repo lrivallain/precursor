@@ -181,6 +181,10 @@ final output, other sections and plans in the same tab, and an amber dot on the 
 *Final output* row) shows where they are. A whitespace-only edit counts as an edit. The edits live
 in the page: a reload or closing the tab discards them, and the browser asks first.
 
+A title, instruction, output instruction or ask is saved when you leave the field. If that save
+fails, the error is shown, your text stays in the field (and when you come back to it, with an
+amber *Not saved* note and a **Retry**), and nothing is lost by navigating away.
+
 ## Good to know
 
 - Plans have at most 200 steps, nested up to 6 levels deep.

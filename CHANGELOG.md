@@ -23,7 +23,9 @@ are the per-version history; releasing does not rewrite this file.
   changed step is re-approved: regenerate it or *Mark as reviewed*. The overall
   assessment says what it read: *Plan readiness* (steps only, not a final
   deliverable) before a final output exists, *Final output assessment* once it
-  does, and it goes out of date when the final changes.
+  does, and it goes out of date when the final changes. A title, instruction,
+  output instruction or ask whose autosave fails keeps its text, shows the error
+  and offers a retry, even after navigating away.
 - **Step by step: automation, assessments and a tracked discussion.** A topic's
   side panel lists its step plans and keeps a trace of the plan it spawned (and
   the plan links back to the topic); the plan header no longer repeats its title

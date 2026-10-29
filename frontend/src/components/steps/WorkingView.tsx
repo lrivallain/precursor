@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import { Activity, FileCheck2 } from "lucide-react";
 import { buildStepTree, flattenTree, isApprovedStep, workingLeaves } from "../../lib/stepPlans";
 import type { StepPlan } from "../../lib/types";
-import { draftKey, useUnsavedGuard, useUnsavedKeys } from "../../lib/stepDrafts";
+import { draftKey, stepHasUnsaved, useUnsavedGuard, useUnsavedKeys } from "../../lib/stepDrafts";
 import { useResizableWidth } from "../../lib/useResizableWidth";
 import { ResizeHandle } from "../ResizeHandle";
 import { StaleBadge } from "./StepUi";
@@ -93,7 +93,7 @@ export function WorkingView({
   useUnsavedGuard();
   const unsaved = useUnsavedKeys(plan.id);
   const unsavedStepIds = useMemo(
-    () => new Set(plan.steps.filter((s) => unsaved.has(draftKey(plan.id, s.id))).map((s) => s.id)),
+    () => new Set(plan.steps.filter((s) => stepHasUnsaved(unsaved, plan.id, s.id)).map((s) => s.id)),
     [plan.id, plan.steps, unsaved],
   );
   const finalUnsaved = unsaved.has(draftKey(plan.id, "final"));
