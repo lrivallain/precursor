@@ -3003,6 +3003,12 @@ export interface Assessment {
   gaps: string[];
   /** Plan level only: places where two steps disagree. */
   contradictions: string[];
+  /**
+   * Plan level only: what was read. "steps" is readiness of the plan before
+   * any final output exists (it does not assess a final deliverable); "final"
+   * is the final output's text against the ask.
+   */
+  scope?: "steps" | "final";
 }
 
 export interface Step {

@@ -9,6 +9,7 @@ import { useConfirm } from "../ConfirmDialog";
 import { InlineTitle } from "../InlineTitle";
 import { Markdown } from "../Markdown";
 import { AutomationBar } from "./AutomationBar";
+import { dropPlanDrafts } from "../../lib/stepDrafts";
 import { STEPS_HEADER_SLOT } from "./StepsSectionParts";
 import {
   BTN_PRIMARY,
@@ -104,7 +105,10 @@ export function StepPlanHeader({
       await api.stepPlans.remove(plan.id);
       return true;
     });
-    if (result) onDeleted();
+    if (result) {
+      dropPlanDrafts(plan.id);
+      onDeleted();
+    }
   }
 
   const working = plan.status !== "drafting" && plan.status !== "cancelled";

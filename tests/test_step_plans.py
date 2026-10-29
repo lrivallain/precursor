@@ -658,6 +658,93 @@ def test_the_final_can_be_edited_and_sent_to_the_topic(monkeypatch: pytest.Monke
         assert any("Edited final" in m["content"] for m in messages)
 
 
+def _approved_and_filed_setup(client: TestClient) -> tuple[dict[str, Any], dict[str, Any]]:
+    topic = client.post("/api/topics", json={"title": "Mail"}).json()
+    plan = _plan(client, topic_id=topic["id"], propose=False)
+    client.post(f"/api/step-plans/{plan['id']}/steps", json={"title": "Only"})
+    sid = _get(client, plan["id"])["steps"][0]["id"]
+    client.post(f"/api/step-plans/{plan['id']}/start", json={})
+    _validate(client, sid, "the answer")
+    return topic, {"plan": plan, "step": sid}
+
+
+def _topic_texts(client: TestClient, topic_id: int) -> list[str]:
+    messages = client.get(f"/api/topics/{topic_id}/messages").json()
+    return [m["content"] for m in messages if m["content"].startswith("**From step-by-step")]
+
+
+def test_a_stale_final_cannot_be_filed_even_after_the_step_is_reapproved(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_llm(monkeypatch)
+    with TestClient(create_app()) as client:
+        topic, ctx = _approved_and_filed_setup(client)
+        pid, sid = ctx["plan"]["id"], ctx["step"]
+        send = f"/api/step-plans/{pid}/send-to-topic"
+        client.post(f"/api/step-plans/{pid}/consolidate/generate", json={})
+        assert _get(client, pid)["status"] == "done"
+
+        # Change an approved step and approve it again: the old final is still stale.
+        client.put(f"/api/steps/{sid}/artifact", json={"content": "the revised answer"})
+        _validate(client, sid, "the revised answer")
+        stale = _get(client, pid)
+        assert stale["final_stale"] is True and stale["ready_to_consolidate"] is True
+        assert stale["status"] == "active"
+
+        for body in ({}, {"force": True}, {"text": "FINAL ANSWER", "force": True}):
+            res = client.post(send, json=body)
+            assert res.status_code == 409, body
+            assert "changed since" in res.json()["detail"]
+        assert _topic_texts(client, topic["id"]) == []
+        assert _get(client, pid)["status"] == "active"
+
+        # Regenerating from the current approved inputs makes it fileable again.
+        client.post(f"/api/step-plans/{pid}/consolidate/generate", json={})
+        sent = client.post(send, json={})
+        assert sent.status_code == 200, sent.text
+        assert "provisional" not in sent.json()["content"]
+        assert _get(client, pid)["status"] == "done"
+
+
+def test_a_stale_final_can_be_filed_once_the_user_reviews_and_saves_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_llm(monkeypatch)
+    with TestClient(create_app()) as client:
+        topic, ctx = _approved_and_filed_setup(client)
+        pid, sid = ctx["plan"]["id"], ctx["step"]
+        client.post(f"/api/step-plans/{pid}/consolidate/generate", json={})
+        client.put(f"/api/steps/{sid}/artifact", json={"content": "the revised answer"})
+        _validate(client, sid, "the revised answer")
+        assert _get(client, pid)["final_stale"] is True
+        send = f"/api/step-plans/{pid}/send-to-topic"
+        assert client.post(send, json={}).status_code == 409
+
+        # Saving the final (even unchanged) is the user's explicit review of it.
+        reviewed = client.put(f"/api/step-plans/{pid}/final", json={"content": "FINAL ANSWER"})
+        assert reviewed.json()["final_stale"] is False
+        assert client.post(send, json={}).status_code == 200
+        assert len(_topic_texts(client, topic["id"])) == 1
+
+
+def test_a_stale_provisional_final_is_not_filed_with_force(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_llm(monkeypatch)
+    with TestClient(create_app()) as client:
+        topic = client.post("/api/topics", json={"title": "Mail"}).json()
+        plan = _plan(client, topic_id=topic["id"])
+        plan = client.post(f"/api/step-plans/{plan['id']}/start", json={}).json()
+        sid = _by_title(plan)["Quote"]["id"]
+        client.put(f"/api/steps/{sid}/artifact", json={"content": "Draft quote"})
+        client.post(f"/api/step-plans/{plan['id']}/consolidate/generate", json={"force": True})
+        send = f"/api/step-plans/{plan['id']}/send-to-topic"
+        client.put(f"/api/steps/{sid}/artifact", json={"content": "Draft quote v2"})
+        assert _get(client, plan["id"])["final_stale"] is True
+        assert client.post(send, json={"force": True}).status_code == 409
+        assert _topic_texts(client, topic["id"]) == []
+
+
 def test_a_plan_without_a_topic_cannot_send(monkeypatch: pytest.MonkeyPatch) -> None:
     _fake_llm(monkeypatch)
     with TestClient(create_app()) as client:
@@ -788,7 +875,22 @@ PLAN_ASSESSMENT = json.dumps(
         "contradictions": ["Quote says 10k, Risks says 12k"],
     }
 )
-ASSESS_REPLIES = {"ONE step's artifact": STEP_ASSESSMENT, "WHOLE result": PLAN_ASSESSMENT}
+FINAL_ASSESSMENT = json.dumps(
+    {
+        "score": 44,
+        "summary": "The final text drops the date.",
+        "covered": ["quote"],
+        "evidence": ["Quote step"],
+        "assumptions": [],
+        "gaps": ["date"],
+        "contradictions": [],
+    }
+)
+ASSESS_REPLIES = {
+    "ONE step's artifact": STEP_ASSESSMENT,
+    "READINESS of a step-by-step plan": PLAN_ASSESSMENT,
+    "FINAL DELIVERABLE of a step-by-step plan": FINAL_ASSESSMENT,
+}
 
 
 def _mode(client: TestClient, plan_id: int, mode: str) -> dict[str, Any]:
@@ -847,10 +949,53 @@ def test_the_global_assessment_covers_the_ask_and_goes_stale(
         assert out["assessment"]["score"] == 61
         assert out["assessment"]["contradictions"] == ["Quote says 10k, Risks says 12k"]
         assert out["assessment_stale"] is False
-        system = next(c["system"] for c in calls if "WHOLE result" in c["system"])
+        assert out["assessment"]["scope"] == "steps"
+        system = next(c["system"] for c in calls if "READINESS of a step" in c["system"])
         assert "Do NOT average" in system and "not a measured probability" in system
+        assert "NOT assessing one" in system
         client.put(f"/api/steps/{steps['Quote']['id']}/artifact", json={"content": "Quote: 11k"})
         assert _get(client, plan["id"])["assessment_stale"] is True
+
+
+def test_the_overall_assessment_reads_the_final_output_once_there_is_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _fake_llm(monkeypatch, ASSESS_REPLIES)
+    with TestClient(create_app()) as client:
+        plan = _started(client)
+        steps = _by_title(plan)
+        client.patch(f"/api/step-plans/{plan['id']}", json={"output_instructions": "Formal tone"})
+        for title in ("Quote", "Data", "Date"):
+            _validate(client, steps[title]["id"], f"{title}: approved text")
+        url = f"/api/step-plans/{plan['id']}/assess"
+
+        before = client.post(url).json()
+        assert before["assessment"]["scope"] == "steps"
+        assert not any("<<<FINAL" in c["user"] for c in calls)
+
+        client.post(f"/api/step-plans/{plan['id']}/consolidate/generate", json={})
+        # A readiness score is not the score of a final output that appeared later.
+        after_final = _get(client, plan["id"])
+        assert after_final["assessment"]["scope"] == "steps"
+        assert after_final["assessment_stale"] is True
+
+        out = client.post(url).json()
+        assert out["assessment"]["scope"] == "final"
+        assert out["assessment"]["score"] == 44
+        assert out["assessment_stale"] is False
+        call = calls[-1]
+        assert (
+            "FINAL DELIVERABLE" in call["system"] and "not a measured probability" in call["system"]
+        )
+        assert "<<<FINAL\nFINAL ANSWER\nFINAL>>>" in call["user"]
+        assert "Formal tone" in call["user"] and "Quote: approved text" in call["user"]
+
+        # Editing the final text invalidates the score of the text it read.
+        client.put(f"/api/step-plans/{plan['id']}/final", json={"content": "A different final"})
+        assert _get(client, plan["id"])["assessment_stale"] is True
+        again = client.post(url).json()
+        assert again["assessment_stale"] is False
+        assert "A different final" in calls[-1]["user"]
 
 
 def test_a_garbled_assessment_is_a_502(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -948,7 +1093,8 @@ def test_the_run_drafts_empty_steps_scores_them_and_validates_nothing(
         assert by["Date"]["assessment"]["score"] == 100
         # The synthesis is provisional and the plan is not complete.
         assert done["final_output"] == "FINAL ANSWER" and done["final_provisional"] is True
-        assert done["assessment"]["score"] == 61
+        # The run ends by scoring the synthesis it just wrote, not the steps alone.
+        assert done["assessment"]["scope"] == "final" and done["assessment"]["score"] == 44
         assert done["status"] != "done"
         chat = client.post(f"/api/step-plans/{pid}/consolidation/chat").json()
         notes = [

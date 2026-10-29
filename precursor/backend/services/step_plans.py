@@ -27,6 +27,7 @@ import json
 import re
 from collections import defaultdict
 from collections.abc import Iterable
+from typing import Literal
 from uuid import uuid4
 
 from fastapi import HTTPException, status
@@ -259,9 +260,18 @@ def step_signature(plan: StepPlan, step: Step) -> str:
     return _sig(plan.source_text, step.instruction, step.artifact)
 
 
+def plan_scope(plan: StepPlan) -> Literal["steps", "final"]:
+    """What the plan's overall assessment reads: the final output once one exists."""
+    return "final" if (plan.final_output or "").strip() else "steps"
+
+
 def plan_signature(plan: StepPlan, steps: list[Step]) -> str:
     leaves = [f"{s.id}:{step_signature(plan, s)}" for s in working_leaves(steps)]
-    return _sig(plan.source_text, plan.output_instructions or "", *leaves)
+    parts = [plan.source_text, plan.output_instructions or "", *leaves]
+    if plan_scope(plan) == "final":
+        # A steps-only assessment is never the assessment of a final output.
+        parts += ["final-output", plan.final_output or ""]
+    return _sig(*parts)
 
 
 def parse_assessment(raw: str | None) -> Assessment | None:

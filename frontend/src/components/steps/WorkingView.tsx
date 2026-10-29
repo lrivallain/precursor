@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import { Activity, FileCheck2 } from "lucide-react";
 import { buildStepTree, flattenTree, isApprovedStep, workingLeaves } from "../../lib/stepPlans";
 import type { StepPlan } from "../../lib/types";
+import { draftKey, useUnsavedGuard, useUnsavedKeys } from "../../lib/stepDrafts";
 import { useResizableWidth } from "../../lib/useResizableWidth";
 import { ResizeHandle } from "../ResizeHandle";
 import { StaleBadge } from "./StepUi";
@@ -89,6 +90,13 @@ export function WorkingView({
     min: 240,
     max: 640,
   });
+  useUnsavedGuard();
+  const unsaved = useUnsavedKeys(plan.id);
+  const unsavedStepIds = useMemo(
+    () => new Set(plan.steps.filter((s) => unsaved.has(draftKey(plan.id, s.id))).map((s) => s.id)),
+    [plan.id, plan.steps, unsaved],
+  );
+  const finalUnsaved = unsaved.has(draftKey(plan.id, "final"));
   const roots = useMemo(() => buildStepTree(plan.steps), [plan.steps]);
   const selectedNode =
     typeof selected === "number" ? flattenTree(roots).find((n) => n.step.id === selected) : undefined;
@@ -126,6 +134,7 @@ export function WorkingView({
           mutate={mutate}
           emptyMessage="This plan has no steps. Add one to continue."
           activeStepId={plan.auto_step_id}
+          unsavedStepIds={unsavedStepIds}
           footer={
             <div className="space-y-3 pt-2">
               <ActivityFeed plan={plan} onSelect={onSelect} />
@@ -148,6 +157,14 @@ export function WorkingView({
                   <span className="block text-sm font-medium">Final output</span>
                   <span className="block truncate text-xs text-muted">{finalHint}</span>
                 </span>
+                {finalUnsaved && (
+                  <span
+                    className="size-2 shrink-0 rounded-full bg-amber-500"
+                    role="img"
+                    aria-label="Unsaved edits"
+                    data-tooltip="Unsaved edits: they are kept while you look around, until you save or discard them"
+                  />
+                )}
                 {plan.final_stale && hasFinal && <StaleBadge />}
               </button>
             </div>

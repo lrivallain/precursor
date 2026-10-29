@@ -141,7 +141,12 @@ The model **self-assesses** each draft and the whole result: a 0–100 score wit
 result covers, its evidence or sources, its assumptions and the gaps left. The score is the
 model's own read, **not a calibrated probability** — read the reasons, not just the number.
 The overall assessment judges the *original ask*: what it covers, what it misses and where
-steps contradict each other — it is not an average of the step scores.
+steps contradict each other — it is not an average of the step scores. It says which scope it
+read: before a final output exists it is a **Plan readiness** score (the steps' artifacts only,
+explicitly *not* an assessment of a final deliverable); once a final output exists, assessing
+reads that text against the ask, the output instructions and the approved artifacts and is
+titled **Final output assessment**. Editing the final output makes that assessment out of date,
+and a readiness score from before the final existed is labelled as steps-only until you assess again.
 
 An assessment is tied to the work it saw. When the artifact, the instruction or the ask
 changes, it is shown as **Out of date** (and the overall one as soon as any step changes)
@@ -155,6 +160,11 @@ the approved artifacts (following the *Options* you set: standing output instruc
 tone or format, and guidance for one run). Edit it by hand or discuss it in the consolidation
 chat, then **Send to topic** to file it back into the topic the plan came from.
 
+If a step changes after the final output was written, the final output is **out of date**, even
+once you approve the step again. It cannot be sent to the topic or complete the plan until you
+regenerate it, or read it and click **Mark as reviewed** (or save your edits). The server enforces
+this; there is no override for an out-of-date final output.
+
 Generating before every step is approved — the automated run does it — is allowed but
 **provisional**: the output is labelled so, the plan is not marked done, and sending it to the
 topic needs an explicit confirmation and is marked provisional there. Approve the remaining
@@ -163,6 +173,13 @@ steps and regenerate for the reviewed final.
 A plan is **done** once a reviewed final output exists (every step approved, not out of date):
 generating it, sending a discussion reply to it, or sending it to the topic completes the plan.
 For a plan with no source topic, *Mark the plan as done* in the final output's **⋯** menu does the same.
+
+## Unsaved edits
+
+Unsaved artifact, instruction and final-output edits are kept while you move between steps, the
+final output, other sections and plans in the same tab, and an amber dot on the step (or the
+*Final output* row) shows where they are. A whitespace-only edit counts as an edit. The edits live
+in the page: a reload or closing the tab discards them, and the browser asks first.
 
 ## Good to know
 

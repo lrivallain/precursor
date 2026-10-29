@@ -144,9 +144,9 @@ Each list holds short items (under 160 characters), at most 8. "covered" and \
 it serves. {_LANGUAGE}"""
 
 _ASSESS_PLAN_SYSTEM = f"""\
-You assess the WHOLE result of a step-by-step plan against the original ask: \
-does the set of artifacts answer every request, and does it hold together? \
-{_SELF_ASSESSMENT}
+You assess the READINESS of a step-by-step plan against the original ask: \
+does the set of step artifacts answer every request, and does it hold together? \
+No final deliverable exists yet, so you are NOT assessing one. {_SELF_ASSESSMENT}
 
 Do NOT average the steps' scores. Go through the original ask request by \
 request, then look across the steps for omissions and contradictions.
@@ -160,6 +160,28 @@ of the ask that no artifact answers, or answers only in part"], "contradictions"
 
 Each list holds short items (under 200 characters), at most 10. Steps without an \
 artifact count as gaps. {_LANGUAGE}"""
+
+_ASSESS_FINAL_SYSTEM = f"""\
+You assess the FINAL DELIVERABLE of a step-by-step plan: the text that will be \
+handed over. Judge that text itself against the original ask and the requested \
+output instructions, using the step artifacts only as the supporting material \
+to check it against. {_SELF_ASSESSMENT}
+
+Do NOT average anything. Go through the original ask request by request and \
+check that the final text answers each one; then check that its claims, \
+numbers and commitments are supported by the artifacts (and say where they \
+are not), and look for omissions and for contradictions inside it or against \
+the artifacts.
+
+Reply with JSON only, no prose and no code fence:
+{{"score": 0-100, "summary": "one or two sentences", "covered": ["request of the \
+ask that the final text answers", "..."], "evidence": ["which step(s) support \
+it"], "assumptions": ["statement of the final text that no artifact supports"], \
+"gaps": ["request of the ask or output instruction the final text misses or \
+answers only in part"], "contradictions": ["two passages that disagree, or the \
+final text against an artifact: name both and the point"]}}
+
+Each list holds short items (under 200 characters), at most 10. {_LANGUAGE}"""
 
 _FINAL_DRAFT_PROMPT = f"""\
 Consolidate the plan into ONE final deliverable now.
@@ -669,7 +691,13 @@ async def assess_step(session: AsyncSession, step_id: int) -> Step:
 
 
 async def assess_plan(session: AsyncSession, plan_id: int) -> StepPlan:
-    """Have the model assess the whole result against the original ask."""
+    """Have the model assess the plan's overall result against the original ask.
+
+    The scope follows what exists: with no final output it is the readiness of
+    the step artifacts; once a final output is written it is that text, with the
+    approved artifacts as support. The assessment records its scope and its
+    signature covers the final text, so editing it makes the score out of date.
+    """
     plan = await svc.get_plan(session, plan_id)
     steps = await svc.plan_steps(session, plan.id)
     leaves = svc.working_leaves(steps)
@@ -680,24 +708,36 @@ async def assess_plan(session: AsyncSession, plan_id: int) -> StepPlan:
         state = "validated" if svc.is_approved(s) else f"NOT validated ({s.status})"
         body = s.artifact.strip() or "(no artifact yet)"
         blocks.append(f"### {s.title} [{state}]\nAsked: {s.instruction or '-'}\n\n{body}")
-    user = f"{svc.plan_header(plan)}\n\nSteps and their artifacts:\n" + "\n\n".join(blocks)
+    scope = svc.plan_scope(plan)
+    if scope == "final":
+        note = " (provisional: not every step is validated)" if plan.final_provisional else ""
+        user = (
+            f"{svc.plan_header(plan)}\n\nRequested output instructions:\n"
+            f"{plan.output_instructions or '(none)'}\n\n"
+            f"The final deliverable{note}:\n<<<FINAL\n{plan.final_output}\nFINAL>>>\n\n"
+            "Supporting step artifacts:\n" + "\n\n".join(blocks)
+        )
+        system = _ASSESS_FINAL_SYSTEM
+        intro = "Assessing the final output: the model checks that text against the original ask…"
+    else:
+        user = f"{svc.plan_header(plan)}\n\nSteps and their artifacts:\n" + "\n\n".join(blocks)
+        system = _ASSESS_PLAN_SYSTEM
+        intro = (
+            "Assessing the plan's readiness: the model checks the steps' artifacts against the ask…"
+        )
     sig = svc.plan_signature(plan, steps)
-    await trace_in_chat(
-        session,
-        await _chat_id(session, plan_id=plan.id),
-        "Assessing the whole plan: the model checks the result against the original ask…",
-    )
-    assessment = await _assess_or_trace(
-        session, plan, _ASSESS_PLAN_SYSTEM, user, await _chat_id(session, plan_id=plan.id)
-    )
+    chat_id = await _chat_id(session, plan_id=plan.id)
+    await trace_in_chat(session, chat_id, intro)
+    assessment = await _assess_or_trace(session, plan, system, user, chat_id)
+    assessment.scope = scope
     plan = await svc.get_plan(session, plan_id)
     plan.assessment_json = assessment.model_dump_json()
     plan.assessed_sig = sig
     await session.commit()
     await trace_in_chat(
         session,
-        await _chat_id(session, plan_id=plan.id),
-        _assessment_note("whole plan", assessment),
+        chat_id,
+        _assessment_note("final output" if scope == "final" else "plan readiness", assessment),
     )
     return plan
 
@@ -832,10 +872,19 @@ async def send_to_topic(
     """File the final output into the plan's topic as a user message, like a note.
 
     A provisional output is only filed on an explicit ``force``, labelled as
-    such, and doesn't complete the plan.
+    such, and doesn't complete the plan. An out-of-date one (a step changed
+    since it was written) is never filed: regenerate or review it first.
     """
     plan = await svc.get_plan(session, plan_id)
     body = (text if text is not None else plan.final_output) or ""
+    if plan.final_stale and (plan.final_output or "").strip():
+        # Not overridable by ``force``: an out-of-date output is neither reviewed
+        # nor provisional, it simply doesn't match the steps any more.
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "The steps changed since this final output was written. Regenerate it, or "
+            "review it and save it, before sending.",
+        )
     provisional = plan.final_provisional or not svc.is_ready(await svc.plan_steps(session, plan.id))
     if provisional and not force:
         raise HTTPException(

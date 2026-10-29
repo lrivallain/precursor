@@ -61,6 +61,7 @@ export function AssessmentPanel({
   disabledReason,
   onAssess,
   defaultOpen = false,
+  scopeNote,
 }: {
   title: string;
   assessment: Assessment | null;
@@ -68,6 +69,8 @@ export function AssessmentPanel({
   disabledReason?: string | null;
   onAssess: () => Promise<unknown>;
   defaultOpen?: boolean;
+  /** What this score did and did not read, shown with the reasons. */
+  scopeNote?: string | null;
 }) {
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState(defaultOpen);
@@ -119,6 +122,11 @@ export function AssessmentPanel({
             The model's own read of how well this answers the ask: a self-assessment, not a
             calibrated probability. Read the reasons, not just the number.
           </p>
+          {scopeNote && (
+            <p className="text-[11px] font-medium text-fg" data-testid="assessment-scope">
+              {scopeNote}
+            </p>
+          )}
           <div className={`space-y-2 ${stale ? "opacity-70" : ""}`}>
             {assessment.summary && <p className="text-sm">{assessment.summary}</p>}
             <Section label="Covered" items={assessment.covered} />

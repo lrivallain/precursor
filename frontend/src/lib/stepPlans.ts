@@ -329,8 +329,16 @@ export async function startStepPlanFromTopic(
   return plan;
 }
 
-/** Whether `draft` differs from `base` in a way worth warning about (blank ≈ blank). */
+/** The server keeps text without leading/trailing newlines; spaces are kept. */
+function normalizeText(text: string): string {
+  return text.replace(/^\n+|\n+$/g, "");
+}
+
+/**
+ * Whether `draft` differs from `base` the way the server would see it. Only
+ * surrounding newlines are ignored (the server drops them on save), so spaces
+ * typed into an empty field still count as an edit.
+ */
 export function hasUnsavedEdits(draft: string, base: string): boolean {
-  if (draft === base) return false;
-  return !(draft.trim() === "" && base.trim() === "");
+  return normalizeText(draft) !== normalizeText(base);
 }

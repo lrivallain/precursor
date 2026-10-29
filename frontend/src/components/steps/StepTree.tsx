@@ -48,6 +48,8 @@ interface Props {
   footer?: ReactNode;
   /** The step the automated run is drafting right now. */
   activeStepId?: number | null;
+  /** Steps holding edits that are not saved yet. */
+  unsavedStepIds?: ReadonlySet<number>;
 }
 
 const ACTION_BTN =
@@ -68,6 +70,7 @@ export function StepTree({
   emptyMessage,
   footer,
   activeStepId = null,
+  unsavedStepIds,
 }: Props) {
   const confirm = useConfirm();
   const [adding, setAdding] = useState<{ parent: number | null } | null>(null);
@@ -222,6 +225,14 @@ export function StepTree({
                   role="status"
                   aria-label="The model is drafting this step"
                   data-tooltip="The model is drafting this step"
+                />
+              )}
+              {unsavedStepIds?.has(step.id) && (
+                <span
+                  className="size-2 shrink-0 rounded-full bg-amber-500"
+                  role="img"
+                  aria-label="Unsaved edits"
+                  data-tooltip="Unsaved edits: they are kept while you look around, until you save or discard them"
                 />
               )}
               {step.assessment && <ScoreChip assessment={step.assessment} stale={step.assessment_stale} />}

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { CheckCircle2, ChevronDown, ChevronRight, FileText, Loader2, Save, Send, Sparkles } from "lucide-react";
 import { api } from "../../lib/api";
 import { openTopic } from "../../lib/sideChats";
+import { draftKey, useStoredDraft } from "../../lib/stepDrafts";
 import { hasUnsavedEdits } from "../../lib/stepPlans";
 import type { Message, StepPlan } from "../../lib/types";
 import { useConfirm } from "../ConfirmDialog";
@@ -54,7 +55,6 @@ export function ConsolidationPanel({
 }) {
   const confirm = useConfirm();
   const finalOutput = plan.final_output ?? "";
-  const [draft, setDraft] = useState(finalOutput);
   const [view, setView] = useState<"edit" | "preview">(finalOutput ? "preview" : "edit");
   const [saving, setSaving] = useState(false);
   const [sending, setSending] = useState(false);
@@ -85,19 +85,19 @@ export function ConsolidationPanel({
   const latestProposal = newest && !appliedInfo(newest.artifact) ? newest.id : null;
   // The text the draft started from, so a model-written final output arriving
   // isn't mistaken for the user's unsaved edits.
-  const [base, setBase] = useState(finalOutput);
+  // Both outlive this panel (see stepDrafts): leaving for a step keeps them.
+  const { draft, setDraft, base, setBase } = useStoredDraft(draftKey(plan.id, "final"), finalOutput);
   const dirty = hasUnsavedEdits(draft, base);
   const dirtyRef = useRef(dirty);
   dirtyRef.current = dirty;
   const draftRef = useRef(draft);
   draftRef.current = draft;
-  const planIdRef = useRef(plan.id);
+  const baseRef = useRef(base);
+  baseRef.current = base;
 
   useEffect(() => {
-    const samePlan = planIdRef.current === plan.id;
-    planIdRef.current = plan.id;
-    if (samePlan && dirtyRef.current && finalOutput.trim() !== draftRef.current.trim()) {
-      setNewer(true);
+    if (dirtyRef.current && finalOutput.trim() !== draftRef.current.trim()) {
+      setNewer(finalOutput !== baseRef.current);
     } else {
       setDraft(finalOutput);
       setBase(finalOutput);
@@ -107,12 +107,17 @@ export function ConsolidationPanel({
 
   const unvalidated = !plan.ready_to_consolidate;
   const hasFinal = finalOutput.trim().length > 0;
+  const assessedFinal = plan.assessment?.scope === "final";
+
+  // Saving unchanged text is how you say "I read this against the current
+  // steps and it still holds": it clears the out-of-date flag.
+  const reviewable = plan.final_stale && hasFinal && !dirty;
 
   async function save(): Promise<void> {
-    if (!dirty || saving) return;
+    if ((!dirty && !reviewable) || saving) return;
     setSaving(true);
     try {
-      await mutate(() => api.stepPlans.writeFinal(plan.id, draft));
+      await mutate(() => api.stepPlans.writeFinal(plan.id, dirty ? draft : finalOutput));
     } finally {
       setSaving(false);
     }
@@ -217,7 +222,7 @@ export function ConsolidationPanel({
       : plan.final_provisional || unvalidated
         ? "Approve every step and regenerate the final output first."
         : plan.final_stale
-          ? "The final output is out of date. Regenerate it first."
+          ? "The final output is out of date. Regenerate it, or mark it as reviewed, first."
           : null;
 
   const sendBlocker = !plan.source_topic_id
@@ -226,7 +231,9 @@ export function ConsolidationPanel({
       ? "Generate the final output first."
       : dirty
         ? "Save your edits first."
-        : null;
+        : plan.final_stale
+          ? "The steps changed since this output was written. Regenerate it, or review it and mark it as reviewed first."
+          : null;
 
   return (
     <div className="flex h-full flex-col gap-4">
@@ -256,7 +263,8 @@ export function ConsolidationPanel({
         </p>
       ) : plan.final_stale && hasFinal ? (
         <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
-          Steps changed after this output was written. Regenerate it, or edit it by hand.
+          Steps changed after this output was written, so it can't be sent or completed as is.
+          Regenerate it, or read it against the current steps and mark it as reviewed.
         </p>
       ) : unvalidated ? (
         <p className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-muted">
@@ -277,11 +285,18 @@ export function ConsolidationPanel({
       )}
 
       <AssessmentPanel
-        title="Overall assessment"
+        title={assessedFinal ? "Final output assessment" : "Plan readiness"}
         assessment={plan.assessment}
         stale={plan.assessment_stale}
         disabledReason={plan.steps.length === 0 ? "Add steps first." : null}
         onAssess={() => mutate(() => api.stepPlans.assessPlan(plan.id))}
+        scopeNote={
+          assessedFinal
+            ? "Scope: the final output as written, against the ask, the output instructions and the step artifacts."
+            : hasFinal
+              ? "Scope: the steps only, from before the final output existed. It does NOT assess the final output: re-assess to score it."
+              : "Scope: the steps only (readiness to answer the ask). There is no final output yet, so this does NOT assess a final deliverable."
+        }
       />
 
       <div className="space-y-2">
@@ -374,10 +389,18 @@ export function ConsolidationPanel({
               <button
                 type="button"
                 onClick={() => void save()}
-                disabled={!dirty || saving}
+                disabled={(!dirty && !reviewable) || saving}
                 className={BTN_SECONDARY}
+                data-tooltip={
+                  reviewable
+                    ? "You checked this output against the current steps: clears the out-of-date flag"
+                    : dirty
+                      ? "Save the final output (⌘/Ctrl+S)"
+                      : "Nothing to save"
+                }
               >
-                {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Save
+                {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}{" "}
+                {reviewable ? "Mark as reviewed" : "Save"}
               </button>
               <button
                 type="button"

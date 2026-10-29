@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { History, Loader2, Save } from "lucide-react";
 import { api, apiErrorMessage } from "../../lib/api";
+import { draftKey, useStoredDraft } from "../../lib/stepDrafts";
 import { hasUnsavedEdits } from "../../lib/stepPlans";
 import type { Step, StepArtifactVersion } from "../../lib/types";
 import { useConfirm } from "../ConfirmDialog";
@@ -17,11 +18,11 @@ type Mutate = <T>(action: () => Promise<T>) => Promise<T | undefined>;
  */
 export function StepArtifactEditor({ step, mutate }: { step: Step; mutate: Mutate }) {
   const confirm = useConfirm();
-  const [draft, setDraft] = useState(step.artifact);
   // What the draft started from: edits are measured against this, not the live
   // artifact, so a new version arriving (e.g. a model draft) isn't mistaken for
-  // unsaved edits.
-  const [base, setBase] = useState(step.artifact);
+  // unsaved edits. Both outlive this component (see stepDrafts), so moving to
+  // another step and back keeps unsaved text.
+  const { draft, setDraft, base, setBase } = useStoredDraft(draftKey(step.plan_id, step.id), step.artifact);
   const [view, setView] = useState<"edit" | "preview">("edit");
   const [saving, setSaving] = useState(false);
   const [newerVersion, setNewerVersion] = useState(false);
@@ -31,15 +32,14 @@ export function StepArtifactEditor({ step, mutate }: { step: Step; mutate: Mutat
   dirtyRef.current = dirty;
   const draftRef = useRef(draft);
   draftRef.current = draft;
-  const lastStepId = useRef(step.id);
+  const baseRef = useRef(base);
+  baseRef.current = base;
 
-  // A different step, or a new version of this one: follow it unless that
-  // would discard unsaved edits.
+  // A new version of this step (or, on return to it, one made while away):
+  // follow it unless that would discard unsaved edits.
   useEffect(() => {
-    const sameStep = step.id === lastStepId.current;
-    lastStepId.current = step.id;
-    if (sameStep && dirtyRef.current && step.artifact.trim() !== draftRef.current.trim()) {
-      setNewerVersion(true);
+    if (dirtyRef.current && step.artifact.trim() !== draftRef.current.trim()) {
+      setNewerVersion(step.artifact !== baseRef.current);
     } else {
       setDraft(step.artifact);
       setBase(step.artifact);

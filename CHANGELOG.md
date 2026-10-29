@@ -15,6 +15,15 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **Step by step: no lost drafts, no stale final, an honest assessment scope.**
+  Unsaved artifact and final-output edits now survive moving between steps, the
+  final output and other sections (an amber dot marks them, and a reload asks
+  first); whitespace-only edits count. A final output that is out of date with the
+  steps can no longer be sent to the topic or complete the plan, even after the
+  changed step is re-approved: regenerate it or *Mark as reviewed*. The overall
+  assessment says what it read: *Plan readiness* (steps only, not a final
+  deliverable) before a final output exists, *Final output assessment* once it
+  does, and it goes out of date when the final changes.
 - **Step by step: automation, assessments and a tracked discussion.** A topic's
   side panel lists its step plans and keeps a trace of the plan it spawned (and
   the plan links back to the topic); the plan header no longer repeats its title

@@ -33,6 +33,9 @@ class Assessment(BaseModel):
     gaps: list[str] = Field(default_factory=list)
     # Plan level only: places where two steps disagree.
     contradictions: list[str] = Field(default_factory=list)
+    # Plan level only: what was read. "steps" is the readiness of the plan's
+    # artifacts (no final output existed); "final" is the final output's own text.
+    scope: Literal["steps", "final"] = "steps"
 
 
 class ActivityNote(BaseModel):
