@@ -201,10 +201,21 @@ async function run() {
           assert.equal(await receipt.locator("svg.lucide-list-checks").count(), 1);
           const style = await receipt.evaluate((element) => {
             const css = getComputedStyle(element);
-            return { background: css.backgroundColor, border: css.borderTopWidth, overflow: element.scrollWidth > element.clientWidth + 1 };
+            const probe = element.ownerDocument.createElement("span");
+            probe.style.color = "color-mix(in oklab, var(--section-accent) 40%, var(--border))";
+            element.append(probe);
+            const featureBorder = getComputedStyle(probe).color;
+            probe.remove();
+            return {
+              background: css.backgroundColor,
+              borders: [css.borderTopWidth, css.borderRightWidth, css.borderBottomWidth, css.borderLeftWidth],
+              borderColor: css.borderTopColor, featureBorder,
+              overflow: element.scrollWidth > element.clientWidth + 1,
+            };
           });
           assert.equal(style.background, "rgba(0, 0, 0, 0)", "receipts must not become blue document cards");
-          assert.equal(style.border, "0px");
+          assert.deepEqual(style.borders, ["1px", "1px", "1px", "1px"], "the feature border must surround the entire receipt");
+          assert.equal(style.borderColor, style.featureBorder);
           assert.equal(style.overflow, false, `receipt overflow: ${theme}, ${width}px`);
           const quote = await receipt.getByTestId("step-plan-prompt").evaluate((element) => {
             const css = getComputedStyle(element);
@@ -213,9 +224,12 @@ async function run() {
             element.append(probe);
             const neutral = getComputedStyle(probe).color;
             probe.remove();
-            return { rule: css.borderLeftWidth, color: css.borderLeftColor, neutral };
+            return {
+              borders: [css.borderTopWidth, css.borderRightWidth, css.borderBottomWidth, css.borderLeftWidth],
+              color: css.borderLeftColor, neutral,
+            };
           });
-          assert.equal(quote.rule, "1px");
+          assert.deepEqual(quote.borders, ["0px", "0px", "0px", "1px"]);
           assert.equal(quote.color, quote.neutral);
         }
         for (const document of [filed, earlier]) {
@@ -223,22 +237,42 @@ async function run() {
           const style = await document.evaluate((element) => {
             const css = getComputedStyle(element);
             const probe = element.ownerDocument.createElement("span");
-            probe.style.color = "var(--bg)";
+            probe.style.color = "color-mix(in oklab, var(--section-accent) 12%, var(--bg))";
             element.append(probe);
             const background = getComputedStyle(probe).color;
             probe.style.color = "var(--border)";
             const border = getComputedStyle(probe).color;
             probe.remove();
+            const canvas = element.ownerDocument.createElement("canvas");
+            canvas.width = canvas.height = 1;
+            const context = canvas.getContext("2d");
+            function luminance(color) {
+              context.fillStyle = color;
+              context.fillRect(0, 0, 1, 1);
+              const rgb = [...context.getImageData(0, 0, 1, 1).data].slice(0, 3).map((value) => {
+                const channel = value / 255;
+                return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+              });
+              return rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722;
+            }
+            const surface = luminance(css.backgroundColor);
+            const contrast = [".markdown", '[data-testid="step-plan-note-header"]', "footer button"].map((selector) => {
+              const foreground = luminance(getComputedStyle(element.querySelector(selector)).color);
+              return (Math.max(foreground, surface) + 0.05) / (Math.min(foreground, surface) + 0.05);
+            });
             return {
               background: css.backgroundColor, expectedBackground: background,
               border: css.borderTopColor, expectedBorder: border, borderWidth: css.borderTopWidth,
               overflow: element.scrollWidth > element.clientWidth + 1,
+              contrast,
             };
           });
           assert.equal(style.background, style.expectedBackground);
+          assert.ok((await document.getAttribute("class")).includes("section-steps"), "document tint must use the Step by step section colour");
           assert.equal(style.border, style.expectedBorder);
           assert.equal(style.borderWidth, "1px");
           assert.equal(style.overflow, false, `document overflow: ${theme}, ${width}px`);
+          assert.ok(style.contrast.every((ratio) => ratio >= 4.5), `document text contrast: ${theme}, ${width}px: ${style.contrast}`);
           const bounds = await document.locator(".markdown").boundingBox();
           const footerBounds = await document.getByTestId("step-plan-note-footer").boundingBox();
           assert.ok(footerBounds.y >= bounds.y + bounds.height, "plan link must follow the document");

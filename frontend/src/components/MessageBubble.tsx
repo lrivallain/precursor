@@ -271,7 +271,7 @@ export function MessageBubble({ role, content, reasoning, pending, attachments, 
       <div
         className={`relative ${planNote ? "p-4 sm:p-5" : "px-3 py-2"} rounded-lg border ${
           onRetry ? "border-red-500/40" : "border-border"
-        } ${planNote ? "bg-bg" : isUser ? "bg-accent/10" : "bg-surface"} max-w-full ${planNote ? "w-full" : ""}`}
+        } ${planNote ? "section-steps step-plan-document" : isUser ? "bg-accent/10" : "bg-surface"} max-w-full ${planNote ? "w-full" : ""}`}
         data-testid={planNote ? "step-plan-output" : undefined}
       >
         {highlighted && (

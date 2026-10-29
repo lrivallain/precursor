@@ -15,7 +15,7 @@ export function StepPlanTrace({ content }: { content: string }) {
     const long = prompt !== preview;
     return (
       <div
-        className="flex min-w-0 w-full items-start gap-2.5 px-3 py-2 text-sm"
+        className="section-steps step-plan-receipt flex min-w-0 w-full items-start gap-2.5 rounded-lg border px-3 py-3 text-sm"
         data-testid="step-plan-trace"
         data-plan-id={trace.planId}
       >

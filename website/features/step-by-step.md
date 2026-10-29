@@ -24,11 +24,13 @@ The ask is copied into the plan, so every later model call is grounded in it —
 plan keeps working even if the topic is edited or deleted. You can edit the plan's ask
 later; its original topic trace stays unchanged.
 
-**The topic keeps the trail.** Starting a plan (with `/steps` or the button) leaves an
+**The topic keeps the trail.** Starting a plan (with `/steps` or the button) leaves a
 quiet **Request sent to Step by step** activity receipt in the topic's discussion, with
 the existing checklist icon, a blue link to the plan and an immutable copy of the
-**original prompt** under a subtle quote rule. Text after `/steps` is the submitted ask (without the
-command prefix); a bare `/steps` or the topic button uses the latest non-empty user ask
+**original prompt** under a subtle quote rule. A thin outline in the feature's teal
+colour surrounds the whole receipt, including its heading, link and prompt.
+Text after `/steps` is the submitted ask (without the command prefix); a bare `/steps`
+or the topic button uses the latest non-empty user ask
 and labels the snapshot **From topic message**. The receipt records the full effective text,
 not a reconstruction from the plan's later ask.
 
@@ -38,8 +40,9 @@ Prompt text is shown literally, so Markdown, HTML and plan-like headers remain p
 the prompt rather than changing the receipt. Older link-only traces still open their plans
 and explain that no original prompt was recorded; they are not backfilled from a mutable ask.
 
-Returned **Final output** notes have a different role: a neutral bordered document whose
-Markdown content leads, with quiet checklist metadata and version/provisional labels.
+Returned **Final output** notes have a different role: a bordered Markdown document with a
+soft Step by step teal background matching the receipt outline, distinct from ordinary
+discussion. Its content leads, with quiet checklist metadata and version/provisional labels.
 The plan link sits in the document footer, without repeating its title above a heading
 already supplied by the output. The original prompt remains secondary and directly readable.
 
@@ -202,7 +205,7 @@ Restoring an older version only moves the *current* marker, and saving a text th
 earlier version points back at it, so neither adds a duplicate. When you **Send to topic**, the
 version that was filed gets a green **posted** badge in the history and next to the version
 number, and the note in the topic names it (*final output v2*). In the topic the note is a
-neutral document with quiet **Final output** metadata, the version and, when it applies,
+softly teal-tinted document with quiet **Final output** metadata, the version and, when it applies,
 a *Provisional* label; the plan title links back to the plan from its footer. Later versions don't move the
 badge: it stays on the version that was actually posted.
 

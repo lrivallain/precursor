@@ -17,8 +17,10 @@ are the per-version history; releasing does not rewrite this file.
 
 - **Step by step: a quiet request receipt, then a clear document.** Topic
   creation traces now show *Request sent to Step by step*, a blue plan link
-  and the original prompt under a neutral quote rule, rather than a blue card.
-  Returned final outputs use a neutral document surface, understated version
+  and the original prompt under a quote rule, with a thin feature-coloured
+  border around the entire receipt rather than a blue card.
+  Returned final outputs use a soft Step by step teal-tinted document surface
+  to stand apart from ordinary discussion, understated version
   and provisional metadata, and a footer plan link so their Markdown content
   leads without a duplicated title. Both retain the existing checklist icon;
   immutable prompt snapshots, expansion, legacy messages and output history
