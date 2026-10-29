@@ -28,6 +28,11 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Fixed
 
+- **Agents and workflows keep valid WorkIQ access.** Attaching WorkIQ to an
+  agent no longer forces an OAuth refresh of a still-valid access token. That
+  unnecessary refresh could be refused by Entra's token-protection policy,
+  leaving workflows without mailbox tools even while chat worked. The
+  keep-alive still explicitly renews credentials when renewal is due.
 - **Windows: no console window left on screen.** The login items were
   Startup-folder `.cmd` files that ran the console script, so a terminal window
   stayed open for as long as Precursor ran, and closing it killed the app. They

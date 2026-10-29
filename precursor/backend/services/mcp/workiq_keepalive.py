@@ -254,7 +254,7 @@ class WorkIQKeepAlive:
             )
             await self._on_refresh_failed(profile)
             return
-        result = await resolve_workiq_bearer_token(profile, caller="keep-alive")
+        result = await resolve_workiq_bearer_token(profile, caller="keep-alive", renew_now=True)
         if result is None:
             await self._on_refresh_failed(profile)
             return

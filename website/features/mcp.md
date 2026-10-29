@@ -276,6 +276,13 @@ deliberate-renewal path now marks the credential spent, so the refresh it asked
 for is the refresh it gets, and a renewal that changed nothing is reported as the
 anomaly it is rather than logged as a success.
 
+Attaching WorkIQ to an agent or workflow is **not** itself a renewal request.
+It uses the stored token's normal expiry check, just like chat, rather than
+forcing a refresh of a still-valid credential. Otherwise an Entra
+token-protection refusal (`AADSTS530084`) could remove WorkIQ from an agent
+even while the same access token still worked in chat. Expired credentials
+still need renewal or sign-in; this does not bypass your organization's policy.
+
 How far ahead of expiry that happens isn't a setting. It follows from the token's
 own lifetime — a quarter of it, never less than five minutes — because the only
 thing that matters is how many attempts fit before the token dies. A typical
