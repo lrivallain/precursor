@@ -129,8 +129,7 @@ export function MessageBubble({ role, content, reasoning, pending, attachments, 
   const liveElapsed = useStopwatch(Boolean(pending));
 
   // Copy the rendered text (markdown stripped), the raw markdown source, or
-  // (replies only) email-safe HTML. Output (assistant) bubbles expose these
-  // alongside delete.
+  // email-safe HTML for replies and filed plan outputs.
   const flashCopied = (kind: "text" | "md" | "html") => {
     setCopied(kind);
     window.setTimeout(() => setCopied(null), 1200);
@@ -148,7 +147,7 @@ export function MessageBubble({ role, content, reasoning, pending, attachments, 
     }
   };
   const copyHtml = async () => {
-    if (contentRef.current && (await copyFormatted(contentRef.current, content))) {
+    if (contentRef.current && (await copyFormatted(contentRef.current, planNote?.body ?? content))) {
       flashCopied("html");
     }
   };
@@ -306,7 +305,7 @@ export function MessageBubble({ role, content, reasoning, pending, attachments, 
                     <Copy size={12} />
                   )}
                 </button>
-                {role === "assistant" && (
+                {(role === "assistant" || planNote != null) && (
                   <button
                     type="button"
                     onClick={() => void copyHtml()}

@@ -129,6 +129,7 @@ async function run() {
     const derived = page.locator(`[data-testid="step-plan-trace"][data-plan-id="${button.id}"]`);
     await derived.getByText("Original prompt · From topic message", { exact: true }).waitFor();
 
+    const filedBody = `# Filed output\n\nA **synthetic** final output.\n\n- Checked sequence\n- Preserved Markdown\n\n${"RESULT".repeat(120)}`;
     // Historical traces do not fetch or pretend to recover a mutable ask.
     await page.route(`**/api/topics/${topic.id}/messages*`, async (route) => {
       const response = await route.fetch();
@@ -145,7 +146,7 @@ async function run() {
           prompt: Array.from({ length: 9 }, (_, i) => `Line ${i + 1}`).join("\n"),
         }) },
         { ...base, id: 900005, role: "user", kind: null,
-          content: `**From step-by-step plan: [Filed output](/steps/${button.id}) · final output v2 (provisional)**\n\n# Filed output\n\nA **synthetic** final output.\n\n- Checked sequence\n- Preserved Markdown\n\n${"RESULT".repeat(120)}` },
+          content: `**From step-by-step plan: [Filed output](/steps/${button.id}) · final output v2 (provisional)**\n\n${filedBody}` },
         { ...base, id: 900006, role: "user", kind: null,
           content: `**From step-by-step plan: [Earlier output](/steps/${button.id})**\n\nAn older output without a heading or version.` },
         { ...base, id: 900007, content: JSON.stringify({
@@ -179,6 +180,40 @@ async function run() {
     assert.equal(await filed.getByRole("heading").count(), 1, "do not duplicate the document title");
     assert.equal(await filed.locator(".markdown strong").textContent(), "synthetic");
     assert.equal(await filed.locator(".markdown li").count(), 2);
+    await page.evaluate(() => {
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: {
+          async write(items) {
+            window.formattedCopy = {};
+            for (const item of items) {
+              for (const type of item.types) {
+                window.formattedCopy[type] = await (await item.getType(type)).text();
+              }
+            }
+          },
+          async writeText(text) {
+            window.plainCopy = text;
+          },
+        },
+      });
+    });
+    await filed.hover();
+    const mailCopy = filed.getByRole("button", { name: "Copy formatted", exact: true });
+    assert.equal(await mailCopy.locator("svg.lucide-mail").count(), 1);
+    await mailCopy.click();
+    await page.waitForFunction(() => Boolean(window.formattedCopy?.["text/html"]));
+    const copied = await page.evaluate(() => window.formattedCopy);
+    assert.equal(copied["text/plain"], filedBody, "plain flavour must not include plan provenance");
+    assert.match(copied["text/html"], /<h1 style="[^"]+">Filed output<\/h1>/);
+    assert.match(copied["text/html"], /<strong>synthetic<\/strong>/);
+    assert.match(copied["text/html"], /<li style="/);
+    assert.doesNotMatch(copied["text/html"], /From step-by-step plan|Final output|Provisional|\/steps\/|<button|<svg/);
+    await mailCopy.locator("svg.lucide-check").waitFor();
+    await page.evaluate(() => Object.defineProperty(window, "ClipboardItem", { configurable: true, value: undefined }));
+    await mailCopy.click();
+    await page.waitForFunction(() => window.plainCopy != null);
+    assert.equal(await page.evaluate(() => window.plainCopy), filedBody, "clipboard fallback must copy the document body too");
     const earlier = page.getByTestId("step-plan-output").filter({ hasText: "An older output without a heading or version." });
     assert.equal(await earlier.getByRole("heading").count(), 0);
     assert.equal(await earlier.getByTestId("step-plan-note-header").textContent(), "Final output");
@@ -284,7 +319,7 @@ async function run() {
     await page.keyboard.press("Enter");
     await page.waitForURL(new RegExp(`/steps/${button.id}$`));
     assert.deepEqual(errors, []);
-    console.log("step prompt traces: immutable snapshots, receipt/document hierarchy, ListChecks icons, Markdown, versions, links and responsive themes: ok");
+    console.log("step prompt traces: immutable snapshots, receipt/document hierarchy, ListChecks icons, Markdown, formatted copying, versions, links and responsive themes: ok");
   } finally {
     const page = await browser.newPage();
     if (topicId != null) {

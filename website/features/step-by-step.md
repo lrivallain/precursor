@@ -45,8 +45,11 @@ soft Step by step teal background matching the receipt outline, distinct from or
 discussion. Its content leads, with quiet checklist metadata and version/provisional labels.
 The plan link sits in the document footer, without repeating its title above a heading
 already supplied by the output. The original prompt remains secondary and directly readable.
+Hover the returned document and choose the **Copy formatted** envelope to paste it into
+an email with its layout intact. Both the formatted copy and its plain-text fallback
+contain only the document, without the plan metadata or footer link.
 
-<Screenshot src="/screenshots/step-plan-traces.png" alt="A quiet request receipt, a returned Markdown document with version and provisional labels, a longer prompt with Show all, and an older trace without a snapshot" caption="The request is an activity receipt; the returned output is the document. Both keep their link to the plan." />
+<Screenshot src="/screenshots/step-plan-traces.png" alt="A quiet request receipt, a returned Markdown document with version and provisional labels and an envelope copy action, a longer prompt with Show all, and an older trace without a snapshot" caption="The request is an activity receipt; the returned output is the document. Both keep their link to the plan." />
 
 The topic's side panel lists its plans — like side chats — with their progress. In the
 other direction, the plan's bar (which takes the place of the app's top bar) shows a

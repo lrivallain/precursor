@@ -15,6 +15,10 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Changed
 
+- **Step by step: copy returned outputs for email.** Final-output documents in
+  a topic now expose the usual *Copy formatted* envelope. It preserves the
+  document's layout without copying the plan metadata or footer link, and its
+  plain-text fallback likewise contains only the document body.
 - **Step by step: a quiet request receipt, then a clear document.** Topic
   creation traces now show *Request sent to Step by step*, a blue plan link
   and the original prompt under a quote rule, with a thin feature-coloured

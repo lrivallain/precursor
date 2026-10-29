@@ -208,6 +208,9 @@ An assistant reply's hover toolbar has three copy buttons, in topics and chats:
   drop inline drawings.
 - **Copy raw markdown**: the Markdown source.
 
+Final-output documents returned by [Step by step](/features/step-by-step) also have the
+**Copy formatted** envelope. It copies the document body without its plan metadata or link.
+
 The **Copy** button over summaries, notes and workflow outputs uses the same
 formatted copy.
 

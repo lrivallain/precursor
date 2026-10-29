@@ -302,6 +302,7 @@ const scenes = {
       await cards.first().scrollIntoViewIfNeeded();
       const first = await cards.first().boundingBox();
       const last = await cards.last().boundingBox();
+      await page.getByTestId("step-plan-output").hover();
       return {
         x: Math.floor(first.x - 8), y: Math.floor(first.y - 8),
         width: Math.ceil(first.width + 16),
