@@ -57,6 +57,24 @@ async def _note(plan_id: int, text: str) -> None:
         await llm.trace_in_chat(session, chat.id, text)
 
 
+async def _step_title(step_id: int) -> str:
+    async with SessionLocal() as session:
+        return (await svc.get_step(session, step_id)).title
+
+
+def _outcome_note(title: str, draft: llm.ArtifactDraft) -> str:
+    if draft.outcome == "published":
+        step = draft.step
+        score = svc.parse_assessment(step.assessment_json)
+        scored = f", scored {score.score}/100" if score else ""
+        return (
+            f"Drafted «{title}» (version {step.artifact_version}{scored}). Waiting for your review."
+        )
+    if draft.outcome == "discussion":
+        return f"«{title}»: the model answered in the discussion without a deliverable."
+    return f"«{title}»: waiting for a tool approval."
+
+
 async def _next_step(plan_id: int, skip: set[int]) -> int | None:
     """The first working step that still has nothing and hasn't been approved."""
     async with SessionLocal() as session:
@@ -85,10 +103,16 @@ async def _run(plan_id: int) -> None:
         )
         while (step_id := await _next_step(plan_id, done)) is not None:
             done.add(step_id)
-            async with SessionLocal() as session:
-                outcome = (await llm.generate_artifact(session, step_id)).outcome
+            title = await _step_title(step_id)
+            svc.CURRENT_STEP[plan_id] = step_id
+            await _note(plan_id, f"Drafting «{title}»…")
             await publish_step_plan_changed(plan_id)
-            if outcome == "awaiting_approval":
+            async with SessionLocal() as session:
+                draft = await llm.generate_artifact(session, step_id)
+            svc.CURRENT_STEP.pop(plan_id, None)
+            await _note(plan_id, _outcome_note(title, draft))
+            await publish_step_plan_changed(plan_id)
+            if draft.outcome == "awaiting_approval":
                 await _note(plan_id, "Paused: a tool call in a step needs your approval.")
                 await _set_state(plan_id, AUTO_PAUSED)
                 return
@@ -103,6 +127,7 @@ async def _run(plan_id: int) -> None:
         await _note(plan_id, f"Automated run stopped: {detail}")
         await _set_state(plan_id, AUTO_PAUSED)
     finally:
+        svc.CURRENT_STEP.pop(plan_id, None)
         svc.RUNNING.discard(plan_id)
         _TASKS.pop(plan_id, None)
         await publish_step_plan_changed(plan_id)

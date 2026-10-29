@@ -30,6 +30,8 @@ export function AutomationBar({ plan, mutate }: { plan: StepPlan; mutate: Mutate
   const mode = plan.automation_mode;
   const running = plan.auto_state === "running";
   const paused = plan.auto_state === "paused";
+  const current = plan.steps.find((st) => st.id === plan.auto_step_id);
+  const runningLabel = current ? `Drafting “${current.title}”` : "Running";
   const workable = plan.status === "active" || plan.status === "consolidating";
 
   async function run(action: () => Promise<unknown>): Promise<void> {
@@ -95,7 +97,7 @@ export function AutomationBar({ plan, mutate }: { plan: StepPlan; mutate: Mutate
               role="status"
               data-tooltip="Drafting and scoring the steps that have no artifact yet"
             >
-              <Loader2 size={12} className="animate-spin" /> Running
+              <Loader2 size={12} className="animate-spin" /> {runningLabel}
             </span>
           )}
           {paused && <span className="text-xs text-amber-700 dark:text-amber-300">Paused</span>}

@@ -30,7 +30,7 @@ from collections.abc import Iterable
 from uuid import uuid4
 
 from fastapi import HTTPException, status
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.models import (
@@ -59,6 +59,7 @@ from precursor.backend.models.step_plan import (
     STEP_VALIDATED,
 )
 from precursor.backend.schemas.step_plan import (
+    ActivityNote,
     Assessment,
     StepArtifactVersionRead,
     StepCreate,
@@ -78,6 +79,8 @@ from precursor.backend.services.slugs import allocate_unique_slug
 # database survives a restart, this set doesn't: that is how an interrupted run
 # reads as paused instead of running forever.
 RUNNING: set[int] = set()
+# The step the automated run is drafting right now, per plan.
+CURRENT_STEP: dict[int, int] = {}
 
 MAX_STEPS_PER_PLAN = 200
 MAX_DEPTH = 6
@@ -350,7 +353,32 @@ async def to_plan_read(session: AsyncSession, plan: StepPlan) -> StepPlanRead:
     )
     if plan.auto_state == AUTO_RUNNING and plan.id not in RUNNING:
         read.auto_state = "paused"
+    read.auto_step_id = CURRENT_STEP.get(plan.id) if plan.id in RUNNING else None
+    read.activity = await _recent_activity(session, plan.id, [s.id for s in steps])
     return read
+
+
+ACTIVITY_LIMIT = 30
+
+
+async def _recent_activity(
+    session: AsyncSession, plan_id: int, step_ids: list[int]
+) -> list[ActivityNote]:
+    """The latest traces left in the plan's chats: what the model and the run did."""
+    rows = await session.execute(
+        select(Message.id, Message.content, Message.created_at, Chat.step_id)
+        .join(Chat, Chat.id == Message.chat_id)
+        .where(
+            Message.kind == STEP_PLAN_TRACE_KIND,
+            or_(Chat.step_plan_id == plan_id, Chat.step_id.in_(step_ids)),
+        )
+        .order_by(Message.id.desc())
+        .limit(ACTIVITY_LIMIT)
+    )
+    return [
+        ActivityNote(id=i, text=text, step_id=step_id, created_at=at)
+        for i, text, at, step_id in reversed(rows.all())
+    ]
 
 
 async def read_step(session: AsyncSession, step: Step) -> StepRead:
@@ -573,6 +601,30 @@ async def _flag_for_review(session: AsyncSession, plan: StepPlan) -> None:
         if step.status == STEP_VALIDATED:
             step.needs_review = True
     _reopen_plan(plan)
+
+
+async def complete_plan(session: AsyncSession, plan_id: int) -> StepPlan:
+    """Mark the plan done: it needs a final output built from approved steps only."""
+    plan = await get_plan(session, plan_id)
+    if plan.status == PLAN_DONE:
+        return plan
+    if plan.status not in (PLAN_ACTIVE, PLAN_CONSOLIDATING):
+        raise HTTPException(status.HTTP_409_CONFLICT, "Start the plan first.")
+    if not (plan.final_output or "").strip():
+        raise HTTPException(status.HTTP_409_CONFLICT, "There's no final output yet.")
+    if plan.final_stale:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "The steps changed since the final output was built: regenerate it first.",
+        )
+    if plan.final_provisional or not is_ready(await plan_steps(session, plan_id)):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Not every step is validated: this output is provisional and can't complete the plan.",
+        )
+    plan.status = PLAN_DONE
+    await session.commit()
+    return plan
 
 
 def _reopen_plan(plan: StepPlan) -> None:

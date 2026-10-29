@@ -35,6 +35,16 @@ class Assessment(BaseModel):
     contradictions: list[str] = Field(default_factory=list)
 
 
+class ActivityNote(BaseModel):
+    """One trace of what the model or the automated run did, for the live feed."""
+
+    id: int
+    text: str
+    # The step it concerns; None for a note about the whole plan.
+    step_id: int | None = None
+    created_at: UtcDateTime
+
+
 class StepRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -85,6 +95,10 @@ class StepPlanRead(ConversationLLMFields):
     automation_mode: AutomationMode = "manual"
     # ``running`` only while the run is alive in this process.
     auto_state: AutoState = "idle"
+    # The step being drafted right now, while the run is alive.
+    auto_step_id: int | None = None
+    # The latest traces of the model and the run, oldest first.
+    activity: list[ActivityNote] = Field(default_factory=list)
     # Coverage of the original ask by the whole result (not an average of steps).
     assessment: Assessment | None = None
     assessment_stale: bool = False

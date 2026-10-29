@@ -12,6 +12,7 @@ import { parseToolMeta } from "../lib/toolMeta";
 import type { MessageDeletion, PendingDelete } from "../lib/useMessageDeletion";
 import { TURN_ANCHOR_ATTR } from "../lib/useTurnTimeline";
 import type { Message, SideChatItem, ToolApproval, ToolApprovalDecision } from "../lib/types";
+import { ArtifactCard, splitArtifactReply } from "./steps/ArtifactCard";
 import { StepPlanTrace } from "./steps/StepPlanTrace";
 import type { PromptRewindActions } from "../lib/useConversation";
 import type { ReplyEditController } from "../lib/useReplyEdit";
@@ -148,10 +149,16 @@ function renderRow({
   const sideChatSource = Boolean(onStartSideChat) && reply;
   const editable = Boolean(replyEdit) && reply && !streaming;
   const editing = replyEdit && replyEdit.editingId === m.id;
+  // A deliverable marked by the model in a plan discussion is laid out as a card
+  // rather than as raw marker comments.
+  const split = m.role === "assistant" && !m.kind && !m.is_error ? splitArtifactReply(m.content) : null;
+  const card = split ? (
+    <ArtifactCard messageId={m.id} artifact={split.artifact} complete={split.complete} />
+  ) : undefined;
   return (
     <MessageBubble
       role={m.role}
-      content={m.content}
+      content={split ? split.text : m.content}
       reasoning={m.reasoning}
       attachments={m.attachments}
       collapsible={collapsible}
@@ -167,9 +174,9 @@ function renderRow({
       onRewindHere={rewindActions?.here}
       onEditResend={rewindActions?.edit}
       revealActions={revealActions && Boolean(rewindActions)}
-      onStartSideChat={sideChatSource ? () => onStartSideChat?.(m) : undefined}
-      quotableId={sideChatSource || (replyEdit && reply) ? m.id : undefined}
-      onEditReply={editable && !editing ? () => replyEdit?.start(m.id) : undefined}
+      onStartSideChat={sideChatSource && !split ? () => onStartSideChat?.(m) : undefined}
+      quotableId={!split && (sideChatSource || (replyEdit && reply)) ? m.id : undefined}
+      onEditReply={editable && !editing && !split ? () => replyEdit?.start(m.id) : undefined}
       editor={
         editing ? (
           <ReplyEditor
@@ -191,7 +198,14 @@ function renderRow({
             }
           : undefined
       }
-      footer={sideChats && sideChats.length > 0 ? <SideChatLinks items={sideChats} /> : undefined}
+      footer={
+        card || (sideChats && sideChats.length > 0) ? (
+          <>
+            {card}
+            {sideChats && sideChats.length > 0 && <SideChatLinks items={sideChats} />}
+          </>
+        ) : undefined
+      }
     />
   );
 }

@@ -381,6 +381,12 @@ def test_a_chosen_reply_can_become_the_artifact(monkeypatch: pytest.MonkeyPatch)
         assert client.post(url, json={"message_id": user_msg["id"]}).status_code == 409
         assert client.post(url, json={"message_id": 999999}).status_code == 404
 
+        # Sending what the artifact already holds leaves an approval alone.
+        client.post(f"/api/steps/{sid}/status", json={"status": "validated"})
+        again = client.post(url, json={"message_id": replies[-1]["id"]}).json()
+        assert again["status"] == "validated"
+        assert again["artifact_version"] == res.json()["artifact_version"]
+
 
 def test_the_step_chat_is_grounded_and_hidden_from_the_chat_list(
     monkeypatch: pytest.MonkeyPatch,
@@ -525,7 +531,7 @@ def test_consolidation_needs_validated_steps_unless_forced(
         assert res.json()["outcome"] == "published"
         out = res.json()["plan"]
         assert out["final_output"] == "FINAL ANSWER"
-        assert out["status"] == "consolidating"
+        assert out["status"] == "done"
         assert out["final_stale"] is False
         assert out["final_provisional"] is False
         turn = TURNS[-1]
@@ -608,7 +614,7 @@ def test_changing_validated_work_marks_the_final_stale(monkeypatch: pytest.Monke
         for title in ("Quote", "Data", "Date"):
             _validate(client, steps[title]["id"])
         client.post(f"/api/step-plans/{plan['id']}/consolidate/generate", json={})
-        assert _get(client, plan["id"])["status"] == "consolidating"
+        assert _get(client, plan["id"])["status"] == "done"
         client.put(f"/api/steps/{steps['Quote']['id']}/artifact", json={"content": "changed"})
         after = _get(client, plan["id"])
         assert after["final_stale"] is True
@@ -912,12 +918,13 @@ def test_the_run_drafts_empty_steps_scores_them_and_validates_nothing(
     _fake_llm(monkeypatch, ASSESS_REPLIES)
     with TestClient(create_app()) as client:
         topic = client.post("/api/topics", json={"title": "Mail"}).json()
-        plan = _plan(client, topic_id=topic["id"], automation_mode="auto")
+        plan = _plan(client, topic_id=topic["id"])
         plan = client.post(f"/api/step-plans/{plan['id']}/start", json={}).json()
         pid, steps = plan["id"], _by_title(plan)
         # The user already approved one step and wrote another: the run leaves both alone.
         _validate(client, steps["Quote"]["id"], "Quote: approved")
         client.put(f"/api/steps/{steps['Data']['id']}/artifact", json={"content": "My own data"})
+        _mode(client, pid, "auto")
 
         assert client.post(f"/api/step-plans/{pid}/auto/start").status_code == 200
         done = _await_run(client, pid)
@@ -942,6 +949,50 @@ def test_the_run_drafts_empty_steps_scores_them_and_validates_nothing(
         assert any("Automated run started" in n for n in notes)
         assert any("Automated run finished" in n for n in notes)
         assert any("self-assessment" in n for n in notes)
+        assert any(n.startswith("Drafting «Date»") for n in notes)
+        assert any(n.startswith("Drafted «Date»") and "scored" in n for n in notes)
+        # The same traces feed the live activity list.
+        feed = [n["text"] for n in done["activity"]]
+        assert any("Automated run started" in t for t in feed)
+        assert any(t.startswith("Drafted «Date»") for t in feed)
+        assert done["auto_step_id"] is None
+
+
+def test_starting_an_automated_plan_starts_the_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_llm(monkeypatch, ASSESS_REPLIES)
+    with TestClient(create_app()) as client:
+        plan = _plan(client, automation_mode="auto")
+        started = client.post(f"/api/step-plans/{plan['id']}/start", json={}).json()
+        assert started["status"] == "active"
+        done = _await_run(client, plan["id"])
+        leaves = [s for s in done["steps"] if s["title"] in ("Quote", "Data", "Date")]
+        assert all(s["artifact"] and s["status"] == "to_validate" for s in leaves)
+        # Nothing was approved, so the synthesis is provisional and nothing completes.
+        assert done["final_provisional"] is True and done["status"] == "consolidating"
+        assert client.post(f"/api/step-plans/{plan['id']}/complete").status_code == 409
+
+
+def test_a_user_generated_final_completes_only_when_approved(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_llm(monkeypatch)
+    with TestClient(create_app()) as client:
+        plan = _started(client)
+        pid, steps = plan["id"], _by_title(plan)
+        gen = f"/api/step-plans/{pid}/consolidate/generate"
+        assert client.post(f"/api/step-plans/{pid}/complete").status_code == 409
+        # Consolidating anyway stays provisional: not done.
+        _validate(client, steps["Quote"]["id"], "Quote: 10k")
+        res = client.post(gen, json={"force": True}).json()
+        assert res["plan"]["final_provisional"] is True and res["plan"]["status"] == "consolidating"
+        assert client.post(f"/api/step-plans/{pid}/complete").status_code == 409
+        # A manual edit of the output doesn't complete it either, but approval + Mark as done does.
+        _validate(client, steps["Data"]["id"], "Data risks")
+        _validate(client, steps["Date"]["id"], "A date")
+        client.put(f"/api/step-plans/{pid}/final", json={"content": "My final"})
+        assert _get(client, pid)["status"] == "consolidating"
+        done = client.post(f"/api/step-plans/{pid}/complete")
+        assert done.status_code == 200 and done.json()["status"] == "done"
 
 
 def test_the_run_never_replaces_an_existing_final_and_needs_auto_mode(

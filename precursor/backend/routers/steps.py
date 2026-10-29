@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.db import get_session
-from precursor.backend.models.step_plan import AUTHOR_USER
+from precursor.backend.models.step_plan import AUTHOR_USER, AUTOMATION_AUTO
 from precursor.backend.schemas.chat import ChatRead
 from precursor.backend.schemas.message import MessageRead
 from precursor.backend.schemas.step_plan import (
@@ -136,9 +136,19 @@ async def start_plan(
     payload: StepStartRequest | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> StepPlanRead:
-    await svc.start_plan(
+    plan = await svc.start_plan(
         session, plan_id, accept_proposed=payload.accept_proposed if payload else True
     )
+    if plan.automation_mode == AUTOMATION_AUTO:
+        await runner.start(session, plan_id)
+    await publish_step_plan_changed(plan_id)
+    return await _plan(session, plan_id)
+
+
+@router.post("/{plan_id}/complete", response_model=StepPlanRead)
+async def complete_plan(plan_id: int, session: AsyncSession = Depends(get_session)) -> StepPlanRead:
+    """Mark the plan done once its final output is built from approved steps."""
+    await svc.complete_plan(session, plan_id)
     await publish_step_plan_changed(plan_id)
     return await _plan(session, plan_id)
 
@@ -203,6 +213,7 @@ async def generate_final(
         plan_id,
         instructions=payload.instructions if payload else None,
         force=payload.force if payload else False,
+        complete=True,
     )
     await publish_step_plan_changed(plan_id)
     return FinalDraftResult(plan=await _plan(session, plan_id), outcome=draft.outcome)
@@ -212,7 +223,7 @@ async def generate_final(
 async def final_from_message(
     plan_id: int, payload: UseMessageRequest, session: AsyncSession = Depends(get_session)
 ) -> StepPlanRead:
-    await llm.use_message_as_final(session, plan_id, payload.message_id)
+    await llm.use_message_as_final(session, plan_id, payload.message_id, complete=True)
     await publish_step_plan_changed(plan_id)
     return await _plan(session, plan_id)
 

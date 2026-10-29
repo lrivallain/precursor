@@ -45,6 +45,13 @@ export function StepDetail({
 
   // The model's latest reply in this step's discussion becomes a new artifact
   // version; unsaved edits in the editor are kept behind its "newer version" banner.
+  async function sendReply(messageId: number): Promise<boolean> {
+    setDraftNote(null);
+    const updated = await mutate(() => api.stepPlans.artifactFromMessage(step.id, messageId));
+    if (updated) setDraftNote(`Sent the reply to the artifact as version ${updated.artifact_version}. Review it, then validate.`);
+    return !!updated;
+  }
+
   async function sendLatestReply(): Promise<boolean> {
     if (step.chat_id == null) return false;
     setDraftNote(null);
@@ -56,9 +63,7 @@ export function StepDetail({
       setDraftNote("The discussion has no model reply to send yet.");
       return false;
     }
-    const updated = await mutate(() => api.stepPlans.artifactFromMessage(step.id, reply.id));
-    if (updated) setDraftNote(`Sent the latest reply to the artifact as version ${updated.artifact_version}. Review it, then validate.`);
-    return !!updated;
+    return sendReply(reply.id);
   }
 
   async function setStatus(action: StatusAction): Promise<void> {
@@ -214,6 +219,11 @@ export function StepDetail({
               key={step.id}
               open={() => api.stepPlans.stepChat(step.id)}
               onOpened={() => void reload()}
+              artifactAction={{
+                label: "Send to artifact",
+                tooltip: "Save this artifact as a new version of the step's artifact. Your unsaved edits are kept.",
+                send: async (id) => void (await sendReply(id)),
+              }}
             />
           }
         />

@@ -85,7 +85,8 @@ A reply is a conversation, so it can hold questions or alternatives. When you as
 discussion to write or change the artifact, the model marks the deliverable with
 `<!-- artifact -->…<!-- /artifact -->` (always the whole artifact), and the app saves it at
 once as a new version in *To validate*, scored in the background. The discussion notes what
-happened. A reply without the markers changes nothing: **Send the latest reply to the artifact**
+happened. In the transcript the deliverable shows as a **Proposed artifact** card (rendered Markdown, not
+raw markers) with its own **Send to artifact** button. A reply without the markers changes nothing: **Send the latest reply to the artifact**
 promotes one by hand. It is the big arrow on the divider between the two panes when they
 sit side by side, and a bar at the top of the discussion otherwise (the consolidation has
 the same, towards the final output).
@@ -108,8 +109,10 @@ Whatever the mode, **the model never validates**: drafts land in *To validate* a
 stays yours, step by step. The run skips validated steps, steps that already have an
 artifact, and an existing final output, so it can't overwrite your work. **Pause** stops it
 after the step in flight and **Resume** carries on; a run interrupted by a restart reads as
-paused. Everything the run does is traced in the plan's discussion, where you can talk to the
-model. You can add, split or reopen steps and edit instructions at any time.
+paused. **Start** runs an automated plan straight away. The run is live: the step being drafted
+shows a spinner in the tree and its name in the plan bar, and an **Activity** list (open while
+it runs) follows each step; the page also refreshes by itself. Everything the run does is traced
+in the plan's discussion, where you can talk to the model. You can add, split or reopen steps and edit instructions at any time.
 
 ### Assessments
 
@@ -135,6 +138,10 @@ Consolidating before every step is approved — the automated run does it — is
 **provisional**: the output is labelled so, the plan is not marked done, and sending it to the
 topic needs an explicit confirmation and is marked provisional there. Validate the remaining
 steps and regenerate for the reviewed final.
+
+A plan is **done** once a reviewed final output exists (every step validated, not out of date):
+generating it, sending a discussion reply to it, or sending it to the topic completes the plan,
+and **Mark as done** does the same for a plan with no source topic.
 
 ## Good to know
 

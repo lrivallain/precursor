@@ -3029,6 +3029,14 @@ export interface Step {
   updated_at: string;
 }
 
+/** One line of the plan's activity feed (a step trace written by the run). */
+export interface ActivityNote {
+  id: number;
+  text: string;
+  step_id: number | null;
+  created_at: string;
+}
+
 export interface StepPlan {
   id: number;
   title: string;
@@ -3045,6 +3053,10 @@ export interface StepPlan {
   final_provisional: boolean;
   automation_mode: AutomationMode;
   auto_state: AutoState;
+  /** The step being drafted right now, only while the run is going. */
+  auto_step_id: number | null;
+  /** The latest run traces, oldest first. */
+  activity: ActivityNote[];
   assessment: Assessment | null;
   assessment_stale: boolean;
   ready_to_consolidate: boolean;

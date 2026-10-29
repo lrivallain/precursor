@@ -434,6 +434,11 @@ async def use_message_as_artifact(session: AsyncSession, step_id: int, message_i
     chat_id = await _chat_id(session, step_id=step_id)
     content = await _chat_message(session, chat_id, message_id)
     text = svc.extract_deliverable(content) or content.strip()
+    current = await svc.get_step(session, step_id)
+    if current.artifact.strip("\n") == text.strip("\n"):
+        # Sending what the artifact already holds (an old card clicked again)
+        # must not demote a validated step.
+        return current
     saved = await svc.write_artifact(
         session, step_id, text, author=AUTHOR_MODEL, mark=STEP_TO_VALIDATE
     )
@@ -693,6 +698,7 @@ async def generate_final(
     *,
     instructions: str | None = None,
     force: bool = False,
+    complete: bool = False,
 ) -> FinalDraft:
     """Ask the consolidation discussion for the final output.
 
@@ -734,7 +740,7 @@ async def generate_final(
     deliverable = svc.extract_deliverable(result.reply or "")
     if deliverable is None:
         return FinalDraft(await svc.get_plan(session, plan_id), "discussion")
-    saved = await save_final(session, plan_id, deliverable)
+    saved = await save_final(session, plan_id, deliverable, complete=complete)
     await _assess_plan_quietly(session, saved)
     return FinalDraft(saved, "published")
 
@@ -750,13 +756,25 @@ async def _assess_plan_quietly(session: AsyncSession, plan: StepPlan) -> None:
         log.exception("Plan assessment failed for plan %s", plan.id)
 
 
-async def use_message_as_final(session: AsyncSession, plan_id: int, message_id: int) -> StepPlan:
+async def use_message_as_final(
+    session: AsyncSession, plan_id: int, message_id: int, *, complete: bool = False
+) -> StepPlan:
     chat_id = await _chat_id(session, plan_id=plan_id)
     content = await _chat_message(session, chat_id, message_id)
-    return await save_final(session, plan_id, svc.extract_deliverable(content) or content.strip())
+    return await save_final(
+        session, plan_id, svc.extract_deliverable(content) or content.strip(), complete=complete
+    )
 
 
-async def save_final(session: AsyncSession, plan_id: int, content: str) -> StepPlan:
+async def save_final(
+    session: AsyncSession, plan_id: int, content: str, *, complete: bool = False
+) -> StepPlan:
+    """Keep ``content`` as the final output.
+
+    ``complete`` is for a user's own request: an output built from approved
+    steps then finishes the plan. The automated run and discussion edits never
+    pass it, so a model can't finish a plan on its own.
+    """
     plan = await svc.get_plan(session, plan_id)
     if plan.status == PLAN_DRAFTING:
         raise HTTPException(status.HTTP_409_CONFLICT, "Start the plan first.")
@@ -767,6 +785,8 @@ async def save_final(session: AsyncSession, plan_id: int, content: str) -> StepP
     plan.final_provisional = bool(plan.final_output) and not svc.is_ready(steps)
     if plan.status == PLAN_ACTIVE and plan.final_output:
         plan.status = PLAN_CONSOLIDATING
+    if complete and plan.final_output and not plan.final_provisional:
+        plan.status = PLAN_DONE
     await session.commit()
     return plan
 

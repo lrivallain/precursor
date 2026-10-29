@@ -3,6 +3,7 @@ import { Loader2 } from "lucide-react";
 import { api, apiErrorMessage } from "../../lib/api";
 import type { Chat } from "../../lib/types";
 import { ChatSessionPanel } from "../ChatSessionPanel";
+import { ArtifactActionContext, type ArtifactAction } from "./ArtifactCard";
 import { BTN_SECONDARY, ErrorBanner } from "./StepUi";
 
 /**
@@ -13,10 +14,13 @@ import { BTN_SECONDARY, ErrorBanner } from "./StepUi";
 export function PlanChat({
   open,
   onOpened,
+  artifactAction,
 }: {
   open: () => Promise<Chat>;
   /** The chat was just opened (it may have moved the step to "in progress"). */
   onOpened?: () => void;
+  /** What the "send" button of a deliverable the model marked does. */
+  artifactAction?: ArtifactAction;
 }) {
   const [chat, setChat] = useState<Chat | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -69,6 +73,7 @@ export function PlanChat({
     );
   }
   return (
+    <ArtifactActionContext.Provider value={artifactAction ?? null}>
     <ChatSessionPanel
       key={chat.id}
       chat={chat}
@@ -79,5 +84,6 @@ export function PlanChat({
         await refresh();
       }}
     />
+    </ArtifactActionContext.Provider>
   );
 }

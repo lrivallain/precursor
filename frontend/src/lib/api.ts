@@ -862,6 +862,8 @@ export const api = {
         method: "POST",
         body: JSON.stringify({ message_id: messageId }),
       }),
+    complete: (id: number) =>
+      request<StepPlan>(`/api/step-plans/${id}/complete`, { method: "POST" }),
     sendToTopic: (id: number, text?: string, force = false) =>
       request<Message>(`/api/step-plans/${id}/send-to-topic`, {
         method: "POST",

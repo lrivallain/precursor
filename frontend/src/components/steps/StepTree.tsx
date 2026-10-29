@@ -8,6 +8,7 @@ import {
   GripVertical,
   IndentDecrease,
   IndentIncrease,
+  Loader2,
   Plus,
   Trash2,
   X,
@@ -44,6 +45,8 @@ interface Props {
   /** Shown instead of the tree when there is no step yet. */
   emptyMessage: string;
   footer?: ReactNode;
+  /** The step the automated run is drafting right now. */
+  activeStepId?: number | null;
 }
 
 const ACTION_BTN =
@@ -63,6 +66,7 @@ export function StepTree({
   renderDetail,
   emptyMessage,
   footer,
+  activeStepId = null,
 }: Props) {
   const confirm = useConfirm();
   const [adding, setAdding] = useState<{ parent: number | null } | null>(null);
@@ -209,6 +213,15 @@ export function StepTree({
                 >
                   {progress.done}/{progress.total}
                 </span>
+              )}
+              {step.id === activeStepId && (
+                <Loader2
+                  size={13}
+                  className="shrink-0 animate-spin text-sky-600 dark:text-sky-400"
+                  role="status"
+                  aria-label="The model is drafting this step"
+                  data-tooltip="The model is drafting this step"
+                />
               )}
               {step.needs_review && <NeedsReviewBadge />}
               {step.assessment && <ScoreChip assessment={step.assessment} stale={step.assessment_stale} />}

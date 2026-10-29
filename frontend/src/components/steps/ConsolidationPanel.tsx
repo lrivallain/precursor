@@ -133,8 +133,8 @@ export function ConsolidationPanel({
     }
   }
 
-  // Take the latest consolidation-discussion reply as the final output.
-  async function useLatestReply(): Promise<boolean> {
+  // Take a consolidation-discussion reply (the latest by default) as the final output.
+  async function useReply(messageId?: number): Promise<boolean> {
     if (plan.consolidation_chat_id == null || adopting) return false;
     if (dirty) {
       const ok = await confirm({
@@ -148,20 +148,29 @@ export function ConsolidationPanel({
     setAdopting(true);
     setNotice(null);
     try {
-      const messages = await api.chats.listMessages(plan.consolidation_chat_id);
-      const reply = [...messages]
-        .reverse()
-        .find((m) => m.role === "assistant" && m.kind !== "step_plan" && m.content.trim());
-      if (!reply) {
-        setNotice("The discussion has no model reply to send yet.");
-        return false;
+      let id = messageId;
+      if (id === undefined) {
+        const messages = await api.chats.listMessages(plan.consolidation_chat_id);
+        const reply = [...messages]
+          .reverse()
+          .find((m) => m.role === "assistant" && m.kind !== "step_plan" && m.content.trim());
+        if (!reply) {
+          setNotice("The discussion has no model reply to send yet.");
+          return false;
+        }
+        id = reply.id;
       }
-      const updated = await mutate(() => api.stepPlans.finalFromMessage(plan.id, reply.id));
+      const replyId = id;
+      const updated = await mutate(() => api.stepPlans.finalFromMessage(plan.id, replyId));
       if (updated) setView("preview");
       return !!updated;
     } finally {
       setAdopting(false);
     }
+  }
+
+  async function markDone(): Promise<void> {
+    await mutate(() => api.stepPlans.complete(plan.id));
   }
 
   async function sendToTopic(): Promise<void> {
@@ -183,6 +192,16 @@ export function ConsolidationPanel({
       setSending(false);
     }
   }
+
+  const doneBlocker = !hasFinal
+    ? "Generate the final output first."
+    : dirty
+      ? "Save your edits first."
+      : plan.final_provisional || unvalidated
+        ? "Validate every step and regenerate the final output first."
+        : plan.final_stale
+          ? "The final output is out of date. Regenerate it first."
+          : null;
 
   const sendBlocker = !plan.source_topic_id
     ? "This plan wasn't started from a topic, so there is nowhere to send it."
@@ -227,6 +246,11 @@ export function ConsolidationPanel({
           Steps changed after this output was written. Regenerate it, or edit it by hand.
         </p>
       )}
+      {plan.status === "done" && (
+        <p className="flex items-center gap-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-300">
+          <CheckCircle2 size={16} /> This plan is done.
+        </p>
+      )}
       {sent && plan.source_topic_id && (
         <p className="flex flex-wrap items-center gap-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-300">
           <CheckCircle2 size={16} /> Sent to “{plan.source_topic_title}”.
@@ -267,11 +291,21 @@ export function ConsolidationPanel({
                 label: "Send the latest reply to the final output",
                 tooltip:
                   "Save the model's latest reply in the consolidation discussion as the final output (provisional until every step is validated).",
-                onClick: useLatestReply,
+                onClick: () => useReply(),
               }
             : undefined
         }
-        discussion={<PlanChat open={() => api.stepPlans.consolidationChat(plan.id)} onOpened={() => void reload()} />}
+        discussion={
+          <PlanChat
+            open={() => api.stepPlans.consolidationChat(plan.id)}
+            onOpened={() => void reload()}
+            artifactAction={{
+              label: "Send to final output",
+              tooltip: "Save this as the final output (provisional until every step is validated).",
+              send: async (id) => void (await useReply(id)),
+            }}
+          />
+        }
         work={
         <div className="space-y-3">
           <div className="flex flex-wrap items-center gap-2">
@@ -299,6 +333,17 @@ export function ConsolidationPanel({
               >
                 {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Save
               </button>
+              {plan.status !== "done" && (
+                <button
+                  type="button"
+                  onClick={() => void markDone()}
+                  disabled={doneBlocker !== null}
+                  className={BTN_SECONDARY}
+                  data-tooltip={doneBlocker ?? "Every step is approved and the final output is current: close the plan"}
+                >
+                  <CheckCircle2 size={14} /> Mark as done
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => void sendToTopic()}

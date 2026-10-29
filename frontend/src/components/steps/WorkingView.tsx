@@ -1,5 +1,5 @@
-import { useMemo, type CSSProperties } from "react";
-import { FileCheck2 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { Activity, FileCheck2 } from "lucide-react";
 import { api } from "../../lib/api";
 import { buildStepTree, flattenTree, isApprovedStep, workingLeaves } from "../../lib/stepPlans";
 import type { StepPlan } from "../../lib/types";
@@ -9,6 +9,59 @@ import { BTN_SECONDARY, GuidedAction, StaleBadge } from "./StepUi";
 import { ConsolidationPanel } from "./ConsolidationPanel";
 import { StepDetail } from "./StepDetail";
 import { StepTree } from "./StepTree";
+
+function formatTime(iso: string): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+/** What the automated run did and is doing, newest last; open while it runs. */
+function ActivityFeed({ plan, onSelect }: { plan: StepPlan; onSelect: (selection: StepSelection) => void }) {
+  const running = plan.auto_state === "running";
+  const notes = plan.activity;
+  const [open, setOpen] = useState(running);
+  const wasRunning = useRef(running);
+  useEffect(() => {
+    if (running && !wasRunning.current) setOpen(true);
+    wasRunning.current = running;
+  }, [running]);
+  const listRef = useRef<HTMLOListElement>(null);
+  useEffect(() => {
+    if (open && listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
+  }, [open, notes.length]);
+  if (notes.length === 0 && !running) return null;
+  return (
+    <div className="rounded-xl border border-border" data-testid="activity-feed">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-medium"
+      >
+        <Activity size={14} className={running ? "text-sky-600 dark:text-sky-400" : "text-muted"} />
+        <span className="flex-1">Activity</span>
+        {running && <span className="text-xs font-normal text-sky-600 dark:text-sky-400">running…</span>}
+      </button>
+      {open && (
+        <ol ref={listRef} className="max-h-48 space-y-1 overflow-y-auto border-t border-border px-3 py-2 text-xs" aria-live="polite">
+          {notes.length === 0 && <li className="text-muted">Starting…</li>}
+          {notes.map((n) => (
+            <li key={n.id} className="flex gap-2">
+              <span className="shrink-0 tabular-nums text-muted">{formatTime(n.created_at)}</span>
+              {n.step_id != null ? (
+                <button type="button" className="min-w-0 text-left hover:text-accent" onClick={() => onSelect(n.step_id)}>
+                  {n.text}
+                </button>
+              ) : (
+                <span className="min-w-0">{n.text}</span>
+              )}
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+}
 
 type Mutate = <T>(action: () => Promise<T>) => Promise<T | undefined>;
 
@@ -45,7 +98,9 @@ export function WorkingView({
   const hasFinal = (plan.final_output ?? "").trim().length > 0;
 
   const finalHint = plan.status === "done"
-    ? "Sent to the topic"
+    ? plan.source_topic_id
+      ? "Done · sent to the topic"
+      : "Done"
     : hasFinal
       ? plan.final_stale
         ? "Out of date"
@@ -71,8 +126,10 @@ export function WorkingView({
           onSelect={onSelect}
           mutate={mutate}
           emptyMessage="This plan has no steps. Add one to continue."
+          activeStepId={plan.auto_step_id}
           footer={
             <div className="space-y-3 pt-2">
+              <ActivityFeed plan={plan} onSelect={onSelect} />
               <GuidedAction
                 label="Suggest missing steps"
                 busyLabel="Looking for gaps…"

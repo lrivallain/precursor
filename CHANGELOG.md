@@ -27,6 +27,14 @@ are the per-version history; releasing does not rewrite this file.
   contradictions) that goes out of date when the work changes. The artifact and
   discussion can sit side by side, and the steps tree and that split are
   resizable. See [Step by step](website/features/step-by-step.md).
+- **Step by step: live runs, finishing, and a readable artifact.** *Start* now runs
+  an automated plan, and a run is visible: a spinner on the step in progress, its
+  name in the plan bar and an *Activity* list, with the page refreshing on its
+  own. Generating the final output from approved steps (or *Mark as done*, for a
+  plan without a topic) now completes the plan instead of leaving it
+  *consolidating*. An artifact in the discussion is shown as a *Proposed artifact*
+  card with its own *Send to artifact* button instead of raw markers; sending an
+  unchanged artifact no longer un-validates its step.
 - **Step by step: draft a step from its own button, and the discussion edits the
   artifact.** Each step has a *Draft with model* / *Redraft* button (with an
   optional steer) and a hint on what to do next; asking in the step's or the
