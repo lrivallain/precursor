@@ -302,6 +302,30 @@ export interface OpenStepPlanDetail {
   planId: number;
 }
 
+/** A final output filed into a topic by a plan (see step_plan_llm.topic_note_content). */
+export interface StepPlanNote {
+  planId: number;
+  title: string;
+  version: number | null;
+  provisional: boolean;
+  body: string;
+}
+
+const NOTE_HEAD = /^\*\*From step-by-step plan: \[([\s\S]+?)\]\(\/steps\/(\d+)\)(?: · final output v(\d+))?( \(provisional[^)]*\))?\*\*(?:\n\n|$)/;
+
+/** Split a filed final output into its metadata and its content, or null for any other message. */
+export function parseStepPlanNote(content: string): StepPlanNote | null {
+  const m = NOTE_HEAD.exec(content);
+  if (!m) return null;
+  return {
+    planId: Number(m[2]),
+    title: m[1],
+    version: m[3] ? Number(m[3]) : null,
+    provisional: Boolean(m[4]),
+    body: content.slice(m[0].length),
+  };
+}
+
 /** Switch to Step by step and open plan `planId`. */
 export function openStepPlan(planId: number): void {
   window.dispatchEvent(

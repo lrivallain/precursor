@@ -26,7 +26,9 @@ import { matchBuiltinCommand } from "../lib/commands";
 import { useSkills } from "../lib/skillsStore";
 import { errorNoticeBody, isErrorNotice } from "../lib/systemNotice";
 import type { Attachment, MessageRole, Skill } from "../lib/types";
+import { parseStepPlanNote } from "../lib/stepPlans";
 import { Markdown } from "./Markdown";
+import { StepPlanNoteHeader } from "./steps/StepPlanNoteHeader";
 import { MessageMeta, formatTimestamp } from "./MessageMeta";
 import { ReasoningDisclosure } from "./ReasoningDisclosure";
 
@@ -112,6 +114,7 @@ export function MessageBubble({ role, content, reasoning, pending, attachments, 
   const builtinCommand =
     isUser && !pending && !skillInvocation ? matchBuiltinCommand(content) : null;
   const showThinking = pending && !content;
+  const planNote = isUser && !pending ? parseStepPlanNote(content) : null;
   const thinking = role === "assistant" ? reasoning?.trim() ?? "" : "";
   const imageAttachments = (attachments ?? []).filter((a) => a.mime.startsWith("image/"));
   const fileAttachments = (attachments ?? []).filter((a) => !a.mime.startsWith("image/"));
@@ -470,9 +473,10 @@ export function MessageBubble({ role, content, reasoning, pending, attachments, 
                 ))}
               </div>
             )}
+            {planNote && <StepPlanNoteHeader note={planNote} />}
             <div ref={contentRef} data-reply-id={quotableId}>
               <Markdown className="text-sm leading-relaxed" sourceAnnotated={quotableId != null}>
-                {content || "\u200B"}
+                {planNote ? planNote.body : content || "\u200B"}
               </Markdown>
             </div>
             {pending && (

@@ -28,7 +28,8 @@ async function run() {
     page.on("pageerror", (error) => errors.push(error.message));
     await prepareDemoPage(page);
 
-    const topic = await api(page, "POST", "/topics", { title: "Final versions test" });
+    const topicTitle = `Final versions test ${Date.now()}`;
+    const topic = await api(page, "POST", "/topics", { title: topicTitle });
     const plan = await api(page, "POST", "/step-plans", {
       topic_id: topic.id,
       propose: false,
@@ -103,6 +104,17 @@ async function run() {
     await page.getByText("Version 3", { exact: true }).waitFor();
     await page.getByText("v1 posted").waitFor();
     assert.equal((await read()).final_posted_version, 1);
+
+    // in the topic the note shows a header band, split from its content
+    await page.goto(`${BASE}/topics`);
+    await page.getByText(topicTitle, { exact: true }).first().click();
+    const band = page.getByTestId("step-plan-note-header");
+    await band.waitFor();
+    assert.match(await band.innerText(), /final output/i);
+    assert.match(await band.innerText(), /v1/);
+    assert.equal(await page.getByText("**From step-by-step plan").count(), 0, "no raw markdown header");
+    await band.getByRole("button").first().click();
+    await page.waitForURL(`${BASE}/steps/${plan.id}`, { waitUntil: "commit" });
 
     assert.deepEqual(errors, []);
     await api(page, "DELETE", `/step-plans/${plan.id}`);

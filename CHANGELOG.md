@@ -15,6 +15,13 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Changed
 
+- **Step by step: a clearer header on the final output filed in a topic.** The
+  note now opens with a coloured band that splits its metadata from the
+  content: a *Step by step · Final output* eyebrow, the plan title as a blue
+  link that opens the plan, the version chip (*v2*) and an amber *Provisional*
+  chip when it was filed before every step was approved. The stored message is
+  unchanged Markdown, so the model and exports still read it, and notes filed
+  earlier get the band too.
 - **Step by step: one panel for step artifacts and the final output.** Both
   are now the same editor (version label, history, save, edit/preview, the
   *newer version* guard), so the final output gets the resizable box and the

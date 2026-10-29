@@ -179,7 +179,9 @@ a *newer version* banner.
 Restoring an older version only moves the *current* marker, and saving a text that matches an
 earlier version points back at it, so neither adds a duplicate. When you **Send to topic**, the
 version that was filed gets a green **posted** badge in the history and next to the version
-number, and the note in the topic names it (*final output v2*). Later versions don't move the
+number, and the note in the topic names it (*final output v2*). In the topic the note opens with a
+coloured header band, split from the content: the plan title (a link back to the plan), the
+version and, when it applies, a *Provisional* chip. Later versions don't move the
 badge: it stays on the version that was actually posted.
 
 If a step changes after the final output was written, the final output is **out of date**, even
