@@ -249,7 +249,17 @@ def test_artifact_edits_are_versioned_and_revertible(monkeypatch: pytest.MonkeyP
         assert sorted(v["version"] for v in versions) == [1, 2]
         reverted = client.post(f"/api/steps/{sid}/artifact/revert", json={"version": 1}).json()
         assert reverted["artifact"] == "v1"
-        assert reverted["artifact_version"] == 3
+        # Restoring points at the old version; it never records a new one.
+        assert reverted["artifact_version"] == 1
+        assert len(client.get(f"/api/steps/{sid}/versions").json()) == 2
+        # Re-applying text that matches an earlier version reuses it too.
+        again = client.put(f"/api/steps/{sid}/artifact", json={"content": "v2"}).json()
+        assert again["artifact_version"] == 2
+        fresh = client.put(f"/api/steps/{sid}/artifact", json={"content": "v3"}).json()
+        assert fresh["artifact_version"] == 3
+        noop = client.post(f"/api/steps/{sid}/artifact/revert", json={"version": 3}).json()
+        assert noop["artifact_version"] == 3
+        assert len(client.get(f"/api/steps/{sid}/versions").json()) == 3
 
 
 def test_editing_a_validated_artifact_reopens_validation(monkeypatch: pytest.MonkeyPatch) -> None:

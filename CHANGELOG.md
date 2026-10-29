@@ -27,6 +27,14 @@ are the per-version history; releasing does not rewrite this file.
   contradictions) that goes out of date when the work changes. The artifact and
   discussion can sit side by side, and the steps tree and that split are
   resizable. See [Step by step](website/features/step-by-step.md).
+- **Step by step: a live discussion and cleaner versions.** The step and
+  consolidation chats now update live when *Draft with model*, a run or the final
+  output works (events from your own window used to be dropped), and a new version
+  is the current one immediately. *Restore* on an older version moves the current
+  marker instead of creating a new version, and identical content never makes a
+  duplicate. A proposed artifact shows **Applied as vN** once sent, with its button
+  and the divider arrow idle, and assessments are announced in the chat while the
+  model runs them.
 - **Step by step: a simpler, more natural flow.** Each step shows one main action
   for where it stands (*Draft with model*, *Approve*, *Reopen*) and keeps the rest
   in a **⋯** menu; statuses collapse to To do, In progress (blue), To review

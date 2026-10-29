@@ -40,6 +40,7 @@ from precursor.backend.services import step_plans as svc
 from precursor.backend.services.compaction import render_transcript
 from precursor.backend.services.conversation_turn import load_model_history
 from precursor.backend.services.events import (
+    broadcast_events,
     publish_message_changed,
     publish_message_changed_chat,
     publish_step_plan_changed,
@@ -402,11 +403,12 @@ async def generate_artifact(
             status.HTTP_409_CONFLICT, "This step is split into sub-steps; it has no artifact."
         )
     chat = await svc.ensure_step_chat(session, step.id)
-    result = await run_chat_turn(
-        chat.id,
-        _visible_prompt("Draft the artifact for this step.", instructions),
-        llm_prompt=_llm_prompt(_ARTIFACT_DRAFT_PROMPT, instructions),
-    )
+    with broadcast_events():
+        result = await run_chat_turn(
+            chat.id,
+            _visible_prompt("Draft the artifact for this step.", instructions),
+            llm_prompt=_llm_prompt(_ARTIFACT_DRAFT_PROMPT, instructions),
+        )
     session.expire_all()
     if result.awaiting_approval:
         return ArtifactDraft(await svc.get_step(session, step_id), "awaiting_approval")
@@ -416,6 +418,9 @@ async def generate_artifact(
     saved = await svc.write_artifact(
         session, step_id, deliverable, author=AUTHOR_MODEL, mark=STEP_TO_VALIDATE
     )
+    # The draft is on screen before the (slower) assessment starts.
+    with broadcast_events():
+        await publish_step_plan_changed(saved.plan_id)
     await _assess_after_draft(session, saved)
     return ArtifactDraft(saved, "published")
 
@@ -457,13 +462,14 @@ def _spawn(coro: Any) -> None:
 
 async def _assess_later(step_id: int | None, plan_id: int) -> None:
     """Score a discussion edit off the request path: it's a slow model call."""
-    async with SessionLocal() as session:
-        if step_id is not None:
-            step = await svc.get_step(session, step_id)
-            await _assess_after_draft(session, step)
-        else:
-            await _assess_plan_quietly(session, await svc.get_plan(session, plan_id))
-    await publish_step_plan_changed(plan_id)
+    with broadcast_events():
+        async with SessionLocal() as session:
+            if step_id is not None:
+                step = await svc.get_step(session, step_id)
+                await _assess_after_draft(session, step)
+            else:
+                await _assess_plan_quietly(session, await svc.get_plan(session, plan_id))
+        await publish_step_plan_changed(plan_id)
 
 
 async def apply_chat_reply(chat_id: int, reply: str) -> None:
@@ -609,7 +615,19 @@ async def trace_in_chat(session: AsyncSession, chat_id: int | None, text: str) -
         )
     )
     await session.commit()
-    await publish_message_changed_chat(chat_id)
+    with broadcast_events():
+        await publish_message_changed_chat(chat_id)
+
+
+async def _assess_or_trace(
+    session: AsyncSession, plan: StepPlan, system: str, user: str, chat_id: int | None
+) -> Assessment:
+    """Run an assessment call; a failure closes the "Assessing…" note in the chat."""
+    try:
+        return parse_assessment(await _complete(session, plan, system=system, user=user))
+    except Exception:
+        await trace_in_chat(session, chat_id, "The assessment didn't complete. Try it again.")
+        raise
 
 
 async def assess_step(session: AsyncSession, step_id: int) -> Step:
@@ -629,8 +647,14 @@ async def assess_step(session: AsyncSession, step_id: int) -> Step:
         f"\n\nIts artifact:\n<<<ARTIFACT\n{step.artifact}\nARTIFACT>>>"
     )
     sig = svc.step_signature(plan, step)
-    assessment = parse_assessment(
-        await _complete(session, plan, system=_ASSESS_STEP_SYSTEM, user=user)
+    await trace_in_chat(
+        session,
+        await _chat_id(session, step_id=step.id),
+        f"Assessing «{step.title}» (version {step.artifact_version}): the model checks the "
+        "artifact against what this step must produce…",
+    )
+    assessment = await _assess_or_trace(
+        session, plan, _ASSESS_STEP_SYSTEM, user, await _chat_id(session, step_id=step.id)
     )
     step = await svc.get_step(session, step_id)
     step.assessment_json = assessment.model_dump_json()
@@ -658,8 +682,13 @@ async def assess_plan(session: AsyncSession, plan_id: int) -> StepPlan:
         blocks.append(f"### {s.title} [{state}]\nAsked: {s.instruction or '-'}\n\n{body}")
     user = f"{svc.plan_header(plan)}\n\nSteps and their artifacts:\n" + "\n\n".join(blocks)
     sig = svc.plan_signature(plan, steps)
-    assessment = parse_assessment(
-        await _complete(session, plan, system=_ASSESS_PLAN_SYSTEM, user=user)
+    await trace_in_chat(
+        session,
+        await _chat_id(session, plan_id=plan.id),
+        "Assessing the whole plan: the model checks the result against the original ask…",
+    )
+    assessment = await _assess_or_trace(
+        session, plan, _ASSESS_PLAN_SYSTEM, user, await _chat_id(session, plan_id=plan.id)
     )
     plan = await svc.get_plan(session, plan_id)
     plan.assessment_json = assessment.model_dump_json()
@@ -729,11 +758,12 @@ async def generate_final(
     else:
         rules += "\n\nUse the validated artifacts only."
     chat = await svc.ensure_consolidation_chat(session, plan.id)
-    result = await run_chat_turn(
-        chat.id,
-        _visible_prompt("Consolidate the plan into the final deliverable.", instructions),
-        llm_prompt=_llm_prompt(rules, instructions),
-    )
+    with broadcast_events():
+        result = await run_chat_turn(
+            chat.id,
+            _visible_prompt("Consolidate the plan into the final deliverable.", instructions),
+            llm_prompt=_llm_prompt(rules, instructions),
+        )
     session.expire_all()
     if result.awaiting_approval:
         return FinalDraft(await svc.get_plan(session, plan_id), "awaiting_approval")

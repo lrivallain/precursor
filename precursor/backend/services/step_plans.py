@@ -30,7 +30,7 @@ from collections.abc import Iterable
 from uuid import uuid4
 
 from fastapi import HTTPException, status
-from sqlalchemy import delete, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.models import (
@@ -907,13 +907,46 @@ async def write_artifact(
     text = content.strip("\n")
     changed = text != step.artifact
     if changed:
-        step.artifact_version += 1
-        step.artifact = text
-        session.add(
-            StepArtifactVersion(
-                step_id=step.id, version=step.artifact_version, content=text, author=author
+        known = (
+            (
+                await session.execute(
+                    select(StepArtifactVersion)
+                    .where(
+                        StepArtifactVersion.step_id == step.id, StepArtifactVersion.content == text
+                    )
+                    .order_by(StepArtifactVersion.version.desc())
+                )
             )
+            .scalars()
+            .first()
         )
+        if known is not None:
+            # Same text as an earlier draft: point back at it instead of
+            # recording a duplicate.
+            step.artifact_version = known.version
+            step.artifact = text
+        else:
+            latest = (
+                await session.execute(
+                    select(func.max(StepArtifactVersion.version)).where(
+                        StepArtifactVersion.step_id == step.id
+                    )
+                )
+            ).scalar() or 0
+            step.artifact_version = max(latest, step.artifact_version) + 1
+            step.artifact = text
+            session.add(
+                StepArtifactVersion(
+                    step_id=step.id, version=step.artifact_version, content=text, author=author
+                )
+            )
+    _settle_artifact(plan, step, changed=changed, mark=mark)
+    await session.commit()
+    return step
+
+
+def _settle_artifact(plan: StepPlan, step: Step, *, changed: bool, mark: str | None) -> None:
+    """Status, review flag and plan reopening after a step's artifact moved."""
     was_validated = step.status == STEP_VALIDATED
     if mark is not None and step.status != STEP_CANCELLED:
         step.status = mark
@@ -928,8 +961,6 @@ async def write_artifact(
         changed and (plan.final_output or "").strip()
     ):
         _reopen_plan(plan)
-    await session.commit()
-    return step
 
 
 async def list_versions(session: AsyncSession, step_id: int) -> list[StepArtifactVersionRead]:
@@ -952,7 +983,18 @@ async def revert_artifact(session: AsyncSession, step_id: int, version: int) -> 
     ).scalar_one_or_none()
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Version not found")
-    return await write_artifact(session, step_id, row.content, author=AUTHOR_USER)
+    step = await get_step(session, step_id)
+    plan = await get_plan(session, step.plan_id)
+    if step.status == STEP_PROPOSED:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Accept this suggestion first.")
+    # Restoring points the step back at an existing version: the history keeps
+    # one row per distinct draft, so nothing new is recorded.
+    changed = row.content != step.artifact
+    step.artifact = row.content
+    step.artifact_version = row.version
+    _settle_artifact(plan, step, changed=changed, mark=None)
+    await session.commit()
+    return step
 
 
 # --- chats --------------------------------------------------------------------

@@ -39,7 +39,7 @@ with optional guidance (in the plan's **⋯ Plan tools** menu). **Start** moves 
 Each step has:
 
 - an **instruction** — what it must produce;
-- a Markdown **artifact**, with an editor, preview and **version history** you can revert to;
+- a Markdown **artifact**, with an editor, preview and **version history** you can restore (restoring just moves the *current* marker, it never adds a version);
 - a **Discussion** next to the artifact: a chat with room to breathe (the title and
   instruction fold away above it). **Show side by side** puts it beside the artifact with a
   draggable divider, as in a live session; the tree is resizable too, and both widths are
@@ -70,7 +70,7 @@ One colour per status, in the tree and on the step:
 | Approved | green | You approved the artifact (it needs a non-empty one). |
 | Skipped | strikethrough | Left out of the final output. |
 
-Editing or reverting an approved artifact sends it back to *To review* and marks the final
+Editing or restoring an older version of an approved artifact sends it back to *To review* and marks the final
 output **stale**, so you always know when the final output no longer matches the steps.
 Changing the ask or a step's instruction after you approved it flags the step **Review**:
 the approval no longer counts until you approve it again.
@@ -97,6 +97,13 @@ happened. In the transcript the deliverable shows as a **Proposed artifact** car
 raw markers) with its own **Send to artifact** button. A reply without the markers changes nothing until you send it: the **big arrow** on the divider
 between the two panes (it lights up when the model has proposed an artifact) carries the latest proposal
 over, as does each card's **Send to artifact** button. The final output has the same arrow.
+Once a proposal is in the artifact, its card reads **Applied as vN** (or *earlier* if the
+artifact has moved on), its button is disabled and the arrow goes idle until a new proposal arrives.
+
+The discussion is live: a model turn started from **Draft with model**, a run or the final
+output shows up in the chat as it streams, and a new version becomes the current one at once,
+with no reload. Assessments the model runs are announced in the chat too (*Assessing … version N…*),
+and a failed one says so. Saving identical content never creates a duplicate version.
 
 Nothing is overwritten silently: your unsaved edits stay in the editor (a banner offers the
 newer version), and an **approved** step is never changed by the discussion — reopen it first.

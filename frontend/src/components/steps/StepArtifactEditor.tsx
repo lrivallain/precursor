@@ -230,11 +230,11 @@ function VersionHistory({
                   data-tooltip={
                     v.version === step.artifact_version
                       ? "This is the current version"
-                      : "Restore as a new version"
+                      : "Make this the current version (no new version is created)"
                   }
                   onClick={() => void revert(v)}
                 >
-                  Revert
+                  Restore
                 </button>
               </span>
             </div>

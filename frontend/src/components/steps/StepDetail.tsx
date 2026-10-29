@@ -1,9 +1,10 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { FileText, Loader2, RotateCcw, Scissors, Sparkles, XCircle, CheckCircle2, Undo2 } from "lucide-react";
 import { api } from "../../lib/api";
-import type { AutomationMode, SettableStepStatus } from "../../lib/types";
+import type { AutomationMode, SettableStepStatus, StepArtifactVersion } from "../../lib/types";
 import { addChildBlocker, isGroup, primaryAction, progressOf, type StepNode } from "../../lib/stepPlans";
 import { useConfirm } from "../ConfirmDialog";
+import type { AppliedInfo } from "./ArtifactCard";
 import { PlanChat } from "./PlanChat";
 import { StepArtifactEditor } from "./StepArtifactEditor";
 import { StepEditor } from "./StepEditor";
@@ -43,18 +44,43 @@ export function StepDetail({
   const [note, setNote] = useState<string | null>(null);
   const [panel, setPanel] = useState<Panel>(null);
   const [splitting, setSplitting] = useState(false);
-  const [proposals, setProposals] = useState<number[]>([]);
-  const [sent, setSent] = useState<number[]>([]);
+  const [proposals, setProposals] = useState<{ id: number; artifact: string }[]>([]);
+  const [versions, setVersions] = useState<StepArtifactVersion[]>([]);
   const draft = useStepDraft({ step, mutate, onNotice: setNote });
 
-  const registerProposal = useCallback((messageId: number) => {
-    setProposals((ids) => (ids.includes(messageId) ? ids : [...ids, messageId]));
-    return () => setProposals((ids) => ids.filter((id) => id !== messageId));
+  const registerProposal = useCallback((messageId: number, artifact: string) => {
+    setProposals((all) => [...all.filter((p) => p.id !== messageId), { id: messageId, artifact }]);
+    return () => setProposals((all) => all.filter((p) => p.id !== messageId));
   }, []);
 
-  // The proposal the divider arrow carries: the newest finished one not yet sent.
-  const pending = proposals.filter((id) => !sent.includes(id));
-  const latestProposal = pending.length > 0 ? Math.max(...pending) : null;
+  // Versions are matched by content, so "applied" survives a reload and also
+  // covers text that was applied from another window.
+  useEffect(() => {
+    let cancelled = false;
+    api.stepPlans
+      .versions(step.id)
+      .then((rows) => {
+        if (!cancelled) setVersions(rows);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [step.id, step.artifact_version, step.artifact]);
+
+  const appliedInfo = useCallback(
+    (artifact: string): AppliedInfo | null => {
+      const text = artifact.trim();
+      const match = versions.find((v) => v.content.trim() === text);
+      return match ? { label: `Applied as v${match.version}`, current: match.version === step.artifact_version } : null;
+    },
+    [versions, step.artifact_version],
+  );
+
+  // The proposal the divider arrow carries: the newest finished one, unless
+  // its text is already in the artifact.
+  const newest = proposals.reduce<{ id: number; artifact: string } | null>((a, p) => (!a || p.id > a.id ? p : a), null);
+  const latestProposal = newest && !appliedInfo(newest.artifact)?.current ? newest.id : null;
 
   // A proposal becomes a new artifact version; unsaved edits in the editor are
   // kept behind its "newer version" banner.
@@ -62,7 +88,6 @@ export function StepDetail({
     setNote(null);
     const updated = await mutate(() => api.stepPlans.artifactFromMessage(step.id, messageId));
     if (updated) {
-      setSent((ids) => [...ids, messageId]);
       setNote(`Sent to the artifact as version ${updated.artifact_version}. Review it, then approve.`);
     }
     return !!updated;
@@ -298,6 +323,7 @@ export function StepDetail({
                   tooltip: "Save this as a new version of the step's artifact. Your unsaved edits are kept.",
                   send: async (id) => void (await sendProposal(id)),
                   register: registerProposal,
+                  applied: appliedInfo,
                 }}
               />
             }

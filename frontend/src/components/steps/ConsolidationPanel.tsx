@@ -8,6 +8,7 @@ import { useConfirm } from "../ConfirmDialog";
 import { Markdown } from "../Markdown";
 import { RefineTextarea } from "../RefineTextarea";
 import { AssessmentPanel } from "./AssessmentPanel";
+import type { AppliedInfo } from "./ArtifactCard";
 import { PlanChat } from "./PlanChat";
 import { WorkTabs } from "./WorkTabs";
 import { BTN_PRIMARY, BTN_SECONDARY, INPUT, OverflowMenu, StaleBadge } from "./StepUi";
@@ -64,15 +65,24 @@ export function ConsolidationPanel({
   const [generating, setGenerating] = useState(false);
   const [options, setOptions] = useState(false);
   const [guidance, setGuidance] = useState("");
-  const [proposals, setProposals] = useState<number[]>([]);
-  const [taken, setTaken] = useState<number[]>([]);
-  const registerProposal = useCallback((messageId: number) => {
-    setProposals((ids) => (ids.includes(messageId) ? ids : [...ids, messageId]));
-    return () => setProposals((ids) => ids.filter((id) => id !== messageId));
+  const [proposals, setProposals] = useState<{ id: number; artifact: string }[]>([]);
+  const registerProposal = useCallback((messageId: number, artifact: string) => {
+    setProposals((all) => [...all.filter((p) => p.id !== messageId), { id: messageId, artifact }]);
+    return () => setProposals((all) => all.filter((p) => p.id !== messageId));
   }, []);
-  // The proposal the divider arrow carries: the newest finished reply not yet sent.
-  const waiting = proposals.filter((id) => !taken.includes(id));
-  const latestProposal = waiting.length > 0 ? Math.max(...waiting) : null;
+  // The final output keeps no history: a proposal is "applied" while it is
+  // the text on file.
+  const appliedInfo = useCallback(
+    (artifact: string): AppliedInfo | null =>
+      artifact.trim() !== "" && artifact.trim() === finalOutput.trim()
+        ? { label: "Applied to the final output", current: true }
+        : null,
+    [finalOutput],
+  );
+  // The proposal the divider arrow carries: the newest finished reply, unless
+  // it is already the final output.
+  const newest = proposals.reduce<{ id: number; artifact: string } | null>((a, p) => (!a || p.id > a.id ? p : a), null);
+  const latestProposal = newest && !appliedInfo(newest.artifact) ? newest.id : null;
   // The text the draft started from, so a model-written final output arriving
   // isn't mistaken for the user's unsaved edits.
   const [base, setBase] = useState(finalOutput);
@@ -168,7 +178,6 @@ export function ConsolidationPanel({
     try {
       const updated = await mutate(() => api.stepPlans.finalFromMessage(plan.id, messageId));
       if (updated) {
-        setTaken((ids) => [...ids, messageId]);
         setView("preview");
       }
       return !!updated;
@@ -339,6 +348,7 @@ export function ConsolidationPanel({
               tooltip: "Save this as the final output (provisional until every step is approved).",
               send: async (id) => void (await useReply(id)),
               register: registerProposal,
+              applied: appliedInfo,
             }}
           />
         }

@@ -32,7 +32,7 @@ from precursor.backend.models.step_plan import (
 )
 from precursor.backend.services import step_plan_llm as llm
 from precursor.backend.services import step_plans as svc
-from precursor.backend.services.events import publish_step_plan_changed
+from precursor.backend.services.events import publish_step_plan_changed, set_current_client_id
 
 log = logging.getLogger(__name__)
 
@@ -95,6 +95,9 @@ async def _still_running(plan_id: int) -> bool:
 
 async def _run(plan_id: int) -> None:
     done: set[int] = set()
+    # The task outlives the request that started it: its events are for every
+    # window, the one that pressed Start included.
+    set_current_client_id(None)
     try:
         await _note(
             plan_id,

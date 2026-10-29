@@ -9,7 +9,16 @@ export interface ArtifactAction {
   /** Resolves once the deliverable of that message was saved (or refused). */
   send: (messageId: number) => Promise<void>;
   /** Called while a finished proposal is on screen, so the divider arrow knows it has something to send. */
-  register?: (messageId: number) => () => void;
+  register?: (messageId: number, artifact: string) => () => void;
+  /** Where this proposal's text already lives (a version of the artifact, the final output), if anywhere. */
+  applied?: (artifact: string) => AppliedInfo | null;
+}
+
+export interface AppliedInfo {
+  /** "Applied as v3": where the text went. */
+  label: string;
+  /** It is what the artifact holds now (not an older version). */
+  current: boolean;
 }
 
 export const ArtifactActionContext = createContext<ArtifactAction | null>(null);
@@ -54,22 +63,21 @@ export function splitArtifactReply(content: string): SplitReply | null {
 export function ArtifactCard({ messageId, artifact, complete }: { messageId: number; artifact: string; complete: boolean }) {
   const action = useContext(ArtifactActionContext);
   const [sending, setSending] = useState(false);
-  const [sent, setSent] = useState(false);
+  const applied = action?.applied?.(artifact) ?? null;
   const register = action?.register;
   const registerRef = useRef(register);
   registerRef.current = register;
 
   useEffect(() => {
     if (!complete) return;
-    return registerRef.current?.(messageId);
-  }, [complete, messageId]);
+    return registerRef.current?.(messageId, artifact);
+  }, [complete, messageId, artifact]);
 
   async function send(): Promise<void> {
     if (!action || sending) return;
     setSending(true);
     try {
       await action.send(messageId);
-      setSent(true);
     } finally {
       setSending(false);
     }
@@ -81,9 +89,9 @@ export function ArtifactCard({ messageId, artifact, complete }: { messageId: num
         <FileText size={14} aria-hidden />
         <span className="flex-1">{complete ? "Proposed artifact" : "Writing the artifact…"}</span>
         {!complete && <Loader2 size={13} className="animate-spin" aria-hidden />}
-        {sent && (
-          <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-300">
-            <CheckCircle2 size={13} /> Sent
+        {applied && (
+          <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-300" data-testid="artifact-card-applied">
+            <CheckCircle2 size={13} /> {applied.current ? applied.label : `${applied.label} earlier`}
           </span>
         )}
       </div>
@@ -95,12 +103,18 @@ export function ArtifactCard({ messageId, artifact, complete }: { messageId: num
           <button
             type="button"
             onClick={() => void send()}
-            disabled={sending}
-            data-tooltip={action.tooltip}
+            disabled={sending || applied?.current === true}
+            data-tooltip={applied?.current ? "Already in the artifact: nothing left to send." : action.tooltip}
             className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 disabled:opacity-60"
           >
-            {sending ? <Loader2 size={14} className="animate-spin" /> : <ArrowLeft size={14} strokeWidth={2.5} />}
-            {action.label}
+            {sending ? (
+              <Loader2 size={14} className="animate-spin" />
+            ) : applied?.current ? (
+              <CheckCircle2 size={14} />
+            ) : (
+              <ArrowLeft size={14} strokeWidth={2.5} />
+            )}
+            {applied?.current ? applied.label : action.label}
           </button>
         </div>
       )}
