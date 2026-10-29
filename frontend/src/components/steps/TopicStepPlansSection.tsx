@@ -83,7 +83,7 @@ export function TopicStepPlansSection({ items, onStart, starting }: TopicStepPla
                 </div>
                 <div className="mt-0.5 flex justify-between gap-2 pl-[18px] text-[11px] text-muted tabular-nums">
                   <span>
-                    {item.validated_count}/{item.step_count} validated
+                    {item.validated_count}/{item.step_count} approved
                   </span>
                   <span className="truncate">{relativeWhen(new Date(item.updated_at))}</span>
                 </div>

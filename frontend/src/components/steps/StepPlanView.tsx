@@ -57,7 +57,7 @@ export function StepPlanView({
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="step-plan-view">
-      <StepPlanHeader plan={plan} mutate={mutate} onDeleted={onDeleted} />
+      <StepPlanHeader plan={plan} mutate={mutate} onDeleted={onDeleted} onSelect={setSelected} />
       {actionError && (
         <div className="border-b border-border px-5 py-2">
           <ErrorBanner message={actionError} onDismiss={dismissActionError} />

@@ -48,10 +48,11 @@ function Section({ label, items }: { label: string; items: string[] }) {
 }
 
 /**
- * A model self-assessment: score plus the reasons behind it (what it covers,
- * the evidence, assumptions, gaps and, for a whole plan, contradictions).
- * Collapsed to its score until opened, since the reasons are long; shown as
- * out of date when the work changed after it was written.
+ * A model self-assessment, shown as a score chip. Click it for the reasons (what
+ * it covers, the evidence, assumptions, gaps and, for a whole plan,
+ * contradictions) and to run it again. The model assesses on its own after it
+ * drafts; a step you wrote yourself offers "Assess" instead. Shown as out of
+ * date when the work changed after it was written.
  */
 export function AssessmentPanel({
   title,
@@ -70,7 +71,6 @@ export function AssessmentPanel({
 }) {
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState(defaultOpen);
-  const Chevron = open ? ChevronDown : ChevronRight;
 
   async function run(): Promise<void> {
     setBusy(true);
@@ -81,69 +81,62 @@ export function AssessmentPanel({
     }
   }
 
+  if (!assessment) {
+    return (
+      <button
+        type="button"
+        onClick={() => void run()}
+        disabled={busy || !!disabledReason}
+        data-tooltip={disabledReason ?? "Ask the model how well this answers the ask"}
+        aria-label={`Assess: ${title}`}
+        className="inline-flex w-fit items-center gap-1.5 rounded-full border border-dashed border-border px-2.5 py-0.5 text-xs text-muted transition hover:bg-surface hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {busy ? <Loader2 size={12} className="animate-spin" /> : <Gauge size={12} aria-hidden />}
+        {busy ? "Assessing…" : "Assess"}
+      </button>
+    );
+  }
+
+  const Chevron = open ? ChevronDown : ChevronRight;
   return (
-    <section
-      className="rounded-lg border border-border bg-surface/40 px-3 py-2"
-      aria-label={title}
-      data-testid="assessment-panel"
-    >
-      <div className="flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          aria-expanded={open}
-          data-tooltip={open ? "Hide the reasons" : "Show the reasons behind the score"}
-          className="flex min-w-0 items-center gap-2 rounded text-left hover:text-fg"
-        >
-          <Chevron size={14} className="shrink-0 text-muted" aria-hidden />
-          <Gauge size={14} className="shrink-0 text-muted" aria-hidden />
-          <h4 className="text-xs font-medium uppercase tracking-wide text-muted">{title}</h4>
-          {assessment ? (
-            <>
-              <ScoreChip assessment={assessment} stale={stale} />
-              <span className="text-xs text-muted">/ 100</span>
-            </>
-          ) : (
-            <span className="text-xs text-muted">not assessed yet</span>
-          )}
-          {assessment && stale && (
-            <span
-              className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-300"
-              data-tooltip="The work changed after this was assessed. Assess it again."
-            >
-              Out of date
-            </span>
-          )}
-        </button>
-        <button
-          type="button"
-          onClick={() => void run()}
-          disabled={busy || !!disabledReason}
-          data-tooltip={disabledReason ?? "Ask the model to assess this again"}
-          className={`${BTN_SMALL} ml-auto`}
-        >
-          {busy && <Loader2 size={12} className="animate-spin" />}
-          {busy ? "Assessing…" : assessment ? "Re-assess" : "Assess"}
-        </button>
-      </div>
+    <section aria-label={title} data-testid="assessment-panel">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        data-tooltip={open ? "Hide the reasons" : "Show the reasons behind the score"}
+        className="inline-flex items-center gap-1.5 rounded-full border border-border px-2 py-0.5 text-xs text-muted transition hover:bg-surface hover:text-fg"
+      >
+        <Gauge size={12} aria-hidden />
+        <span>{title}</span>
+        <ScoreChip assessment={assessment} stale={stale} />
+        {stale && <span className="text-amber-700 dark:text-amber-300">out of date</span>}
+        <Chevron size={12} aria-hidden />
+      </button>
       {open && (
-        <div className="mt-2 space-y-2">
+        <div className="mt-2 space-y-2 rounded-lg border border-border bg-surface/40 px-3 py-2">
           <p className="text-[11px] text-muted">
             The model's own read of how well this answers the ask: a self-assessment, not a
             calibrated probability. Read the reasons, not just the number.
           </p>
-          {assessment ? (
-            <div className={`space-y-2 ${stale ? "opacity-70" : ""}`}>
-              {assessment.summary && <p className="text-sm">{assessment.summary}</p>}
-              <Section label="Covered" items={assessment.covered} />
-              <Section label="Evidence" items={assessment.evidence} />
-              <Section label="Assumptions" items={assessment.assumptions} />
-              <Section label="Gaps" items={assessment.gaps} />
-              <Section label="Contradictions" items={assessment.contradictions} />
-            </div>
-          ) : (
-            <p className="text-sm text-muted">Not assessed yet.</p>
-          )}
+          <div className={`space-y-2 ${stale ? "opacity-70" : ""}`}>
+            {assessment.summary && <p className="text-sm">{assessment.summary}</p>}
+            <Section label="Covered" items={assessment.covered} />
+            <Section label="Evidence" items={assessment.evidence} />
+            <Section label="Assumptions" items={assessment.assumptions} />
+            <Section label="Gaps" items={assessment.gaps} />
+            <Section label="Contradictions" items={assessment.contradictions} />
+          </div>
+          <button
+            type="button"
+            onClick={() => void run()}
+            disabled={busy || !!disabledReason}
+            data-tooltip={disabledReason ?? "Ask the model to assess this again"}
+            className={BTN_SMALL}
+          >
+            {busy && <Loader2 size={12} className="animate-spin" />}
+            {busy ? "Assessing…" : "Re-assess"}
+          </button>
         </div>
       )}
     </section>

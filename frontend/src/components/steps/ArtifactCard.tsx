@@ -1,4 +1,4 @@
-import { createContext, useContext, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { ArrowLeft, CheckCircle2, FileText, Loader2 } from "lucide-react";
 import { Markdown } from "../Markdown";
 
@@ -8,6 +8,8 @@ export interface ArtifactAction {
   tooltip: string;
   /** Resolves once the deliverable of that message was saved (or refused). */
   send: (messageId: number) => Promise<void>;
+  /** Called while a finished proposal is on screen, so the divider arrow knows it has something to send. */
+  register?: (messageId: number) => () => void;
 }
 
 export const ArtifactActionContext = createContext<ArtifactAction | null>(null);
@@ -53,6 +55,14 @@ export function ArtifactCard({ messageId, artifact, complete }: { messageId: num
   const action = useContext(ArtifactActionContext);
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
+  const register = action?.register;
+  const registerRef = useRef(register);
+  registerRef.current = register;
+
+  useEffect(() => {
+    if (!complete) return;
+    return registerRef.current?.(messageId);
+  }, [complete, messageId]);
 
   async function send(): Promise<void> {
     if (!action || sending) return;

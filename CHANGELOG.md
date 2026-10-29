@@ -27,6 +27,16 @@ are the per-version history; releasing does not rewrite this file.
   contradictions) that goes out of date when the work changes. The artifact and
   discussion can sit side by side, and the steps tree and that split are
   resizable. See [Step by step](website/features/step-by-step.md).
+- **Step by step: a simpler, more natural flow.** Each step shows one main action
+  for where it stands (*Draft with model*, *Approve*, *Reopen*) and keeps the rest
+  in a **⋯** menu; statuses collapse to To do, In progress (blue), To review
+  (amber), Approved (green) and Skipped. The plan bar shows the stage (plan the
+  steps, work through them, final output, done) with one next-action button, and a
+  *Plan tools* menu for suggesting steps, reviewing the plan and deleting it.
+  Assessments are a small chip (score first, reasons on click), the final output
+  keeps only *Generate* and *Send to topic* in view (instructions and guidance sit
+  behind *Options*), and the discussion-to-artifact arrow lights up only when the
+  model has proposed something; the separate "send the latest reply" bar is gone.
 - **Step by step: live runs, finishing, and a readable artifact.** *Start* now runs
   an automated plan, and a run is visible: a spinner on the step in progress, its
   name in the plan bar and an *Activity* list, with the page refreshing on its

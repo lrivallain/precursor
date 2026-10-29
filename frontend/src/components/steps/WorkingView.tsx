@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Activity, FileCheck2 } from "lucide-react";
-import { api } from "../../lib/api";
 import { buildStepTree, flattenTree, isApprovedStep, workingLeaves } from "../../lib/stepPlans";
 import type { StepPlan } from "../../lib/types";
 import { useResizableWidth } from "../../lib/useResizableWidth";
 import { ResizeHandle } from "../ResizeHandle";
-import { BTN_SECONDARY, GuidedAction, StaleBadge } from "./StepUi";
+import { StaleBadge } from "./StepUi";
 import { ConsolidationPanel } from "./ConsolidationPanel";
 import { StepDetail } from "./StepDetail";
 import { StepTree } from "./StepTree";
@@ -107,7 +106,7 @@ export function WorkingView({
         : "Written"
       : plan.ready_to_consolidate
         ? "Ready to generate"
-        : `${pending} step${pending === 1 ? "" : "s"} left to validate`;
+        : `${pending} step${pending === 1 ? "" : "s"} left to approve`;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
@@ -130,14 +129,6 @@ export function WorkingView({
           footer={
             <div className="space-y-3 pt-2">
               <ActivityFeed plan={plan} onSelect={onSelect} />
-              <GuidedAction
-                label="Suggest missing steps"
-                busyLabel="Looking for gaps…"
-                secondary
-                guidanceLabel="What to look for (optional)"
-                placeholder="e.g. anything about security or migration timing"
-                onRun={(guidance) => mutate(() => api.stepPlans.suggestMissing(plan.id, guidance || undefined))}
-              />
               <button
                 type="button"
                 onClick={() => onSelect("final")}
@@ -149,7 +140,7 @@ export function WorkingView({
                 data-tooltip={
                   plan.ready_to_consolidate
                     ? undefined
-                    : "Not every step is validated yet. You can still generate, after a confirmation."
+                    : "Not every step is approved yet. You can still generate, after a confirmation."
                 }
               >
                 <FileCheck2 size={16} className="shrink-0 text-muted" />
@@ -158,9 +149,6 @@ export function WorkingView({
                   <span className="block truncate text-xs text-muted">{finalHint}</span>
                 </span>
                 {plan.final_stale && hasFinal && <StaleBadge />}
-                <span className={`${BTN_SECONDARY} pointer-events-none !px-2 !py-1 text-xs`} aria-hidden>
-                  Consolidate
-                </span>
               </button>
             </div>
           }
@@ -187,7 +175,7 @@ export function WorkingView({
             <p className="font-medium text-fg">Pick a step</p>
             <p>
               Select a step on the left to edit it, write or generate its artifact and discuss it.
-              When every step is validated, consolidate them into one final output.
+              When every step is approved, the final output combines them.
             </p>
           </div>
         )}

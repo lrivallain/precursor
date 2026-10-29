@@ -5,10 +5,16 @@ import { ResizeHandle } from "../ResizeHandle";
 
 type Tab = "work" | "discussion";
 
-/** Moves the model's latest discussion reply into the work pane. Resolves true once it landed. */
+/**
+ * The arrow from the discussion to the work pane: it moves the model's latest
+ * proposal across. It stays dimmed (with `idleReason` as its hint) until a reply
+ * actually proposes something, and resolves true once the proposal landed.
+ */
 export type Transfer = {
   label: string;
   tooltip: string;
+  idleReason: string;
+  ready: boolean;
   onClick: () => Promise<boolean | void>;
 };
 
@@ -69,7 +75,7 @@ export function WorkTabs({
   }, [showDiscussion]);
 
   async function runTransfer(): Promise<void> {
-    if (!transfer || transferring) return;
+    if (!transfer || !transfer.ready || transferring) return;
     setTransferring(true);
     try {
       const landed = await transfer.onClick();
@@ -130,10 +136,14 @@ export function WorkTabs({
               <button
                 type="button"
                 onClick={() => void runTransfer()}
-                disabled={transferring}
+                disabled={transferring || !transfer.ready}
                 aria-label={transfer.label}
-                data-tooltip={transfer.tooltip}
-                className="absolute left-1/2 top-24 z-10 flex h-12 w-12 -translate-x-1/2 items-center justify-center rounded-full bg-accent text-white shadow-lg ring-4 ring-bg transition hover:scale-105 disabled:opacity-60"
+                data-tooltip={transfer.ready ? transfer.tooltip : transfer.idleReason}
+                className={`absolute left-1/2 top-24 z-10 flex h-12 w-12 -translate-x-1/2 items-center justify-center rounded-full shadow-lg ring-4 ring-bg transition ${
+                  transfer.ready
+                    ? "bg-accent text-white hover:scale-105"
+                    : "cursor-not-allowed bg-surface text-muted/60 shadow-none"
+                }`}
               >
                 {transferring ? <Loader2 size={22} className="animate-spin" /> : <ArrowLeft size={24} strokeWidth={2.5} />}
               </button>
@@ -148,18 +158,6 @@ export function WorkTabs({
             style={split ? ({ "--discussion-w": `${width}px` } as React.CSSProperties) : undefined}
           >
             <div className="flex h-full min-h-0 flex-col">
-              {transfer && (
-                <button
-                  type="button"
-                  onClick={() => void runTransfer()}
-                  disabled={transferring}
-                  data-tooltip={transfer.tooltip}
-                  className="mb-2 inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-lg bg-accent/10 px-3 py-2 text-sm font-medium text-accent hover:bg-accent/20 disabled:opacity-60"
-                >
-                  {transferring ? <Loader2 size={16} className="animate-spin" /> : <ArrowLeft size={16} strokeWidth={2.5} />}
-                  {transfer.label}
-                </button>
-              )}
               <div className="min-h-0 flex-1">{discussion}</div>
             </div>
           </div>

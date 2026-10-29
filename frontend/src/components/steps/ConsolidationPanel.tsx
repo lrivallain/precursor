@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { CheckCircle2, FileText, Loader2, Save, Send } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { CheckCircle2, ChevronDown, ChevronRight, FileText, Loader2, Save, Send, Sparkles } from "lucide-react";
 import { api } from "../../lib/api";
 import { openTopic } from "../../lib/sideChats";
 import { hasUnsavedEdits } from "../../lib/stepPlans";
@@ -10,7 +10,7 @@ import { RefineTextarea } from "../RefineTextarea";
 import { AssessmentPanel } from "./AssessmentPanel";
 import { PlanChat } from "./PlanChat";
 import { WorkTabs } from "./WorkTabs";
-import { BTN_PRIMARY, BTN_SECONDARY, GuidedAction, INPUT, StaleBadge } from "./StepUi";
+import { BTN_PRIMARY, BTN_SECONDARY, INPUT, OverflowMenu, StaleBadge } from "./StepUi";
 
 type Mutate = <T>(action: () => Promise<T>) => Promise<T | undefined>;
 
@@ -39,7 +39,7 @@ export function OutputInstructions({ plan, mutate }: { plan: StepPlan; mutate: M
 }
 
 /**
- * The last step: one final output assembled from the validated artifacts,
+ * The last step: one final output assembled from the approved artifacts,
  * editable, discussable, and fileable back into the topic the ask came from.
  */
 export function ConsolidationPanel({
@@ -61,6 +61,18 @@ export function ConsolidationPanel({
   const [newer, setNewer] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [adopting, setAdopting] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [options, setOptions] = useState(false);
+  const [guidance, setGuidance] = useState("");
+  const [proposals, setProposals] = useState<number[]>([]);
+  const [taken, setTaken] = useState<number[]>([]);
+  const registerProposal = useCallback((messageId: number) => {
+    setProposals((ids) => (ids.includes(messageId) ? ids : [...ids, messageId]));
+    return () => setProposals((ids) => ids.filter((id) => id !== messageId));
+  }, []);
+  // The proposal the divider arrow carries: the newest finished reply not yet sent.
+  const waiting = proposals.filter((id) => !taken.includes(id));
+  const latestProposal = waiting.length > 0 ? Math.max(...waiting) : null;
   // The text the draft started from, so a model-written final output arriving
   // isn't mistaken for the user's unsaved edits.
   const [base, setBase] = useState(finalOutput);
@@ -96,7 +108,7 @@ export function ConsolidationPanel({
     }
   }
 
-  async function generate(guidance: string): Promise<void> {
+  async function generate(): Promise<void> {
     if (dirty) {
       const ok = await confirm({
         title: "Discard unsaved edits?",
@@ -108,18 +120,24 @@ export function ConsolidationPanel({
     }
     if (unvalidated) {
       const ok = await confirm({
-        title: "Not every step is validated",
+        title: "Not every step is approved",
         message:
-          "Some working steps are not validated yet. The final output will be built from the artifacts that exist, which may leave gaps. Generate anyway?",
+          "Some working steps are not approved yet. The final output will be built from the artifacts that exist, which may leave gaps. Generate anyway?",
         confirmLabel: "Generate anyway",
         variant: "warning",
       });
       if (!ok) return;
     }
     setNotice(null);
-    const result = await mutate(() =>
-      api.stepPlans.generateFinal(plan.id, { instructions: guidance || undefined, force: unvalidated }),
-    );
+    setGenerating(true);
+    let result;
+    try {
+      result = await mutate(() =>
+        api.stepPlans.generateFinal(plan.id, { instructions: guidance.trim() || undefined, force: unvalidated }),
+      );
+    } finally {
+      setGenerating(false);
+    }
     if (!result) return;
     if (result.outcome === "published") setView("preview");
     else if (result.outcome === "awaiting_approval") {
@@ -128,14 +146,14 @@ export function ConsolidationPanel({
       );
     } else {
       setNotice(
-        "The model answered in the discussion without a deliverable (a question or alternatives), so the final output is unchanged. Reply in the discussion, or use its reply as the final output.",
+        "The model answered in the discussion without a deliverable (a question or alternatives), so the final output is unchanged. Reply in the discussion, or send one of its replies to the final output.",
       );
     }
   }
 
-  // Take a consolidation-discussion reply (the latest by default) as the final output.
-  async function useReply(messageId?: number): Promise<boolean> {
-    if (plan.consolidation_chat_id == null || adopting) return false;
+  // Take a consolidation-discussion reply as the final output.
+  async function useReply(messageId: number): Promise<boolean> {
+    if (adopting) return false;
     if (dirty) {
       const ok = await confirm({
         title: "Discard unsaved edits?",
@@ -148,21 +166,11 @@ export function ConsolidationPanel({
     setAdopting(true);
     setNotice(null);
     try {
-      let id = messageId;
-      if (id === undefined) {
-        const messages = await api.chats.listMessages(plan.consolidation_chat_id);
-        const reply = [...messages]
-          .reverse()
-          .find((m) => m.role === "assistant" && m.kind !== "step_plan" && m.content.trim());
-        if (!reply) {
-          setNotice("The discussion has no model reply to send yet.");
-          return false;
-        }
-        id = reply.id;
+      const updated = await mutate(() => api.stepPlans.finalFromMessage(plan.id, messageId));
+      if (updated) {
+        setTaken((ids) => [...ids, messageId]);
+        setView("preview");
       }
-      const replyId = id;
-      const updated = await mutate(() => api.stepPlans.finalFromMessage(plan.id, replyId));
-      if (updated) setView("preview");
       return !!updated;
     } finally {
       setAdopting(false);
@@ -178,7 +186,7 @@ export function ConsolidationPanel({
     const ok = await confirm({
       title: provisional ? "Send a provisional output?" : "Send to topic?",
       message: provisional
-        ? `Not every step was validated when this output was written. It will be posted in “${plan.source_topic_title ?? "the source topic"}” marked as provisional, and the plan will not be marked done.`
+        ? `Not every step was approved when this output was written. It will be posted in “${plan.source_topic_title ?? "the source topic"}” marked as provisional, and the plan will not be marked done.`
         : `The final output will be posted as a new message in “${plan.source_topic_title ?? "the source topic"}”.`,
       confirmLabel: provisional ? "Send as provisional" : "Send",
       variant: provisional ? "warning" : undefined,
@@ -198,7 +206,7 @@ export function ConsolidationPanel({
     : dirty
       ? "Save your edits first."
       : plan.final_provisional || unvalidated
-        ? "Validate every step and regenerate the final output first."
+        ? "Approve every step and regenerate the final output first."
         : plan.final_stale
           ? "The final output is out of date. Regenerate it first."
           : null;
@@ -223,34 +231,29 @@ export function ConsolidationPanel({
         {plan.final_stale && <StaleBadge />}
       </div>
 
-      {plan.final_provisional && hasFinal && (
-        <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
-          Provisional: this output was written before every step was validated, so it is not an
-          approved final and the plan stays open. Validate the remaining steps, then regenerate it.
-        </p>
-      )}
       {notice && (
         <p role="status" className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-muted">
           {notice}
         </p>
       )}
-
-      {unvalidated && (
-        <p className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-muted">
-          Some working steps are not validated yet. Validate them first for a complete answer, or
-          generate anyway.
-        </p>
-      )}
-      {plan.final_stale && hasFinal && (
-        <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
-          Steps changed after this output was written. Regenerate it, or edit it by hand.
-        </p>
-      )}
-      {plan.status === "done" && (
+      {plan.status === "done" ? (
         <p className="flex items-center gap-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-300">
           <CheckCircle2 size={16} /> This plan is done.
         </p>
-      )}
+      ) : plan.final_provisional && hasFinal ? (
+        <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
+          Provisional: written before every step was approved, so the plan stays open. Approve the
+          remaining steps, then regenerate it.
+        </p>
+      ) : plan.final_stale && hasFinal ? (
+        <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
+          Steps changed after this output was written. Regenerate it, or edit it by hand.
+        </p>
+      ) : unvalidated ? (
+        <p className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-muted">
+          Some steps are not approved yet. Approve them for a complete answer, or generate anyway.
+        </p>
+      ) : null}
       {sent && plan.source_topic_id && (
         <p className="flex flex-wrap items-center gap-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-300">
           <CheckCircle2 size={16} /> Sent to “{plan.source_topic_title}”.
@@ -272,14 +275,43 @@ export function ConsolidationPanel({
         onAssess={() => mutate(() => api.stepPlans.assessPlan(plan.id))}
       />
 
-      <OutputInstructions plan={plan} mutate={mutate} />
-
-      <GuidedAction
-        label={hasFinal ? "Regenerate final output" : "Generate final output"}
-        busyLabel="Consolidating…"
-        placeholder="e.g. start with a two-line summary, then one section per ask"
-        onRun={generate}
-      />
+      <div className="space-y-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            className={hasFinal ? BTN_SECONDARY : BTN_PRIMARY}
+            disabled={generating}
+            onClick={() => void generate()}
+            data-testid="generate-final"
+          >
+            {generating ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+            {generating ? "Consolidating…" : hasFinal ? "Regenerate" : "Generate the final output"}
+          </button>
+          <button
+            type="button"
+            onClick={() => setOptions((v) => !v)}
+            aria-expanded={options}
+            className="inline-flex items-center gap-1 text-xs text-muted hover:text-fg"
+          >
+            {options ? <ChevronDown size={12} /> : <ChevronRight size={12} />} Options
+          </button>
+        </div>
+        {options && (
+          <div className="space-y-3 rounded-lg border border-border bg-surface p-3">
+            <OutputInstructions plan={plan} mutate={mutate} />
+            <label className="block text-xs font-medium text-muted">
+              Guidance for this run only
+              <textarea
+                value={guidance}
+                onChange={(e) => setGuidance(e.target.value)}
+                rows={2}
+                placeholder="e.g. start with a two-line summary, then one section per ask"
+                className={`${INPUT} mt-1 resize-y font-normal`}
+              />
+            </label>
+          </div>
+        )}
+      </div>
 
       <WorkTabs
         ariaLabel="Consolidation"
@@ -288,10 +320,13 @@ export function ConsolidationPanel({
         transfer={
           plan.consolidation_chat_id != null
             ? {
-                label: "Send the latest reply to the final output",
+                label: "Send the proposal to the final output",
                 tooltip:
-                  "Save the model's latest reply in the consolidation discussion as the final output (provisional until every step is validated).",
-                onClick: () => useReply(),
+                  "Send the model's latest proposal to the final output (provisional until every step is approved). Your unsaved edits are kept until you confirm.",
+                idleReason:
+                  "Nothing to send yet. This lights up when a reply in the discussion proposes a final output.",
+                ready: latestProposal !== null,
+                onClick: () => (latestProposal !== null ? useReply(latestProposal) : Promise.resolve(false)),
               }
             : undefined
         }
@@ -301,8 +336,9 @@ export function ConsolidationPanel({
             onOpened={() => void reload()}
             artifactAction={{
               label: "Send to final output",
-              tooltip: "Save this as the final output (provisional until every step is validated).",
+              tooltip: "Save this as the final output (provisional until every step is approved).",
               send: async (id) => void (await useReply(id)),
+              register: registerProposal,
             }}
           />
         }
@@ -333,17 +369,6 @@ export function ConsolidationPanel({
               >
                 {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Save
               </button>
-              {plan.status !== "done" && (
-                <button
-                  type="button"
-                  onClick={() => void markDone()}
-                  disabled={doneBlocker !== null}
-                  className={BTN_SECONDARY}
-                  data-tooltip={doneBlocker ?? "Every step is approved and the final output is current: close the plan"}
-                >
-                  <CheckCircle2 size={14} /> Mark as done
-                </button>
-              )}
               <button
                 type="button"
                 onClick={() => void sendToTopic()}
@@ -356,6 +381,19 @@ export function ConsolidationPanel({
                 {sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
                 Send to topic
               </button>
+              {plan.status !== "done" && (
+                <OverflowMenu
+                  label="Final output actions"
+                  items={[
+                    {
+                      label: "Mark the plan as done",
+                      icon: CheckCircle2,
+                      onSelect: markDone,
+                      disabledReason: doneBlocker ?? undefined,
+                    },
+                  ]}
+                />
+              )}
             </div>
           </div>
 
@@ -389,7 +427,7 @@ export function ConsolidationPanel({
                   void save();
                 }
               }}
-              placeholder="The final answer, in Markdown. Generate it from the validated steps, or write it yourself."
+              placeholder="The final answer, in Markdown. Generate it from the approved steps, or write it yourself."
               aria-label="Final output (Markdown)"
               className="w-full resize-y rounded-lg border border-border bg-bg px-3 py-2 font-mono text-sm outline-none focus:border-accent/60"
             />

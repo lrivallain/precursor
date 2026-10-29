@@ -1,5 +1,5 @@
 import { api } from "./api";
-import type { SettableStepStatus, Step, StepPlan, StepPlanStatus, StepStatus } from "./types";
+import type { Step, StepPlan, StepPlanStatus } from "./types";
 
 export const PLAN_STATUS_LABEL: Record<StepPlanStatus, string> = {
   drafting: "Drafting",
@@ -25,32 +25,48 @@ export const PLAN_STATUS_PILL: Record<StepPlanStatus, string> = {
   cancelled: "bg-slate-500/15 text-slate-600 dark:text-slate-300",
 };
 
-export const STEP_STATUS_LABEL: Record<StepStatus, string> = {
-  proposed: "Suggested",
-  open: "Open",
-  in_progress: "In progress",
-  to_validate: "To validate",
-  validated: "Validated",
-  cancelled: "Cancelled",
+/**
+ * What a step looks like to the user. The backend keeps six statuses; the UI
+ * collapses them to the four a person acts on, one colour each: slate = not
+ * started, blue = being worked on, amber = waiting for you, green = approved.
+ */
+export type DisplayStatus = "suggested" | "todo" | "working" | "review" | "approved" | "skipped";
+
+export const DISPLAY_STATUS_LABEL: Record<DisplayStatus, string> = {
+  suggested: "Suggested",
+  todo: "To do",
+  working: "In progress",
+  review: "To review",
+  approved: "Approved",
+  skipped: "Skipped",
 };
 
-export const STEP_STATUS_PILL: Record<StepStatus, string> = {
-  proposed: "bg-violet-500/15 text-violet-700 dark:text-violet-300",
-  open: "bg-slate-500/15 text-slate-600 dark:text-slate-300",
-  in_progress: "bg-sky-500/15 text-sky-700 dark:text-sky-300",
-  to_validate: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
-  validated: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
-  cancelled: "bg-slate-500/10 text-slate-500 line-through dark:text-slate-400",
+export const DISPLAY_STATUS_PILL: Record<DisplayStatus, string> = {
+  suggested: "bg-violet-500/15 text-violet-700 dark:text-violet-300",
+  todo: "bg-slate-500/15 text-slate-600 dark:text-slate-300",
+  working: "bg-sky-500/15 text-sky-700 dark:text-sky-300",
+  review: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
+  approved: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
+  skipped: "bg-slate-500/10 text-slate-500 line-through dark:text-slate-400",
 };
 
-export const STEP_STATUS_DOT: Record<StepStatus, string> = {
-  proposed: "bg-violet-500",
-  open: "bg-slate-400",
-  in_progress: "bg-sky-500",
-  to_validate: "bg-amber-500",
-  validated: "bg-emerald-500",
-  cancelled: "bg-slate-300 dark:bg-slate-600",
+export const DISPLAY_STATUS_DOT: Record<DisplayStatus, string> = {
+  suggested: "bg-violet-500",
+  todo: "bg-slate-400",
+  working: "bg-sky-500",
+  review: "bg-amber-500",
+  approved: "bg-emerald-500",
+  skipped: "bg-slate-300 dark:bg-slate-600",
 };
+
+export function displayStatus(step: Step): DisplayStatus {
+  if (step.status === "proposed") return "suggested";
+  const status = step.effective_status;
+  if (status === "cancelled") return "skipped";
+  if (status === "validated") return step.needs_review ? "review" : "approved";
+  if (status === "to_validate" || step.artifact.trim() !== "") return "review";
+  return status === "in_progress" ? "working" : "todo";
+}
 
 /** Backend caps (services/step_plans.py); mirrored to disable actions early. */
 export const MAX_STEP_DEPTH = 6;
@@ -118,6 +134,58 @@ export function planProgress(plan: StepPlan): { done: number; total: number } {
   const roots = buildStepTree(plan.steps);
   const leaves = roots.flatMap(workingLeaves);
   return { done: leaves.filter((l) => isApprovedStep(l.step)).length, total: leaves.length };
+}
+
+export type PlanStage = "plan" | "work" | "final" | "done";
+
+export const PLAN_STAGES: { id: PlanStage; label: string }[] = [
+  { id: "plan", label: "Plan the steps" },
+  { id: "work", label: "Work through them" },
+  { id: "final", label: "Final output" },
+  { id: "done", label: "Done" },
+];
+
+function hasFinalOutput(plan: StepPlan): boolean {
+  return (plan.final_output ?? "").trim() !== "";
+}
+
+/** Where a plan is in its life: planning, working the steps, writing the final output, or done. */
+export function planStage(plan: StepPlan): PlanStage {
+  if (plan.status === "done") return "done";
+  if (plan.status === "drafting" || plan.status === "cancelled") return "plan";
+  const { done, total } = planProgress(plan);
+  return total > 0 && done === total ? "final" : "work";
+}
+
+/** Whether the automated run still has something to do (empty steps to draft, or no final output yet). */
+export function autoHasWork(plan: StepPlan): boolean {
+  if (plan.automation_mode !== "auto" || (plan.status !== "active" && plan.status !== "consolidating")) {
+    return false;
+  }
+  const leaves = buildStepTree(plan.steps).flatMap(workingLeaves);
+  return leaves.some((l) => l.step.artifact.trim() === "") || !hasFinalOutput(plan);
+}
+
+export interface PlanNext {
+  label: string;
+  /** What the button opens: a step id or the final output. */
+  target: number | "final";
+}
+
+/** The one thing the user should do next on a plan, or null when there is nothing to do. */
+export function planNext(plan: StepPlan): PlanNext | null {
+  if (plan.status !== "active" && plan.status !== "consolidating") return null;
+  const leaves = buildStepTree(plan.steps).flatMap(workingLeaves);
+  if (leaves.length === 0) return null;
+  const review = leaves.filter((l) => displayStatus(l.step) === "review");
+  if (review.length > 0) {
+    return { label: `Review next step (${review.length})`, target: review[0].step.id };
+  }
+  const todo = leaves.find((l) => !isApprovedStep(l.step));
+  if (todo) return { label: "Go to the next step", target: todo.step.id };
+  if (!hasFinalOutput(plan)) return { label: "Write the final output", target: "final" };
+  if (plan.final_stale || plan.final_provisional) return { label: "Regenerate the final output", target: "final" };
+  return { label: plan.source_topic_id != null ? "Send to the topic" : "Review the final output", target: "final" };
 }
 
 /** The step to show first once a plan is working: the first leaf still to do, else the first step. */
@@ -208,54 +276,21 @@ export function planMove(
   return { target: { parent_step_id: grandId, position: parentIdx + 1 } };
 }
 
-export interface StatusAction {
-  status: SettableStepStatus;
+export type StepPrimaryKind = "draft" | "approve" | "reopen" | "restore";
+
+export interface StepPrimary {
+  kind: StepPrimaryKind;
   label: string;
-  disabledReason?: string;
 }
 
-/** Status actions offered for a step, with the reason when one is blocked. */
-export function statusActions(node: StepNode): StatusAction[] {
+/** The one action that moves a leaf step forward, or null for a group or a suggestion. */
+export function primaryAction(node: StepNode): StepPrimary | null {
   const { step } = node;
-  const group = isGroup(node);
-  const hasArtifact = step.artifact.trim().length > 0;
-  const needsArtifact = hasArtifact ? undefined : "Write or generate the artifact first.";
-  if (step.status === "proposed") return [];
-  if (group) {
-    return step.effective_status === "cancelled"
-      ? [{ status: "open", label: "Reopen" }]
-      : [{ status: "cancelled", label: "Cancel group" }];
-  }
-  switch (step.status) {
-    case "open":
-      return [
-        { status: "in_progress", label: "Start" },
-        { status: "to_validate", label: "Mark to validate", disabledReason: needsArtifact },
-        { status: "cancelled", label: "Cancel" },
-      ];
-    case "in_progress":
-      return [
-        { status: "to_validate", label: "Mark to validate", disabledReason: needsArtifact },
-        { status: "validated", label: "Validate", disabledReason: needsArtifact },
-        { status: "cancelled", label: "Cancel" },
-      ];
-    case "to_validate":
-      return [
-        { status: "validated", label: "Validate" },
-        { status: "in_progress", label: "Back to work" },
-        { status: "cancelled", label: "Cancel" },
-      ];
-    case "validated":
-      return [
-        ...(step.needs_review ? [{ status: "validated" as const, label: "Validate again" }] : []),
-        { status: "in_progress", label: "Reopen" },
-        { status: "cancelled", label: "Cancel" },
-      ];
-    case "cancelled":
-      return [{ status: "open", label: "Reopen" }];
-    default:
-      return [];
-  }
+  if (step.status === "proposed" || isGroup(node)) return null;
+  if (step.status === "cancelled") return { kind: "restore", label: "Restore" };
+  if (step.artifact.trim() === "") return { kind: "draft", label: "Draft with model" };
+  if (step.status === "validated" && !step.needs_review) return { kind: "reopen", label: "Reopen" };
+  return { kind: "approve", label: step.needs_review ? "Approve again" : "Approve" };
 }
 
 // Starting a plan from a topic crosses sections (topic -> step by step), which the

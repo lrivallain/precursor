@@ -10,22 +10,26 @@ const MODES: { value: AutomationMode; label: string; hint: string }[] = [
   {
     value: "manual",
     label: "Manual",
-    hint: "You write and validate everything. The model only answers when you ask.",
+    hint: "You write and approve everything. The model only answers when you ask.",
   },
   {
     value: "assisted",
     label: "Assisted",
-    hint: "The model drafts a step when you ask and scores it. You review and validate.",
+    hint: "The model drafts a step when you ask and scores it. You review and approve.",
   },
   {
     value: "auto",
     label: "Automated",
-    hint: "The model drafts and scores every step, then a provisional final output. It never validates: you review step by step.",
+    hint: "The model drafts and scores every step, then a provisional final output. It never approves: you review step by step.",
   },
 ];
 
-/** How much of the work the model does, and the run controls for the automated mode. Sized for the top bar. */
-export function AutomationBar({ plan, mutate }: { plan: StepPlan; mutate: Mutate }) {
+/**
+ * How much of the work the model does, and the run controls for the automated
+ * mode. `canRun` is false once the model has nothing left to do, so the plan's
+ * next-action button takes over. Sized for the top bar.
+ */
+export function AutomationBar({ plan, mutate, canRun }: { plan: StepPlan; mutate: Mutate; canRun: boolean }) {
   const [busy, setBusy] = useState(false);
   const mode = plan.automation_mode;
   const running = plan.auto_state === "running";
@@ -79,18 +83,18 @@ export function AutomationBar({ plan, mutate }: { plan: StepPlan; mutate: Mutate
             >
               <Pause size={14} /> Pause
             </button>
-          ) : (
+          ) : canRun || paused ? (
             <button
               type="button"
               className={BTN_PRIMARY}
               disabled={busy}
               onClick={() => void run(() => api.stepPlans.startAuto(plan.id))}
-              data-tooltip="Draft and score the steps that have no artifact yet. Validated steps and your edits are never touched."
+              data-tooltip="Draft and score the steps that have no artifact yet. Approved steps and your edits are never touched."
             >
               {busy ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
               {paused ? "Resume" : "Run"}
             </button>
-          )}
+          ) : null}
           {running && (
             <span
               className="inline-flex items-center gap-1.5 text-xs text-muted"

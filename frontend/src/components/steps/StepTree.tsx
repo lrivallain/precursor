@@ -22,14 +22,15 @@ import {
   planMove,
   progressOf,
   siblingIds,
-  STEP_STATUS_DOT,
+  DISPLAY_STATUS_DOT,
+  displayStatus,
   type MoveKind,
   type MoveTarget,
   type StepNode,
 } from "../../lib/stepPlans";
 import { useConfirm } from "../ConfirmDialog";
 import { ScoreChip } from "./AssessmentPanel";
-import { NeedsReviewBadge, StepStatusPill } from "./StepUi";
+import { StepStatusPill } from "./StepUi";
 
 type Mutate = <T>(action: () => Promise<T>) => Promise<T | undefined>;
 type DropZone = "before" | "after" | "inside";
@@ -196,7 +197,7 @@ export function StepTree({
               className="flex min-w-0 flex-1 items-center gap-2 text-left text-sm"
             >
               <span
-                className={`h-2 w-2 shrink-0 rounded-full ${STEP_STATUS_DOT[step.effective_status]}`}
+                className={`h-2 w-2 shrink-0 rounded-full ${DISPLAY_STATUS_DOT[displayStatus(step)]}`}
                 aria-hidden
               />
               <span
@@ -209,7 +210,7 @@ export function StepTree({
               {progress && (
                 <span
                   className="shrink-0 text-[11px] tabular-nums text-muted"
-                  data-tooltip={`${progress.done} of ${progress.total} sub-steps validated`}
+                  data-tooltip={`${progress.done} of ${progress.total} sub-steps approved`}
                 >
                   {progress.done}/{progress.total}
                 </span>
@@ -223,9 +224,8 @@ export function StepTree({
                   data-tooltip="The model is drafting this step"
                 />
               )}
-              {step.needs_review && <NeedsReviewBadge />}
               {step.assessment && <ScoreChip assessment={step.assessment} stale={step.assessment_stale} />}
-              <StepStatusPill status={step.effective_status} />
+              <StepStatusPill step={step} />
             </button>
             {proposed && (
               <>
