@@ -51,7 +51,10 @@ def _run_manifest_step(
         env={
             "PATH": f"{pathlib.Path(sys.executable).parent}:/usr/bin:/bin",
             "GITHUB_REPOSITORY": "owner/repo",
-            "GITHUB_SHA": "0123456789abcdef0123456789abcdef01234567",
+            # workflow_run's GITHUB_SHA is the default branch's current head,
+            # not necessarily the CI commit that this build must identify.
+            "GITHUB_SHA": "f" * 40,
+            "TESTED_SHA": "0123456789abcdef0123456789abcdef01234567",
             "GITHUB_OUTPUT": str(tmp_path / "gh_output"),
         },
     )
@@ -80,7 +83,7 @@ def test_the_workflow_manifest_is_read_back_by_the_update_check(tmp_path: pathli
     # Every one of these being non-None means the parser found the key the
     # workflow wrote. A rename on either side fails here.
     assert version == "2026.7.1.dev229+gabcdef123"
-    assert commit == "012345678"  # first 9 of GITHUB_SHA
+    assert commit == "012345678"  # first 9 of TESTED_SHA, not GITHUB_SHA
     assert wheel_url is not None and wheel_url.endswith(HOST)
     assert extras == (f"https://github.com/owner/repo/releases/download/nightly/{COMPANION}",)
 

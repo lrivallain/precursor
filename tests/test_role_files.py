@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import shutil
 import uuid
 from collections.abc import AsyncIterator
@@ -17,7 +16,11 @@ from sqlalchemy import select
 from precursor.backend.main import create_app
 from precursor.backend.services.definitions.checker import check_definitions
 from precursor.backend.services.definitions.loader import load_definitions
-from tests.definitions_support import mark_database, restore_database, wipe_agents_and_workflows
+from tests.definitions_support import (
+    isolated_migration_database,
+    mark_database,
+    restore_database,
+)
 
 
 def _uid() -> str:
@@ -172,32 +175,20 @@ def test_ensure_default_role_file_leaves_an_existing_one_alone(files_mode: Path)
 @pytest.fixture
 async def database_mode(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Path]:
     from precursor.backend.config import get_settings
-    from precursor.backend.db import SessionLocal
-    from precursor.backend.models import AppSetting
     from precursor.backend.services.definitions import overlay
 
-    mark = await mark_database()
-    # The migration refuses while any workflow is mid-run, and the shared DB holds other modules' leftovers.
-    await wipe_agents_and_workflows()
-    async with SessionLocal() as session:
-        for key, value in (("agents_enabled", True), ("definitions_source", "database")):
-            row = await session.get(AppSetting, key)
-            if row is None:
-                session.add(AppSetting(key=key, value=json.dumps(value)))
-            else:
-                row.value = json.dumps(value)
-        await session.commit()
-        await overlay.refresh_source(session)
-    settings = get_settings()
-    monkeypatch.setattr(settings, "definitions_source", "database")
-    root = Path(settings.definitions_dir)
-    shutil.rmtree(root, ignore_errors=True)
-    overlay.invalidate()
-    yield root
-    overlay.invalidate()
-    overlay._pins.clear()
-    shutil.rmtree(root, ignore_errors=True)
-    await restore_database(mark)
+    async with isolated_migration_database():
+        settings = get_settings()
+        monkeypatch.setattr(settings, "definitions_source", "database")
+        root = Path(settings.definitions_dir)
+        shutil.rmtree(root, ignore_errors=True)
+        overlay.invalidate()
+        try:
+            yield root
+        finally:
+            overlay.invalidate()
+            overlay._pins.clear()
+            shutil.rmtree(root, ignore_errors=True)
 
 
 async def _add_role(name: str, prompt: str) -> None:

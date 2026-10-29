@@ -182,7 +182,8 @@ shown in the Settings panel.
 Every night at **01:17 UTC**, GitHub Actions releases unreleased, CI-green
 changes from `main` under a new immutable `v<version>` tag, with artifacts on
 GitHub and PyPI. No changes means no release; manual releases remain available.
-The rolling `nightly` prerelease still follows every push. See
+The rolling `nightly` prerelease follows `main` only after CI succeeds on the
+exact commit; website deployment remains independent. See
 [RELEASING.md](RELEASING.md), [release notes](https://github.com/lrivallain/precursor/releases),
 and [CHANGELOG.md](CHANGELOG.md).
 

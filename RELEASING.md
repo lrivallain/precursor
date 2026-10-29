@@ -159,8 +159,31 @@ uv tool install precursor-ai  # or install the `precursor-ai` command
 ## The nightly channel
 
 Tagged releases are the *stable* channel. Alongside them, `nightly.yml`
-publishes a **rolling prerelease of `main` on every push** — the same wheel and
-sdist, attached to a permanently-named `nightly` tag that is replaced each run.
+publishes a **rolling prerelease after CI succeeds on `main`** — the same wheel
+and sdist, attached to a permanently-named `nightly` tag that is replaced each run.
+
+Nightly listens for completed **CI** runs, not pushes. Only successful push
+runs on this repository's `main` are eligible: pull requests, forks, failed
+and cancelled runs cannot publish. The gate queries `ci.yml` for the latest
+main-push run at the candidate's exact SHA; missing, pending or non-successful
+CI fails closed. Checkout, build, tag, release notes and `version.json` all
+use that tested SHA, never the default-branch head from a `workflow_run` event.
+
+Only the current `main` commit may replace the rolling release. Superseded
+commits are skipped before building and checked again immediately before
+publishing, so a delayed completion cannot roll Nightly back or publish an
+older green commit while a newer commit is still being tested. Publication is
+serialized without cancelling an in-progress replacement.
+
+**Actions → Nightly → Run workflow** on **main** retries the same gated path:
+
+```bash
+gh workflow run nightly.yml --ref main
+```
+
+Manual dispatch does not bypass CI; wait for successful CI on that exact
+commit before retrying. Website deployment (`pages.yml`) remains independent,
+triggered directly by relevant pushes to `main`.
 
 It exists to remove the last reason to run Precursor from a source checkout: the
 published wheel already carries the SPA and the in-app docs, so following `main`

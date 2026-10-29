@@ -5,34 +5,76 @@ name: Nightly
 # frontend build on the user's machine.
 #
 # The artifacts land on a single, permanently-named `nightly` prerelease that is
-# replaced on every push. Alongside the wheel it carries `version.json`, a tiny
-# manifest the app reads to answer "is there something newer than me?" in one
+# replaced after successful CI on main. Alongside the wheel it carries a tiny
+# `version.json` manifest the app reads to answer "is there something newer than me?" in one
 # request (see precursor/backend/services/updates.py).
 
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
 
-concurrency:
-  group: nightly
-  cancel-in-progress: true
+env:
+  UV_FROZEN: "1"
 
 jobs:
-  nightly:
-    name: Build and publish the rolling build
+  gate:
+    name: Require CI on the exact current main commit
+    if: >-
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_repository.full_name == github.repository) ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     permissions:
-      contents: write # replace the `nightly` release and its assets
+      actions: read
+      contents: read
+    outputs:
+      publish: ${{ steps.gate.outputs.publish }}
+      sha: ${{ steps.gate.outputs.sha }}
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
+
+      - name: Require successful main-push CI and reject superseded commits
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TESTED_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: python3 scripts/release.py nightly --sha "$TESTED_SHA"
+
+  nightly:
+    name: Build and publish the rolling build
+    needs: gate
+    if: needs.gate.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    # Never cancel halfway through replacing the release. Queued runs recheck
+    # main and CI before touching it, so late completions cannot roll it back.
+    concurrency:
+      group: nightly
+      cancel-in-progress: false
+    permissions:
+      actions: read # recheck the same commit's CI immediately before publishing
+      contents: write # replace the `nightly` release and its assets
+    env:
+      TESTED_SHA: ${{ needs.gate.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
           # Full history + tags so hatch-vcs derives a dev version that encodes
           # the commit (…dev227+g<sha>), which is what the update check compares.
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up Node
         uses: actions/setup-node@v7
@@ -76,7 +118,7 @@ jobs:
           host = hosts[0]
 
           repo = os.environ["GITHUB_REPOSITORY"]
-          sha = os.environ["GITHUB_SHA"]
+          sha = os.environ["TESTED_SHA"]
           base = f"https://github.com/{repo}/releases/download/nightly"
 
           json.dump(
@@ -105,7 +147,14 @@ jobs:
           version=$(python3 -c "import json;print(json.load(open('dist/version.json'))['version'])")
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
+      - name: Recheck CI and supersession before publishing
+        id: recheck
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/release.py nightly --sha "$TESTED_SHA"
+
       - name: Replace the nightly release
+        if: steps.recheck.outputs.publish == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.manifest.outputs.version }}
@@ -114,10 +163,10 @@ jobs:
           # Written to a file rather than passed inline: the notes contain
           # backticks and fenced blocks, which are a shell-quoting minefield.
           cat > notes.md <<EOF
-          Rolling build of \`main\` (${GITHUB_SHA:0:9}).
+          Rolling build of \`main\` (${TESTED_SHA:0:9}).
 
           > [!WARNING]
-          > This is an unstable prerelease rebuilt on every push. Use a tagged
+          > This is an unstable prerelease rebuilt after successful CI on main. Use a tagged
           > release if you want stability.
 
           Install (or update) in one command:
@@ -143,10 +192,10 @@ jobs:
           # every nightly URL a 404 behind a green run.
           if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/nightly" --silent 2>/dev/null; then
             gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/nightly" \
-              -f sha="$GITHUB_SHA" -F force=true --silent
+              -f sha="$TESTED_SHA" -F force=true --silent
           else
             gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" \
-              -f ref=refs/tags/nightly -f sha="$GITHUB_SHA" --silent
+              -f ref=refs/tags/nightly -f sha="$TESTED_SHA" --silent
           fi
           gh release create nightly \
             --title "Nightly ($VERSION)" \
@@ -156,6 +205,7 @@ jobs:
             dist/*.whl dist/*.tar.gz dist/version.json
 
       - name: Check the nightly is downloadable
+        if: steps.recheck.outputs.publish == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -167,7 +217,7 @@ jobs:
           serves_this_build() {
             local manifest
             manifest=$(curl -fsSL "$base/version.json") || return 1
-            [ "$(jq -r .full_commit <<<"$manifest")" = "$GITHUB_SHA" ] || return 1
+            [ "$(jq -r .full_commit <<<"$manifest")" = "$TESTED_SHA" ] || return 1
             curl -fsSL -o /dev/null "$(jq -r .wheel_url <<<"$manifest")"
           }
           wait_for_downloads() {
@@ -189,5 +239,5 @@ jobs:
               -F draft=false -f tag_name=nightly --silent
             wait_for_downloads && exit 0
           fi
-          echo "::error::$base/version.json does not serve this build ($GITHUB_SHA)."
+          echo "::error::$base/version.json does not serve this build ($TESTED_SHA)."
           exit 1

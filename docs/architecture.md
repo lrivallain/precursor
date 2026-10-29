@@ -565,15 +565,18 @@ the server preflights Docker availability against the effective jail setting.
   that runs the release smoke gate and `scripts/smoke_mcp.py`. A tag push (`v*`) triggers
   `release.yml`, which builds the wheel and publishes a GitHub Release. See
   [../RELEASING.md](../RELEASING.md).
-- `nightly.yml` publishes a **rolling prerelease** of `main` on every push:
+- `nightly.yml` publishes a **rolling prerelease** after successful main-push CI:
   wheels plus a small `version.json` the update check reads in one request. It
   exists so tracking `main` doesn't require a source checkout — the wheel
   already carries the SPA, the docs and every plugin frontend, so there is
   nothing left for a user to build. The manifest is a contract between that
   workflow and `services/updates.py`, and `tests/test_nightly_manifest.py`
   runs the workflow's actual step against the actual parser so the two can't
-  drift — the workflow itself only ever runs on `main`, after merge, so a
-  rename would otherwise surface in production.
+  drift. Both automatic CI-completion runs and manual retries require green
+  CI at the exact source SHA. Checkout, tag and manifest pin that SHA; main and
+  CI are rechecked before publication to skip superseded commits. Publication
+  is serialized without cancelling an in-progress replacement. Website
+  deployment remains push-triggered and independent.
 
 ## Plugin contract
 

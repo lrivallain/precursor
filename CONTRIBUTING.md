@@ -123,6 +123,17 @@ same whether or not you're signed in to `gh` — a test that needs model output
 injects its own fake provider rather than calling one. It lives at the
 repository root, not under `tests/`, so the whole suite gets the same isolation.
 
+Each parallel worker reuses its own scratch database between tests. Migration
+tests use `tests.definitions_support.isolated_migration_database()` to establish
+an unfinalized database-mode install: it clears migration, finalization and
+role-filing markers, refreshes the overlay cache, then restores the incoming
+settings and cache in `finally`. Snapshot/restore alone does not establish a
+test's starting state; do not make wizard tests depend on their predecessor.
+
+Main-push CI also gates rolling Nightly publication at that exact commit,
+including manual retries. Website deployment stays independent; see
+[RELEASING.md](RELEASING.md#the-nightly-channel).
+
 ## Plugins
 
 Anything that isn't "topics, chat, GitHub" belongs in a plugin rather than in
