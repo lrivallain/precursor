@@ -26,7 +26,7 @@ async function run() {
     topicId = topic.id;
     const topicUrl = `${BASE}/topics/platform/${topic.slug}`;
     const originalMessages = await api(page, "GET", `/topics/${topic.id}/messages`);
-    const effectiveAsk = originalMessages.find((m) => m.role === "user").content;
+    const effectiveAsk = originalMessages.filter((m) => m.role === "user").at(-1).content;
 
     // Keep creation real, but do not invoke a model for proposals.
     const requests = [];
@@ -122,8 +122,9 @@ async function run() {
 
     const short = await start("/steps Count from 1 to 3.");
     await openTopic();
-    const shortCard = page.locator(`[data-testid="step-plan-trace"][data-plan-id="${short.id}"]`);
+    const shortCard = page.locator(`[data-testid="step-plan-trace"][data-plan-id="${short.id}"]`).first();
     await shortCard.getByText("Count from 1 to 3.", { exact: true }).last().waitFor();
+    await shortCard.getByText("Request sent to Step by step", { exact: true }).waitFor();
     assert.equal(await shortCard.getByRole("button", { name: /Show all|Show less/ }).count(), 0);
     const derived = page.locator(`[data-testid="step-plan-trace"][data-plan-id="${button.id}"]`);
     await derived.getByText("Original prompt · From topic message", { exact: true }).waitFor();
@@ -144,7 +145,14 @@ async function run() {
           prompt: Array.from({ length: 9 }, (_, i) => `Line ${i + 1}`).join("\n"),
         }) },
         { ...base, id: 900005, role: "user", kind: null,
-          content: `**From step-by-step plan: [Filed output](/steps/${button.id}) · final output v2 (provisional)**\n\nA synthetic final output.` },
+          content: `**From step-by-step plan: [Filed output](/steps/${button.id}) · final output v2 (provisional)**\n\n# Filed output\n\nA **synthetic** final output.\n\n- Checked sequence\n- Preserved Markdown\n\n${"RESULT".repeat(120)}` },
+        { ...base, id: 900006, role: "user", kind: null,
+          content: `**From step-by-step plan: [Earlier output](/steps/${button.id})**\n\nAn older output without a heading or version.` },
+        { ...base, id: 900007, content: JSON.stringify({
+          kind: "step_plan_trace", version: 1, plan_id: short.id,
+          title: '**Literal <img src=x onerror=alert(1)> [title](/steps/999)**' + "TITLE".repeat(60),
+          source: "submitted", prompt: "Keep the title literal, too.",
+        }) },
       ] });
     });
     await page.reload({ waitUntil: "networkidle" });
@@ -160,27 +168,89 @@ async function run() {
     assert.equal((await lines.textContent()).split("\n").length, 8);
     await multilineToggle.click();
     assert.ok((await lines.textContent()).endsWith("Line 9"));
-    const filed = page.getByTestId("step-plan-note-header").filter({ hasText: "Step by step · Final output" });
-    await filed.getByRole("button", { name: "Filed output", exact: true }).waitFor();
-    assert.ok((await filed.textContent()).includes("v2"));
-    assert.ok((await filed.textContent()).includes("Provisional"));
-    await page.getByText("A synthetic final output.", { exact: true }).waitFor();
+    const filed = page.getByTestId("step-plan-output").filter({ has: page.getByRole("heading", { name: "Filed output", exact: true }) });
+    const metadata = filed.getByTestId("step-plan-note-header");
+    const footer = filed.getByTestId("step-plan-note-footer");
+    await metadata.getByText("Final output", { exact: true }).waitFor();
+    assert.ok((await metadata.textContent()).includes("v2"));
+    assert.ok((await metadata.textContent()).includes("Provisional"));
+    assert.equal(await metadata.getByRole("button").count(), 0, "plan links belong in the document footer");
+    await footer.getByRole("button", { name: "Filed output", exact: true }).waitFor();
+    assert.equal(await filed.getByRole("heading").count(), 1, "do not duplicate the document title");
+    assert.equal(await filed.locator(".markdown strong").textContent(), "synthetic");
+    assert.equal(await filed.locator(".markdown li").count(), 2);
+    const earlier = page.getByTestId("step-plan-output").filter({ hasText: "An older output without a heading or version." });
+    assert.equal(await earlier.getByRole("heading").count(), 0);
+    assert.equal(await earlier.getByTestId("step-plan-note-header").textContent(), "Final output");
+    const literalTitle = cards.filter({ hasText: "Keep the title literal, too." });
+    assert.equal(await literalTitle.locator("img, a, strong").count(), 0);
+    assert.ok((await literalTitle.getByRole("button").textContent()).startsWith("**Literal <img"));
+    const activity = page.getByText("Assessing the current artifact…", { exact: true }).locator("../..");
+    assert.equal(await activity.locator("..").getAttribute("data-testid"), null);
+    assert.ok((await activity.getAttribute("class")).includes("bg-accent/[0.06]"));
 
-    // Both themes and a narrow viewport keep long, unbroken text inside the card.
+    // Both themes, zoom-equivalent widths and a phone keep each surface distinct.
     for (const theme of ["light", "dark"]) {
       await page.evaluate((value) => document.documentElement.classList.toggle("dark", value === "dark"), theme);
-      for (const width of [1440, 390]) {
+      for (const width of [1440, 720, 390]) {
         await page.setViewportSize({ width, height: 1100 });
         await card.scrollIntoViewIfNeeded();
         await card.getByRole("button", { name: "Show all" }).click();
         assert.equal(await prompt.textContent(), dangerousPrompt);
-        const overflow = await card.evaluate((element) => element.scrollWidth > element.clientWidth + 1);
-        assert.equal(overflow, false, `trace overflow: ${theme}, ${width}px`);
+        for (const receipt of [card, shortCard, legacy, linked, multiline, literalTitle]) {
+          assert.equal(await receipt.locator("svg.lucide-list-checks").count(), 1);
+          const style = await receipt.evaluate((element) => {
+            const css = getComputedStyle(element);
+            return { background: css.backgroundColor, border: css.borderTopWidth, overflow: element.scrollWidth > element.clientWidth + 1 };
+          });
+          assert.equal(style.background, "rgba(0, 0, 0, 0)", "receipts must not become blue document cards");
+          assert.equal(style.border, "0px");
+          assert.equal(style.overflow, false, `receipt overflow: ${theme}, ${width}px`);
+          const quote = await receipt.getByTestId("step-plan-prompt").evaluate((element) => {
+            const css = getComputedStyle(element);
+            const probe = element.ownerDocument.createElement("span");
+            probe.style.color = "var(--border)";
+            element.append(probe);
+            const neutral = getComputedStyle(probe).color;
+            probe.remove();
+            return { rule: css.borderLeftWidth, color: css.borderLeftColor, neutral };
+          });
+          assert.equal(quote.rule, "1px");
+          assert.equal(quote.color, quote.neutral);
+        }
+        for (const document of [filed, earlier]) {
+          assert.equal(await document.getByTestId("step-plan-note-header").locator("svg.lucide-list-checks").count(), 1);
+          const style = await document.evaluate((element) => {
+            const css = getComputedStyle(element);
+            const probe = element.ownerDocument.createElement("span");
+            probe.style.color = "var(--bg)";
+            element.append(probe);
+            const background = getComputedStyle(probe).color;
+            probe.style.color = "var(--border)";
+            const border = getComputedStyle(probe).color;
+            probe.remove();
+            return {
+              background: css.backgroundColor, expectedBackground: background,
+              border: css.borderTopColor, expectedBorder: border, borderWidth: css.borderTopWidth,
+              overflow: element.scrollWidth > element.clientWidth + 1,
+            };
+          });
+          assert.equal(style.background, style.expectedBackground);
+          assert.equal(style.border, style.expectedBorder);
+          assert.equal(style.borderWidth, "1px");
+          assert.equal(style.overflow, false, `document overflow: ${theme}, ${width}px`);
+          const bounds = await document.locator(".markdown").boundingBox();
+          const footerBounds = await document.getByTestId("step-plan-note-footer").boundingBox();
+          assert.ok(footerBounds.y >= bounds.y + bounds.height, "plan link must follow the document");
+        }
         await card.getByRole("button", { name: "Show less" }).click();
       }
     }
+    await footer.getByRole("button", { name: "Filed output", exact: true }).focus();
+    await page.keyboard.press("Enter");
+    await page.waitForURL(new RegExp(`/steps/${button.id}$`));
     assert.deepEqual(errors, []);
-    console.log("step prompt traces: immutable snapshots, entry points, safe rendering and expansion: ok");
+    console.log("step prompt traces: immutable snapshots, receipt/document hierarchy, ListChecks icons, Markdown, versions, links and responsive themes: ok");
   } finally {
     const page = await browser.newPage();
     if (topicId != null) {

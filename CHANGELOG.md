@@ -15,10 +15,18 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Changed
 
+- **Step by step: a quiet request receipt, then a clear document.** Topic
+  creation traces now show *Request sent to Step by step*, a blue plan link
+  and the original prompt under a neutral quote rule, rather than a blue card.
+  Returned final outputs use a neutral document surface, understated version
+  and provisional metadata, and a footer plan link so their Markdown content
+  leads without a duplicated title. Both retain the existing checklist icon;
+  immutable prompt snapshots, expansion, legacy messages and output history
+  are unchanged.
 - **Step by step: keep the original prompt beside the process link.** Creating
   a plan from a topic now saves the full effective ask in an immutable topic
   trace, including asks derived by a bare `/steps` or the topic button. The
-  trace reuses the filed-artifact header and shows short prompts immediately,
+  trace shows short prompts immediately,
   with accessible *Show all / Show less* for long ones. Plan edits never change
   the snapshot, prompt syntax stays literal, and historical link-only traces
   remain navigable without pretending to recover their original ask.
@@ -26,13 +34,11 @@ are the per-version history; releasing does not rewrite this file.
   main-push CI on the exact source commit, including manual retries. Checkout,
   tag and manifest stay pinned to that commit, and superseded builds cannot
   roll the channel back. Website deployment remains independent.
-- **Step by step: a clearer header on the final output filed in a topic.** The
-  note now opens with a coloured band that splits its metadata from the
-  content: a *Step by step · Final output* eyebrow, the plan title as a blue
-  link that opens the plan, the version chip (*v2*) and an amber *Provisional*
-  chip when it was filed before every step was approved. The stored message is
-  unchanged Markdown, so the model and exports still read it, and notes filed
-  earlier get the band too.
+- **Step by step: identifiable final outputs filed in a topic.** The note
+  separates *Final output* metadata from its Markdown content, including the
+  version (*v2*) and a *Provisional* label when filed before every step was
+  approved. The stored message is unchanged Markdown, so the model and
+  exports still read it, and notes filed earlier get the same presentation.
 - **Step by step: one panel for step artifacts and the final output.** Both
   are now the same editor (version label, history, save, edit/preview, the
   *newer version* guard), so the final output gets the resizable box and the

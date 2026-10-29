@@ -293,11 +293,12 @@ const scenes = {
   },
 
   "step-plan-traces": {
-    viewport: { width: 1200, height: 1100 },
+    viewport: { width: 1200, height: 1400 },
     async go(page) {
       await page.goto(`${BASE}/topics/step-prompt-audit`, { waitUntil: "networkidle" });
       const cards = page.getByTestId("step-plan-trace");
       await cards.last().waitFor();
+      await page.getByTestId("step-plan-output").waitFor();
       await cards.first().scrollIntoViewIfNeeded();
       const first = await cards.first().boundingBox();
       const last = await cards.last().boundingBox();

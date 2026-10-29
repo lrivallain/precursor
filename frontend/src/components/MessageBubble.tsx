@@ -28,7 +28,7 @@ import { errorNoticeBody, isErrorNotice } from "../lib/systemNotice";
 import type { Attachment, MessageRole, Skill } from "../lib/types";
 import { parseStepPlanNote } from "../lib/stepPlans";
 import { Markdown } from "./Markdown";
-import { StepPlanNoteHeader } from "./steps/StepPlanNoteHeader";
+import { StepPlanLink, StepPlanNoteHeader } from "./steps/StepPlanNoteHeader";
 import { MessageMeta, formatTimestamp } from "./MessageMeta";
 import { ReasoningDisclosure } from "./ReasoningDisclosure";
 
@@ -269,9 +269,10 @@ export function MessageBubble({ role, content, reasoning, pending, attachments, 
         {agentSessionId != null && <AgentExchangeBadge agentSessionId={agentSessionId} />}
       </div>
       <div
-        className={`relative px-3 py-2 rounded-lg border ${
+        className={`relative ${planNote ? "p-4 sm:p-5" : "px-3 py-2"} rounded-lg border ${
           onRetry ? "border-red-500/40" : "border-border"
-        } ${isUser ? "bg-accent/10" : "bg-surface"} max-w-full ${planNote ? "w-full" : ""}`}
+        } ${planNote ? "bg-bg" : isUser ? "bg-accent/10" : "bg-surface"} max-w-full ${planNote ? "w-full" : ""}`}
+        data-testid={planNote ? "step-plan-output" : undefined}
       >
         {highlighted && (
           // Ties the prompt to the timeline rail's blue (current) dash.
@@ -479,6 +480,11 @@ export function MessageBubble({ role, content, reasoning, pending, attachments, 
                 {planNote ? planNote.body : content || "\u200B"}
               </Markdown>
             </div>
+            {planNote && (
+              <footer className="-mx-4 -mb-4 mt-5 border-t border-border px-4 py-2.5 sm:-mx-5 sm:-mb-5 sm:px-5" data-testid="step-plan-note-footer">
+                <StepPlanLink note={planNote} />
+              </footer>
+            )}
             {pending && (
               <div className="mt-1 flex items-center gap-2 text-[11px] text-muted">
                 <span className="italic">streaming…</span>
