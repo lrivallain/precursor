@@ -85,6 +85,7 @@ export function AgentsSettings() {
   const approvalPolicy: AgentApprovalPolicy = settings?.agents_approval_policy ?? "balanced";
   const systemPrompt = settings?.agents_system_prompt ?? "";
   const watchdogTimeout = settings?.agents_watchdog_timeout_seconds ?? 600;
+  const trackFiles = settings?.agents_file_change_tracking ?? true;
   // Archived-timeline retention. Reachable with Agents mode off, but only when
   // there is history to protect — see the section's own comment below.
   const eventRetentionDays = settings?.agent_event_retention_days ?? 30;
@@ -144,6 +145,7 @@ export function AgentsSettings() {
     agents_approval_policy?: AgentApprovalPolicy;
     agents_system_prompt?: string;
     agents_watchdog_timeout_seconds?: number;
+    agents_file_change_tracking?: boolean;
     agent_event_retention_days?: number;
     agent_event_max_per_session?: number;
   }): Promise<void> {
@@ -314,6 +316,27 @@ export function AgentsSettings() {
           <span className="block text-[11px] text-muted">
             A running agent with no activity for longer than this is flipped to
             “interrupted” (you can resume it). Minimum 30 seconds.
+          </span>
+        </label>
+      )}
+
+      {enabled && available && (
+        <label className="flex cursor-pointer items-start gap-2">
+          <input
+            type="checkbox"
+            checked={trackFiles}
+            disabled={busy}
+            onChange={(e) => void patch({ agents_file_change_tracking: e.target.checked })}
+            className="mt-0.5 accent-accent"
+          />
+          <span>
+            <span className="block text-sm">Track file changes for rewind</span>
+            <span className="block text-[11px] text-muted">
+              New agent sessions keep a copy of each file before the agent changes it, so
+              rewinding a session can put its files back too. Applies to sessions started
+              after the change; one that wasn&rsquo;t tracked from its start rewinds its
+              conversation only.
+            </span>
           </span>
         </label>
       )}

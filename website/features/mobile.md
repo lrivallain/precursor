@@ -46,16 +46,15 @@ they collapse to one pane on a phone:
 | Surface | On a phone |
 | --- | --- |
 | [Workspaces](/features/workspaces) | The file tree and the editor become a **list → detail** flow — the tree owns the screen until you open a file, and a back arrow returns to it. |
-| Workspace assistant | Opens **over** the workspace instead of beside it, and starts stowed in its rail so it isn't what you land on. |
+| Workspace discussion | Opens **over** the workspace instead of beside it, and stays closed until you press **Discuss**. |
 | Conversation stats | Hidden. It's an at-a-glance diagnostic, and even collapsed its rail cost width the transcript needed. |
 
-The workspace assistant uses its own, wider threshold — **1024px** — because a
-file tree, an editor *and* a 24rem assistant leave the editor unusable long
-before the phone breakpoint. On a tablet the tree and editor still sit side by
-side while the assistant overlays.
+The workspace discussion uses its own, wider threshold — **1024px** — because a
+file tree, an editor *and* a chat leave the editor unusable long before the
+phone breakpoint. On a tablet the tree and editor still sit side by side while
+the discussion overlays.
 
-Your desktop preferences aren't overwritten by any of this — the assistant panel
-in particular deliberately doesn't persist a small screen's collapse state back
+Your desktop preferences aren't overwritten by any of this
 over the one you set where it fits.
 
 ## Touch details

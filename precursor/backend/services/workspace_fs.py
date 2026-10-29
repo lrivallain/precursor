@@ -8,6 +8,7 @@ reads/writes.
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 from precursor.backend.schemas import FileNode
@@ -55,6 +56,24 @@ def safe_join(root: Path, rel: str) -> Path:
     if parts and parts[0] in _HIDDEN_TOP:
         raise UnsafePathError(f"Path '{rel}' is not accessible")
     return target
+
+
+def refuse_definitions_for_tools(root: Path, rel: str) -> None:
+    """Raise ``UnsafePathError`` when a *tool* would write the definitions folder.
+
+    Agent and workflow definition files declare what an agent may do, so an
+    assistant writing them could grant itself more. The MCP file tools call this
+    before any write; people editing in the Files section don't, and a change
+    that widens permissions is still held for review before it can run.
+    """
+    from precursor.backend.config import get_settings
+
+    target = safe_join(root, rel)
+    protected = Path(get_settings().definitions_dir).resolve()
+    if target == protected or protected in target.parents:
+        raise UnsafePathError(
+            "Agent and workflow definition files are read-only for tools; edit them in the app"
+        )
 
 
 def is_text_file(path: Path) -> bool:
@@ -132,6 +151,30 @@ def delete_file(root: Path, rel: str) -> None:
     if target.is_dir():
         raise IsADirectoryError(rel)
     target.unlink()
+
+
+def delete_dir(root: Path, rel: str) -> int:
+    """Delete the folder ``rel`` and everything in it; returns how many files went.
+
+    Never the root itself. A symlink to a folder loses only the link: its
+    target, which may hold anything, is left alone.
+    """
+    target = safe_join(root, rel)
+    parts = [p for p in Path((rel or "").strip().strip("/")).parts if p not in ("", ".")]
+    if target == root.resolve() or not parts:
+        raise UnsafePathError("The workspace's own folder can't be deleted")
+    lexical = root.joinpath(*parts)
+    if lexical.is_symlink():
+        lexical.unlink()
+        return 0
+    if not target.exists():
+        raise FileNotFoundError(rel)
+    if not target.is_dir():
+        raise NotADirectoryError(rel)
+    files = sum(1 for p in target.rglob("*") if p.is_file() or p.is_symlink())
+    # rmtree doesn't follow symlinks inside the folder: it removes the links.
+    shutil.rmtree(target)
+    return files
 
 
 def rename(root: Path, src_rel: str, dst_rel: str) -> None:

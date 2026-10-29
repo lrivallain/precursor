@@ -1,3 +1,4 @@
+import { ApprovalBadge } from "./ApprovalBadge";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ComponentType, ReactNode } from "react";
 import {
@@ -12,7 +13,9 @@ import {
   FolderGit2,
   Home,
   Layers,
+  ListChecks,
   MessageSquare,
+  MessageSquarePlus,
   Mail,
   MailOpen,
   MessagesSquare,
@@ -26,10 +29,12 @@ import {
   Plus,
   Radio,
   Search,
+  Sparkles,
   StickyNote,
   Workflow as WorkflowIcon,
   X,
 } from "lucide-react";
+import { startSideChat } from "../lib/sideChats";
 import type { Collection, ReminderItem, TopicNode } from "../lib/types";
 import type { RemindersController } from "../lib/useRemindersController";
 import type { TopicsController } from "../lib/useTopicsController";
@@ -50,6 +55,13 @@ import { useSidebarNavStyle } from "../lib/useSidebarNavStyle";
 import { ContextMenu } from "./ContextMenu";
 import type { ContextMenuItem } from "./ContextMenu";
 
+// Starts a side chat on the whole topic and leaves for it (see lib/sideChats).
+function openSideChat(topicId: number): void {
+  void startSideChat(topicId).catch(() => {
+    // the topic may have gone since the menu opened; stay put
+  });
+}
+
 /** The sections core itself ships. */
 export type CoreSidebarMode =
   | "topics"
@@ -57,7 +69,9 @@ export type CoreSidebarMode =
   | "live"
   | "workspaces"
   | "agents"
-  | "workflows";
+  | "workflows"
+  | "steps"
+  | "iq";
 
 /**
  * A section key: one of core's own, or the id of a section contributed by a
@@ -80,6 +94,8 @@ function newActionLabel(mode: SidebarMode, section: SectionPlugin | null): strin
       return "New agent";
     case "workflows":
       return "New workflow";
+    case "steps":
+      return "New step plan";
     case "topics":
       return "New topic";
     default:
@@ -92,7 +108,8 @@ function newActionLabel(mode: SidebarMode, section: SectionPlugin | null): strin
 // nothing behind it is worse than no button. Core's own sections always do.
 function supportsNew(mode: SidebarMode, section: SectionPlugin | null): boolean {
   if (section) return section.onNew != null;
-  return CORE_MODE_KEYS.has(mode);
+  // IQ is a question box, not a list of things to create.
+  return CORE_MODE_KEYS.has(mode) && mode !== "iq";
 }
 
 /**
@@ -128,6 +145,8 @@ export interface SidebarSlots {
   workspaces?: ReactNode;
   agents?: ReactNode;
   workflows?: ReactNode;
+  steps?: ReactNode;
+  iq?: ReactNode;
   /** Rendered when a plugin section is active (its own list). */
   plugin?: ReactNode;
 }
@@ -326,7 +345,7 @@ export function Sidebar({
             className="rounded-md shrink-0"
           />
           <span className="flex-1 truncate font-semibold tracking-tight">
-            {mode === "agents" ? "Agents" : mode === "workflows" ? "Workflows" : "Precursor"}
+            {mode === "agents" ? "Agents" : mode === "workflows" ? "Workflows" : mode === "steps" ? "Step by step" : "Precursor"}
           </span>
         </button>
         {!narrow && (
@@ -421,6 +440,10 @@ export function Sidebar({
         slots.agents
       ) : mode === "workflows" ? (
         slots.workflows
+      ) : mode === "steps" ? (
+        slots.steps
+      ) : mode === "iq" ? (
+        slots.iq
       ) : activeSection ? (
         slots.plugin
       ) : !CORE_MODE_KEYS.has(mode) ? (
@@ -658,6 +681,8 @@ function TopicItem({
             aria-label="Last run failed"
             data-tooltip="Last run failed"
           />
+        ) : (node.pending_approvals ?? 0) > 0 ? (
+          <ApprovalBadge count={node.pending_approvals ?? 0} />
         ) : node.unread_count > 0 ? (
           <UnreadBadge count={node.unread_count} />
         ) : null}
@@ -707,6 +732,11 @@ function TopicItem({
               label: "New notes",
               icon: StickyNote,
               onSelect: () => onOpenNotes(node.id),
+            },
+            {
+              label: "New side chat",
+              icon: MessageSquarePlus,
+              onSelect: () => openSideChat(node.id),
             },
             ...moveToCollectionItems(node, collections, onMoveToCollection),
             {
@@ -888,6 +918,8 @@ const CORE_MODES: ModeDef[] = [
   { mode: "workspaces", label: SECTION_LABELS.workspaces, Icon: FolderGit2 },
   { mode: "agents", label: SECTION_LABELS.agents, Icon: Bot },
   { mode: "workflows", label: SECTION_LABELS.workflows, Icon: WorkflowIcon },
+  { mode: "steps", label: SECTION_LABELS.steps, Icon: ListChecks },
+  { mode: "iq", label: SECTION_LABELS.iq, Icon: Sparkles },
 ];
 
 // Stable empty default so a caller that passes no plugin sections doesn't
@@ -1427,6 +1459,8 @@ function PinnedItem({
         )}
         {isStreaming ? (
           <StreamingDots />
+        ) : (node.pending_approvals ?? 0) > 0 ? (
+          <ApprovalBadge count={node.pending_approvals ?? 0} />
         ) : node.unread_count > 0 ? (
           <UnreadBadge count={node.unread_count} />
         ) : null}
@@ -1462,6 +1496,11 @@ function PinnedItem({
               label: "New notes",
               icon: StickyNote,
               onSelect: () => onOpenNotes(node.id),
+            },
+            {
+              label: "New side chat",
+              icon: MessageSquarePlus,
+              onSelect: () => openSideChat(node.id),
             },
             ...moveToCollectionItems(node, collections, onMoveToCollection),
             {

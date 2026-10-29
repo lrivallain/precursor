@@ -37,6 +37,15 @@ def blob_path(sha256: str) -> Path:
     return _blobs_root() / sha256[:2] / sha256[2:4] / sha256
 
 
+def sidecar_path(sha256: str, suffix: str) -> Path:
+    """Path of a derived file (e.g. cached extracted text) stored beside a blob.
+
+    Sidecars are named ``<sha256>.<suffix>`` so the orphan sweep reclaims them
+    together with the blob they were derived from.
+    """
+    return blob_path(sha256).with_name(f"{sha256}.{suffix}")
+
+
 def write_blob(data: bytes) -> str:
     """Persist ``data`` and return its SHA-256 key.
 
@@ -100,7 +109,8 @@ async def gc_orphan_blobs() -> int:
     for path in root.rglob("*"):
         if not path.is_file() or path.name.endswith(".tmp"):
             continue
-        if path.name in referenced:
+        # Sidecars ("<sha>.<suffix>") live and die with their source blob.
+        if path.name.split(".", 1)[0] in referenced:
             continue
         try:
             path.unlink()

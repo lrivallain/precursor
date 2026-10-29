@@ -81,7 +81,7 @@ async def system_preamble(agent: AgentSession, caps: _Caps | None = None) -> str
     """
     caps = caps or agent
     async with SessionLocal() as session:
-        role_prompt = (await resolve_role_prompt(session, caps.role_id)).strip()
+        role_prompt = (await resolve_role_prompt(session, caps.role)).strip()
         custom = (await resolve_agents_system_prompt(session)).strip()
         # Long-term memory is standing context, not always wanted: a pure
         # transform step ("translate this") is better off not consulting it.

@@ -12,7 +12,9 @@ import { topicSlugPath } from "./topicTree";
 //   /live/<slug>                                         → live meeting sessions
 //   /agents/<public-id>                                  → agents
 //   /workflows/<id>[/run/<n|latest>]                     → workflows
-//   /ws/<slug>/<file/path>                               → workspaces
+//   /steps[/<id>]                                        → step by step
+//   /iq                                                  → ask Precursor IQ
+//   /ws/<slug>/<file/path>[?chat=<slug>|?topic=<public-id>] → workspaces (+ discussion)
 //   /<plugin-section>/<opaque…>[#hash]                   → plugin sections
 // Topic slugs are globally unique, so the trailing slug alone identifies the
 // item; the collection slug and the ancestor slugs make the URL readable +
@@ -20,10 +22,18 @@ import { topicSlugPath } from "./topicTree";
 // re-parenting and collection moves, and the SPA rewrites it to the readable
 // form once resolved.
 
+/** The chat or topic open beside a workspace file (`?chat=<slug>` / `?topic=<public-id>`). */
+export interface WsDiscussionRef {
+  kind: "chat" | "topic";
+  /** A chat's slug, or a topic's public id. */
+  ref: string;
+}
+
 export interface WsRoute {
   open: boolean;
   slug: string | null;
   path: string | null;
+  discussion: WsDiscussionRef | null;
 }
 
 /** Route state owned by a plugin section; opaque to core. */
@@ -50,6 +60,8 @@ export interface AppRoute {
   // The run segment (`/workflows/<id>/run/<n|latest>`): a run number as a string
   // or the literal "latest" to track the live/newest run; null when absent.
   workflowRunRef: string | null;
+  // The step plan id segment (`/steps/<id>`); null on the overview route.
+  stepPlanRef: number | null;
   // For a plugin-contributed section: the path segments after its root, and the
   // raw hash. Core treats both as opaque and hands them to the section.
   pluginSegments: string[];
@@ -70,11 +82,19 @@ export function navigate(url: string, { replace = false }: { replace?: boolean }
 // `/ws/<slug>/<file/path>` deep-links straight to a file.
 export function parseWsRoute(): WsRoute {
   const segs = window.location.pathname.replace(/^\/+|\/+$/g, "").split("/");
-  if (segs[0] !== "ws") return { open: false, slug: null, path: null };
+  if (segs[0] !== "ws") return { open: false, slug: null, path: null, discussion: null };
   const slug = segs[1] ? decodeURIComponent(segs[1]) : null;
   const path =
     segs.length > 2 ? segs.slice(2).map(decodeURIComponent).join("/") : null;
-  return { open: true, slug, path };
+  const query = new URLSearchParams(window.location.search);
+  const chat = query.get("chat");
+  const topic = query.get("topic");
+  const discussion: WsDiscussionRef | null = chat
+    ? { kind: "chat", ref: chat }
+    : topic
+      ? { kind: "topic", ref: topic }
+      : null;
+  return { open: true, slug, path, discussion };
 }
 
 export function parseAppRoute(): AppRoute {
@@ -88,6 +108,7 @@ export function parseAppRoute(): AppRoute {
     agentRef: null,
     workflowRef: null,
     workflowRunRef: null,
+    stepPlanRef: null,
     pluginSegments: [],
     pluginHash: "",
   };
@@ -111,6 +132,15 @@ export function parseAppRoute(): AppRoute {
       workflowRunRef: runRef,
     };
   }
+  if (segs[0] === "steps") {
+    const raw = segs[1] ? Number.parseInt(decodeURIComponent(segs[1]), 10) : NaN;
+    return {
+      ...base,
+      mode: "steps",
+      stepPlanRef: Number.isSafeInteger(raw) && raw > 0 ? raw : null,
+    };
+  }
+  if (segs[0] === "iq") return { ...base, mode: "iq" };
   if (segs[0] === "chats") {
     return { ...base, mode: "chats", chatSlug: segs[1] ? decodeURIComponent(segs[1]) : null };
   }
@@ -157,6 +187,8 @@ const CORE_MODES: ReadonlySet<string> = new Set([
   "workspaces",
   "agents",
   "workflows",
+  "steps",
+  "iq",
 ]);
 
 /** Whether `mode` is a plugin section rather than one of core's own. */
@@ -218,14 +250,24 @@ export function workflowUrl(workflowId: number | null, runSeg: string | null = n
   return `/workflows/${workflowId}`;
 }
 
-/** `/ws`, `/ws/<slug>`, or `/ws/<slug>/<file/path>` for an open file. */
-export function workspaceUrl(slug: string | null, filePath: string | null): string {
+/** `/steps` (overview) or `/steps/<id>`. */
+export function stepPlanUrl(planId: number | null): string {
+  return planId == null ? "/steps" : `/steps/${planId}`;
+}
+
+/** `/ws`, `/ws/<slug>`, or `/ws/<slug>/<file/path>` for an open file, plus the open discussion. */
+export function workspaceUrl(
+  slug: string | null,
+  filePath: string | null,
+  discussion: WsDiscussionRef | null = null,
+): string {
   let url = "/ws";
   if (slug) {
     url += `/${encodeURIComponent(slug)}`;
     if (filePath) {
       url += "/" + filePath.split("/").map(encodeURIComponent).join("/");
     }
+    if (discussion) url += `?${discussion.kind}=${encodeURIComponent(discussion.ref)}`;
   }
   return url;
 }

@@ -10,11 +10,15 @@ grow to host the other.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import DateTime, Integer, String, Text
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from precursor.backend.models.base import Base, TimestampMixin
+
+if TYPE_CHECKING:
+    from precursor.backend.models.conversation_artifact import ConversationArtifact
 
 
 class Workspace(Base, TimestampMixin):
@@ -44,8 +48,7 @@ class Workspace(Base, TimestampMixin):
     cloned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    # Assistant Role assigned to this workspace's chat. Null resolves to the
-    # default role (no persona injected). SET NULL on delete reverts to default.
-    role_id: Mapped[int | None] = mapped_column(
-        ForeignKey("roles.id", ondelete="SET NULL"), nullable=True, index=True
+    # SQLite doesn't enforce the FK cascade, so the ORM carries it.
+    artifacts: Mapped[list[ConversationArtifact]] = relationship(
+        "ConversationArtifact", back_populates="workspace", cascade="all, delete-orphan"
     )

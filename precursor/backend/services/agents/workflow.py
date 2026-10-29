@@ -36,8 +36,8 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import func, select
-from sqlalchemy.orm import selectinload
+from sqlalchemy import exists, func, or_, select
+from sqlalchemy.orm import aliased, selectinload
 
 from precursor.backend.models.agent_artifact import AgentArtifact
 from precursor.backend.models.agent_event import AgentEventRecord
@@ -55,8 +55,12 @@ from precursor.backend.models.workflow import (
 from precursor.backend.services.agents.directives import (
     RESULT_SUMMARY_CAP,
     strip_control_directives,
+    strip_published_artifacts,
 )
+from precursor.backend.services.agents.event_normalizer import is_content_free
 from precursor.backend.services.agents.mcp_scope import parse_mcp_scope, scope_includes_precursor
+from precursor.backend.services.definitions import anchors as definition_anchors
+from precursor.backend.services.definitions import overlay as definition_overlay
 from precursor.backend.services.events import publish_workflow_changed
 from precursor.backend.services.workflow_state import (
     build_state_index_prompt,
@@ -66,6 +70,7 @@ from precursor.backend.services.workflow_state import (
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from precursor.backend.schemas.definitions import WorkflowDefinition
     from precursor.backend.services.agents.manager import AgentManager
 
 logger = logging.getLogger(__name__)
@@ -141,7 +146,8 @@ _GATE_PREAMBLE = (
 # asks a clarifying question just wedges the whole pipeline (the coordinator parks
 # it as ``blocked`` and pauses the run). This forces the step to commit to the
 # most reasonable interpretation of its objective and actually produce the
-# deliverable, rather than stalling to ask what to do.
+# deliverable, rather than stalling to ask what to do. The artifact syntax is
+# spelled out because a step that isn't autonomous never sees the full protocol.
 _TASK_PREAMBLE = (
     "You are an automated step in a workflow — it runs unattended, so there is no "
     "human available to answer questions mid-run. Act fully autonomously: carry "
@@ -150,7 +156,8 @@ _TASK_PREAMBLE = (
     "confirmation, and never emit NEED_INPUT — if a detail is underspecified, "
     "pick the most reasonable interpretation and proceed anyway. Produce the "
     "actual deliverable your objective calls for (not a description of what you "
-    "could do), publish it with an ARTIFACT directive, and end with "
+    "could do), publish it as an artifact — a line 'ARTIFACT: <title>', the full "
+    "deliverable on the lines below it, then a line 'END_ARTIFACT' — and end with "
     "'OBJECTIVE_COMPLETE: <2-3 sentence summary>'."
 )
 
@@ -268,13 +275,18 @@ async def _publish(workflow: Workflow) -> None:
     await publish_workflow_changed(workflow.id, status=workflow.status, name=workflow.name)
 
 
-async def _load_workflow(session: AsyncSession, workflow_id: int) -> Workflow | None:
-    result = await session.execute(
+async def _load_workflow(
+    session: AsyncSession, workflow_id: int, *, fresh: bool = False
+) -> Workflow | None:
+    stmt = (
         select(Workflow)
         .where(Workflow.id == workflow_id)
         .options(selectinload(Workflow.steps).selectinload(WorkflowStep.agent))
     )
-    return result.scalar_one_or_none()
+    if fresh:
+        # Replace identity-mapped state, e.g. after the step rows were rewritten.
+        stmt = stmt.execution_options(populate_existing=True)
+    return (await session.execute(stmt)).scalar_one_or_none()
 
 
 async def _last_assistant_message(
@@ -318,6 +330,29 @@ async def _last_assistant_message(
 _MIRROR_RUN_SCOPE: Any = object()
 
 
+def _superseded_attempt_runs() -> Any:
+    """Agent runs a later attempt of the *same step* has replaced.
+
+    Every step attempt — a gate loop-back, an unblock, a rejected approval's
+    re-drive, a replay — opens a fresh ``AgentRun`` under the same workflow run
+    and leaves a ``WorkflowRunStep`` trace at the step's position. An attempt is
+    superseded once a newer trace at that ``(run_id, position)`` points at a
+    different run. Keyed on the position rather than the agent, so an agent
+    reused at two steps of one workflow keeps both steps' deliverables.
+    """
+    newer = aliased(WorkflowRunStep)
+    return select(WorkflowRunStep.agent_run_id).where(
+        WorkflowRunStep.agent_run_id.is_not(None),
+        exists().where(
+            newer.run_id == WorkflowRunStep.run_id,
+            newer.position == WorkflowRunStep.position,
+            newer.id > WorkflowRunStep.id,
+            newer.agent_run_id.is_not(None),
+            newer.agent_run_id != WorkflowRunStep.agent_run_id,
+        ),
+    )
+
+
 async def _run_scoped_artifacts(
     session: AsyncSession,
     agent_id: int,
@@ -331,8 +366,19 @@ async def _run_scoped_artifacts(
     same agent can't leak its deliverables into this one's context. Falls back to
     the agent-wide read when no workflow run is in play (a manual call, or rows
     written before runs existed).
+
+    Either way, an attempt a later attempt of the same step superseded never
+    reaches the board. Stacked, a gate that failed once would judge every
+    earlier draft beside the current one and fail on the duplication itself
+    until ``max_loops`` ran out.
     """
-    stmt = select(AgentArtifact).where(AgentArtifact.agent_id == agent_id)
+    stmt = select(AgentArtifact).where(
+        AgentArtifact.agent_id == agent_id,
+        or_(
+            AgentArtifact.agent_run_id.is_(None),
+            AgentArtifact.agent_run_id.not_in(_superseded_attempt_runs()),
+        ),
+    )
     if workflow_run_id is not None:
         stmt = stmt.join(AgentRun, AgentArtifact.agent_run_id == AgentRun.id).where(
             AgentRun.workflow_run_id == workflow_run_id
@@ -375,20 +421,27 @@ async def collect_step_context(
         workflow_run_id if artifacts_run_id is _MIRROR_RUN_SCOPE else artifacts_run_id
     )
     parts: list[str] = []
+    artifacts = await _run_scoped_artifacts(session, prev_agent_id, board_run_id)
     prev_run = await _current_run_for(session, prev_agent_id, workflow_run_id)
     if workflow_run_id is None or prev_run is not None:
-        body = await _last_assistant_message(
+        raw = await _last_assistant_message(
             session, prev_agent_id, prev_run.id if prev_run is not None else None
         )
-        if body:
-            body = _DIRECTIVE_LINE_RE.sub("", body).strip()
-        if not body:
+        body = ""
+        lifted = False
+        if raw:
+            # Artifacts follow as blackboard entries; don't forward them twice.
+            kept = strip_published_artifacts(raw, {(a.title, a.content) for a in artifacts})
+            lifted = kept != raw
+            body = _DIRECTIVE_LINE_RE.sub("", kept).strip()
+        # The summary would only repeat the lifted artifacts' bodies.
+        if not body and not lifted:
             summary = await _prev_step_summary(session, prev_agent_id, workflow_run_id)
             if summary:
                 body = summary.strip()
         if body:
             parts.append(body)
-    for art in await _run_scoped_artifacts(session, prev_agent_id, board_run_id):
+    for art in artifacts:
         parts.append(f"[{art.title}]\n{art.content}".strip())
     label = agent.title or f"Step agent {prev_agent_id}"
     if not parts:
@@ -801,8 +854,15 @@ async def _begin_run(
     workflow: Workflow,
     trigger: str,
     run_input: str | None = None,
+    *,
+    snapshot: tuple[str, str, str, WorkflowDefinition] | None = None,
 ) -> None:
-    """Open a fresh run-trace and point the workflow at it."""
+    """Open a fresh run-trace and point the workflow at it.
+
+    ``snapshot`` (files mode) is the workflow file the run executes: stored with
+    the run and pinned to it, so neither a later edit nor a restart changes what
+    this run runs.
+    """
     run = WorkflowRun(
         workflow_id=workflow.id,
         run_number=workflow.run_count or 1,
@@ -811,9 +871,17 @@ async def _begin_run(
         started_at=datetime.now(UTC),
         input=(run_input.strip()[:8000] or None) if run_input else None,
     )
+    if snapshot is not None:
+        run.definition_path, run.definition_hash, run.definition_snapshot, _ = snapshot
     session.add(run)
     await session.flush()
     workflow.current_run_id = run.id
+    if snapshot is not None and workflow.export_id:
+        path, digest, _text, defn = snapshot
+        definition_overlay.pin_run(workflow.export_id, run.id, defn, path, digest)
+    else:
+        # No version to pin: don't let a previous run's pin serve this one.
+        definition_overlay.release_pin(workflow.export_id)
 
 
 async def _step_output(
@@ -969,8 +1037,8 @@ async def _snapshot_step_overrides(run: AgentRun, workflow: Workflow, step: Work
     # happens to carry". Without this a narrow step would silently inherit a
     # scope it never asked for.
     run.mcp_servers = step.mcp_servers
-    if workflow.role_id is not None:
-        run.role_id = workflow.role_id
+    if workflow.role is not None:
+        run.role = workflow.role
     if workflow.approval_policy is not None:
         # The pipeline's tool-approval stance wins for the duration of the run.
         # On the run rather than the agent, so a shared agent keeps its own
@@ -1011,11 +1079,13 @@ async def _open_agent_run(
         use_memory=agent.use_memory,
         mcp_servers=agent.mcp_servers,
         approval_policy=agent.approval_policy,
-        role_id=agent.role_id,
+        role=agent.role,
         started_at=datetime.now(UTC),
     )
     if step is not None:
         await _snapshot_step_overrides(run, workflow, step)
+    if (source := definition_overlay.provenance(agent)) is not None:
+        run.definition_path, run.definition_hash = source
     session.add(run)
     await session.flush()
     agent.current_run_id = run.id
@@ -1208,6 +1278,9 @@ async def _finalize_run(
     run.status = status
     if status in ("completed", "failed", "cancelled"):
         run.finished_at = datetime.now(UTC)
+        # The run is over: its pinned file version goes (a retry restores it
+        # from the run's snapshot), and steps read the file as it is again.
+        definition_overlay.release_pin(workflow.export_id, run_id)
     else:
         # Re-opened (resumed or retried): a run that is going again hasn't
         # finished, and must not keep a stale outcome from the attempt that
@@ -1505,12 +1578,41 @@ async def start_workflow(
 
     Returns the updated workflow, or ``None`` if it has no runnable step. Safe to
     call on an idle/completed/draft workflow; refuses if already running.
+
+    In files mode the step rows are first brought in line with the workflow's
+    definition file; a file with errors raises :class:`DefinitionFileError`
+    instead of running the stale database copy.
     """
-    workflow = await _load_workflow(session, workflow_id)
+    synced = await definition_anchors.sync_workflow(session, workflow_id)
+    if synced.error is not None:
+        raise definition_anchors.DefinitionFileError(synced.error)
+    workflow = await _load_workflow(session, workflow_id, fresh=synced.changed)
     if workflow is None:
         return None
     if workflow.status == "running":
         return workflow
+    # Files mode: the run will execute exactly these bytes of its file, so they
+    # are what gets reviewed — not a scan that may be a moment older.
+    snapshot = definition_overlay.read_workflow_file(workflow)
+    if (
+        snapshot is None
+        and definition_overlay.files_mode()
+        and definition_overlay.linked_file(workflow) is not None
+    ):
+        # Deleted, moved or broken since the last scan: nothing to pin, and the
+        # database copy is no substitute.
+        raise definition_anchors.DefinitionFileError(
+            "its definition file couldn't be read just now; check it and start again"
+        )
+    if snapshot is not None and not definition_anchors.same_steps(workflow, snapshot[3]):
+        raise definition_anchors.DefinitionFileError(
+            f"{snapshot[0]} changed while the run was starting; start it again"
+        )
+    held = await definition_anchors.review_blockers(
+        session, workflow, snapshot[3] if snapshot is not None else None
+    )
+    if held is not None:
+        raise definition_anchors.DefinitionFileError(held)
 
     steps = _ordered_steps(workflow)
     first = _first_runnable(steps)
@@ -1543,7 +1645,7 @@ async def start_workflow(
     # its meaning at the *read* side instead (see ``_build_context``): set, a
     # step sees only this run's board; unset, it sees every run's.
 
-    await _begin_run(session, workflow, trigger, run_input)
+    await _begin_run(session, workflow, trigger, run_input, snapshot=snapshot)
     await session.commit()
     await _publish(workflow)
 
@@ -1905,6 +2007,10 @@ async def resume_workflow(
         return None
     if workflow.status != "paused":
         return workflow
+    if await definition_anchors.guard_continuation(session, workflow):
+        # Re-pinned: the rows loaded above were projected from the file as it
+        # is now, not from the version this run executes.
+        workflow = await _load_workflow(session, workflow_id, fresh=True) or workflow
 
     steps = _ordered_steps(workflow)
     current = next((s for s in steps if s.id == workflow.current_step_id), None)
@@ -2048,6 +2154,10 @@ async def retry_step(
     # live run would race the coordinator that is still driving it.
     if workflow.status not in ("failed", "cancelled"):
         return workflow
+    if await definition_anchors.guard_continuation(session, workflow):
+        # Re-pinned: the rows loaded above were projected from the file as it
+        # is now, not from the version this run executes.
+        workflow = await _load_workflow(session, workflow_id, fresh=True) or workflow
 
     steps = _ordered_steps(workflow)
     if not steps:
@@ -2356,7 +2466,8 @@ async def step_attempt_events(
             data = json.loads(payload)
         except (ValueError, TypeError):
             continue
-        if not isinstance(data, dict):
+        # Streaming frames archived before they stopped being kept render nothing.
+        if not isinstance(data, dict) or is_content_free(data.get("kind"), data.get("text")):
             continue
         # Older rows predate the payload carrying its own timestamp; fall back to
         # the row's so the UI can always order and label them.
@@ -2410,6 +2521,10 @@ async def approve_step(
         return None
     if workflow.status != "awaiting_approval":
         return workflow
+    if await definition_anchors.guard_continuation(session, workflow):
+        # Re-pinned: the rows loaded above were projected from the file as it
+        # is now, not from the version this run executes.
+        workflow = await _load_workflow(session, workflow_id, fresh=True) or workflow
 
     steps = _ordered_steps(workflow)
     idx = next((i for i, s in enumerate(steps) if s.id == workflow.current_step_id), None)
@@ -2461,6 +2576,12 @@ async def reject_step(
         return None
     if workflow.status != "awaiting_approval":
         return workflow
+    # Anything but stopping runs more steps. (A step that *declares* stop still
+    # goes through the guard, which only refuses a reshaped run.)
+    if action != "stop" and await definition_anchors.guard_continuation(session, workflow):
+        # Re-pinned: the rows loaded above were projected from the file as it
+        # is now, not from the version this run executes.
+        workflow = await _load_workflow(session, workflow_id, fresh=True) or workflow
 
     steps = _ordered_steps(workflow)
     idx = next((i for i, s in enumerate(steps) if s.id == workflow.current_step_id), None)
@@ -2562,15 +2683,32 @@ async def sweep_stalled_steps(session: AsyncSession, manager: AgentManager) -> i
     timeout = no watchdog). Returns how many runs it intervened in.
     """
     now = datetime.now(UTC)
-    result = await session.execute(
-        select(Workflow.id, Workflow.step_timeout_seconds).where(
-            Workflow.status == "running",
-            Workflow.step_timeout_seconds.is_not(None),
-            Workflow.current_run_id.is_not(None),
+    if definition_overlay.files_mode():
+        # The timeout is declared by each workflow's (pinned) file, not the
+        # column: load the rows so they're projected, and read it from there.
+        running = (
+            (
+                await session.execute(
+                    select(Workflow).where(
+                        Workflow.status == "running", Workflow.current_run_id.is_not(None)
+                    )
+                )
+            )
+            .scalars()
+            .all()
         )
-    )
+        candidates = [(w.id, w.step_timeout_seconds) for w in running]
+    else:
+        result = await session.execute(
+            select(Workflow.id, Workflow.step_timeout_seconds).where(
+                Workflow.status == "running",
+                Workflow.step_timeout_seconds.is_not(None),
+                Workflow.current_run_id.is_not(None),
+            )
+        )
+        candidates = list(result.tuples().all())
     swept = 0
-    for workflow_id, step_timeout in result.all():
+    for workflow_id, step_timeout in candidates:
         timeout = step_timeout or 0
         if timeout <= 0:
             continue

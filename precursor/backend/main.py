@@ -31,25 +31,31 @@ if TYPE_CHECKING:
 
 from precursor import __version__
 from precursor.backend.config import get_settings
-from precursor.backend.db import init_db
+from precursor.backend.db import SessionLocal, init_db
 from precursor.backend.plugins import discover
 from precursor.backend.routers import (
     agents,
+    approval_rules,
+    approvals,
+    artifacts,
     attachments,
     chat,
     chat_messages,
     chats,
     collections,
     commands,
+    definitions,
     drawio,
     events,
     github,
+    iq,
     issue,
     live,
     llm,
     mcp,
     me,
     memories,
+    openai_proxy,
     plugins,
     raw,
     refine,
@@ -59,6 +65,7 @@ from precursor.backend.routers import (
     settings,
     skills,
     stats,
+    steps,
     stt,
     summary,
     topic_summary,
@@ -68,7 +75,14 @@ from precursor.backend.routers import (
     workflows,
     workspaces,
 )
+from precursor.backend.services.definitions import overlay as definition_overlay
+from precursor.backend.services.definitions.migration import (
+    adopt_files_if_fresh,
+    backfill_role_files,
+)
+from precursor.backend.services.llm import ProviderConfigurationError
 from precursor.backend.services.llm.one_shot import LLMCallFailed
+from precursor.backend.services.roles import ensure_default_role_file
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +90,24 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await init_db()
+    async with SessionLocal() as session:
+        # Which source declares agents and workflows (the migration's choice).
+        await definition_overlay.refresh_source(session)
+        # A new install starts in files mode: nothing to migrate.
+        await adopt_files_if_fresh(session)
+        # An install already in files mode before roles became files.
+        await backfill_role_files(session)
+        # Files mode: roles live in the folder, where the default must exist.
+        ensure_default_role_file()
+        from precursor.backend.services.app_settings import resolve_agents_enabled
+        from precursor.backend.services.definitions.anchors import restore_pins
+        from precursor.backend.services.definitions.home import ensure_definitions_workspace
+
+        # The built-in "Agents & workflows" workspace, where Agents mode is used.
+        if definition_overlay.files_mode() or await resolve_agents_enabled(session):
+            await ensure_definitions_workspace(session)
+        # Files mode: runs in flight keep executing the version they started from.
+        await restore_pins(session)
     from precursor.backend.services.blob_store import gc_orphan_blobs
 
     try:
@@ -112,6 +144,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             logger.info("Pruned %d archived agent event(s) on startup", pruned_events.rows)
     except Exception:  # pragma: no cover - best-effort cleanup
         logger.warning("Agent-event retention sweep failed", exc_info=True)
+    if get_settings().iq_enabled:
+        from precursor.backend.services.iq import indexer as iq_indexer
+
+        try:
+            await iq_indexer.ensure_index_version()
+        except Exception:  # pragma: no cover - the index is derived; never fatal
+            logger.warning("Precursor IQ index bootstrap failed", exc_info=True)
     from precursor.backend.services.mcp.user_servers import hydrate_user_entries
 
     await hydrate_user_entries()
@@ -173,6 +212,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     backup_ticker = get_backup_ticker()
     await backup_ticker.start()
+    from precursor.backend.services.approval_expiry_ticker import get_approval_expiry_ticker
+
+    approval_expiry_ticker = get_approval_expiry_ticker()
+    await approval_expiry_ticker.start()
+    from precursor.backend.services.iq.ticker import get_iq_ticker
+
+    iq_ticker = get_iq_ticker()
+    await iq_ticker.start()
     from precursor.backend.services.mcp.workiq_keepalive import get_workiq_keepalive
 
     workiq_keepalive = get_workiq_keepalive()
@@ -204,6 +251,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await live_transcript_ticker.stop()
         await agent_event_ticker.stop()
         await backup_ticker.stop()
+        await approval_expiry_ticker.stop()
+        await iq_ticker.stop()
+        from precursor.backend.services.iq import indexer as iq_indexer
+
+        await iq_indexer.shutdown()
         await workiq_keepalive.stop()
         await mcp_warmup.stop()
         await agent_manager.stop()
@@ -355,6 +407,13 @@ def create_app() -> FastAPI:
             content={"detail": exc.detail},
         )
 
+    @app.exception_handler(ProviderConfigurationError)
+    async def _provider_configuration_failed(
+        _request: Request, exc: ProviderConfigurationError
+    ) -> JSONResponse:
+        logger.warning("LLM provider configuration: %s", exc)
+        return JSONResponse(status_code=422, content={"detail": str(exc)})
+
     @app.middleware("http")
     async def _client_id_middleware(request, call_next):  # type: ignore[no-untyped-def]
         # Tag this request with the originating window's id so events
@@ -370,11 +429,15 @@ def create_app() -> FastAPI:
         chat.router,
         chats.router,
         chat_messages.router,
+        approval_rules.router,
+        approvals.topic_router,
+        approvals.chat_router,
         attachments.router,
         settings.router,
         github.router,
         mcp.router,
         llm.router,
+        openai_proxy.router,
         summary.router,
         topic_summary.router,
         issue.router,
@@ -386,10 +449,14 @@ def create_app() -> FastAPI:
         memories.router,
         events.router,
         workspaces.router,
+        artifacts.router,
         reminders.router,
         agents.router,
         workflows.router,
+        steps.router,
+        steps.steps_router,
         transfer.router,
+        definitions.router,
         stt.router,
         live.router,
         raw.router,
@@ -400,6 +467,7 @@ def create_app() -> FastAPI:
         version.router,
         stats.router,
         search.router,
+        iq.router,
         refine.router,
     ):
         app.include_router(r)

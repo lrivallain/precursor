@@ -854,3 +854,72 @@ def test_a_finished_windows_update_is_reported_once(
     app._report_finished_update()
 
     assert notes == [("Precursor update failed", "No solution found\nC:/logs/update.log")]
+
+
+# --- the status item belongs to the main thread ------------------------------
+#
+# pystray's macOS backend touches the NSStatusItem from whichever thread asks,
+# and macOS traps (SIGTRAP, "trace trap") when that isn't the main thread — the
+# icon died on its first background refresh.
+
+
+class _RecordingIcon:
+    def __init__(self) -> None:
+        self.redraws: list[str] = []
+
+    def update_menu(self) -> None:
+        import threading
+
+        self.redraws.append(threading.current_thread().name)
+
+
+def _fake_app_helper(monkeypatch: pytest.MonkeyPatch) -> list[object]:
+    import types
+
+    queued: list[object] = []
+    tools = types.ModuleType("PyObjCTools")
+    helper = types.ModuleType("PyObjCTools.AppHelper")
+    helper.callAfter = queued.append  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "PyObjCTools", tools)
+    monkeypatch.setitem(sys.modules, "PyObjCTools.AppHelper", helper)
+    return queued
+
+
+def _refresh_off_main_thread(app: tray.TrayApp) -> None:
+    import threading
+
+    worker = threading.Thread(target=app._refresh, name="poll")
+    worker.start()
+    worker.join()
+
+
+def test_a_background_refresh_is_handed_to_the_main_thread_on_macos(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    queued = _fake_app_helper(monkeypatch)
+    monkeypatch.setattr(tray.sys, "platform", "darwin")
+    monkeypatch.setattr(tray, "_make_image", lambda _state: object())
+    app = _app(_running_at("2026.9.0"), monkeypatch)
+    icon = _RecordingIcon()
+    app._icon = icon
+
+    _refresh_off_main_thread(app)
+
+    assert icon.redraws == []
+    assert queued == [app._redraw]
+    queued.pop()()  # what the main run loop does with it
+    assert icon.redraws == ["MainThread"]
+
+
+def test_a_refresh_redraws_inline_off_macos(monkeypatch: pytest.MonkeyPatch) -> None:
+    queued = _fake_app_helper(monkeypatch)
+    monkeypatch.setattr(tray.sys, "platform", "linux")
+    monkeypatch.setattr(tray, "_make_image", lambda _state: object())
+    app = _app(_running_at("2026.9.0"), monkeypatch)
+    icon = _RecordingIcon()
+    app._icon = icon
+
+    _refresh_off_main_thread(app)
+
+    assert queued == []
+    assert icon.redraws == ["poll"]

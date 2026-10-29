@@ -8,6 +8,7 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from precursor.backend.models.message import MessageRole
+from precursor.backend.schemas.artifact import WorkspaceTurnContext
 
 
 class AttachmentRead(BaseModel):
@@ -51,15 +52,75 @@ class MessageCreate(BaseModel):
     content: str = Field(min_length=1)
 
 
+class MessageUpdate(BaseModel):
+    """A user edit of an assistant reply (see ``edit_container_message``)."""
+
+    content: str = Field(min_length=1, max_length=200_000)
+
+
+class CompactRequest(BaseModel):
+    """``/compact`` options: what the summary should focus on, if anything."""
+
+    instructions: str | None = Field(default=None, max_length=4000)
+
+
+class TurnIndexRead(BaseModel):
+    """One turn of the transcript timeline (see ``list_container_turns``)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    # The prompt opening the turn, and the last row before the next prompt.
+    message_id: int
+    last_message_id: int
+    created_at: datetime
+    prompt: str
+    # The first assistant text of the turn, empty while unanswered.
+    reply: str
+    has_compaction: bool
+    agent_session_id: int | None = None
+
+
+class RewindRequest(BaseModel):
+    """Drop the turn opened by ``from_message_id`` (a user prompt) and all later rows.
+
+    ``through_message_id``, when set, is the last row deleted: rows created after
+    the user confirmed the rewind are kept.
+    """
+
+    from_message_id: int
+    through_message_id: int | None = None
+
+
+class RewindResult(BaseModel):
+    deleted: int
+
+
+class ContextEstimateRead(BaseModel):
+    """Estimated history the next turn sends, and the system prompt and tools on top."""
+
+    tokens: int
+    by_role: dict[str, int]
+    saved_by_hygiene: int
+    messages: int
+    compacted: bool
+    compaction_id: int | None = None
+    compacted_messages: int = 0
+    system_tokens: int = 0
+    system_tools_tokens: int = 0
+    mcp_tools_tokens: int = 0
+
+
 class StoppedTurn(BaseModel):
     """What a user-stopped turn leaves behind, to persist as-is.
 
     ``content`` is the partial reply received so far; ``tool_call_ids`` name the
     calls of the latest tool round that never returned, recorded as stopped.
+    ``reasoning`` is the model's thinking streamed for that reply, kept with it.
     """
 
     content: str = ""
     tool_call_ids: list[str] = Field(default_factory=list, max_length=64)
+    reasoning: str = ""
 
     @model_validator(mode="after")
     def _something_to_save(self) -> StoppedTurn:
@@ -76,6 +137,14 @@ class MessageRead(BaseModel):
     chat_id: int | None = None
     role: MessageRole
     content: str
+    # Edited assistant replies: the model's answer before the user's edit, and
+    # when it was edited. Both NULL for untouched messages.
+    original_content: str | None = None
+    edited_at: datetime | None = None
+    # Special-row marker; "compaction" = a context-compaction summary.
+    kind: str | None = None
+    # The model's thinking for this assistant round, shown collapsed.
+    reasoning: str | None = None
     tool_calls: str | None = None
     agent_session_id: int | None = None
     # The linked agent's public (UUID) id — used by the UI for deep links and
@@ -85,6 +154,8 @@ class MessageRead(BaseModel):
     completion_tokens: int | None = None
     # The LLM model id that produced this assistant turn, surfaced in the UI.
     model: str | None = None
+    # Provider id that served this assistant turn.
+    provider: str | None = None
     # Wall-clock duration in ms the assistant turn took to generate.
     elapsed_ms: int | None = None
     created_at: datetime
@@ -127,6 +198,9 @@ class ChatRequest(BaseModel):
     # (partial answer, tool rows, the error notice). Attachments stay bound to
     # the message, so a retry keeps its images and documents.
     retry_message_id: int | None = None
+    # Set when the turn is held from the workspace panel: the file the user is
+    # viewing is injected into this turn's prompt only, never stored.
+    workspace_context: WorkspaceTurnContext | None = None
 
 
 class NotesRephraseRequest(BaseModel):

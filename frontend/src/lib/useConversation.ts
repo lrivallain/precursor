@@ -17,7 +17,7 @@ import {
   parseMemoryUpdateArg,
 } from "./commands";
 import { rolesStore } from "./rolesStore";
-import { skillsStore } from "./skillsStore";
+import { resolveSkillPrompt } from "./skillPrompt";
 import {
   containerFields,
   convKey,
@@ -27,9 +27,11 @@ import {
   type ConvKind,
 } from "./streamStore";
 import { failedTurnUserMessageId } from "./systemNotice";
+import { useApprovals, type ApprovalsController } from "./useApprovals";
 import { useChatScroll, type ChatScroll } from "./useChatScroll";
 import type { ComposerInput } from "./useComposerInput";
 import { useMessageDeletion, type MessageDeletion } from "./useMessageDeletion";
+import { useReplyEdit, type ReplyEditController } from "./useReplyEdit";
 import {
   useNotesDraft,
   type NotesDraftController,
@@ -37,9 +39,11 @@ import {
 } from "./useNotesDraft";
 import { usePendingAttachments } from "./usePendingAttachments";
 import { useReminders, type RemindersController } from "./useReminders";
+import { inCut, useRewind, type RewindController } from "./useRewind";
+import { useTurnTimeline, type TurnTimeline } from "./useTurnTimeline";
 import { useWindowedMessages } from "./useWindowedMessages";
 import type { ComposerAttachments } from "../components/Composer";
-import type { Message } from "./types";
+import type { Message, WorkspaceTurnContext } from "./types";
 
 /**
  * Erase a conversation's transcript and drop its client-side stream buffer, so a
@@ -52,6 +56,12 @@ export async function clearConversation(kind: ConvKind, id: number): Promise<voi
   streamStore.stop(key);
   await api.container(kind, id).clearMessages();
   streamStore.clear(key);
+}
+
+/** What a prompt's toolbar offers; `here` is absent on the latest turn (nothing to drop). */
+export interface PromptRewindActions {
+  here?: () => void;
+  edit: () => void;
 }
 
 export interface UseConversationOptions {
@@ -69,7 +79,12 @@ export interface UseConversationOptions {
   /** Refresh the sidebar Reminders section after a set / cancel / done. */
   onRemindersChanged?: () => void;
   /** Persist a role change for this conversation (null = default). */
-  onSetRole?: (roleId: number | null) => Promise<void>;
+  onSetRole?: (roleName: string | null) => Promise<void>;
+  /**
+   * Set while the conversation is viewed from the workspace panel: each turn
+   * carries the workspace (and open file) so the model sees them.
+   */
+  workspaceContext?: WorkspaceTurnContext | null;
   /** Topic-only: post the notes pad as a GitHub issue comment. */
   onPostComment?: UseNotesDraftOptions["onPostComment"];
 }
@@ -79,12 +94,16 @@ export interface Conversation {
   persisted: Message[];
   setPersisted: Dispatch<SetStateAction<Message[]>>;
   loadingOlder: boolean;
+  /** Older history exists above the loaded window. */
+  hasOlder: boolean;
   /** Persisted window merged with the live buffered turn. */
   messages: Message[];
   /** `messages` minus rows pending an undoable delete. */
   visibleMessages: Message[];
   streaming: boolean;
   pendingContent: string;
+  /** The model's thinking for the in-flight round, streamed ahead of its reply. */
+  pendingReasoning: string;
   /** The prompt to offer a Retry on, when the transcript ends on an error. */
   retryableId: number | null;
   userHistory: string[];
@@ -92,8 +111,26 @@ export interface Conversation {
   onScroll: ChatScroll["onScroll"];
   attachments: ComposerAttachments;
   deletion: Pick<MessageDeletion, "pendingDeletes" | "requestDeleteMessage" | "undoDelete">;
+  compaction: {
+    /** True while a `/compact` summary is being generated. */
+    compacting: boolean;
+    /** Id of the newest compaction marker; older rows are hidden from the model. */
+    markerId: number | null;
+    /** Summarise the conversation so far (`/compact [focus]`). */
+    run: (instructions?: string) => Promise<void>;
+  };
+  /** Tool calls the turn is parked on, awaiting the user's answer. */
+  approvals: ApprovalsController;
   notes: NotesDraftController;
+  /** In-place edits of assistant replies. */
+  replyEdit: ReplyEditController;
   reminders: RemindersController;
+  /** The turn index and scroll position behind the transcript timeline rail. */
+  timeline: TurnTimeline;
+  /** Return the conversation to an earlier turn (preview → confirm → undo grace). */
+  rewind: RewindController;
+  /** Rewind actions for a prompt that opens a turn, or undefined when unavailable. */
+  rewindActions: (m: Message) => PromptRewindActions | undefined;
   /** Whether the composer's role picker is open (a bare `/role` opens it). */
   roleOpen: boolean;
   setRoleOpen: Dispatch<SetStateAction<boolean>>;
@@ -119,6 +156,7 @@ export function useConversation({
   onUpdated,
   onRemindersChanged,
   onSetRole,
+  workspaceContext,
   onPostComment,
 }: UseConversationOptions): Conversation {
   const confirmAction = useConfirm();
@@ -147,6 +185,7 @@ export function useConversation({
     setPersisted,
   });
   const [roleOpen, setRoleOpen] = useState(false);
+  const [compacting, setCompacting] = useState(false);
   // Set while we handle a user-initiated Stop so the streaming→done effect
   // skips its own reload and lets stop() own the (post-persist) refresh.
   const stoppingRef = useRef(false);
@@ -157,16 +196,38 @@ export function useConversation({
   const streamKey = convKey(kind, id);
   const streaming = streamStore.isStreaming(streamKey);
   const pendingContent = streamStore.pendingContent(streamKey);
+  const pendingReasoning = streamStore.pendingReasoning(streamKey);
   const buffered = streamStore.bufferedMessages(streamKey);
   const hasSession = streamStore.hasSession(streamKey);
   const messages = useMemo<Message[]>(
     () => (hasSession ? mergeConversation(persisted, buffered) : persisted),
     [persisted, buffered, hasSession],
   );
+  const rewind = useRewind({
+    resetKey: streamKey,
+    rewind: (fromId, throughId) => containerApi.rewind(fromId, throughId),
+    setPersisted,
+    persistedRef: win.persistedRef,
+    draft: composer.draft,
+    setDraft: composer.setDraft,
+    streaming,
+    onSettled: () => {
+      void win.reloadMessages();
+      onUpdated();
+    },
+    onError: (message) => systemNote(message),
+  });
+  const rewound = rewind.hidden;
   const visibleMessages = useMemo<Message[]>(
-    () => messages.filter((m) => !hiddenIds.has(m.id)),
-    [messages, hiddenIds],
+    () => messages.filter((m) => !hiddenIds.has(m.id) && !inCut(m.id, rewound)),
+    [messages, hiddenIds, rewound],
   );
+  const compactionMarkerId = useMemo<number | null>(() => {
+    for (let i = visibleMessages.length - 1; i >= 0; i--) {
+      if (visibleMessages[i].kind === "compaction") return visibleMessages[i].id;
+    }
+    return null;
+  }, [visibleMessages]);
   // The prompt to offer a Retry on: set only while the transcript ends on an
   // error notice and nothing is streaming.
   const retryableId = useMemo<number | null>(
@@ -177,13 +238,46 @@ export function useConversation({
   // Reverse-infinite-scroll wiring lives in useWindowedMessages; bind the scroll
   // helpers back into the hook once useChatScroll has produced them.
   const { scrollRef, onScroll, captureTopAnchor, pinToBottom } = useChatScroll(
-    [messages, pendingContent],
+    [messages, pendingContent, pendingReasoning],
     win.onReachTop,
   );
   const { bindScroll, reloadMessages } = win;
   useEffect(() => {
     bindScroll({ captureTopAnchor, pinToBottom });
   }, [bindScroll, captureTopAnchor, pinToBottom]);
+
+  const approvals = useApprovals({
+    kind,
+    id,
+    streamKey,
+    containerApi,
+    streaming,
+    onUpdated,
+  });
+
+  const timeline = useTurnTimeline({
+    resetKey: streamKey,
+    listTurns: containerApi.listTurns,
+    scrollRef,
+    messages: visibleMessages,
+    streaming,
+    ensureLoaded: win.ensureLoaded,
+    hidden: rewound,
+  });
+
+  const turnIndexById = useMemo(
+    () => new Map(timeline.turns.map((t, i) => [t.message_id, i])),
+    [timeline.turns],
+  );
+  function rewindActions(m: Message): PromptRewindActions | undefined {
+    const index = turnIndexById.get(m.id);
+    if (index === undefined || streaming || rewind.pending) return undefined;
+    const { turns } = timeline;
+    return {
+      here: index < turns.length - 1 ? () => rewind.start(turns, index, "rewind") : undefined,
+      edit: () => rewind.start(turns, index, "edit"),
+    };
+  }
 
   const reminders = useReminders({
     container: kind,
@@ -202,9 +296,25 @@ export function useConversation({
       onUpdated();
     },
     startAppendAndAsk: (body, attachmentIds) =>
-      void streamStore.start(streamKey, body, undefined, undefined, attachmentIds),
+      void streamStore.start(
+        streamKey,
+        body,
+        undefined,
+        undefined,
+        attachmentIds,
+        workspaceContext ?? undefined,
+      ),
     onPostComment,
     systemNote,
+  });
+
+  const replyEdit = useReplyEdit({
+    resetKey: streamKey,
+    editMessage: containerApi.editMessage,
+    setPersisted,
+    confirm: (message) => confirmAction({ message, confirmLabel: "Restore original" }),
+    onSaved: onUpdated,
+    onError: (message) => systemNote(message),
   });
 
   const userHistory = useMemo(
@@ -226,7 +336,9 @@ export function useConversation({
         streamStore.hasSession(streamKey) &&
         !streamStore.isStreaming(streamKey)
       ) {
+        const error = streamStore.requestError(streamKey);
         streamStore.clear(streamKey);
+        if (error) systemNote(`Error: ${error}`);
       }
     })();
     return () => {
@@ -251,10 +363,12 @@ export function useConversation({
       return;
     }
     let cancelled = false;
+    const error = streamStore.requestError(streamKey);
     void (async () => {
       const msgs = await reloadMessages();
       if (cancelled || msgs === null) return;
       streamStore.clear(streamKey);
+      if (error) systemNote(`Error: ${error}`);
       onUpdated();
     })();
     return () => {
@@ -292,6 +406,9 @@ export function useConversation({
     const content = draft.trim();
     const hasAttachments = pendingAttachments.length > 0;
     if ((!content && !hasAttachments) || streaming) return;
+    // The new prompt must land after a pending rewind's cut; if the cut didn't
+    // happen, keep the draft rather than send it onto the old history.
+    if (!(await rewind.flush())) return;
     pinToBottom();
     if (speech.listening) speech.stop();
 
@@ -304,38 +421,37 @@ export function useConversation({
       }
       return;
     }
-    if (cmd) {
-      const skill = skillsStore.byName(cmd.name);
-      if (skill) {
-        setDraft("");
-        const expanded = `${skill.instructions.trim()}\n\n---\n\n${skillsStore.expandReferences(cmd.argument)}`;
-        const atts = pendingAttachments;
-        setPendingAttachments([]);
-        // Persist the literal slash command as the user message;
-        // the LLM receives the expanded prompt for this turn only.
-        void streamStore.start(streamKey, content, expanded, atts);
-        return;
-      }
-    }
-
     setDraft("");
     const atts = pendingAttachments;
     setPendingAttachments([]);
-    // No leading skill command, but a `/skill-name` may appear mid-prompt: send
-    // the expanded text to the LLM while the transcript keeps what was typed.
-    const inlined = content ? skillsStore.expandReferences(content) : content;
+    // The transcript keeps what was typed; the LLM receives the skill-expanded
+    // prompt for this turn only.
+    const resolved = resolveSkillPrompt(content, parseCommand);
     void streamStore.start(
       streamKey,
-      content || "(attachment attached)",
-      inlined && inlined !== content ? inlined : undefined,
+      resolved.content,
+      resolved.promptOverride,
       atts,
+      undefined,
+      workspaceContext ?? undefined,
     );
   }
 
   function sendSuggestion(text: string): void {
     if (streaming || !text.trim()) return;
     pinToBottom();
-    void streamStore.start(streamKey, text.trim());
+    void rewind.flush().then((ok) => {
+      if (ok) {
+        void streamStore.start(
+          streamKey,
+          text.trim(),
+          undefined,
+          undefined,
+          undefined,
+          workspaceContext ?? undefined,
+        );
+      }
+    });
   }
 
   /**
@@ -351,7 +467,19 @@ export function useConversation({
     // Client-side notes carry negative ids and are left alone.
     setPersisted((prev) => prev.filter((p) => p.id < m.id));
     streamStore.clear(streamKey);
-    void streamStore.retry(streamKey, m.id, m.content, m.attachments);
+    void rewind
+      .flush()
+      .then((ok) => {
+        if (ok) {
+          void streamStore.retry(
+            streamKey,
+            m.id,
+            m.content,
+            m.attachments,
+            workspaceContext ?? undefined,
+          );
+        }
+      });
   }
 
   function stop(): void {
@@ -363,6 +491,7 @@ export function useConversation({
     // suppresses the streaming→done effect's reload so this handler owns the
     // post-persist refresh.
     const partial = streamStore.pendingContent(streamKey).trim();
+    const reasoning = streamStore.pendingReasoning(streamKey).trim();
     stoppingRef.current = true;
     const stoppedCalls = streamStore.stop(streamKey);
     void (async () => {
@@ -370,6 +499,7 @@ export function useConversation({
         if (partial || stoppedCalls.length > 0) {
           await containerApi.saveStopped({
             ...(partial ? { content: `${partial}\n\n_(stopped)_` } : {}),
+            ...(partial && reasoning ? { reasoning } : {}),
             ...(stoppedCalls.length > 0 ? { tool_call_ids: stoppedCalls } : {}),
           });
         }
@@ -413,6 +543,9 @@ export function useConversation({
       case "clear":
         await runClear();
         return true;
+      case "compact":
+        await runCompact(argument);
+        return true;
       default:
         return false;
     }
@@ -433,6 +566,25 @@ export function useConversation({
       onUpdated();
     } catch (err) {
       systemNote(`Clear failed: ${(err as Error).message}`);
+    }
+  }
+
+  async function runCompact(instructions?: string): Promise<void> {
+    if (compacting) return;
+    if (streaming) {
+      systemNote("Wait for the reply to finish before compacting.");
+      return;
+    }
+    setCompacting(true);
+    try {
+      await containerApi.compact(instructions);
+      await reloadMessages();
+      pinToBottom();
+      onUpdated();
+    } catch (err) {
+      systemNote(`Compaction failed: ${(err as Error).message}`);
+    } finally {
+      setCompacting(false);
     }
   }
 
@@ -481,7 +633,7 @@ export function useConversation({
       return;
     }
     try {
-      await onSetRole?.(role.is_default ? null : role.id);
+      await onSetRole?.(role.is_default ? null : role.name);
       systemNote(`Assistant role set to "${role.name}".`);
     } catch (err) {
       systemNote(`Role change failed: ${(err as Error).message}`);
@@ -493,10 +645,12 @@ export function useConversation({
     persisted,
     setPersisted,
     loadingOlder,
+    hasOlder: win.hasMoreOlder,
     messages,
     visibleMessages,
     streaming,
     pendingContent,
+    pendingReasoning,
     retryableId,
     userHistory,
     scrollRef,
@@ -509,8 +663,14 @@ export function useConversation({
       onRemove: removeAttachment,
     },
     deletion: { pendingDeletes, requestDeleteMessage, undoDelete },
+    compaction: { compacting, markerId: compactionMarkerId, run: runCompact },
+    approvals,
     notes,
+    replyEdit,
     reminders,
+    timeline,
+    rewind,
+    rewindActions,
     roleOpen,
     setRoleOpen,
     send,

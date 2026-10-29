@@ -12,6 +12,8 @@ Three differences matter for the translation done here:
   instead of an assistant field plus a ``tool`` message;
 * tool definitions are flat — no nested ``function`` object;
 * reasoning effort is ``reasoning={"effort": ...}``, not ``reasoning_effort``.
+  The same object asks for a reasoning *summary*, the only view of the model's
+  thinking this API streams.
 
 Streaming emits semantic events (``response.output_text.delta``, …) instead of
 choice deltas. This module folds them back into Precursor's provider events so
@@ -20,7 +22,7 @@ callers can't tell which endpoint served the turn.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from typing import Any
 
 from openai import AsyncOpenAI
@@ -29,6 +31,7 @@ from precursor.backend.services.llm._openai_compat import open_stream_with_retry
 from precursor.backend.services.llm.base import (
     ChatMessage,
     ProviderEvent,
+    ReasoningDeltaEvent,
     TextDeltaEvent,
     ToolCallRequest,
     ToolCallsEvent,
@@ -104,6 +107,51 @@ def to_responses_tools(tools: Sequence[ToolDef]) -> list[dict[str, Any]]:
     ]
 
 
+# Chat-completions request options this API takes under the same name.
+_SAME_NAME_OPTIONS = ("temperature", "top_p", "parallel_tool_calls")
+
+
+def to_responses_options(options: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Translate chat-completions request options to their Responses spelling.
+
+    Options with no Responses equivalent (``stop``, ``seed``, the penalties) are
+    dropped: the caller asked for a chat-completions model and this is the best
+    rendition of that request, not a place to fail it.
+    """
+    if not options:
+        return {}
+    out: dict[str, Any] = {k: options[k] for k in _SAME_NAME_OPTIONS if k in options}
+
+    max_tokens = options.get("max_completion_tokens", options.get("max_tokens"))
+    if max_tokens is not None:
+        out["max_output_tokens"] = max_tokens
+
+    choice = options.get("tool_choice")
+    if isinstance(choice, str):
+        out["tool_choice"] = choice
+    elif isinstance(choice, dict):
+        name = (choice.get("function") or {}).get("name")
+        if name:
+            out["tool_choice"] = {"type": "function", "name": name}
+
+    fmt = options.get("response_format")
+    if isinstance(fmt, dict):
+        kind = fmt.get("type")
+        if kind == "json_object":
+            out["text"] = {"format": {"type": "json_object"}}
+        elif kind == "json_schema":
+            spec = fmt.get("json_schema") or {}
+            out["text"] = {
+                "format": {
+                    "type": "json_schema",
+                    **{
+                        k: spec[k] for k in ("name", "description", "schema", "strict") if k in spec
+                    },
+                }
+            }
+    return out
+
+
 async def stream_responses_tools(
     *,
     client: AsyncOpenAI,
@@ -111,6 +159,7 @@ async def stream_responses_tools(
     messages: Sequence[ChatMessage],
     tools: Sequence[ToolDef],
     reasoning_effort: str | None = None,
+    request_options: Mapping[str, Any] | None = None,
 ) -> AsyncIterator[ProviderEvent]:
     """Run a tool-aware streamed turn against the Responses API.
 
@@ -119,14 +168,18 @@ async def stream_responses_tools(
     marker close the turn.
     """
     kwargs: dict[str, Any] = {
+        **to_responses_options(request_options),
         "model": model,
         "input": to_responses_input(messages),
         "stream": True,
     }
     if tools:
         kwargs["tools"] = to_responses_tools(tools)
+    # Always ask for the summary: models that don't reason just stream none.
+    reasoning: dict[str, str] = {"summary": "auto"}
     if reasoning_effort:
-        kwargs["reasoning"] = {"effort": reasoning_effort}
+        reasoning["effort"] = reasoning_effort
+    kwargs["reasoning"] = reasoning
 
     stream = await open_stream_with_retry(
         lambda: client.responses.create(**kwargs), tool_count=len(tools)
@@ -135,6 +188,7 @@ async def stream_responses_tools(
     calls: list[ToolCallRequest] = []
     usage: UsageEvent | None = None
     status: str | None = None
+    reasoned = False
 
     async for event in stream:
         etype = getattr(event, "type", "")
@@ -143,6 +197,20 @@ async def stream_responses_tools(
             delta = getattr(event, "delta", "")
             if delta:
                 yield TextDeltaEvent(content=delta)
+            continue
+
+        if etype == "response.reasoning_summary_text.delta":
+            delta = getattr(event, "delta", "")
+            if delta:
+                reasoned = True
+                yield ReasoningDeltaEvent(content=delta)
+            continue
+
+        # Each summary part opens with its own bold heading; without a break
+        # between them the next heading would run on from the last sentence.
+        if etype == "response.reasoning_summary_part.added":
+            if reasoned:
+                yield ReasoningDeltaEvent(content="\n\n")
             continue
 
         # Tool calls stream their arguments piecewise, but the completed item

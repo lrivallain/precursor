@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 
@@ -37,6 +37,10 @@ class LLMModel:
     # reasoning-capable or the provider doesn't advertise the set — the UI hides
     # the effort picker in that case.
     supported_reasoning_efforts: list[str] = field(default_factory=list)
+    # Largest reply the model can produce, ``None`` when not advertised.
+    max_output_tokens: int | None = None
+    # Whether the model accepts image input, as far as the provider tells us.
+    vision: bool = False
 
 
 @dataclass(slots=True)
@@ -60,6 +64,18 @@ class ToolCallRequest:
 @dataclass(slots=True)
 class TextDeltaEvent:
     kind: Literal["text"] = "text"
+    content: str = ""
+
+
+@dataclass(slots=True)
+class ReasoningDeltaEvent:
+    """A streamed chunk of the model's thinking, shown apart from the answer.
+
+    Usually a provider-written summary rather than the raw chain of thought, and
+    never fed back to the model on a later turn.
+    """
+
+    kind: Literal["reasoning"] = "reasoning"
     content: str = ""
 
 
@@ -89,7 +105,15 @@ class UsageEvent:
     total_tokens: int = 0
 
 
-ProviderEvent = TextDeltaEvent | ToolCallsEvent | TurnDoneEvent | UsageEvent
+@dataclass(frozen=True, slots=True)
+class EmbeddingResult:
+    """Vectors for a batch of texts, in input order, plus billed input tokens."""
+
+    vectors: list[list[float]]
+    prompt_tokens: int = 0
+
+
+ProviderEvent = TextDeltaEvent | ReasoningDeltaEvent | ToolCallsEvent | TurnDoneEvent | UsageEvent
 
 
 class LLMError(Exception):
@@ -125,12 +149,18 @@ class LLMProvider(Protocol):
         messages: Sequence[ChatMessage],
         tools: Sequence[ToolDef],
         reasoning_effort: str | None = None,
+        request_options: Mapping[str, Any] | None = None,
     ) -> AsyncIterator[ProviderEvent]:
         """Yield typed events for a tool-capable assistant reply.
 
         The chat router consumes this in a loop: collect text + tool calls,
         execute the calls, append ``tool`` messages, call again until the
         model returns no further tool calls.
+
+        ``request_options`` carries extra sampling / output controls in
+        chat-completions vocabulary (``temperature``, ``tool_choice``,
+        ``response_format``…). Only the OpenAI-compatible endpoint sets them;
+        providers forward what their API understands and drop the rest.
         """
         ...
 

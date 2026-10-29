@@ -85,7 +85,9 @@ than guessing.
 Entry points are resolved once at startup and routes are mounted while the app is
 built, so a package imported into the live process would be only half installed.
 Precursor runs the installer out-of-process and offers a **Restart now** button.
-Disabling, by contrast, is instant.
+Disabling, by contrast, is instant. A disabled or uninstalled plugin's MCP
+server stops being offered to the assistant, but its on/off switch is
+remembered, so it comes back as you left it when the plugin does.
 :::
 
 ::: warning Installing is opt-in

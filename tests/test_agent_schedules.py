@@ -14,6 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from precursor.backend.main import create_app
+from precursor.backend.services.scheduler import Scheduler
 
 
 @pytest.fixture(autouse=True)
@@ -26,10 +27,11 @@ def _cleanup_agents() -> object:
         from sqlalchemy import delete
 
         from precursor.backend.db import SessionLocal
-        from precursor.backend.models import AgentSchedule, AgentSession
+        from precursor.backend.models import AgentEventRecord, AgentSchedule, AgentSession
 
         async with SessionLocal() as session:
             await session.execute(delete(AgentSchedule))
+            await session.execute(delete(AgentEventRecord))
             await session.execute(delete(AgentSession))
             await session.commit()
 
@@ -92,7 +94,12 @@ def test_agent_schedule_crud() -> None:
         assert client.get(f"/api/agents/{agent_id}").status_code == 200
 
 
-def test_agent_schedule_run_now_pulls_forward() -> None:
+def test_agent_schedule_run_now_pulls_forward(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Only the route is under test; see test_topic_schedule_run_now_posts_notice.
+    async def _no_run(_self: Scheduler, _agent_id: int) -> None:
+        return None
+
+    monkeypatch.setattr(Scheduler, "_run_one_agent", _no_run)
     app = create_app()
     with TestClient(app) as client:
         agent_id = asyncio.run(_make_agent())

@@ -152,7 +152,9 @@ continues to search the whole fleet, ordered by urgency.
 
 While an agent is working, its card shows the **current tool** it is running (and
 a `×N parallel` count when several run at once) plus the agent's own **live
-narration** — the first plain-language line of the message it is streaming. A
+narration** — the first plain-language line of the message it is streaming. While
+the model is [thinking](/features/agents-mode/running#watching-an-agent-think),
+the card shows a pulsing *Thinking…* line with the step it is on instead. A
 backgrounded agent therefore reads as "what it is doing now" in its own words.
 
 Click any card to drop into that agent's

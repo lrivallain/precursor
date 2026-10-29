@@ -11,12 +11,13 @@ type Listener = () => void;
 const STALE_AFTER_MS = 5 * 60 * 1000;
 
 class ModelsStore {
-  private models: LLMModel[] = [];
-  private byId = new Map<string, LLMModel>();
+  private catalogs = new Map<string, { models: LLMModel[]; fetchedAt: number }>();
+  private errors = new Map<string, string>();
+  private provider = "github_copilot";
   private currentId: string | null = null;
-  private loaded = false;
-  private fetchedAt = 0;
-  private loading: Promise<void> | null = null;
+  private loading = new Map<string, Promise<void>>();
+  private generations = new Map<string, number>();
+  private requests = new Map<string, symbol>();
   private version = 0;
   private listeners = new Set<Listener>();
 
@@ -34,13 +35,21 @@ class ModelsStore {
     for (const l of this.listeners) l();
   }
 
-  all(): LLMModel[] {
-    return this.models;
+  all(provider = this.provider): LLMModel[] {
+    return this.catalogs.get(provider)?.models ?? [];
   }
 
-  byIdOrNull(id: string | null | undefined): LLMModel | null {
+  hasLoaded(provider: string): boolean {
+    return this.catalogs.has(provider);
+  }
+
+  byIdOrNull(id: string | null | undefined, provider = this.provider): LLMModel | null {
     if (!id) return null;
-    return this.byId.get(id) ?? null;
+    return this.all(provider).find((model) => model.id === id) ?? null;
+  }
+
+  error(provider: string): string | null {
+    return this.errors.get(provider) ?? null;
   }
 
   current(): LLMModel | null {
@@ -54,41 +63,59 @@ class ModelsStore {
   }
 
   applySettings(settings: Settings | null | undefined): void {
-    this.setCurrent(settings?.llm_model ?? null);
+    if (settings && this.provider !== settings.llm_provider) {
+      this.provider = settings.llm_provider;
+      this.notify();
+    }
+    this.setCurrent((settings?.llm_model_category ? settings.llm_category_preset?.model : null) ?? settings?.llm_model ?? null);
   }
 
   /** Seed the catalog from a list a caller already fetched. */
-  adopt(list: LLMModel[]): void {
-    this.models = list;
-    this.byId = new Map(list.map((m) => [m.id, m]));
-    this.loaded = true;
-    this.fetchedAt = Date.now();
+  adopt(list: LLMModel[], provider = this.provider): void {
+    this.generations.set(provider, (this.generations.get(provider) ?? 0) + 1);
+    this.catalogs.set(provider, { models: list, fetchedAt: Date.now() });
+    this.errors.delete(provider);
     this.notify();
   }
 
-  async load(): Promise<void> {
-    if (this.loading) return this.loading;
-    this.loading = (async () => {
+  async load(provider = this.provider): Promise<void> {
+    const pending = this.loading.get(provider);
+    if (pending) return pending;
+    const generation = this.generations.get(provider) ?? 0;
+    const token = Symbol();
+    this.requests.set(provider, token);
+    const request = (async () => {
       try {
-        const list = await api.llm.listModels();
-        this.adopt(list);
+        const list = await api.llm.listModels(provider);
+        if ((this.generations.get(provider) ?? 0) === generation) this.adopt(list, provider);
       } catch (err) {
-        // Provider may not be configured; that's OK, just leave list empty.
+        if ((this.generations.get(provider) ?? 0) === generation) {
+          this.catalogs.delete(provider);
+          this.errors.set(provider, err instanceof Error ? err.message : String(err));
+          this.notify();
+        }
         console.warn("Failed to load model catalog", err);
       } finally {
-        this.loading = null;
+        if (this.requests.get(provider) === token) {
+          this.loading.delete(provider);
+          this.requests.delete(provider);
+        }
       }
     })();
-    return this.loading;
+    this.loading.set(provider, request);
+    return request;
   }
 
   /** Force a catalog refetch — use after the provider or its token changes. */
-  async refresh(): Promise<void> {
-    return this.load();
+  async refresh(provider = this.provider): Promise<void> {
+    this.generations.set(provider, (this.generations.get(provider) ?? 0) + 1);
+    this.loading.delete(provider);
+    return this.load(provider);
   }
 
-  async ensureLoaded(): Promise<void> {
-    if (!this.loaded || Date.now() - this.fetchedAt > STALE_AFTER_MS) await this.load();
+  async ensureLoaded(provider = this.provider): Promise<void> {
+    const catalog = this.catalogs.get(provider);
+    if (!catalog || Date.now() - catalog.fetchedAt > STALE_AFTER_MS) await this.load(provider);
   }
 }
 

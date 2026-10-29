@@ -9,6 +9,8 @@ export const SECTION_LABELS: Record<CoreSidebarMode, string> = {
   workspaces: "Files",
   agents: "Agents",
   workflows: "Workflows",
+  steps: "Step by step",
+  iq: "IQ",
 };
 
 /** Display name for any section — core or plugin-contributed. */
@@ -101,6 +103,26 @@ export const SECTION_COLORS: Record<CoreSidebarMode, SectionColor> = {
     accentText: "text-indigo-600 dark:text-indigo-400",
     activeTab: "bg-indigo-500/15 text-indigo-600 dark:text-indigo-400",
     hoverTab: "hover:bg-indigo-500/10 hover:text-indigo-600 dark:hover:text-indigo-400",
+  },
+  steps: {
+    icon: "bg-teal-500/10 text-teal-600 dark:text-teal-400",
+    activeCard: "border-teal-500/60 bg-teal-500/10",
+    hoverCard: "hover:border-teal-500/50 hover:bg-teal-500/5",
+    primaryBtn:
+      "bg-teal-500/15 text-teal-700 hover:bg-teal-500/25 dark:text-teal-300 border border-teal-500/30",
+    accentText: "text-teal-600 dark:text-teal-400",
+    activeTab: "bg-teal-500/15 text-teal-600 dark:text-teal-400",
+    hoverTab: "hover:bg-teal-500/10 hover:text-teal-600 dark:hover:text-teal-400",
+  },
+  iq: {
+    icon: "bg-fuchsia-500/10 text-fuchsia-600 dark:text-fuchsia-400",
+    activeCard: "border-fuchsia-500/60 bg-fuchsia-500/10",
+    hoverCard: "hover:border-fuchsia-500/50 hover:bg-fuchsia-500/5",
+    primaryBtn:
+      "bg-fuchsia-500/15 text-fuchsia-700 hover:bg-fuchsia-500/25 dark:text-fuchsia-300 border border-fuchsia-500/30",
+    accentText: "text-fuchsia-600 dark:text-fuchsia-400",
+    activeTab: "bg-fuchsia-500/15 text-fuchsia-600 dark:text-fuchsia-400",
+    hoverTab: "hover:bg-fuchsia-500/10 hover:text-fuchsia-600 dark:hover:text-fuchsia-400",
   },
 };
 

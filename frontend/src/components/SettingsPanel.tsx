@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   X,
   ChevronDown,
@@ -17,6 +17,7 @@ import {
   Brain,
   SlidersHorizontal,
   Workflow as WorkflowIcon,
+  FileCode2,
   Mic,
   BarChart3,
   Bot,
@@ -24,6 +25,7 @@ import {
   RefreshCw,
   HardDriveDownload,
   Layers,
+  ListOrdered,
 } from "lucide-react";
 import { GithubIcon as Github } from "./icons/GithubIcon";
 import { api } from "../lib/api";
@@ -33,11 +35,13 @@ import { signInWorkiq } from "../lib/workiqSignIn";
 import { setTheme, getStoredTheme, type Theme } from "../lib/theme";
 import { setFont, getStoredFont, FONT_OPTIONS, type FontChoice } from "../lib/font";
 import { modelsStore } from "../lib/modelsStore";
+import { ProviderConfigurationBadge } from "./ProviderConfigurationBadge";
 import { settingsStore } from "../lib/settingsStore";
 import {
   notificationsSupported,
   requestNotificationPermission,
 } from "../lib/notifications";
+import { playCompletionSound } from "../lib/sound";
 import type {
   BackupRunResult,
   LLMModel,
@@ -46,10 +50,14 @@ import type {
   MCPServerCreate,
   MCPServerUpdate,
   Me,
+  ConversationApprovalPolicy,
   Settings,
 } from "../lib/types";
 import { useConfirm } from "./ConfirmDialog";
+import { ApprovalRulesSection } from "./ApprovalRulesSection";
 import { Select } from "./Select";
+import { CONVERSATION_APPROVAL_POLICIES } from "../lib/approvalPolicies";
+import { DeploymentNamesInput } from "./DeploymentNamesInput";
 import { SidebarTabs } from "./SidebarTabs";
 import { SkillsTab } from "./SkillsTab";
 import { RolesTab } from "./RolesTab";
@@ -61,6 +69,10 @@ import { PluginsSettings } from "./PluginsSettings";
 import { resolveSettingsPages } from "../lib/plugins";
 import { usePluginDescriptors } from "../lib/pluginStore";
 import { WorkflowsSettings } from "./WorkflowsSettings";
+import { OpenAIProxySettings } from "./OpenAIProxySettings";
+import { IQSettings } from "./IQSettings";
+import { PresetsSettings } from "./PresetsSettings";
+import { DefinitionsMigrationWizard } from "./DefinitionsMigrationWizard";
 
 interface Props {
   onClose: () => void;
@@ -74,6 +86,8 @@ interface Props {
 interface SystemSettings {
   llm_max_input_tokens: number;
   llm_max_tool_result_tokens: number;
+  llm_tool_result_keep_turns: number;
+  llm_max_attachment_chars: number;
   scheduled_run_timeout_seconds: number;
   tool_result_retention_days: number;
   cmd_runner_jail: boolean;
@@ -90,6 +104,8 @@ function pickSystem(s: Settings): SystemSettings {
   return {
     llm_max_input_tokens: s.llm_max_input_tokens,
     llm_max_tool_result_tokens: s.llm_max_tool_result_tokens,
+    llm_tool_result_keep_turns: s.llm_tool_result_keep_turns,
+    llm_max_attachment_chars: s.llm_max_attachment_chars,
     scheduled_run_timeout_seconds: s.scheduled_run_timeout_seconds,
     tool_result_retention_days: s.tool_result_retention_days,
     cmd_runner_jail: s.cmd_runner_jail,
@@ -114,16 +130,19 @@ type CoreCategory =
   | "appearance"
   | "chat"
   | "model"
+  | "presets"
   | "github"
   | "speech"
   | "live"
   | "mcp"
+  | "iq"
   | "skills"
   | "roles"
   | "collections"
   | "memory"
   | "agents"
   | "workflows"
+  | "definitions"
   | "plugins"
   | "stats"
   | "backup"
@@ -163,16 +182,19 @@ const CATEGORIES: ReadonlyArray<CategoryDef> = [
   { id: "appearance", label: "Appearance", icon: Palette, group: "App" },
   { id: "chat", label: "Chat", icon: MessageSquare, group: "App" },
   { id: "model", label: "Model", icon: Cpu, group: "App" },
+  { id: "presets", label: "Presets", icon: ListOrdered, group: "App" },
   { id: "github", label: "GitHub", icon: Github, group: "Integrations" },
   { id: "speech", label: "Speech-to-text", icon: Mic, group: "Integrations" },
   { id: "live", label: "Live", icon: Radio, group: "Integrations" },
   { id: "mcp", label: "MCP servers", icon: Plug, group: "Integrations" },
+  { id: "iq", label: "Precursor IQ", icon: Sparkles, group: "Integrations" },
   { id: "skills", label: "Skills", icon: Sparkles, group: "Extensions" },
   { id: "roles", label: "Roles", icon: Drama, group: "Extensions" },
   { id: "collections", label: "Collections", icon: Layers, group: "Extensions" },
   { id: "memory", label: "Memory", icon: Brain, group: "Extensions" },
   { id: "agents", label: "Agents", icon: Bot, group: "Extensions" },
   { id: "workflows", label: "Workflows", icon: WorkflowIcon, group: "Extensions" },
+  { id: "definitions", label: "Definition files", icon: FileCode2, group: "Extensions" },
   { id: "plugins", label: "Plugins", icon: Puzzle, group: "Extensions" },
   { id: "stats", label: "Usage stats", icon: BarChart3, group: "Advanced" },
   { id: "backup", label: "Backup", icon: HardDriveDownload, group: "Advanced" },
@@ -206,7 +228,7 @@ const FONT_PREVIEW_STACKS: Record<FontChoice, string | undefined> = {
   lexend: '"Lexend", sans-serif',
 };
 
-export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }: Props) {
+export function SettingsPanel({ onClose: closeNow, initialCategory, onCollectionsChanged }: Props) {
   const confirmAction = useConfirm();
   const [category, setCategory] = useState<Category>(initialCategory ?? "appearance");
   // Settings pages contributed by installed plugins, appended as their own group.
@@ -240,8 +262,14 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
   const [models, setModels] = useState<LLMModel[]>([]);
   const [modelsError, setModelsError] = useState<string | null>(null);
   const [modelsLoading, setModelsLoading] = useState(false);
+  const modelsRequest = useRef(0);
+  useEffect(() => () => { modelsRequest.current++; }, []);
   const [provider, setProvider] = useState("");
+  const [defaultProvider, setDefaultProvider] = useState("");
+  const [defaultModel, setDefaultModel] = useState("");
+  const [defaultModels, setDefaultModels] = useState<LLMModel[]>([]);
   const [providers, setProviders] = useState<LLMProviderSpec[]>([]);
+  const [modelFallbacks, setModelFallbacks] = useState<Settings["model_fallbacks"]>({ categories: [] });
   const [providerConfig, setProviderConfig] = useState<
     Record<string, Record<string, string>>
   >({});
@@ -257,6 +285,7 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
   // Auto-naming a fresh chat from its first message, and the model that does it
   // ("" = the default chat model).
   const [chatAutonameEnabled, setChatAutonameEnabled] = useState(true);
+  const [mockEnabled, setMockEnabled] = useState(true);
   const [chatAutonameModel, setChatAutonameModel] = useState("");
   const [sttTest, setSttTest] = useState<
     { state: "idle" | "testing" | "ok" | "error"; detail?: string }
@@ -264,9 +293,13 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
   const [ttlMinutes, setTtlMinutes] = useState(60);
   const [showChatStats, setShowChatStats] = useState(true);
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
+  const [completionSoundEnabled, setCompletionSoundEnabled] = useState(false);
   const [maxToolRounds, setMaxToolRounds] = useState(15);
+  const [scheduledApprovalTimeout, setScheduledApprovalTimeout] = useState(60);
+  const [topicApprovalPolicy, setTopicApprovalPolicy] = useState<ConversationApprovalPolicy>("autonomous");
+  const [chatApprovalPolicy, setChatApprovalPolicy] = useState<ConversationApprovalPolicy>("autonomous");
   const [issueAssociationsEnabled, setIssueAssociationsEnabled] = useState(true);
-  // Folder backup (DB + blobs) — editable prefs plus a manual "run now" action.
+  // Folder backup (DB + blobs + definitions) — editable prefs plus a manual "run now" action.
   const [backupEnabled, setBackupEnabled] = useState(false);
   const [backupDir, setBackupDir] = useState("");
   const [backupRetention, setBackupRetention] = useState(7);
@@ -284,6 +317,7 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
   // Browser channel the built-in Playwright MCP server drives (MCP tab).
   const [playwrightBrowser, setPlaywrightBrowser] = useState("msedge");
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [mcpEditing, setMcpEditing] = useState<MCPServerStatus | "new" | null>(null);
   const [me, setMe] = useState<Me | null>(null);
   const [appVersion, setAppVersion] = useState<string | null>(null);
@@ -340,22 +374,28 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
   // `share` seeds the shared store used by the composer picker — only safe when
   // the fetched list reflects the *saved* provider, not an unsaved preview.
   async function loadModels(
-    providerOverride?: string,
+    providerOverride: string,
     { share = false }: { share?: boolean } = {},
   ): Promise<LLMModel[]> {
+    const request = ++modelsRequest.current;
     setModelsLoading(true);
     setModelsError(null);
+    setModels([]);
     try {
       const list = await api.llm.listModels(providerOverride);
+      if (request !== modelsRequest.current) return list;
       setModels(list);
-      if (share) modelsStore.adopt(list);
+      modelsStore.adopt(list, providerOverride);
+      if (share) modelsStore.applySettings(settingsStore.current());
       return list;
     } catch (e) {
-      setModels([]);
-      setModelsError(e instanceof Error ? e.message : String(e));
+      if (request === modelsRequest.current) {
+        setModels([]);
+        setModelsError(e instanceof Error ? e.message : String(e));
+      }
       return [];
     } finally {
-      setModelsLoading(false);
+      if (request === modelsRequest.current) setModelsLoading(false);
     }
   }
 
@@ -367,6 +407,19 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
     void loadModels(next);
   }
 
+  useEffect(() => {
+    if (!defaultProvider) return;
+    let stale = false;
+    setDefaultModels([]);
+    api.llm.listModels(defaultProvider).then(
+      (list) => { if (!stale) setDefaultModels(list); },
+      () => {},
+    );
+    return () => { stale = true; };
+  }, [defaultProvider]);
+
+  const liveSettings = settings ? { ...settings, mock_provider_enabled: mockEnabled } : settings;
+
   const activeProviderSpec = providers.find((p) => p.id === provider);
 
   useEffect(() => {
@@ -374,12 +427,19 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
       const s = await api.settings.get();
       setSettings(s);
       setProvider(s.llm_provider);
+      setDefaultProvider(s.llm_provider);
+      setDefaultModel(s.llm_model_category ? "" : s.llm_model);
+      setModelFallbacks(s.model_fallbacks ?? { categories: [] });
       setProviderConfig(s.llm_providers ?? {});
       setRepo(s.github_repo);
       setTtlMinutes(s.issue_context_ttl_minutes);
       setShowChatStats(s.show_chat_stats);
       setNotificationsEnabled(s.notifications_enabled);
+      setCompletionSoundEnabled(s.completion_sound_enabled);
       setMaxToolRounds(s.max_tool_rounds);
+      setScheduledApprovalTimeout(s.scheduled_approval_timeout_minutes ?? 60);
+      setTopicApprovalPolicy(s.topic_approval_policy ?? "autonomous");
+      setChatApprovalPolicy(s.chat_approval_policy ?? "autonomous");
       setIssueAssociationsEnabled(s.issue_associations_enabled);
       setBackupEnabled(s.backup_enabled);
       setBackupDir(s.backup_dir);
@@ -391,6 +451,7 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
       setLiveEnabled(s.live_enabled);
       setLiveTranscriptRetentionDays(s.live_transcript_retention_days);
       setChatAutonameEnabled(s.chat_autoname_enabled);
+      setMockEnabled(s.mock_provider_enabled ?? true);
       setChatAutonameModel(s.chat_autoname_model);
       setSys(pickSystem(s));
       setDockerAvailable(s.docker_available);
@@ -403,15 +464,15 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
       settingsStore.set(s);
       await refreshMcp();
       try {
-        setProviders(await api.llm.listProviders());
+        setProviders(await api.llm.listProviders(true));
       } catch {
         setProviders([]);
       }
-      await loadModels(undefined, { share: true });
+      await loadModels(s.llm_provider, { share: true });
       try {
         setMe(await api.me.get());
       } catch {
-        setMe({ github: null, github_token_source: "none" });
+        setMe({ github: null, github_token_source: "none", proxy_user: null });
       }
       try {
         setAppVersion((await api.system.getVersion()).version);
@@ -442,30 +503,20 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
     return out;
   }
 
-  // Persist the provider + its config, then refresh the catalog — without
-  // closing the panel (so the user can verify discovery). Model and reasoning
-  // effort are chosen in the composer now, not here; but if the previously
-  // selected global model isn't in the new provider's catalog we snap it to a
-  // valid one so the composer never points at a stale id.
+  // Persist provider config without changing the default, then refresh the catalog — without
+  // closing the panel. The server resolves retired pins; don't overwrite a
+  // categorised pin merely because it is absent from the refreshed catalogue.
   async function applyProviderSettings(): Promise<void> {
     setModelsLoading(true);
     try {
       const updated = await api.settings.update({
-        llm_provider: provider,
         llm_providers: buildLlmProvidersPayload(),
       });
       setSettings(updated);
       setProviderConfig(updated.llm_providers ?? {});
       settingsStore.set(updated);
-      const list = await loadModels(provider, { share: true });
-      if (list.length > 0 && !list.some((m) => m.id === updated.llm_model)) {
-        const snapped = await api.settings.update({ llm_model: list[0].id });
-        setSettings(snapped);
-        settingsStore.set(snapped);
-        modelsStore.applySettings(snapped);
-      } else {
-        modelsStore.applySettings(updated);
-      }
+      await loadModels(provider, { share: true });
+      modelsStore.applySettings(updated);
     } catch (e) {
       setModelsError(e instanceof Error ? e.message : String(e));
       setModelsLoading(false);
@@ -474,16 +525,22 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
 
   async function save(): Promise<void> {
     setSaving(true);
+    setSaveError(null);
     try {
       const payload: Parameters<typeof api.settings.update>[0] = {
         theme,
         font_family: font,
-        llm_provider: provider,
+        llm_provider: defaultProvider,
         github_repo: repo,
+        model_fallbacks: modelFallbacks,
         issue_context_ttl_minutes: ttlMinutes,
         show_chat_stats: showChatStats,
         notifications_enabled: notificationsEnabled,
+        completion_sound_enabled: completionSoundEnabled,
         max_tool_rounds: maxToolRounds,
+        topic_approval_policy: topicApprovalPolicy,
+        chat_approval_policy: chatApprovalPolicy,
+        scheduled_approval_timeout_minutes: scheduledApprovalTimeout,
         issue_associations_enabled: issueAssociationsEnabled,
         azure_speech_endpoint: azureEndpoint,
         azure_speech_language: azureLanguage,
@@ -492,6 +549,7 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
         live_enabled: liveEnabled,
         live_transcript_retention_days: liveTranscriptRetentionDays,
         chat_autoname_enabled: chatAutonameEnabled,
+        mock_provider_enabled: mockEnabled,
         chat_autoname_model: chatAutonameModel,
         mcp_expose: expose,
         mcp_http_enabled: httpEnabled,
@@ -503,6 +561,15 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
         ...(sys ?? {}),
       };
       const llmProviders = buildLlmProvidersPayload();
+      if (defaultProvider !== settings?.llm_provider) {
+        payload.llm_model = "";
+        payload.llm_model_category = null;
+        payload.llm_reasoning_effort = "";
+      } else if (defaultModel && defaultModel !== settings?.llm_model) {
+        payload.llm_model = defaultModel;
+        payload.llm_model_category = null;
+        payload.llm_reasoning_effort = "";
+      }
       if (Object.keys(llmProviders).length > 0) {
         payload.llm_providers = llmProviders;
       }
@@ -513,6 +580,7 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
         payload.api_keys = apiKeys;
       }
       const updated = await api.settings.update(payload);
+      for (const configuredProvider of Object.keys(llmProviders)) void modelsStore.refresh(configuredProvider);
       setSettings(updated);
       modelsStore.applySettings(updated);
       // A new GitHub token can mean a different account/plan, hence a different
@@ -523,7 +591,9 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
       setAzureKey("");
       setTheme(theme);
       setFont(font);
-      onClose();
+      closeNow();
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : String(error));
     } finally {
       setSaving(false);
     }
@@ -557,6 +627,7 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
         db_snapshot: null,
         blobs_copied: 0,
         blobs_total: 0,
+        definitions_archive: null,
       });
     } finally {
       setBackupRunning(false);
@@ -680,6 +751,37 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
     }
   }
 
+  const formSnapshot = JSON.stringify([
+    theme, font, defaultProvider, defaultModel, mockEnabled, modelFallbacks, providerConfig,
+    repo, githubToken, azureKey, azureEndpoint, azureLanguage, ttlMinutes, showChatStats,
+    notificationsEnabled, completionSoundEnabled, maxToolRounds, topicApprovalPolicy, chatApprovalPolicy, scheduledApprovalTimeout, issueAssociationsEnabled,
+    liveFastModel, liveReasoningEffort, liveEnabled, liveTranscriptRetentionDays,
+    chatAutonameEnabled, chatAutonameModel, expose, httpEnabled, workiqTenant,
+    playwrightBrowser, backupEnabled, backupDir, backupRetention, sys,
+  ]);
+  // Captured on the render right after the initial load populates the form.
+  const baseline = useRef<string | null>(null);
+  useEffect(() => {
+    if (settings && baseline.current === null) baseline.current = formSnapshot;
+  }, [settings, formSnapshot]);
+
+  const confirming = useRef(false);
+  const onClose = useCallback(async (): Promise<void> => {
+    if (confirming.current) return;
+    const dirty = baseline.current !== null && baseline.current !== formSnapshot;
+    if (dirty) confirming.current = true;
+    const keep = dirty && !(await confirmAction({
+      title: "Discard unsaved changes?",
+      message: "You have unsaved settings. Closing now will discard them.",
+      confirmLabel: "Discard changes",
+      cancelLabel: "Keep editing",
+      variant: "warning",
+    }));
+    confirming.current = false;
+    if (keep) return;
+    closeNow();
+  }, [formSnapshot, confirmAction, closeNow]);
+
   // Esc closes the modal — convention shared with most settings dialogs
   // (VS Code, Linear, GitHub).
   useEffect(() => {
@@ -698,11 +800,16 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
       }}
     >
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="settings-panel-title"
         className="bg-bg border border-border rounded-lg shadow-2xl flex flex-col w-full overflow-hidden"
         style={{ maxWidth: 960, height: "min(720px, 90vh)" }}
       >
         <header className="flex items-center justify-between px-4 h-12 border-b border-border shrink-0">
-          <h2 className="font-semibold">Settings</h2>
+          <h2 id="settings-panel-title" className="font-semibold">
+            Settings
+          </h2>
           <button
             onClick={onClose}
             className="p-1.5 rounded hover:bg-surface"
@@ -715,6 +822,7 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
 
         <div className="flex flex-1 min-h-0">
           <SidebarTabs
+            className="w-12 sm:w-52 shrink-0 border-r border-border overflow-y-auto py-2 [&>div>div]:hidden sm:[&>div>div]:block [&_button]:justify-center sm:[&_button]:justify-start [&_button]:min-h-10 sm:[&_button]:min-h-0 [&_button>span]:hidden sm:[&_button>span]:inline"
             groups={SETTINGS_GROUPS}
             tabs={allCategories}
             active={category}
@@ -877,6 +985,28 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
                       </span>
                     </span>
                   </label>
+                  <label className="flex items-start gap-2 cursor-pointer mt-3">
+                    <input
+                      type="checkbox"
+                      checked={completionSoundEnabled}
+                      onChange={(e) => {
+                        const on = e.target.checked;
+                        // Previews the sound, and the click unlocks audio.
+                        if (on) playCompletionSound();
+                        setCompletionSoundEnabled(on);
+                      }}
+                      className="mt-0.5 accent-accent"
+                    />
+                    <span>
+                      <span className="block text-sm">
+                        Play a sound when a reply finishes
+                      </span>
+                      <span className="block text-[11px] text-muted">
+                        A short, quiet pop when a reply you asked for in a topic
+                        or chat completes. Off by default.
+                      </span>
+                    </span>
+                  </label>
                 </section>
 
                 <section>
@@ -902,19 +1032,119 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
                     multi-step agents (e.g. browser automation); decrease to
                     cut runaway loops short. Range: 1–1000.
                   </p>
+                  <label className="block text-xs text-muted mb-1 mt-4">
+                    Default tool approval — topics
+                  </label>
+                  <Select
+                    fullWidth
+                    size="sm"
+                    ariaLabel="Default tool approval policy for topics"
+                    value={topicApprovalPolicy}
+                    onChange={(v) => setTopicApprovalPolicy(v as ConversationApprovalPolicy)}
+                    options={CONVERSATION_APPROVAL_POLICIES.map((p) => ({
+                      value: p.value,
+                      label: p.label,
+                    }))}
+                  />
+                  <p className="text-[11px] text-muted mt-1">
+                    {CONVERSATION_APPROVAL_POLICIES.find((p) => p.value === topicApprovalPolicy)?.hint}
+                     Each topic can change it from the shield pill in its composer.
+                  </p>
+                  <label className="block text-xs text-muted mb-1 mt-4">
+                    Default tool approval — chats
+                  </label>
+                  <Select
+                    fullWidth
+                    size="sm"
+                    ariaLabel="Default tool approval policy for chats"
+                    value={chatApprovalPolicy}
+                    onChange={(v) => setChatApprovalPolicy(v as ConversationApprovalPolicy)}
+                    options={CONVERSATION_APPROVAL_POLICIES.map((p) => ({
+                      value: p.value,
+                      label: p.label,
+                    }))}
+                  />
+                  <p className="text-[11px] text-muted mt-1">
+                    {CONVERSATION_APPROVAL_POLICIES.find((p) => p.value === chatApprovalPolicy)?.hint}
+                     Each chat can change it from the shield pill in its composer.
+                  </p>
+                  <label className="block text-xs text-muted mb-1 mt-4">
+                    Unattended approval timeout (minutes)
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={scheduledApprovalTimeout}
+                    onChange={(e) =>
+                      setScheduledApprovalTimeout(Math.max(0, Math.floor(Number(e.target.value) || 0)))
+                    }
+                    className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
+                  />
+                  <p className="text-[11px] text-muted mt-1">
+                    When a scheduled run needs an approval nobody is there to give, it waits this
+                    long and is then denied, and the model is told nobody answered. 0 waits
+                    forever. A topic's schedule can override it.
+                  </p>
+                </section>
+
+                <section>
+                  <h3 className="text-sm font-medium mb-2">Approval rules</h3>
+                  <ApprovalRulesSection owner={{ kind: "global" }} />
+                  <p className="text-[11px] text-muted mt-2">
+                    Rules for a single conversation live in its settings.
+                  </p>
                 </section>
               </>
             )}
 
+            {category === "presets" && (
+              <PresetsSettings
+                value={modelFallbacks}
+                onChange={setModelFallbacks}
+                settings={settings}
+                providers={providers}
+              />
+            )}
+
             {category === "model" && (
               <section>
-                <h3 className="text-sm font-medium mb-2">Provider</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="min-w-0">
+                    <h3 className="text-sm font-medium mb-2">Global default provider</h3>
+                    <Select
+                      value={defaultProvider}
+                      onChange={(next) => { setDefaultProvider(next); setDefaultModel(""); }}
+                      options={providers.filter((p) => p.id !== "mock" || mockEnabled || defaultProvider === "mock").map((p) => ({ value: p.id, label: p.label, suffix: <ProviderConfigurationBadge settings={liveSettings} provider={p} /> }))}
+                      ariaLabel="Global default provider"
+                      fullWidth
+                    />
+                  </div>
+                  <div className="min-w-0">
+                    <h3 className="text-sm font-medium mb-2">Global default model</h3>
+                    <Select
+                      value={defaultModel}
+                      onChange={setDefaultModel}
+                      options={[
+                        ...(defaultModel === "" ? [{ value: "", label: settings?.llm_model_category ? "Preset category (set in the composer)" : "Select a model…" }] : []),
+                        ...defaultModels.map((m) => ({ value: m.id, label: m.name || m.id })),
+                      ]}
+                      ariaLabel="Global default model"
+                      fullWidth
+                    />
+                  </div>
+                </div>
+                <p className="text-[11px] text-muted mt-2 mb-4">
+                  Applies to conversations using the global default. Agents stay on the Copilot SDK.
+                  {" "}Provider marks reflect saved setup, not a connection test.
+                </p>
+                <h3 className="text-sm font-medium mb-2">Configure provider</h3>
                 <Select
                   value={provider}
                   onChange={onProviderChange}
                   options={providers.map((p) => ({
                     value: p.id,
                     label: p.label,
+                    suffix: <ProviderConfigurationBadge settings={liveSettings} provider={p} />,
                   }))}
                   ariaLabel="LLM provider"
                   fullWidth
@@ -923,6 +1153,24 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
                 {(() => {
                   const activeSpec = activeProviderSpec;
                   if (!activeSpec) return null;
+                  if (activeSpec.id === "mock") {
+                    return (
+                      <label className="flex items-start gap-2 cursor-pointer mt-3 p-3 rounded border border-border bg-surface">
+                        <input
+                          type="checkbox"
+                          checked={mockEnabled}
+                          onChange={(e) => setMockEnabled(e.target.checked)}
+                          className="mt-0.5 accent-accent"
+                        />
+                        <span>
+                          <span className="block text-sm">Enabled</span>
+                          <span className="block text-[11px] text-muted">
+                            Offline canned replies. When disabled, Mock is hidden from pickers and unconfigured providers report an error instead.
+                          </span>
+                        </span>
+                      </label>
+                    );
+                  }
                   if (activeSpec.uses_github_token) {
                     return (
                       <p className="text-[11px] text-muted mt-2">
@@ -937,34 +1185,48 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
                   const present =
                     settings?.llm_providers_present?.[provider] ?? {};
                   return (
-                    <div className="mt-3 space-y-3 p-3 rounded border border-border bg-surface">
+                    <div data-llm-provider-config={provider} className="mt-3 space-y-3 p-3 rounded border border-border bg-surface">
                       {activeSpec.fields.map((f) => (
                         <div key={f.name}>
-                          <label className="block text-xs text-muted mb-1">
-                            {f.label}
-                            {f.secret && present[f.name] && (
-                              <span className="text-green-500"> (configured)</span>
-                            )}
-                          </label>
-                          <input
-                            type={f.secret ? "password" : "text"}
-                            value={cfg[f.name] ?? ""}
-                            onChange={(e) =>
-                              setProviderConfig((prev) => ({
-                                ...prev,
-                                [provider]: {
-                                  ...(prev[provider] ?? {}),
-                                  [f.name]: e.target.value,
-                                },
-                              }))
-                            }
-                            placeholder={
-                              f.secret && present[f.name]
-                                ? "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022"
-                                : f.placeholder
-                            }
-                            className="w-full bg-bg border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
-                          />
+                          {provider === "azure_foundry" && f.name === "deployment" ? (
+                            <DeploymentNamesInput
+                              value={cfg[f.name] ?? ""}
+                              onChange={(value) =>
+                                setProviderConfig((prev) => ({
+                                  ...prev,
+                                  [provider]: { ...(prev[provider] ?? {}), [f.name]: value },
+                                }))
+                              }
+                            />
+                          ) : (
+                            <>
+                              <label className="block text-xs text-muted mb-1">
+                                {f.label}
+                                {f.secret && present[f.name] && (
+                                  <span className="text-green-500"> (configured)</span>
+                                )}
+                              </label>
+                              <input
+                                type={f.secret ? "password" : "text"}
+                                value={cfg[f.name] ?? ""}
+                                onChange={(e) =>
+                                  setProviderConfig((prev) => ({
+                                    ...prev,
+                                    [provider]: {
+                                      ...(prev[provider] ?? {}),
+                                      [f.name]: e.target.value,
+                                    },
+                                  }))
+                                }
+                                placeholder={
+                                  f.secret && present[f.name]
+                                    ? "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022"
+                                    : f.placeholder
+                                }
+                                className="w-full bg-bg border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
+                              />
+                            </>
+                          )}
                           {f.help && (
                             <p className="text-[11px] text-muted mt-1">{f.help}</p>
                           )}
@@ -996,8 +1258,11 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
                   </span>
                 </div>
                 <p className="text-[11px] text-muted mt-2">
-                  Pick the model, reasoning effort and context size from the
-                  composer toolbar — they apply to every conversation.
+                  Configure several providers without changing the global default.
+                  Chat and topic model pickers list all configured providers and save
+                  the provider with your model choice, effort and context size.
+                  Use global default removes that override. Group models from any
+                  provider into ordered fallbacks in Settings &gt; Presets.
                 </p>
 
                 {sys && (
@@ -1038,8 +1303,55 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
                         before they enter the transcript.
                       </p>
                     </div>
+                    <div>
+                      <label className="block text-xs text-muted mb-1">
+                        Keep tool results in full for the last N turns
+                      </label>
+                      <NumberInput
+                        value={sys.llm_tool_result_keep_turns}
+                        min={0}
+                        max={1000}
+                        onCommit={(n) =>
+                          setSys({ ...sys, llm_tool_result_keep_turns: n })
+                        }
+                      />
+                      <p className="text-[11px] text-muted mt-1">
+                        Larger tool outputs from older turns reach the model as
+                        a short preview; it can call the tool again when it
+                        needs the rest. 0 always sends them in full.
+                      </p>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-muted mb-1">
+                        Max characters per attached document
+                      </label>
+                      <NumberInput
+                        value={sys.llm_max_attachment_chars}
+                        min={1000}
+                        max={2_000_000}
+                        onCommit={(n) =>
+                          setSys({ ...sys, llm_max_attachment_chars: n })
+                        }
+                      />
+                      <p className="text-[11px] text-muted mt-1">
+                        Text extracted from each attached PDF, DOCX, PPTX or
+                        text file. Longer documents are cut, and the model is
+                        told how much it can't see.
+                      </p>
+                    </div>
                   </div>
                 )}
+
+                <OpenAIProxySettings
+                  settings={settings}
+                  onSettings={(next) => {
+                    setSettings(next);
+                    settingsStore.set(next);
+                  }}
+                  models={
+                    provider === settings?.llm_provider && !modelsError ? models : null
+                  }
+                />
               </section>
             )}
 
@@ -1316,6 +1628,18 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
               </section>
             )}
 
+            {category === "iq" && (
+              <IQSettings
+                settings={settings}
+                onSettings={(next) => {
+                  setSettings(next);
+                  settingsStore.set(next);
+                }}
+                providers={providers}
+                onNavigate={setCategory}
+              />
+            )}
+
             {category === "mcp" && (
               <section>
                 <McpExposeCard
@@ -1428,7 +1752,7 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
 
             {category === "skills" && <SkillsTab />}
 
-            {category === "roles" && <RolesTab />}
+            {category === "roles" && <RolesTab onOpenMigration={() => setCategory("definitions")} />}
             {category === "collections" && (
               <CollectionsTab onChanged={onCollectionsChanged} />
             )}
@@ -1437,7 +1761,10 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
             {category === "agents" && <AgentsSettings />}
             {category === "plugins" && <PluginsSettings />}
             {activePluginPage && <activePluginPage.Component />}
-            {category === "workflows" && <WorkflowsSettings />}
+            {category === "workflows" && (
+              <WorkflowsSettings onOpenMigration={() => setCategory("definitions")} />
+            )}
+            {category === "definitions" && <DefinitionsMigrationWizard />}
 
             {category === "stats" && <StatsTab />}
 
@@ -1468,6 +1795,7 @@ export function SettingsPanel({ onClose, initialCategory, onCollectionsChanged }
           </div>
         </div>
 
+        {saveError && <p role="alert" className="border-t border-border px-3 py-2 text-xs text-danger">{saveError}</p>}
         <footer className="border-t border-border p-3 flex items-center justify-end gap-2 shrink-0">
           <span
             className="mr-auto text-[11px] text-muted"
@@ -1558,8 +1886,9 @@ function BackupTab({
           />
           <p className="text-[11px] text-muted mt-1">
             Absolute path to an existing, writable directory. Snapshots go under{" "}
-            <code className="font-mono">db/</code> and attachment files under{" "}
-            <code className="font-mono">blobs/</code>.
+            <code className="font-mono">db/</code>, attachment files under{" "}
+            <code className="font-mono">blobs/</code> and zipped definitions under{" "}
+            <code className="font-mono">definitions/</code>.
           </p>
         </div>
 
@@ -1743,10 +2072,10 @@ function SystemTab({
 
       <section className="space-y-3">
         <h3 className="text-sm font-medium">Storage / retention</h3>
-        {numField("Tool result retention (days)", "tool_result_retention_days", {
+        {numField("Tool result & thinking retention (days)", "tool_result_retention_days", {
           min: 0,
           max: 3650,
-          help: "How long full tool outputs are kept before their content is replaced with a short placeholder to save space. 0 = keep forever.",
+          help: "How long full tool outputs and the model's thinking are kept. After that, tool outputs are replaced with a short placeholder and the thinking is removed, to save space. 0 = keep forever.",
         })}
         <p className="text-[11px] text-muted">
           Feature-specific retention lives with its feature: agent timelines
@@ -1924,6 +2253,16 @@ const EXPOSE_SECTIONS: ReadonlyArray<{
     label: "Search",
     hint: "Search across topics, chats, agents & live sessions.",
   },
+  {
+    key: "iq",
+    label: "IQ retrieve",
+    hint: "Ranked passages with citations (retrieve). Each hit also needs its own section on.",
+  },
+  {
+    key: "iq_ask",
+    label: "IQ ask",
+    hint: "Cited answers written by your model (ask) — uses provider quota per call.",
+  },
   { key: "skills", label: "Skills", hint: "List skills & read their instructions." },
   { key: "memory", label: "Memory", hint: "Read long-term memory entries." },
   {
@@ -1957,6 +2296,12 @@ const EXPOSE_SECTIONS: ReadonlyArray<{
     danger: true,
   },
   {
+    key: "side_chats",
+    label: "Side chats",
+    hint: "Let callers start a chat linked to a topic or one of its replies.",
+    danger: true,
+  },
+  {
     key: "schedules",
     label: "Scheduled tasks",
     hint: "List, create, pause and trigger recurring automations.",
@@ -1967,6 +2312,22 @@ const EXPOSE_SECTIONS: ReadonlyArray<{
     label: "Reminders",
     hint: "List, set and cancel one-shot topic reminders.",
     danger: true,
+  },
+  {
+    key: "workspaces",
+    label: "Workspaces",
+    hint: "List workspaces and read their files.",
+  },
+  {
+    key: "workspaces_write",
+    label: "Edit workspaces",
+    hint: "Let callers create workspaces (local or git clone) and write files in them. Agents still ask before each write.",
+    danger: true,
+  },
+  {
+    key: "tools",
+    label: "Basic tools",
+    hint: "Small helpers that read none of your data: date and time, calculator, unit conversion, UUIDs, hashing, text counts.",
   },
 ];
 
@@ -2133,14 +2494,13 @@ function McpExposeCard({
 }) {
   const [open, setOpen] = useState(false);
   const anyOn = EXPOSE_SECTIONS.some((s) => expose[s.key]);
-  const anyWriteOn =
-    expose.memory_write ||
-    expose.agent_state ||
-    expose.workflow_state ||
-    expose.notes ||
-    expose.post_message ||
-    expose.schedules ||
-    expose.reminders;
+  const allOn = EXPOSE_SECTIONS.every((s) => expose[s.key]);
+  const anyWriteOn = EXPOSE_SECTIONS.some((s) => s.danger && expose[s.key]);
+  const setAll = (on: boolean) =>
+    setExpose({
+      ...expose,
+      ...Object.fromEntries(EXPOSE_SECTIONS.map((s) => [s.key, on])),
+    });
   return (
     <div className="border border-border rounded mb-4">
       <button
@@ -2164,6 +2524,24 @@ function McpExposeCard({
             flip the <span className="font-mono">precursor</span> server below
             for the in-app agent to use it.
           </p>
+          <div className="flex items-center gap-3 text-[11px]">
+            <button
+              type="button"
+              onClick={() => setAll(true)}
+              disabled={allOn}
+              className="text-accent hover:underline disabled:opacity-40 disabled:no-underline"
+            >
+              Select all
+            </button>
+            <button
+              type="button"
+              onClick={() => setAll(false)}
+              disabled={!anyOn}
+              className="text-accent hover:underline disabled:opacity-40 disabled:no-underline"
+            >
+              Unselect all
+            </button>
+          </div>
           {EXPOSE_SECTIONS.map((s) => (
             <label key={s.key} className="flex items-start gap-2 cursor-pointer">
               <input
@@ -2188,7 +2566,7 @@ function McpExposeCard({
           {anyWriteOn && (
             <div className="text-[11px] rounded border border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300 px-3 py-2">
               Write capabilities let a caller change this Precursor instance
-              (post messages, manage schedules). Only enable for trusted hosts.
+              (post messages, manage schedules, create workspaces and write files). Only enable for trusted hosts.
             </div>
           )}
           {anyOn && !precursorEnabled && (

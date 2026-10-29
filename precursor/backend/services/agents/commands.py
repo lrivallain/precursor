@@ -13,10 +13,8 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import func, select
-
 from precursor.backend.db import SessionLocal
-from precursor.backend.models import Role
+from precursor.backend.services import roles as roles_service
 
 if TYPE_CHECKING:
     from precursor.backend.services.agents.manager import AgentManager
@@ -41,6 +39,10 @@ async def cmd_clear(manager: AgentManager, agent_id: int, argument: str) -> None
     await manager.clear_session(agent_id)
 
 
+async def cmd_compact(manager: AgentManager, agent_id: int, argument: str) -> None:
+    await manager.compact(agent_id, argument)
+
+
 async def cmd_role(manager: AgentManager, agent_id: int, argument: str) -> None:
     name = " ".join(argument.split())
     if not name:
@@ -48,13 +50,11 @@ async def cmd_role(manager: AgentManager, agent_id: int, argument: str) -> None:
         # normally never reaches here.
         raise ValueError("Usage: /role <name>")
     async with SessionLocal() as session:
-        role = (
-            await session.execute(select(Role).where(func.lower(Role.name) == name.lower()))
-        ).scalar_one_or_none()
+        role = await roles_service.find_role(session, name)
     if role is None:
         raise ValueError(f'Unknown role "{name}". Manage roles in Settings → Roles.')
-    # The default role is persisted as NULL, never by its own id.
-    await manager._patch(agent_id, role_id=None if role.is_default else role.id)
+    # The default role is persisted as NULL, never by its own name.
+    await manager._patch(agent_id, role=None if role.is_default else role.name)
     await manager._publish(agent_id)
 
 
@@ -85,6 +85,7 @@ COMMAND_HANDLERS: dict[str, Callable[[AgentManager, int, str], Awaitable[None]]]
     "rename": cmd_rename,
     "archive": cmd_archive,
     "clear": cmd_clear,
+    "compact": cmd_compact,
     "role": cmd_role,
     "memory-store": cmd_memory_store,
     "memory-update": cmd_memory_update,

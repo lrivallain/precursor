@@ -7,10 +7,12 @@ import {
   readStoredCollectionId,
   writeStoredCollectionId,
 } from "./collections";
-import { eventBus } from "./events";
+import { eventBus, type BusEvent } from "./events";
 import { notifyIfUnfocused } from "./notifications";
 import { openNotes } from "./notesOpen";
 import { navigate, topicsModeUrl, topicUrl, type AppRoute } from "./routes";
+import { useConfirm } from "../components/ConfirmDialog";
+import { archiveTopic, OPEN_TOPIC_EVENT, type OpenTopicDetail } from "./sideChats";
 import { convKey, streamStore } from "./streamStore";
 import { findTitle, totalUnread } from "./topicTree";
 import type { Collection, Topic, TopicNode } from "./types";
@@ -68,7 +70,7 @@ export interface TopicsController {
   togglePin: () => Promise<void>;
   openPromotedTopic: (topic: Topic) => Promise<void>;
   handleStreamComplete: (topicId: number) => Promise<void>;
-  setRoleForActive: (roleId: number | null) => Promise<void>;
+  setRoleForActive: (roleName: string | null) => Promise<void>;
   sectionUrl: () => string;
   modeUrl: () => string;
   syncFromRoute: (r: AppRoute) => void;
@@ -85,6 +87,7 @@ export function useTopicsController(deps: TopicsControllerDeps): TopicsControlle
     setAtHome,
     closeMobileNav,
   } = deps;
+  const confirmAction = useConfirm();
 
   const [tree, setTree] = useState<TopicNode[]>([]);
   const [activeTopic, setActiveTopic] = useState<Topic | null>(null);
@@ -233,6 +236,22 @@ export function useTopicsController(deps: TopicsControllerDeps): TopicsControlle
     });
   }
 
+  // A scheduled run parked on an approval nobody is there to give: say so,
+  // with the deadline after which it is denied.
+  function notifyParked(event: Extract<BusEvent, { type: "approval.parked" }>): void {
+    if (!notificationsEnabledRef.current) return;
+    if (activeTopicRef.current?.id === event.topic_id && document.hasFocus()) return;
+    const what = event.count === 1 ? "1 tool call is" : `${event.count} tool calls are`;
+    const until = event.expires_at
+      ? ` Denied automatically at ${new Date(event.expires_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.`
+      : "";
+    notifyIfUnfocused({
+      title: `${event.title || "A scheduled run"} needs approval`,
+      body: `${what} waiting for you.${until}`,
+      tag: `precursor-approval-${event.topic_id}`,
+    });
+  }
+
   // Adopt a topic the URL resolved to. A deep link (or a permalink) can point
   // outside the collection the user last had open, so the lens follows the
   // topic rather than rendering an empty tree beside it.
@@ -364,6 +383,10 @@ export function useTopicsController(deps: TopicsControllerDeps): TopicsControlle
             }
           })();
         }
+      } else if (event.type === "approval.changed") {
+        if (event.chat_id == null) void refreshTree();
+      } else if (event.type === "approval.parked") {
+        notifyParked(event);
       } else if (event.type === "message.changed") {
         if (event.chat_id != null) return;
         const topicId = event.topic_id;
@@ -431,6 +454,27 @@ export function useTopicsController(deps: TopicsControllerDeps): TopicsControlle
     maybeNotify(id);
   }
 
+  // A side chat's back-link: leave for Topics and open its parent.
+  useEffect(() => {
+    function onOpenTopic(e: Event): void {
+      const id = (e as CustomEvent<OpenTopicDetail>).detail?.topicId;
+      if (id == null) return;
+      void (async () => {
+        try {
+          const topic = await api.topics.get(id);
+          setAtHome(false);
+          setSidebarMode("topics");
+          closeMobileNav();
+          await selectTopic(topic);
+        } catch {
+          // deleted since the link was drawn; stay put
+        }
+      })();
+    }
+    window.addEventListener(OPEN_TOPIC_EVENT, onOpenTopic);
+    return () => window.removeEventListener(OPEN_TOPIC_EVENT, onOpenTopic);
+  }, []);
+
   async function handleSelect(id: number): Promise<void> {
     closeMobileNav();
     await selectTopic(await api.topics.get(id));
@@ -468,7 +512,7 @@ export function useTopicsController(deps: TopicsControllerDeps): TopicsControlle
   }
 
   async function handleArchiveTopic(id: number): Promise<void> {
-    await api.topics.archive(id);
+    await archiveTopic(id, confirmAction);
     if (activeTopicRef.current?.id === id) setActiveTopic(null);
     await refreshTree();
   }
@@ -495,9 +539,9 @@ export function useTopicsController(deps: TopicsControllerDeps): TopicsControlle
   }
 
   // The topics branch of App's shared role persistence (`setRoleForActive`).
-  async function setRoleForActive(roleId: number | null): Promise<void> {
+  async function setRoleForActive(roleName: string | null): Promise<void> {
     if (!activeTopic) return;
-    const updated = await api.topics.update(activeTopic.id, { role_id: roleId });
+    const updated = await api.topics.update(activeTopic.id, { role: roleName });
     if (activeTopicRef.current?.id === activeTopic.id) setActiveTopic(updated);
   }
 

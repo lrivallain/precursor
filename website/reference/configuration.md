@@ -17,6 +17,22 @@ directory, ticker cadences.
 
 Copy `.env.example` to `.env` and uncomment only what you want to override.
 
+Azure AI Foundry's runtime **Deployment names** setting adds names individually
+as removable bubbles on the same endpoint, sharing its key and API version. The persisted
+`llm_providers.azure_foundry.deployment` string also accepts a single name for
+backward compatibility and stores multiple names separated by commas.
+See [Connecting a model](/guide/configuration#connecting-a-model).
+
+Chats/topics store an optional `llm_selection` alongside their metadata:
+`provider`, `model` or `category`, `reasoning_effort` and `context_tokens`
+(1,000-5,000,000). Null means use global defaults. These are conversation
+preferences, not credentials or environment variables.
+
+`llm_provider` remains the global default and `llm_providers` remains the map of
+saved provider configurations. Editing a configuration no longer selects it as
+the default. Explicit conversation selections never fall back to Mock or switch
+providers; missing configuration is an error. Agents/workflows stay Copilot-only.
+
 ## Server
 
 | Variable | Default | Description |
@@ -39,6 +55,9 @@ CLI flags mirror several of these: `--port`, `--api-port`, `--host`,
 | --- | --- | --- |
 | `PRECURSOR_DATABASE_URL` | `sqlite+aiosqlite:///./precursor.db` | Async SQLAlchemy URL. Point at Postgres for production. |
 | `PRECURSOR_DATA_DIR` | `.precursor` *(checkout)* / *user data dir* *(installed)* | On-disk working directory. Holds [workspace](/features/workspaces) clones (`workspaces/`), content-addressed [attachment](/features/attachments) blobs (`blobs/`), the self-hosted draw.io editor (`drawio/`), the agents runtime's Copilot home (`agents/copilot-home/`), and the [background app](/features/background-app)'s `runtime.json` + `logs/`. Relative paths resolve against the process working directory. |
+| `PRECURSOR_DEFINITIONS_DIR` | the **Definitions** workspace (`<data dir>/workspaces/definitions`) | **Work in progress.** Folder of [definition files](/features/definitions): agents and workflows (`*.agent.yaml`, `*.workflow.yaml`) and live [summary templates](/features/live-sessions#your-own-templates) (`*.summary.yaml`). Read by the definitions check, written by the export and the migration; the runtime reads agents and workflows only in files mode (below), summary templates always. Set, it replaces the built-in workspace. |
+| `PRECURSOR_DEFINITIONS_SOURCE` | `database` | **Work in progress.** Normally left alone: the [migration wizard](/features/definitions#getting-there-from-today-s-data) in Settings → Definition files switches an install to files mode (and back) and remembers it. `files` here forces files mode regardless. |
+| `PRECURSOR_DEFINITIONS_WORKSPACE` | *(empty)* | **Work in progress.** Keep the definitions folder in a [workspace](/features/workspaces) — its slug, optionally followed by a folder inside it (`team-defs/precursor`) — so it can be pulled, edited and pushed from the Files section. Ignored when `PRECURSOR_DEFINITIONS_DIR` is set. |
 
 The two defaults above depend on **how Precursor was installed**. A source
 checkout keeps its state beside the code, so every clone and worktree is an
@@ -94,16 +113,60 @@ Model** — not via the environment. The GitHub providers fall back to your
 `gh auth login` session when no token is saved. See
 [Configuration → Connecting a model](/guide/configuration#connecting-a-model).
 
+Ollama requires an explicitly saved `llm_providers.ollama.base_url`, such as
+`http://localhost:11434/v1`, to be configured and included in conversation model
+menus. The Base URL placeholder is a suggestion, not a saved setting.
+
+`model_fallbacks` is an optional runtime-only setting (default
+`{"categories": []}`), edited in **Settings -> Presets**. It is a list of
+user-defined categories, each with ordered presets that carry their own
+`provider` (a provider id, or `agents`). Each preset has `model`, `reasoning_effort` (default `""`),
+`context_tokens` (default `128000`, range 1,000-5,000,000) and `context_tier`
+(`default` or `long_context`, default `default`). Chat uses the token budget;
+Agents/Workflows use the context tier. Each category accepts at most twelve
+presets, with at most 24 categories; duplicate effective presets, unknown scopes and `auto` are rejected.
+See [Model alternatives](/guide/configuration#optional-model-alternatives)
+for matching and retry rules. There is no environment variable or DB migration.
+
+`llm_model_category` and `agents_model_category` are runtime-only selected intents,
+default `null` (direct model selection). Values are `efficiency`, `balanced` or
+`intelligence`; the chosen category must have configured presets in the relevant
+scope. Selecting a category leaves manual model/effort/context defaults stored
+and lets the engine resolve an available preset. Setting a direct model clears
+the corresponding category unless a category was explicitly supplied alongside
+it. `llm_category_preset` is a read-only catalogue preview of the category's first
+candidate, not a promise that inference will succeed or use that model. An
+emptied/unavailable category remains selected and fails clearly at execution.
+
 | Variable | Default | Description |
 | --- | --- | --- |
 | `PRECURSOR_GITHUB_CLI_USER` | *(empty)* | Which `gh` login supplies the token (`gh auth token --user …`). Set it when several accounts are signed in, so the resolved token doesn't depend on the CLI's active account — see [GitHub authentication](/guide/configuration#several-accounts-signed-in-to-gh). |
 
+Prompt budgeting is runtime-only as well, under **Settings → Model → Prompt
+budgeting**:
+
+| Setting | Default | Description |
+| --- | --- | --- |
+| `llm_max_input_tokens` | `600000` | Estimated prompt tokens per request. The oldest turns are dropped first. [`/compact`](/features/context-compression) keeps them as a summary instead. |
+| `llm_max_tool_result_tokens` | `20000` | Cap on a single tool result before it enters the prompt. |
+| `llm_tool_result_keep_turns` | `5` | Tool results over 2,000 characters from turns older than this many user turns reach the model as a short preview. `0` always sends them in full. See [Context compression](/features/context-compression#automatic-trimming). |
+| `llm_max_attachment_chars` | `200000` | Extracted text kept per attached document (PDF, DOCX, PPTX, text). Anything longer is cut, with an explicit note to the model. Range 1,000–2,000,000. See [Attachments](/features/attachments#how-much-of-a-document-the-model-sees). |
+
+The [OpenAI-compatible endpoint](/features/openai-endpoint) is runtime-only too:
+its switch (`openai_proxy_enabled`, off by default) and its API key live in the
+database, set from **Settings → Model**, with no environment twin. Its base URL
+follows `PRECURSOR_HOST` / `PRECURSOR_PORT`.
+
 ## Backup
 
-A periodic copy of the SQLite DB + attachment blobs into a plain folder (e.g. a
-OneDrive/Dropbox/iCloud-synced directory). Enable it, pick the target folder, and
-set snapshot retention **at runtime** — **Settings → Backup**. Only the scheduling
-knobs are env-level:
+A periodic copy of the SQLite DB, attachment blobs and the
+[definitions folder](/features/workspaces#the-definitions-workspace) (the built-in
+**Definitions** workspace by default) into a plain folder (e.g. a
+OneDrive/Dropbox/iCloud-synced directory). The folder holds `db/` snapshots, a
+`blobs/` mirror and one dated `definitions/definitions-<timestamp>.zip` per run;
+snapshot retention applies to the DB snapshots and the definitions archives alike.
+Enable it, pick the target folder, and set retention **at runtime** —
+**Settings → Backup**. Only the scheduling knobs are env-level:
 
 | Variable | Default | Description |
 | --- | --- | --- |
@@ -118,7 +181,7 @@ recurrence is stored in the database.
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `PRECURSOR_SCHEDULER_ENABLED` | `true` | Master switch for every background ticker — the scheduler, reminders, and the two retention sweeps. Set `false` for a read-only or CI instance. |
+| `PRECURSOR_SCHEDULER_ENABLED` | `true` | Master switch for every background ticker — the scheduler, reminders, the retention sweeps and the [Precursor IQ](/features/iq) indexer. Set `false` for a read-only or CI instance. |
 | `PRECURSOR_SCHEDULER_POLL_SECONDS` | `30` | How often the scheduler looks for due runs. |
 | `PRECURSOR_SCHEDULER_CONCURRENCY` | `2` | How many scheduled runs may execute at once. |
 | `PRECURSOR_REMINDER_POLL_SECONDS` | `30` | How often the reminder ticker looks for due reminders. |
@@ -136,7 +199,7 @@ env-level.
 
 | Setting | Default | Where | Description |
 | --- | --- | --- | --- |
-| `tool_result_retention_days` | `0` (keep forever) | Settings → System | Days before a large tool result's content is replaced in place with a short placeholder. |
+| `tool_result_retention_days` | `0` (keep forever) | Settings → System | Days before a large tool result's content is replaced in place with a short placeholder, and the model's thinking is removed from a reply. |
 | `live_transcript_retention_days` | `7` | Settings → Live | Days after a [Live session](/features/live-sessions#transcript-retention) ends before its transcript segments are deleted. `0` keeps them forever. Insights, notes and summary are preserved. |
 | `agent_event_retention_days` | `30` | Settings → Agents | Days before an agent's archived timeline events are deleted. `0` keeps them forever. A *running* agent is never pruned, and every agent keeps its result, artifacts and messages. |
 | `agent_event_max_per_session` | `2000` | Settings → Agents | Hard ceiling on archived events per agent — only the newest are kept. `0` is unlimited. |
@@ -149,6 +212,30 @@ Poll cadences (`PRECURSOR_TOOL_RESULT_RETENTION_POLL_SECONDS`,
 `PRECURSOR_LIVE_TRANSCRIPT_RETENTION_POLL_SECONDS`,
 `PRECURSOR_AGENT_EVENT_RETENTION_POLL_SECONDS`) default to `86400` (daily).
 Every sweep is gated by `PRECURSOR_SCHEDULER_ENABLED`.
+
+## Precursor IQ
+
+The retrieval index behind [Precursor IQ](/features/iq): ⌘K ranking, Ask mode,
+`/api/iq/*` and the `retrieve` / `ask` MCP tools.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `PRECURSOR_IQ_ENABLED` | `true` | Build and serve the index. When `false`, ⌘K falls back to substring search and `/api/iq/*` returns `404`. |
+| `PRECURSOR_IQ_INDEX_POLL_SECONDS` | `20` | How often the background indexer processes queued changes and computes missing embeddings (floor 5 s). Gated by `PRECURSOR_SCHEDULER_ENABLED`; queries still process a small batch on their own. |
+| `PRECURSOR_IQ_RECONCILE_POLL_SECONDS` | `3600` | How often the check for bulk edits and deletes that bypassed the change queue runs. |
+
+Runtime settings (**Settings → Precursor IQ**) stored in `AppSetting`:
+
+| Setting | Default | Description |
+| --- | --- | --- |
+| `iq_embeddings_enabled` | `false` | Embed every indexed passage with the active provider (uses quota) and add vector similarity to the ranking. |
+| `iq_embedding_provider` | `""` | Provider serving embeddings (an id from `/api/llm/providers`). Empty uses the default provider. An unconfigured provider disables semantic matching rather than falling back. |
+| `iq_embedding_model` | `text-embedding-3-small` | Embeddings model, or the deployment name on Azure AI Foundry. Requested at 256 dimensions. |
+| `iq_ask_provider` | `""` | Provider serving Ask answers. Only used together with `iq_ask_model`; empty uses the default provider. |
+| `iq_ask_model` | `""` | Model that writes Ask answers. Empty uses the chat model. |
+
+Two `mcp_expose` sections gate the MCP tools: `iq` (`retrieve`) and `iq_ask`
+(`ask`), both off by default. The `workspaces` (read) and `workspaces_write` (create workspaces, write files) sections gate the workspace tools; they stay opt-in even for Precursor's own agents. The `tools` section gates the basic stateless helpers (`get_datetime`, `calculate`, `date_math`, and so on).
 
 ## Skills directory
 
@@ -170,6 +257,13 @@ process-level knobs:
 | `COPILOT_CLI_PATH` | *(empty)* | Read by the Copilot SDK, and the first thing Precursor's runtime probe checks. Point it at a `copilot` binary to pin the runtime; otherwise Precursor falls back to the SDK's download cache and then to `copilot` on `PATH`. The probe never downloads — see [agents mode](/features/agents-mode#pointing-at-a-specific-cli). |
 | `PRECURSOR_AGENTS_MAX_CONCURRENT` | `3` | Concurrency governor — the max agents the [orchestrator](/features/agents-mode/orchestration#budgets-the-concurrency-governor) lets execute a turn at once. Extra ready agents queue and are released as slots free up. `0` or negative disables the cap (unbounded). |
 | `PRECURSOR_AGENTS_RETRY_BACKOFF_SECONDS` | `60` | Base backoff for [auto-retry](/features/agents-mode/orchestration#retry-auto-recovery) of a failed agent. Delay grows exponentially per attempt (`base × 2ⁿ`); the scheduler re-runs the agent once its retry time is due, up to the agent's `max_retries`. |
+
+A runtime setting (an `AppSetting`, edited in **Settings → Agents**) shapes new
+agent sessions:
+
+| Setting | Default | Description |
+| --- | --- | --- |
+| `agents_file_change_tracking` | `true` | New Copilot sessions capture the files an agent changes, so a [rewind](/features/rewind#restoring-files) can restore them. Applies to sessions created after the change; a session not tracked from its first turn rewinds its conversation only. |
 
 Per-agent **token budget** and **max retries** aren't env vars — they're set in
 each agent's settings drawer (or baked into a

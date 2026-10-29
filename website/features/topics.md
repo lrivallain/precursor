@@ -11,6 +11,22 @@ body, comments, and labels become live context on every turn.
 
 <Screenshot src="/screenshots/topics.png" alt="An onboarding topic beside the collection picker and topic tree" caption="A persistent conversation beside its topic tree, with collections keeping related work together." />
 
+## Provider per topic
+
+The composer's single model picker lists all configured providers' models and
+presets, grouped by provider. Choosing one saves its provider automatically,
+alongside reasoning effort and context size, independently of other conversations.
+Use GitHub Copilot for one
+topic and Azure AI Foundry for another without changing the global default.
+**Use global default** clears the override.
+
+Replies, retries, compaction, summaries, naming and scheduled/MCP-driven turns
+use the same selection. Side chats copy it and promotion preserves it; ordinary
+child topics start on the global default. An unconfigured explicit provider
+shows an error rather than returning a Mock reply or switching providers.
+See [configuration](/guide/configuration#which-model-gets-used); agents and
+workflows remain Copilot SDK-only.
+
 ## Issue-linked context
 
 Link a topic to a GitHub issue — paste a URL or number, or create a new issue
@@ -84,6 +100,56 @@ short brief of where it stands and what is still open, generated on request
 from the conversation, notes and attachments, and merged change by change once
 you have edited it yourself.
 
+## Tool approvals
+
+A topic can override the default [tool approval policy](/features/approvals) from
+the shield pill in its composer. Calls that wait for you show up as inline cards under the
+conversation, and the topic's sidebar row carries an amber shield badge with the
+number of pending approvals, even after a reload. The topic's settings list its
+[approval rules](/features/approvals#rules).
+
+## Side chats
+
+To explore a tangent without adding it to the topic's conversation, start a
+[**side chat**](/features/chats#side-chats). Start one from a reply's toolbar,
+from text you select in a reply, the **New side chat** button in the topic's header, **New side chat** when you
+right-click the topic in the sidebar, **Side chats** in the right panel, or
+`/side-chat`. The chat knows the
+topic's title, description and summary. The topic's right panel lists its side
+chats, and a reply that side chats were started from links to them underneath. A side chat
+can [send its outcome back](/features/chats#sending-the-outcome-back-to-the-topic)
+to the topic as a note.
+
+<Screenshot src="/screenshots/side-chats-panel.png" alt="A topic's right panel listing three side chats with unread, reminder and activity details" caption="The topic's side chats in its right panel: unread counts, reminders and last activity at a glance." />
+
+## Editing replies
+
+When the model drafts something you want to tweak, such as an email, edit its
+reply in place rather than asking for another round. Click **Edit reply** (the
+pen) in an assistant reply's toolbar, change the Markdown, and **Save**
+(⌘/Ctrl+Enter). Esc cancels.
+
+Later turns use your version: the model sees the edited reply as its own
+answer. The original isn't lost. An **Edited** chip appears under the reply.
+Click it to show the original answer in a tinted block, and **Restore** it to
+drop your edit.
+
+<Screenshot src="/screenshots/reply-edit.png" alt="An edited email draft with its original reply shown below in an amber block, with Restore and Hide buttons" caption="An edited reply: the Edited chip opens the model's original underneath, ready to restore." />
+
+### Acting on a selection
+
+Select text inside an assistant reply and a small toolbar appears over it:
+
+- **Side chat** (topics): start a [side chat](#side-chats) quoting only the
+  selection.
+- **Edit**: open the reply editor with the selected text already selected.
+- **Note**: add the selection's **Markdown source** to the [`/notes`](#under-the-composer)
+  pad, opening it if needed. Lists, headings and code fences keep their
+  formatting. The excerpt goes below any notes already in the pad or saved draft,
+  including a popped-out notes window.
+
+Both work the same way in [chats](/features/chats).
+
 ## Scheduling & reminders
 
 Any topic can carry a **schedule** so a prompt runs on a cadence, or a one-shot
@@ -98,6 +164,53 @@ Any topic can carry a **schedule** so a prompt runs on a cadence, or a one-shot
 - **[Attachments](/features/attachments)** — images (vision) and documents.
 - **[MCP tools](/features/mcp)** — shown inline as they are called.
 
+## Watching the model think
+
+Reasoning models think before they answer, and Precursor shows it. While the
+model thinks, a pulsing **Thinking…** row sits where the reply will appear,
+previewing the step it is on — so a long pause reads as progress rather than a
+stall. Click it to read the thinking in full.
+
+<Screenshot src="/screenshots/thinking.png" alt="An assistant reply with its Thinking area expanded above the answer" caption="The model's thinking, opened above its answer. Collapsed, the row shows only the latest step." />
+
+Once the answer lands the area stays with it, collapsed, and survives a reload. A
+turn that [calls tools](/features/mcp) keeps the thinking of each round with that
+round, so you can see *why* the model reached for a tool. Stopping a turn keeps
+the thinking received so far with the partial reply.
+
+What appears depends on the model:
+
+- **Gemini, and GPT-5.5 and later**, stream a summary of their reasoning as they
+  go, one titled step at a time — the preview follows those titles. Older GPT
+  models answer on an API that doesn't expose their thinking, so they show none.
+- **Claude** thinks only when an effort is picked under the composer, and sends
+  a summary of its thinking just before the answer, so it shows up with the
+  reply rather than ahead of it.
+- A model that doesn't reason, or decides a question needs no thinking, shows no
+  Thinking area at all.
+
+The effort picker under the composer sets how hard the model thinks. The thinking
+is for you only: it is never sent back to the model on later turns. It follows
+the tool-result retention window (**Settings → System → Storage / retention**):
+past it, a reply keeps its answer but loses its Thinking area — see
+[Storage & retention](/features/storage).
+
+## Copying a reply
+
+An assistant reply's hover toolbar has three copy buttons, in topics and chats:
+
+- **Copy message**: the text without the Markdown.
+- **Copy formatted** (the envelope): the reply as formatted HTML, ready to
+  paste into an email or a document. Every block carries its own spacing, so
+  paragraphs, lists, tables and code keep their layout after the email is sent.
+  Without this, Outlook on the web and the desktop app strip the spacing when
+  the message is sent. Diagrams are copied as their source, since mail clients
+  drop inline drawings.
+- **Copy raw markdown**: the Markdown source.
+
+The **Copy** button over summaries, notes and workflow outputs uses the same
+formatted copy.
+
 ## Deleting, clearing and stopping
 
 - **Delete** a message from its hover toolbar. It disappears at once, and an
@@ -106,14 +219,27 @@ Any topic can carry a **schedule** so a prompt runs on a cadence, or a one-shot
 - **`/clear`** (or **Topic settings → Clear chat**) erases the whole transcript
   after a confirmation. It always leaves it empty: a reply still streaming is
   stopped first, so its answer can't land afterwards without its prompt.
+- **`/compact [focus]`** summarises a long conversation so it fits the model's
+  window again. The older messages stay visible, and **Undo** on the marker
+  restores them for the model. See
+  [context compression](/features/context-compression).
+- **Rewind** to an earlier turn from the timeline on the right edge of the
+  transcript, or from a prompt's hover toolbar. It deletes every later turn after a preview and an undo
+  countdown. **Edit & resend** also puts that turn's prompt back in the
+  composer. See [timeline & rewind](/features/rewind).
 - **Stop** keeps what already streamed, marked _(stopped)_. A
   [tool call](/features/mcp) still running settles as **stopped** instead of
   spinning, and stays in the transcript after a reload — so the next turn knows
   the call was cut short.
 
-Chats behave the same way, and so does the
-[workspace assistant](/features/workspaces#the-workspace-assistant) (which has no
-per-message delete, since nothing there is saved).
+Chats behave the same way, and so does a discussion opened beside a
+[workspace](/features/workspaces#discussing-a-workspace) — it *is* a chat or a topic.
+
+## Artifacts
+
+Workspace files a topic created or that you attached are listed as **Artifacts**
+in the stats area on the right, under the reminder. See
+[Discussing a workspace](/features/workspaces#discussing-a-workspace).
 
 ## When a turn fails
 

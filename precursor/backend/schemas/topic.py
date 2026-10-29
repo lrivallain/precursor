@@ -4,19 +4,23 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import ConfigDict, Field
 
+from precursor.backend.schemas.approval import ApprovalPolicy
+from precursor.backend.schemas.conversation_llm import ConversationLLMFields
 from precursor.backend.schemas.schedule import ScheduleSummary
 
 
-class TopicBase(BaseModel):
+class TopicBase(ConversationLLMFields):
     title: str = Field(min_length=1, max_length=255)
     description: str | None = None
     parent_id: int | None = None
     github_repo: str | None = None
     github_issue_number: int | None = None
     pinned: bool = False
-    role_id: int | None = None
+    role: str | None = None
+    # Null inherits the global conversation approval policy.
+    approval_policy: ApprovalPolicy | None = None
     # Null on input means "use the default collection"; reads always carry the
     # resolved id.
     collection_id: int | None = None
@@ -31,14 +35,15 @@ class TopicCreate(TopicBase):
     create_linked_issue: bool = False
 
 
-class TopicUpdate(BaseModel):
+class TopicUpdate(ConversationLLMFields):
     title: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = None
     parent_id: int | None = None
     github_repo: str | None = None
     github_issue_number: int | None = None
     pinned: bool | None = None
-    role_id: int | None = None
+    role: str | None = None
+    approval_policy: ApprovalPolicy | None = None
     # Moving a topic also moves its whole subtree (see routers/topics.py).
     collection_id: int | None = None
     # When present, the router normalizes and uniquifies it before storing.
@@ -60,6 +65,8 @@ class TopicRead(TopicBase):
     # Recurrence summary when the topic runs on a schedule (null otherwise).
     # Eager-loaded (selectin) so any topic read carries it.
     schedule: ScheduleSummary | None = None
+    # Quoted reply the conversation started from (a promoted side chat's).
+    seed_content: str | None = None
 
 
 class TopicNode(TopicRead):
@@ -67,6 +74,8 @@ class TopicNode(TopicRead):
 
     children: list[TopicNode] = Field(default_factory=list)
     unread_count: int = 0
+    # Tool calls parked on the user's approval (distinct from unread).
+    pending_approvals: int = 0
 
 
 TopicNode.model_rebuild()

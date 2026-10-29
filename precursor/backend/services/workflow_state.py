@@ -24,7 +24,7 @@ import re
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from precursor.backend.models import WorkflowRun, WorkflowRunStep, WorkflowState
+from precursor.backend.models import WorkflowRun, WorkflowRunStep, WorkflowState, WorkflowStep
 from precursor.backend.models.workflow_state import WORKFLOW_STATE_MAX_KEYS
 from precursor.backend.schemas.workflow_state import WorkflowStateSummary, WorkflowStateWrite
 
@@ -47,6 +47,9 @@ UNSET_PLACEHOLDER = "(unset)"
 # closing brace, so it may contain spaces and punctuation but not ``}``.
 _PLACEHOLDER_RE = re.compile(r"\{\{\s*(?P<expr>[A-Za-z0-9._-]+)\s*(?:\|(?P<default>[^}]*))?\}\}")
 _STEP_OUTPUT_RE = re.compile(r"^step\.(?P<position>\d+)\.output$")
+# Files mode: a step addressed by its key (``{{step.draft.output}}``), which
+# survives reordering. A purely numeric reference stays a position.
+_STEP_KEY_OUTPUT_RE = re.compile(r"^step\.(?P<key>[a-z0-9][a-z0-9_-]*)\.output$")
 
 
 # --------------------------------------------------------------------- store
@@ -173,6 +176,7 @@ def render_placeholders(
     state: dict[str, str] | None = None,
     run_input: str | None = None,
     step_outputs: dict[int, str] | None = None,
+    step_keys: dict[str, int] | None = None,
 ) -> str:
     """Substitute ``{{…}}`` placeholders in a step's instructions.
 
@@ -182,7 +186,10 @@ def render_placeholders(
     * ``{{state.<key>}}`` — a value from this workflow's saved state;
     * ``{{run.input}}`` — the brief the human gave when starting this run;
     * ``{{step.<n>.output}}`` — what the step at 0-based position ``n`` produced
-      in this run.
+      in this run;
+    * ``{{step.<key>.output}}`` — the same, by step key, when ``step_keys`` maps
+      the workflow's keys to positions (files mode). Without it the expression
+      is left untouched, as before.
 
     An expression we don't recognise is **left untouched**, so ordinary prose or
     another tool's templating that happens to use braces survives intact. A
@@ -204,6 +211,9 @@ def render_placeholders(
             value = run_input
         elif (step_match := _STEP_OUTPUT_RE.match(expr)) is not None:
             value = step_outputs.get(int(step_match.group("position")))
+        elif step_keys and (key_match := _STEP_KEY_OUTPUT_RE.match(expr)) is not None:
+            position = step_keys.get(key_match.group("key"))
+            value = step_outputs.get(position) if position is not None else None
         else:
             return match.group(0)  # not ours — leave the text alone
 
@@ -224,6 +234,7 @@ def has_placeholders(text: str | None) -> bool:
         m.group("expr").startswith("state.")
         or m.group("expr") == "run.input"
         or _STEP_OUTPUT_RE.match(m.group("expr"))
+        or _STEP_KEY_OUTPUT_RE.match(m.group("expr"))
         for m in _PLACEHOLDER_RE.finditer(text)
     )
 
@@ -270,4 +281,55 @@ async def render_step_instructions(
         state=await state_mapping(session, workflow_id),
         run_input=run_input,
         step_outputs=step_outputs,
+        step_keys=await _step_keys(session, workflow_id),
     )
+
+
+async def _step_keys(session: AsyncSession, workflow_id: int) -> dict[str, int]:
+    """Step key → position, for steps tied to a definition file (files mode)."""
+    rows = await session.execute(
+        select(WorkflowStep.position, WorkflowStep.definition_ref).where(
+            WorkflowStep.workflow_id == workflow_id, WorkflowStep.definition_ref.is_not(None)
+        )
+    )
+    keys: dict[str, int] = {}
+    for position, ref in rows.all():
+        if ref and "/" in ref:
+            keys[ref.split("/", 1)[1]] = position
+    return keys
+
+
+def step_output_references(text: str | None) -> list[str]:
+    """The step keys ``text`` refers to through ``{{step.<key>.output}}``."""
+    if not text:
+        return []
+    found: list[str] = []
+    for m in _PLACEHOLDER_RE.finditer(text):
+        expr = m.group("expr")
+        if _STEP_OUTPUT_RE.match(expr):
+            continue
+        if (key_match := _STEP_KEY_OUTPUT_RE.match(expr)) is not None:
+            found.append(key_match.group("key"))
+    return found
+
+
+def keyed_step_references(text: str, keys: list[str]) -> str:
+    """Rewrite ``{{step.<n>.output}}`` as ``{{step.<key>.output}}`` for known positions.
+
+    Used when a workflow is written to a file, so its references survive the
+    steps being reordered there. Unknown positions are left as they were.
+    """
+
+    def swap(match: re.Match[str]) -> str:
+        expr = match.group("expr")
+        step_match = _STEP_OUTPUT_RE.match(expr)
+        if step_match is None:
+            return match.group(0)
+        position = int(step_match.group("position"))
+        if not 0 <= position < len(keys):
+            return match.group(0)
+        default = match.group("default")
+        tail = f" |{default}" if default is not None else ""
+        return f"{{{{step.{keys[position]}.output{tail}}}}}"
+
+    return _PLACEHOLDER_RE.sub(swap, text)

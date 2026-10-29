@@ -19,6 +19,7 @@ from precursor.backend.models.agent_trigger import (
     AGENT_TRIGGER_TYPES,
     AgentTrigger,
 )
+from precursor.backend.models.approval_rule import ApprovalRule
 from precursor.backend.models.attachment import Attachment
 from precursor.backend.models.base import Base
 from precursor.backend.models.chat import Chat
@@ -28,6 +29,14 @@ from precursor.backend.models.collection import (
     DEFAULT_COLLECTION_NAME,
     Collection,
 )
+from precursor.backend.models.conversation_artifact import (
+    ARTIFACT_SOURCE_ASSISTANT,
+    ARTIFACT_SOURCE_MANUAL,
+    ARTIFACT_SOURCE_OPENED,
+    ARTIFACT_SOURCES,
+    ConversationArtifact,
+)
+from precursor.backend.models.iq import IQChunk, IQDirty
 from precursor.backend.models.issue_context import IssueContextCache
 from precursor.backend.models.mcp_server import MCPServer
 from precursor.backend.models.mcp_tool_cache import MCPToolCache
@@ -38,13 +47,15 @@ from precursor.backend.models.meeting import (
     MeetingSession,
 )
 from precursor.backend.models.memory import Memory
-from precursor.backend.models.message import Message, MessageRole
+from precursor.backend.models.message import MESSAGE_KIND_COMPACTION, Message, MessageRole
 from precursor.backend.models.note_draft import NoteDraft
 from precursor.backend.models.note_draft_attachment import NoteDraftAttachment
 from precursor.backend.models.reminder import Reminder
 from precursor.backend.models.role import Role
 from precursor.backend.models.settings import AppSetting
 from precursor.backend.models.skill import Skill
+from precursor.backend.models.step_plan import Step, StepArtifactVersion, StepPlan
+from precursor.backend.models.tool_approval import ToolApproval
 from precursor.backend.models.topic import Topic
 from precursor.backend.models.topic_schedule import TopicSchedule
 from precursor.backend.models.topic_summary import TopicSummary
@@ -71,9 +82,14 @@ __all__ = [
     "AGENT_STATE_MAX_KEYS",
     "AGENT_STATE_MAX_VALUE",
     "AGENT_TRIGGER_TYPES",
+    "ARTIFACT_SOURCES",
+    "ARTIFACT_SOURCE_ASSISTANT",
+    "ARTIFACT_SOURCE_MANUAL",
+    "ARTIFACT_SOURCE_OPENED",
     "COLLECTION_ACCENTS",
     "DEFAULT_COLLECTION_ACCENT",
     "DEFAULT_COLLECTION_NAME",
+    "MESSAGE_KIND_COMPACTION",
     "WORKFLOW_STATE_MAX_KEY",
     "WORKFLOW_STATE_MAX_KEYS",
     "WORKFLOW_STATE_MAX_VALUE",
@@ -87,10 +103,14 @@ __all__ = [
     "AgentState",
     "AgentTrigger",
     "AppSetting",
+    "ApprovalRule",
     "Attachment",
     "Base",
     "Chat",
     "Collection",
+    "ConversationArtifact",
+    "IQChunk",
+    "IQDirty",
     "IssueContextCache",
     "MCPServer",
     "MCPToolCache",
@@ -106,6 +126,10 @@ __all__ = [
     "Reminder",
     "Role",
     "Skill",
+    "Step",
+    "StepArtifactVersion",
+    "StepPlan",
+    "ToolApproval",
     "Topic",
     "TopicSchedule",
     "TopicSummary",

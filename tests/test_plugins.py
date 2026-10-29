@@ -12,6 +12,7 @@ attribution, namespacing and mounting under test with nothing to install.
 
 from __future__ import annotations
 
+import json
 import sys
 from collections.abc import Iterator
 from pathlib import Path
@@ -224,6 +225,133 @@ def test_disabling_a_plugin_removes_its_ui_api_and_tools(stub_plugin: LoadedPlug
 
         assert client.get(f"{STUB_PREFIX}/ping").status_code == 200
         assert server in get_mcp_client_manager().plugin_entry_names()
+
+
+class _AnswerOnlyProvider:
+    """An LLM provider that answers every prompt without calling a tool."""
+
+    name = "answer-only"
+
+    async def stream_chat(self, *, model: str, messages: Any, reasoning_effort: Any = None) -> Any:
+        yield ""
+
+    async def stream_chat_with_tools(
+        self, *, model: str, messages: Any, tools: Any, reasoning_effort: Any = None
+    ) -> Any:
+        from precursor.backend.services.llm.base import (
+            TextDeltaEvent,
+            TurnDoneEvent,
+            UsageEvent,
+        )
+
+        _ = model, messages, tools, reasoning_effort
+        yield TextDeltaEvent(content="ok")
+        yield UsageEvent(prompt_tokens=1, completion_tokens=1, total_tokens=2)
+        yield TurnDoneEvent(finish_reason="stop")
+
+    async def list_models(self) -> list[Any]:
+        return []
+
+
+def test_a_disabled_plugins_server_stays_out_of_every_prompt(
+    stub_plugin: LoadedPlugin, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Its toggle outlives the plugin, but a prompt must never ask for it (#383).
+
+    The ``mcp_enabled`` entry is kept on purpose, so re-enabling brings the
+    server back as the user left it. Requesting it meanwhile failed every turn
+    with "MCP server '…' unavailable: Unknown MCP server".
+    """
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AppSetting
+    from precursor.backend.services import conversation_turn, turn_engine
+    from precursor.backend.services.app_settings import resolve_mcp_enabled
+
+    server = f"{STUB_ID}.tools"
+
+    async def _provider(_session: object) -> _AnswerOnlyProvider:
+        return _AnswerOnlyProvider()
+
+    async def _no_usage(*args: object, **kwargs: object) -> None:
+        _ = args, kwargs
+
+    async def _requested() -> list[str]:
+        async with SessionLocal() as session:
+            return await turn_engine.load_enabled_mcp_servers(session)
+
+    async def _stored() -> dict[str, bool]:
+        async with SessionLocal() as session:
+            return await resolve_mcp_enabled(session)
+
+    async def _store(value: str | None) -> str | None:
+        """Write the raw ``mcp_enabled`` row (None deletes it); return the old one."""
+        async with SessionLocal() as session:
+            row = await session.get(AppSetting, "mcp_enabled")
+            previous = row.value if row is not None else None
+            if value is None:
+                if row is not None:
+                    await session.delete(row)
+            elif row is None:
+                session.add(AppSetting(key="mcp_enabled", value=value))
+            else:
+                row.value = value
+            await session.commit()
+            return previous
+
+    monkeypatch.setattr(conversation_turn, "get_llm_provider", _provider)
+    monkeypatch.setattr(turn_engine, "record_usage", _no_usage)
+
+    with TestClient(create_app()) as client:
+        # Only the plugin's server, so the turn has nothing real to spin up. The
+        # tests share one database, so the previous value goes back afterwards.
+        saved = client.portal.call(_store, json.dumps({server: True}))
+        try:
+            client.put(f"/api/plugins/installed/{STUB_ID}", json={"enabled": False})
+            try:
+                assert client.portal.call(_requested) == []
+
+                tid = client.post("/api/topics", json={"title": "Stale plugin"}).json()["id"]
+                stream = client.post(
+                    f"/api/topics/{tid}/messages/stream",
+                    json={"content": "hello"},
+                    headers={"Accept": "text/event-stream"},
+                )
+                assert stream.status_code == 200
+                assert "Unknown MCP server" not in stream.text
+                assert server not in stream.text
+                # Ignored, not pruned: the toggle is still there for the plugin's return.
+                assert client.portal.call(_stored) == {server: True}
+            finally:
+                client.put(f"/api/plugins/installed/{STUB_ID}", json={"enabled": True})
+
+            assert client.portal.call(_requested) == [server]
+        finally:
+            client.portal.call(_store, saved)
+
+
+def test_disabling_a_plugin_retires_its_warm_mcp_worker(stub_plugin: LoadedPlugin) -> None:
+    """No turn asks for a disabled plugin's server, so nothing else would close it."""
+    from precursor.backend.services.mcp.client import get_mcp_client_manager
+
+    class _Worker:
+        alive = True
+        closed = False
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    server = f"{STUB_ID}.tools"
+    manager = get_mcp_client_manager()
+    worker = _Worker()
+    with TestClient(create_app()) as client:
+        manager._workers[server] = worker  # type: ignore[assignment]
+        try:
+            client.put(f"/api/plugins/installed/{STUB_ID}", json={"enabled": False})
+            assert worker.closed
+            assert server not in manager._workers
+        finally:
+            manager._workers.pop(server, None)
+            client.put(f"/api/plugins/installed/{STUB_ID}", json={"enabled": True})
 
 
 def test_plugin_mcp_servers_are_namespaced_and_attributed(stub_plugin: LoadedPlugin) -> None:

@@ -28,6 +28,7 @@ CATALOG_TTL_SECONDS = 300.0
 # provider id -> (fetched_at monotonic, model ids in catalogue order)
 _cache: dict[str, tuple[float, tuple[str, ...]]] = {}
 _locks: dict[str, asyncio.Lock] = {}
+_generation = 0
 
 
 def invalidate_model_catalog(provider: str | None = None) -> None:
@@ -37,13 +38,17 @@ def invalidate_model_catalog(provider: str | None = None) -> None:
     tokenless GitHub Copilot config resolves to the mock provider, and its
     one-entry catalogue must not outlive the token being added.
     """
+    global _generation
+    _generation += 1
     if provider is None:
         _cache.clear()
     else:
         _cache.pop(provider, None)
 
 
-async def offered_model_ids(session: AsyncSession) -> tuple[str, ...] | None:
+async def offered_model_ids(
+    session: AsyncSession, provider: str | None = None
+) -> tuple[str, ...] | None:
     """Model ids the active provider currently offers, in catalogue order.
 
     Returns ``None`` when the catalogue can't be determined — the provider
@@ -52,7 +57,7 @@ async def offered_model_ids(session: AsyncSession) -> tuple[str, ...] | None:
     """
     from precursor.backend.services.app_settings import resolve_llm_provider
 
-    provider_id = await resolve_llm_provider(session)
+    provider_id = provider or await resolve_llm_provider(session)
     cached = _cache.get(provider_id)
     if cached is not None and (time.monotonic() - cached[0]) < CATALOG_TTL_SECONDS:
         return cached[1]
@@ -63,13 +68,20 @@ async def offered_model_ids(session: AsyncSession) -> tuple[str, ...] | None:
         cached = _cache.get(provider_id)
         if cached is not None and (time.monotonic() - cached[0]) < CATALOG_TTL_SECONDS:
             return cached[1]
-        return await _fetch(session, provider_id)
+        return await _fetch(session, provider_id, explicit=provider is not None)
 
 
-async def _fetch(session: AsyncSession, provider_id: str) -> tuple[str, ...] | None:
+async def _fetch(
+    session: AsyncSession, provider_id: str, *, explicit: bool = False
+) -> tuple[str, ...] | None:
     from precursor.backend.services.llm import get_llm_provider
 
-    provider = await get_llm_provider(session)
+    generation = _generation
+    provider = (
+        await get_llm_provider(session, override_provider=provider_id, strict=True)
+        if explicit
+        else await get_llm_provider(session)
+    )
     lister = getattr(provider, "list_models", None)
     if lister is None:
         return None
@@ -81,5 +93,6 @@ async def _fetch(session: AsyncSession, provider_id: str) -> tuple[str, ...] | N
     ids = tuple(m.id for m in models if getattr(m, "id", ""))
     if not ids:
         return None
-    _cache[provider_id] = (time.monotonic(), ids)
+    if generation == _generation and (provider.name != "mock" or provider_id == "mock"):
+        _cache[provider_id] = (time.monotonic(), ids)
     return ids

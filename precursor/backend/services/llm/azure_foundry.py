@@ -7,23 +7,25 @@ and the ``api-key`` header. The model id passed to ``stream_chat`` is the Azure
 **deployment name**.
 
 Azure doesn't expose a uniform per-key model catalog here, so ``list_models``
-returns the configured deployment (if any) and the UI falls back to manual
-deployment-name entry.
+returns the configured deployment names (comma-separated, if multiple) and the
+UI falls back to manual deployment-name entry.
 """
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from typing import Any
 
 from openai import AsyncAzureOpenAI
 
 from precursor.backend.services.llm._openai_compat import (
+    embed_openai,
     stream_openai_tools,
     to_openai_messages,
 )
 from precursor.backend.services.llm.base import (
     ChatMessage,
+    EmbeddingResult,
     LLMModel,
     ProviderEvent,
     ToolDef,
@@ -43,7 +45,12 @@ class AzureFoundryProvider:
         api_version: str = DEFAULT_API_VERSION,
         deployment: str = "",
     ) -> None:
-        self._deployment = deployment
+        self._deployments = list(
+            dict.fromkeys(
+                name.strip() for name in deployment.replace("\n", ",").split(",") if name.strip()
+            )
+        )
+        self._deployment = self._deployments[0] if self._deployments else ""
         self._client = AsyncAzureOpenAI(
             azure_endpoint=endpoint.rstrip("/"),
             api_key=api_key,
@@ -79,6 +86,7 @@ class AzureFoundryProvider:
         messages: Sequence[ChatMessage],
         tools: Sequence[ToolDef],
         reasoning_effort: str | None = None,
+        request_options: Mapping[str, Any] | None = None,
     ) -> AsyncIterator[ProviderEvent]:
         async for event in stream_openai_tools(
             client=self._client,
@@ -86,12 +94,15 @@ class AzureFoundryProvider:
             messages=messages,
             tools=tools,
             reasoning_effort=reasoning_effort,
+            request_options=request_options,
         ):
             yield event
 
+    async def embed(
+        self, texts: Sequence[str], *, model: str, dimensions: int | None = None
+    ) -> EmbeddingResult:
+        return await embed_openai(self._client, texts, model=model, dimensions=dimensions)
+
     async def list_models(self) -> list[LLMModel]:
-        # No portable catalog endpoint; surface the configured deployment so the
-        # picker has at least one entry, otherwise the UI uses manual entry.
-        if self._deployment:
-            return [LLMModel(id=self._deployment, name=self._deployment, publisher="Azure")]
-        return []
+        # This is a configured list, not a remotely verified deployment catalog.
+        return [LLMModel(id=name, name=name, publisher="Azure") for name in self._deployments]

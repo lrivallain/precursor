@@ -1,14 +1,43 @@
 import { useEffect, useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight, BarChart3 } from "lucide-react";
+import {
+  AlarmClock,
+  ChevronLeft,
+  ChevronRight,
+  BarChart3,
+  MessagesSquare,
+  Paperclip,
+  Shrink,
+} from "lucide-react";
 import { streamStore } from "../lib/streamStore";
 import { api } from "../lib/api";
 import { modelsStore, useCurrentModel } from "../lib/modelsStore";
+import { useSettings } from "../lib/settingsStore";
 import { useIsNarrow } from "../lib/useMediaQuery";
-import type { Message } from "../lib/types";
+import type { ContextEstimate, ConversationLLMSelection, Message, ReminderContainer } from "../lib/types";
+import { COMPACT_NUDGE_PERCENT, CompactContextButton } from "./CompactContext";
+import { ContextBreakdown } from "./ContextBreakdown";
+import { ReminderSection, reminderSummary, type ReminderPanelControls } from "./ChatStatsReminder";
+import { SideChatsSection, type SideChatsControls } from "./SideChatsSection";
+import { ArtifactsSection, useConversationArtifacts } from "./ArtifactsSection";
+import type { WsDiscussionRef } from "../lib/routes";
 
 interface ChatStatsPanelProps {
+  selection?: ConversationLLMSelection | null;
   streamKey: string;
   messages: Message[];
+  kind: ReminderContainer;
+  containerId: number;
+  streaming: boolean;
+  compaction: {
+    compacting: boolean;
+    markerId: number | null;
+    run: (instructions?: string) => Promise<void>;
+  };
+  reminder: ReminderPanelControls;
+  /** How the workspace addresses this conversation when an artifact is opened. */
+  discussion: WsDiscussionRef;
+  /** Topics only: the side chats started from this topic. */
+  sideChats?: SideChatsControls;
 }
 
 interface RoundStat {
@@ -82,7 +111,20 @@ function chars(messages: Message[]): number {
 
 const STORAGE_KEY = "precursor:chat-stats:collapsed";
 
-export function ChatStatsPanel({ streamKey, messages }: ChatStatsPanelProps) {
+export function ChatStatsPanel({
+  streamKey,
+  messages,
+  kind,
+  containerId,
+  streaming,
+  compaction,
+  reminder,
+  discussion,
+  sideChats,
+  selection,
+}: ChatStatsPanelProps) {
+  const settings = useSettings();
+  const artifacts = useConversationArtifacts(kind, containerId);
   const narrow = useIsNarrow();
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     if (typeof window === "undefined") return true;
@@ -111,8 +153,16 @@ export function ChatStatsPanel({ streamKey, messages }: ChatStatsPanelProps) {
       cancelled = true;
     };
   }, []);
-  const model = useCurrentModel();
-  const contextWindow = model?.context_window ?? null;
+  const globalModel = useCurrentModel();
+  useEffect(() => {
+    if (selection?.provider) void modelsStore.ensureLoaded(selection.provider);
+  }, [selection?.provider]);
+  const selectedPresets = selection?.category ? (settings?.model_fallbacks?.categories.find((entry) => entry.id === selection.category)?.presets ?? []).filter((preset) => preset.provider !== "agents") : [];
+  const selectedId = selection?.model || selectedPresets[0]?.model;
+  const model = selection ? modelsStore.byIdOrNull(selectedId, selectedPresets[0]?.provider || selection.provider) : globalModel;
+  const contextWindow = selection
+    ? selectedPresets.length ? Math.max(...selectedPresets.map((preset) => preset.context_tokens)) : selection.context_tokens
+    : model?.context_window ?? null;
 
   const totals = useMemo(() => computeTotals(messages), [messages]);
   const roles = useMemo(() => countByRole(messages), [messages]);
@@ -120,6 +170,47 @@ export function ChatStatsPanel({ streamKey, messages }: ChatStatsPanelProps) {
   const liveUsage = streamStore.lastUsage(streamKey);
   const lastInput = liveUsage?.prompt_tokens ?? totals.lastPrompt;
   const lastOutput = liveUsage?.completion_tokens ?? totals.lastCompletion;
+
+  // What the next turn would send, fetched only while the panel is open and
+  // refreshed as the transcript changes.
+  const [estimate, setEstimate] = useState<ContextEstimate | null>(null);
+  const lastMessageId = messages.length > 0 ? messages[messages.length - 1].id : 0;
+  useEffect(() => {
+    if (collapsed || streaming) return;
+    let cancelled = false;
+    const handle = window.setTimeout(() => {
+      api
+        .container(kind, containerId)
+        .contextEstimate()
+        .then((e) => {
+          if (!cancelled) setEstimate(e);
+        })
+        .catch(() => {
+          /* non-fatal: the panel just omits the estimate */
+        });
+    }, 300);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(handle);
+    };
+  }, [kind, containerId, collapsed, streaming, lastMessageId, messages.length]);
+
+  // The last real prompt size predates a compaction made since: until the next
+  // turn reports usage, the estimate is the better reading of the window.
+  const lastUsageId = totals.rounds.length > 0 ? totals.rounds[totals.rounds.length - 1].id : 0;
+  const compactedSinceUsage =
+    compaction.markerId !== null && compaction.markerId > lastUsageId && !liveUsage;
+  const estimatedTotal = estimate
+    ? estimate.tokens + estimate.system_tokens + estimate.system_tools_tokens + estimate.mcp_tools_tokens
+    : null;
+  // Before the first reply there is no reported prompt size either.
+  const useEstimate = estimatedTotal !== null && (compactedSinceUsage || lastInput === 0);
+  const windowUsed = useEstimate ? estimatedTotal : lastInput;
+  const windowPct =
+    contextWindow !== null && contextWindow > 0 ? (windowUsed / contextWindow) * 100 : null;
+  const hasConversation = messages.some((m) => m.role === "user" || m.role === "assistant");
+  const compactDisabled = streaming || !hasConversation;
+  const runCompact = () => void compaction.run();
 
   // Even collapsed this rail costs 2.25rem, and expanded it would take most of
   // a phone screen. It's an at-a-glance diagnostic, so on narrow viewports the
@@ -139,6 +230,58 @@ export function ChatStatsPanel({ streamKey, messages }: ChatStatsPanelProps) {
           <ChevronLeft size={16} />
         </button>
         <BarChart3 size={16} className="mt-2 text-muted" />
+        {reminder.reminder && (
+          <button
+            type="button"
+            onClick={() => setCollapsed(false)}
+            className={`mt-2 rounded p-1.5 ${
+              reminder.reminder.status === "fired"
+                ? "text-amber-600 hover:bg-amber-500/15 dark:text-amber-400"
+                : "text-accent hover:bg-accent/10"
+            }`}
+            data-tooltip={reminderSummary(reminder.reminder)}
+            aria-label="Show reminder"
+          >
+            <AlarmClock size={16} />
+          </button>
+        )}
+        {artifacts.items.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setCollapsed(false)}
+            className="mt-2 rounded p-1.5 text-muted hover:bg-surface"
+            data-tooltip={`${artifacts.items.length} ${artifacts.items.length === 1 ? "artifact" : "artifacts"}`}
+            aria-label="Show artifacts"
+          >
+            <Paperclip size={16} />
+          </button>
+        )}
+        {sideChats && sideChats.items.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setCollapsed(false)}
+            className="relative mt-2 rounded p-1.5 text-muted hover:bg-surface"
+            data-tooltip={`${sideChats.items.length} side ${sideChats.items.length === 1 ? "chat" : "chats"}`}
+            aria-label="Show side chats"
+          >
+            <MessagesSquare size={16} />
+            {sideChats.items.some((c) => c.unread_count > 0) && (
+              <span className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-accent" />
+            )}
+          </button>
+        )}
+        {windowPct !== null && windowPct >= COMPACT_NUDGE_PERCENT && !compactDisabled && (
+          <button
+            type="button"
+            onClick={runCompact}
+            disabled={compaction.compacting}
+            className="mt-2 rounded p-1.5 text-amber-600 hover:bg-amber-500/15 disabled:opacity-50 dark:text-amber-400"
+            data-tooltip={`Context is ${Math.round(windowPct)}% full — compact it`}
+            aria-label="Compact context"
+          >
+            <Shrink size={16} />
+          </button>
+        )}
       </aside>
     );
   }
@@ -162,12 +305,65 @@ export function ChatStatsPanel({ streamKey, messages }: ChatStatsPanelProps) {
       </div>
 
       <div className="flex-1 overflow-y-auto p-3 space-y-4 text-sm">
-        {contextWindow !== null && contextWindow > 0 && (
-          <ContextWindowSection
-            used={lastInput}
+        <ReminderSection {...reminder} />
+        <ArtifactsSection {...artifacts} discussion={discussion} />
+        {sideChats && <SideChatsSection {...sideChats} />}
+
+        {contextWindow !== null && contextWindow > 0 && estimate ? (
+          <ContextBreakdown
+            used={windowUsed}
             limit={contextWindow}
-            modelName={model?.name ?? model?.id ?? "model"}
+            system={estimate.system_tokens}
+            systemTools={estimate.system_tools_tokens}
+            mcpTools={estimate.mcp_tools_tokens}
+            estimated={useEstimate}
+            partsEstimated
+            model={model?.name ?? model?.id ?? "model"}
           />
+        ) : (
+          contextWindow !== null &&
+          contextWindow > 0 && (
+            <ContextWindowSection
+              used={windowUsed}
+              limit={contextWindow}
+              modelName={model?.name ?? model?.id ?? "model"}
+              estimated={false}
+            />
+          )
+        )}
+        <CompactContextButton
+          pct={windowPct}
+          busy={compaction.compacting}
+          disabled={compactDisabled}
+          disabledReason={streaming ? "Wait for the reply to finish" : "Nothing to compact yet"}
+          onCompact={runCompact}
+        />
+
+        {estimate && (
+          <Section title="Next turn (estimate)">
+            <Stat
+              label="History"
+              value={formatInt(estimate.tokens)}
+              unit="tokens"
+              tooltip="Estimated tokens of conversation history the next turn sends. The system prompt and tool definitions are counted separately in the context window."
+            />
+            {estimate.saved_by_hygiene > 0 && (
+              <Stat
+                label="Trimmed"
+                value={compactInt(estimate.saved_by_hygiene)}
+                unit="tokens"
+                tooltip="Saved by dropping inline images from tool results and shortening large tool results from older turns."
+              />
+            )}
+            {estimate.compacted && (
+              <Stat
+                label="Compacted"
+                value={String(estimate.compacted_messages)}
+                unit="messages"
+                tooltip="Messages above the latest compaction marker: the model sees their summary instead."
+              />
+            )}
+          </Section>
         )}
 
         <Section title="Last turn">
@@ -252,10 +448,12 @@ function ContextWindowSection({
   used,
   limit,
   modelName,
+  estimated,
 }: {
   used: number;
   limit: number;
   modelName: string;
+  estimated?: boolean;
 }) {
   const pct = Math.min(100, Math.max(0, (used / limit) * 100));
   // Cool zone < 60%, warm 60–85%, hot > 85%.
@@ -284,7 +482,8 @@ function ContextWindowSection({
         />
       </div>
       <div className="mt-1 flex justify-between text-xs text-muted tabular-nums">
-        <span>
+        <span data-tooltip={estimated ? "Estimated since the last compaction" : undefined}>
+          {estimated ? "≈ " : ""}
           {compactInt(used)} / {compactInt(limit)}
         </span>
         <span>{pct.toFixed(pct < 10 ? 1 : 0)}%</span>
@@ -304,15 +503,19 @@ function Stat({
   value,
   unit,
   emphasis,
+  tooltip,
 }: {
   label: string;
   value: string;
   unit?: string;
   emphasis?: boolean;
+  tooltip?: string;
 }) {
   return (
     <div className="flex justify-between items-baseline gap-2">
-      <span className="text-muted">{label}</span>
+      <span className="text-muted" data-tooltip={tooltip}>
+        {label}
+      </span>
       <span
         className={`tabular-nums ${emphasis ? "font-semibold" : ""}`}
         title={unit ? `${value} ${unit}` : value}

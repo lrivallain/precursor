@@ -32,6 +32,7 @@ import secrets
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
+from datetime import datetime
 from typing import TypedDict
 
 logger = logging.getLogger(__name__)
@@ -59,6 +60,7 @@ RELAYABLE_EVENT_TYPES: frozenset[str] = frozenset(
         "agent.changed",
         "meeting.changed",
         "workflow.changed",
+        "step-plan.changed",
     }
 )
 
@@ -92,8 +94,15 @@ class Event(TypedDict, total=False):
     # Carried by ``workflow.changed``: which pipeline changed, and the run state
     # + name the client needs to raise a notification without re-fetching.
     workflow_id: int | None
+    # Carried by ``step-plan.changed``: which step-by-step plan changed.
+    step_plan_id: int | None
     status: str | None
     name: str | None
+    # Carried by ``approval.parked``: what a notification needs to name the
+    # topic, count the waiting calls and state when they auto-deny.
+    title: str | None
+    count: int | None
+    expires_at: str | None
     client_id: str | None
 
 
@@ -199,8 +208,12 @@ class EventBus:
             "message": event.get("message"),
             "url": event.get("url"),
             "workflow_id": event.get("workflow_id"),
+            "step_plan_id": event.get("step_plan_id"),
             "status": event.get("status"),
             "name": event.get("name"),
+            "title": event.get("title"),
+            "count": event.get("count"),
+            "expires_at": event.get("expires_at"),
             "client_id": event.get("client_id") or _current_client_id.get(),
         }
         self.dispatch(payload)
@@ -326,19 +339,44 @@ async def publish_message_changed_chat(chat_id: int) -> None:
     await _bus.publish({"type": "message.changed", "chat_id": chat_id})
 
 
+# Turns currently generating, per container: every streamed or unattended turn
+# brackets itself with the stream.started / stream.ended publishers below, so
+# this is the one place that knows a transcript is mid-write (compaction must
+# not summarise a turn that is still being appended to).
+_live_streams: dict[tuple[str, int], int] = {}
+
+
+def _stream_delta(kind: str, container_id: int, delta: int) -> None:
+    key = (kind, container_id)
+    count = _live_streams.get(key, 0) + delta
+    if count > 0:
+        _live_streams[key] = count
+    else:
+        _live_streams.pop(key, None)
+
+
+def is_streaming(kind: str, container_id: int) -> bool:
+    """True while a turn is generating in this topic (``"topic"``) or chat."""
+    return (kind, container_id) in _live_streams
+
+
 async def publish_stream_started(topic_id: int) -> None:
+    _stream_delta("topic", topic_id, 1)
     await _bus.publish({"type": "stream.started", "topic_id": topic_id})
 
 
 async def publish_stream_started_chat(chat_id: int) -> None:
+    _stream_delta("chat", chat_id, 1)
     await _bus.publish({"type": "stream.started", "chat_id": chat_id})
 
 
 async def publish_stream_ended(topic_id: int) -> None:
+    _stream_delta("topic", topic_id, -1)
     await _bus.publish({"type": "stream.ended", "topic_id": topic_id})
 
 
 async def publish_stream_ended_chat(chat_id: int) -> None:
+    _stream_delta("chat", chat_id, -1)
     await _bus.publish({"type": "stream.ended", "chat_id": chat_id})
 
 
@@ -404,6 +442,37 @@ async def publish_read_changed(
     )
 
 
+async def publish_approval_changed(
+    *, topic_id: int | None = None, chat_id: int | None = None
+) -> None:
+    """Signal that a conversation's pending approvals changed.
+
+    Emitted when a turn parks on an approval, when one is decided, and when they
+    are cancelled, so every window refreshes the sidebar badge and the approval
+    cards of that conversation.
+    """
+    await _bus.publish({"type": "approval.changed", "topic_id": topic_id, "chat_id": chat_id})
+
+
+async def publish_approval_parked(
+    *, topic_id: int, title: str, count: int, expires_at: datetime | None
+) -> None:
+    """Signal that an unattended run is waiting on a person.
+
+    Carries what a browser notification needs (title, how many calls, when they
+    auto-deny) so a window can alert without fetching the topic first.
+    """
+    await _bus.publish(
+        {
+            "type": "approval.parked",
+            "topic_id": topic_id,
+            "title": title,
+            "count": count,
+            "expires_at": expires_at.isoformat() if expires_at else None,
+        }
+    )
+
+
 async def publish_meeting_changed(meeting_session_id: int | None = None) -> None:
     """Signal that the set of meeting sessions (or one session) changed.
 
@@ -441,3 +510,8 @@ async def publish_workflow_changed(
             "name": name,
         }
     )
+
+
+async def publish_step_plan_changed(step_plan_id: int | None = None) -> None:
+    """Signal that a step-by-step plan (or one of its steps) changed."""
+    await _bus.publish({"type": "step-plan.changed", "step_plan_id": step_plan_id})

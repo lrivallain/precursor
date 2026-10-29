@@ -15,6 +15,392 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **Step by step.** A new section splits a long ask (a customer email, a brief)
+  into a tree of steps. Each step has its own Markdown artifact with version
+  history, a status (open, in progress, to validate, validated, cancelled) and a
+  chat; the model can propose, add or split steps. Once the steps are validated,
+  one consolidated answer is built and can be sent back to the source topic.
+  Start one with `/steps` in a topic or from the section. See
+  [Step by step](website/features/step-by-step.md). A step's chat and drafting
+  also see the source topic's conversation, the requested output and the other
+  steps' work; the discussion gets more room and "Split" is a compact button
+  beside the status actions.
+
+- **Live insights are easier to scan.** Insight categories now have clearer
+  visual grouping, and proactive suggestions lead with a short recommendation
+  followed by concise bullets for alternatives or next steps when useful. See
+  [Live sessions](website/features/live-sessions.md).
+
+- **Live sessions inherit the topic's role.** Attaching a topic to a live
+  session now copies its assistant role into the session, and the role picker
+  moved from the Transcript tab to the session header because it applies to the
+  whole session. The role now also shapes the recap and the topic context
+  brief, not just insights, suggestions and Ask assistant, and is mirrored on
+  the session's chat. See [Live sessions](website/features/live-sessions.md).
+
+- **More keyboard shortcuts.** **C** focuses the message composer, **N** starts a new chat, topic or other
+  item in the current section, **?** opens a
+  new keyboard-shortcuts cheat-sheet (also in the ⌘K palette), and **Esc** in the
+  composer stops a streaming reply. The single-key shortcuts are ignored while
+  you type or a dialog is open. See
+  [Keyboard shortcuts](website/features/keyboard-shortcuts.md).
+
+- **Precursor IQ has its own Settings page.** The IQ card moved out of
+  **Settings → MCP servers** to **Settings → Precursor IQ**. Embeddings now pick
+  any provider configured under **Settings → Model** (Azure AI Foundry reuses
+  its endpoint and key), with a **Test embeddings** button that checks the
+  provider and model before the index is re-embedded. Ask answers get a real
+  provider and model selector instead of a free-text field. New settings
+  `iq_embedding_provider` and `iq_ask_provider`, and `POST
+  /api/iq/embeddings/test`. See [Precursor IQ](website/features/iq.md).
+
+- **Skills and attachments on the "Start a new chat" screen.** The start
+  composer now offers your `/skills` in the autocomplete (built-in commands such
+  as `/clear` stay out, since they act on an open chat) and accepts files via
+  the paperclip, paste or drop. Attaching creates the chat in the background so
+  the upload has somewhere to live; leaving the screen without sending deletes
+  it again. See [Chats](website/features/chats.md#starting-a-chat).
+
+- **Suggested answers in Live sessions.** An opt-in feature: when another
+  participant asks a question, the assistant streams a short first-person reply
+  in a card above the transcript (one fast-model call; `[[NONE]]` suppresses
+  non-questions), and saves it to the session chat as an unattended
+  `live_question` / `live_suggestion` turn. Mark your own voice with **This is
+  me** on its speaker label (`POST /api/live/{id}/speakers/me`) so it is never
+  answered. New `POST /api/live/{id}/suggest` SSE endpoint and `me_labels` on
+  live sessions. See
+  [Suggested answers](website/features/live-sessions.md#suggested-answers).
+
+- **Context window breakdown in the stats panels.** The conversation stats
+  panel (topics, chats) and the agent Insights panel now show a segmented
+  context bar and a legend splitting the window into system prompt, system
+  tools, MCP tools, messages, free space and the compaction buffer, each with
+  its share and token count. The estimate endpoint
+  (`GET /api/{topics|chats}/{id}/messages/context`) gains `system_tokens`,
+  `system_tools_tokens` and `mcp_tools_tokens`. See
+  [Context compression](website/features/context-compression.md#knowing-when-to-compact).
+- **Resizable workspace discussion panel and a compact composer.** Drag the
+  left edge of the workspace discussion panel to resize it (320–800 px,
+  remembered per browser). When the composer is too narrow for its pickers (in
+  topics, chats, agents and the panel alike), the model, effort, context,
+  approval and role pickers collapse to icons with their value in the tooltip, and their menus open as viewport-clamped popups. See
+  [Workspaces](website/features/workspaces.md#discussing-a-workspace) and
+  [Chats](website/features/chats.md#compact-composer).
+
+- **Workspace discussions are real chats and topics, with artifacts.** The
+  ephemeral workspace assistant is gone. A **Discuss** button in the workspace
+  header (the panel is hidden until you press it) opens a real chat or topic
+  beside the files — start a new chat, continue one that already attaches files
+  from the workspace, or bring in any other. The address carries it
+  (`/ws/<slug>/<file>?chat=…` / `?topic=…`). Files an assistant creates or
+  modifies through the workspace tools become **Artifacts** of the chat or topic,
+  listed in its right-hand stats area (attach or detach by hand too); clicking
+  one opens the file with the conversation beside it. New endpoints:
+  `GET/POST/DELETE /api/{topics|chats}/{id}/artifacts` and
+  `GET /api/workspaces/{id}/discussions`; the stream endpoints accept
+  `workspace_context`. See [Workspaces](website/features/workspaces.md#discussing-a-workspace).
+
+- **The persona shows the proxy user.** With no GitHub account, the sidebar
+  persona falls back to the `X-Forwarded-User` header (e.g. behind an OAuth
+  proxy) instead of "Guest", shown with an initials avatar and a shield badge
+  so it reads as signed in. Display only; it grants no access.
+
+- **Tool approval policies for topics and chats.** Choose `manual`, `balanced`
+  or `autonomous` per conversation from a shield pill in the composer (defaults
+  in Settings → Chat, `autonomous` so nothing changes until you opt in). Calls
+  that need a go-ahead park the turn and show inline Approve / Always allow… /
+  Deny cards, persisted across reloads with an amber sidebar badge. Standing
+  `allow` / `ask` rules can match a server, tool and arguments, and the model can
+  ask first. Scheduled runs notify you and auto-deny after a timeout. See
+  [Tool approvals](website/features/approvals.md).
+
+- **A new install starts in files mode.** When nothing is declared in the
+  database yet (no agent, no workflow, no role beyond the untouched `default`)
+  and no source was ever chosen, Precursor records the install as migrated and
+  reads definition files from the first start — the migration wizard is skipped.
+  Existing installs are unchanged. The wizard's **Review** step now also lists
+  roles, each with the file it would write.
+
+- **Assistant roles are definition files.** A role is a `roles/<slug>.role.yaml`
+  file (`name`, `description`, `prompt`) with a published JSON Schema, checked by
+  the folder check and `precursor validate`. In files mode **Settings → Roles**
+  reads and writes those files, `roles/default.role.yaml` is always re-created,
+  and the migration wizard writes, verifies, reverts and cleans up roles along
+  with agents and workflows. Documented in `docs/definitions.md` and the website.
+
+- **`create_workspace` over MCP, and workspace tools in the `precursor` server.**
+  The standalone `workspace-fs` server is folded into the built-in `precursor`
+  server as two new opt-in sections: **Workspaces** (`list_workspaces`,
+  `list_workspace_files`, `read_workspace_file`) and **Edit workspaces**
+  (`create_workspace` for an empty local workspace or a git clone,
+  `create_workspace_file`, `write_workspace_file`, `create_workspace_folder`).
+  Both stay opt-in for Precursor's own agents, and agents still get a permission
+  prompt before each write.
+- **Basic tools section** in Precursor capabilities: stateless helpers that read
+  none of your data. `get_datetime` and `convert_timezone` (IANA zones),
+  `date_math` (shift a date or measure a gap, with business days), `calculate`
+  (safe arithmetic and math functions), `convert_units`, `generate_uuid` (v4/v7),
+  `random_value` (secure tokens and integers), `hash_or_encode` (hashes, base64,
+  URL, hex, HTML), `count_text` (words, sentences, estimated tokens) and
+  `get_system_info` (OS, Python, locale, version; never host or user names).
+- **Select all / Unselect all** for the Settings → MCP → Precursor capabilities
+  section list.
+
+- **Closing Settings with unsaved changes asks for confirmation** (Esc, the close button, Cancel or a click outside).
+- **Disable the Mock provider** via Settings → Model → Configure provider → Mock: it disappears from provider lists and unconfigured providers fail visibly instead of answering with canned replies.
+- **Provider shown with the model on each reply**, and a **Global default model** selector next to the global default provider in Settings → Model.
+- **Conversation-scoped providers.** Configure GitHub Copilot and Azure AI
+  Foundry together, then save a provider, model or preset, reasoning effort and
+  context budget per chat/topic. **Use global default** clears the override.
+  A single model picker groups models and presets from all configured providers;
+  selecting a model saves its provider automatically without a second toolbar control.
+  Replies, retries, compaction, summaries, naming and scheduled topic turns
+  honor it; side chats and promotion preserve it. Explicit providers fail
+  visibly instead of silently returning Mock replies. Agents remain Copilot-only.
+  Provider pickers show green configured and amber not-configured badges from saved
+  credentials and required settings, independently of endpoint health.
+  Ollama is included only after its Base URL has been explicitly saved, rather
+  than being considered configured merely because it has a default endpoint.
+  Model presets moved to their own **Settings -> Presets** tab (the modal is
+  gone): create your own categories, drag models from any configured provider
+  into them, and reorder by dragging. Each preset carries its provider, so one
+  category can fail over across providers.
+
+- **Pick where a promoted chat lands.** The "Promote to topic" confirmation now
+  offers a target collection and parent topic (or top level); the API takes
+  `parent_id` alongside `collection_id`.
+- **Multiple Azure AI Foundry deployments.** Settings -> Model accepts
+  adding deployment names individually as removable bubbles on one endpoint.
+  Each is available in the
+  composer model picker and model alternatives, with the first as the default.
+  Existing single-deployment configurations remain compatible.
+
+- **Backups include the Definitions workspace.** Each backup run now also zips
+  the definitions folder (workflow, agent and summary files) into
+  `definitions/definitions-<timestamp>.zip` in the backup folder, pruned by the
+  same snapshot retention as the database. Previously those files, which live
+  outside the database, were not backed up.
+- **Completion sound.** Settings -> Chat has a new, off-by-default toggle that
+  plays a short, quiet pop when a reply you asked for in a topic or chat
+  finishes. Stopped or failed turns stay silent. The sound is synthesized with
+  Web Audio, so there is no asset to load.
+- **Same-category model alternatives.** Settings -> Model optionally groups
+  model/context/effort presets into **Efficiency**, **Balanced**, and
+  **Intelligence**, separately for each provider and for Agents/Workflows.
+  When a model disappears or rejects its effort/context configuration, Precursor
+  tries the category's ordered presets without overwriting the saved selection.
+  Recovery is bounded and never replays streamed output or agent actions.
+  Settings keeps a compact configuration summary and overall check. **Manage
+  presets** opens a dedicated category-by-runtime overview and one focused
+  editor; **Review configuration** opens a problem directly. Modal edits apply
+  to the Settings draft or can be cancelled without changing it.
+  Preset models reuse the prompt composer's searchable model dropdown, retaining
+  saved/retired ids and allowing explicit ids through the search.
+  Prompt model dropdowns also expose **Presets** with Efficiency, Balanced and
+  Intelligence categories. Users select a category, and the engine resolves its
+  ordered models with their own effort/context at execution. Category intent
+  remains selected across substitutions; explicit models/pins win, and selecting
+  a direct model exits category mode without losing stored manual defaults.
+  Unconfigured categories are hidden; without saved presets for the current
+  provider/runtime, the Presets group is omitted.
+  Category and configuration badges check provider/SDK catalogues, with per-preset
+  warnings for unlisted models, incomplete/duplicate profiles and advertised
+  effort/window mismatches. Missing credentials or unavailable catalogues remain
+  distinct from missing models; **Check models** refreshes without inference.
+- **Copy a reply for email.** Assistant replies in topics and chats get a
+  **Copy formatted** button (the envelope) that copies them as email-ready
+  HTML. Each paragraph, list, table and code block carries its own spacing, so
+  the layout survives when the email is sent from Outlook (web or desktop)
+  instead of collapsing. The **Copy** button on summaries, notes and workflow
+  outputs now produces the same HTML.
+- **Edit a reply.** Fix an assistant reply in place from its toolbar (the pen)
+  in topics and chats. Later turns use the edited text. The model's original
+  answer is kept: an **Edited** chip under the reply shows it and restores it.
+- **Selection toolbar.** Selecting text in an assistant reply now offers
+  **Side chat** (topics), **Edit** (opens the editor on the selection) and
+  **Note**, which adds the selection's Markdown source to the `/notes` pad.
+- **Light or dark for diagrams only.** A sun/moon button in the header of an
+  open `.drawio` file switches the diagram editor between light and dark
+  without changing the app theme. The choice is remembered for every diagram;
+  switching back to match the app theme makes the editor follow the app again.
+- **Side chats.** Start a chat from a topic to explore a tangent without adding
+  it to the topic's conversation.
+  - **Starting one:** from an assistant reply's toolbar (**Start a chat from
+    this reply**), from text selected in a reply (**Side chat** in the selection toolbar),
+    from the **New side chat** button in the topic's header or its right-click
+    menu in the sidebar, from **Side chats** in the topic's right panel, or with
+    the new `/side-chat` command.
+  - **Context:** on every turn the chat gets the topic's title, description and
+    summary. A chat started from a reply, or part of one, also gets a copy of
+    it, quoted at its top with an **Open in topic** link back.
+  - **Getting around:** the topic's right panel lists its side chats with their
+    unread counts, reminders, message counts and last activity, and a reply
+    links to the side chats started from it with a chip under it. In a side
+    chat, the header links back to the topic. The Chats list marks side chats
+    with a split icon.
+  - **Sending back:** **Send to topic** (header button or `/send-to-topic`) has
+    the model sum up the side chat; you review the note, then it's filed into
+    the topic with a link back to the chat.
+  - **Lifecycle:** a new side chat is called "Side chat" until it names itself,
+    and one you open and leave unused is deleted. Archiving a topic offers to
+    archive its side chats too, and restoring it brings them back. Deleting the
+    topic keeps its side chats and only removes the link. Promoting a side chat
+    makes it a sub-topic of its topic and keeps its quoted reply (topics gain
+    `seed_content`).
+  - **API and MCP:** new `GET/POST /api/topics/{id}/chats`, plus discard and
+    topic-note endpoints on chats. Over MCP, the new opt-in `side_chats` section
+    adds `create_side_chat`, and `get_topic` lists side chats when `chats` is
+    exposed. Chats gain `parent_topic_id`, `parent_topic_title`,
+    `parent_message_id` and `seed_content`. In-app `/chats/…` links now open
+    without reloading the page.
+
+- **Timeline and rewind for topics and chats.** A column of short dashes on the
+  right edge of the transcript shows one dash per turn. Dashes for turns on
+  screen are brighter, and the turn you're reading is blue, with a matching blue
+  bar beside its prompt in the transcript. Hover or focus a dash
+  for a preview card, and click it to jump there, even to older turns not loaded
+  yet. **Rewind here** keeps that turn and deletes every later one. **Edit &
+  resend** also deletes that turn and puts its prompt back in the composer. You
+  can also rewind from any prompt's hover toolbar (history and pencil icons),
+  or from the **Reading turn N of M** bar shown while you're scrolled back. Every rewind is previewed first: a cut line marks it and the
+  turns to delete are greyed out. After you confirm, an 8-second undo bar counts
+  down. New endpoints: `GET …/messages/turns` and `POST …/messages/rewind`.
+
+- **Timeline and rewind for agent sessions** (experimental). The agent Activity
+  tab gets the same rail, prompt toolbar and *Reading turn N of M* bar. Rewind
+  cuts the agent's Copilot session history and its transcript together, so the
+  model stops seeing the dropped turns. It works only on the current run while
+  the agent is at rest, is previewed and then confirmed, and can't be undone.
+  It resets the run's progress, question and step count, and deletes artifacts
+  published by the dropped turns. The confirmation can also **restore the files**
+  the dropped turns changed (opt-in each time, with the list of files first);
+  files you edited since are left alone. New sessions track file changes for
+  this unless **Settings → Agents → Track file changes for rewind** is off.
+  Rewind covers the current Copilot session, so an earlier run that continued it
+  (an edited task) can be rewound too. It's refused while a workflow step drives
+  the run. With **All runs** shown, the rail separates and names each run. New
+  endpoints: `GET /api/agents/{id}/rewind/preview` and
+  `POST /api/agents/{id}/rewind` (`mode: conversation | conversation-and-files`).
+  Agent event pages carry an `epoch` (sent back as `?epoch=`) so a live reader
+  resets after a rewind, and `rewindable_run_ids`.
+
+- **See a conversation's pending reminder in the stats panel.** A scheduled
+  reminder used to be invisible until it fired. The conversation stats panel
+  now has a **Reminder** section with the time, how far away it is, and the
+  note. It has buttons to **Edit**, **Done** once the reminder has fired, or
+  **Set reminder** when none is set. The collapsed stats rail shows an
+  alarm-clock icon while a reminder is set. The section updates live when an
+  agent sets or changes the reminder over MCP.
+
+- **Context compression for long conversations.** Type `/compact [focus]`, or
+  click **Compact context** in the conversation stats panel, to have the model
+  summarise a topic or chat into a compaction marker. From the next turn on, the
+  model sees that summary plus everything after it. The older messages stay
+  visible, dimmed. **Undo** on the marker (deleting it) restores the full
+  history, and compacting again folds the previous summary into the new one.
+  Past 80% of the context window, the stats panel nudges you to compact; it is
+  never automatic. Agents get the same `/compact` and button, backed by the
+  Copilot SDK's own history compaction. Its compactions, automatic ones
+  included, now appear in the timeline with the tokens freed.
+  - Two automatic passes shrink what the model sees without a model call. Inline
+    base64 images in tool results (a browser screenshot is about 150k
+    characters) become a placeholder, and are no longer stored as text either.
+    Tool results over 2,000 characters from turns older than the last 5 reach
+    the model as a preview, set by the new `llm_tool_result_keep_turns` setting
+    (**Settings → Model → Prompt budgeting**; `0` turns it off).
+  - API: `POST /api/{topics,chats}/{id}/messages/compact` and `GET
+    …/messages/context`. Messages gain `kind`. The migration adds
+    `messages.kind`. See
+    [Context compression](https://lrivallain.github.io/precursor/features/context-compression).
+  - The agent composer no longer leaves a slash command's echo hanging after
+    the command has run.
+- **Precursor IQ: semantic search and cited answers over your own content.**
+  Topics, topic briefs, messages, attachment text, chats, agent prompts and
+  answers, live notes, summaries, transcripts and insights, and memory are now
+  indexed as passages (SQLite FTS5, or `tsvector` on Postgres). The index is
+  kept current through a change queue written in the same transaction as each
+  write, plus an hourly check for bulk edits. **⌘K** now ranks results by
+  relevance, so words match in any order, without accents and in any field, and
+  its new **Ask** mode (Tab) answers with numbered citations. MCP hosts get the
+  same thing WorkIQ-style: `retrieve` returns ranked hits plus grounding
+  Markdown with `[^n]` citations, and `ask` returns a cited answer. They sit
+  behind two new exposure sections, `iq` and `iq_ask` (off by default), and each
+  hit is also gated by its own section. Opt-in **embeddings**
+  (`text-embedding-3-small` at 256 dimensions, via the active provider) add
+  paraphrase matching, fused with full-text by Reciprocal Rank Fusion, with no
+  new dependency. New `/api/iq/{retrieve,ask,status,reindex}`, the settings
+  `iq_embeddings_enabled`, `iq_embedding_model` and `iq_ask_model`, and the env
+  vars `PRECURSOR_IQ_ENABLED`, `PRECURSOR_IQ_INDEX_POLL_SECONDS` and
+  `PRECURSOR_IQ_RECONCILE_POLL_SECONDS`. Migration `9b4e2f7a1c3d` adds
+  `iq_chunks` / `iq_dirty`. The Postgres full-text path isn't covered by CI.
+  A new **IQ** section (`/iq`, with a home card and a ⌘K entry) is a single
+  question box: matching content appears first and each item opens the real
+  topic, chat, agent or live session, then a cited answer follows whose
+  citations are clickable. Questions aren't saved. **⌘⇧K** (Ctrl+Shift+K)
+  opens it from anywhere, with any selected text pre-filled as the question.
+- **An OpenAI-compatible endpoint for your models.** Point VS Code (as a
+  *Custom Endpoint* model provider), Open WebUI, Continue or the `openai` SDK at
+  `/api/openai/v1` and use the active provider's models through Precursor —
+  streamed or not, with tools, images and the model's thinking. It's off by
+  default: switch it on in **Settings → Model**, which mints an API key that
+  stays readable there, and copy a ready-made VS Code config. It relays to
+  GitHub Copilot, OpenAI, Mistral AI, Hugging Face and Ollama, and answers `503`
+  with the Mock or Azure AI Foundry provider — or an unconfigured one — active,
+  instead of replying with canned text. Its token usage is counted under
+  `openai-endpoint`. Settings gain `openai_proxy_enabled`, `openai_proxy_url`,
+  `openai_proxy_key` and `openai_proxy_available`, `POST
+  /api/settings/openai-proxy/key` regenerates the key, catalogue models gain
+  `max_output_tokens` and `vision`, and providers `openai_proxy`. With Copilot
+  as the provider, keep it to interactive use: proxied, automated traffic can
+  trip GitHub's abuse detection.
+
+- **See the model think.** In topics and chats, a reasoning model's thinking
+  now streams into a collapsed **Thinking** area above its reply. While the
+  model works, the row pulses and previews the step it is on, so a long pause
+  reads as progress; click it to read the thinking in full. It stays with the
+  answer (and with each tool round) after a reload, and a stopped turn keeps
+  what was received. Gemini streams its thoughts, GPT-5.5 and later stream a
+  reasoning summary — Precursor now requests one on the Responses API — and
+  Claude sends a summary with the answer. Thinking is never replayed to the model,
+  and the tool-result retention window (renamed *Tool result & thinking
+  retention*) clears it from older replies.
+  Messages gain a `reasoning` field, the chat stream a `reasoning` event, and
+  `POST …/messages/stopped` an optional `reasoning`.
+
+- **Agents and workflows show the model think, too.** While an agent's model
+  thinks, its timeline ends in the same pulsing **Thinking…** row, and its
+  dashboard card and a workflow's active step show the step it is on. A finished
+  round's thinking sits collapsed on the message it led to — in the agent
+  timeline and in a workflow step's **Activity** — instead of a separate
+  "Thinking" box; a round that went straight to a tool call keeps its own row.
+  Claude streams its thinking live (with a reasoning effort picked), Gemini
+  sends it with each round, GPT keeps it encrypted. The events page gains a
+  `thinking` field, agents and workflow step agents an `active_thinking` field.
+
+- **Empty agent events cleanup.** A new target under **Settings → Usage stats →
+  Storage cleanup** deletes the streaming fragments and empty messages older
+  versions archived — nearly nine agent-event rows in ten on a busy install.
+  Preview it, run it, then Compact.
+
+- **Summary templates for live sessions.** The Summary tab's single
+  **Generate** button opens a small form: the **source** (the recording, or the
+  linked Teams meeting's transcript — replacing the separate "Generate from
+  Teams transcript" button), the **template** — Meeting recap, Executive brief,
+  Action items, Detailed minutes or Follow-up email — and the **language** (the
+  meeting's own by default). Template and language are remembered, so the next
+  recap and the draft written when a session ends start from them. Templates
+  are `*.summary.yaml`
+  [definition files](website/features/definitions.md#summary-templates): from
+  the form, **Edit** saves a built-in to the definitions folder (the copy
+  replaces it) and opens it in Files, and **New from this one** starts your
+  own. A file with errors is skipped and listed, never
+  breaking a recap. The definitions folder now holds every kind of definition,
+  so its built-in workspace is renamed **Definitions** (from *Agents &
+  workflows*). New endpoints: `GET /api/live/summary-templates`,
+  `PUT /api/live/summary-templates/selection` and
+  `POST /api/live/summary-templates/files`; `POST /api/live/{id}/summary` and
+  `/summary/from-transcript` accept `template` and `language`.
+
 - **Windows gets the same one-command install.** `scripts/install.ps1` is the
   PowerShell twin of `install.sh`: `irm …/install.ps1 | iex` installs the nightly
   build with the Kanban and tray extras, registers the login items and starts
@@ -26,6 +412,16 @@ are the per-version history; releasing does not rewrite this file.
   `install.ps1` in Windows PowerShell 5.1, checks the login items, stops and
   restarts the app, replays the login entry, self-updates, and uninstalls.
 
+### Removed
+
+- **`POST /api/workspaces/{id}/chat/stream` and the workspace `role`.** A
+  workspace discussion is an ordinary chat, which has its own role. Existing
+  workspace roles are dropped by a migration.
+
+- **The "Engine selects model" label in the composer.** With a preset category
+  selected, the model picker already shows the category, so the extra caption
+  is gone. The amber "Category needs presets" warning stays.
+
 ### Fixed
 
 - **Agents and workflows keep valid WorkIQ access.** Attaching WorkIQ to an
@@ -33,6 +429,140 @@ are the per-version history; releasing does not rewrite this file.
   unnecessary refresh could be refused by Entra's token-protection policy,
   leaving workflows without mailbox tools even while chat worked. The
   keep-alive still explicitly renews credentials when renewal is due.
+
+- **Deleted roles stay cleared in files mode.** Role deletion now removes
+  matching assignments from agent and workflow definition files, including
+  definitions with stale database columns or no database row yet. Reloads and
+  restarts no longer restore the deleted role. Workflow run snapshots retain
+  their steps, and permission reviews are preserved. Unsafe file edits report
+  a conflict and keep the role instead of claiming success.
+
+- **Workspace layout with the discussion panel open.** The discussion panel
+  and Files tree now shrink before the editor, so the workspace no longer
+  scrolls horizontally or clips the composer, and the file header wraps its
+  actions cleanly instead of scattering the icons in a narrow pane.
+- **Panel resizing over iframes.** Dragging a panel edge over a draw.io, HTML
+  or PDF preview no longer loses the drag when the cursor enters the preview.
+- **Live suggestions no longer pile up.** The Live view's Insights tab kept
+  every proactive suggestion as its own card (up to 12), pushing the insights
+  out of view. It now shows a single suggestion that a newer one replaces, and
+  it resets when you switch sessions. See
+  [Live sessions](website/features/live-sessions.md#insights-q-a-and-summary).
+- **A new chat's first prompt no longer flashes twice.** Starting a chat from
+  the hero briefly showed the prompt both as the optimistic bubble and as the
+  just-persisted message; the duplicate is now dropped immediately.
+
+- **The collapsed Summary bar no longer shows on topics without a summary.** It
+  only appears once a brief exists; the header document icon and
+  `/show-summary` still open an empty panel to generate one. See
+  [Topic summary](website/features/topic-summary.md).
+
+- **The persona no longer claims the mock provider is in use.** The "GitHub not
+  connected" tooltip dropped "using mock provider": other providers work
+  without a GitHub account.
+
+- **An install already in files mode lost its roles.** Installs that had
+  migrated agents and workflows before roles became files kept their roles in
+  the database only, so every role read as missing (warnings like "no role named
+  'Azure CSA'") and the default persona applied. On the first start in files mode
+  Precursor now writes a `roles/<slug>.role.yaml` for each role row that has no
+  file, once and without overwriting any file.
+
+- **The `precursor` MCP server listed every tool even with no capability
+  exposed.** `tools/list` now advertises only the exposed sections (just
+  `precursor_info` when none is on), so the tool count in Settings and the tools
+  a chat offers the model follow the Precursor capabilities toggles; saving them
+  reloads the server's tool list.
+- **Images and PDFs open in a workspace.** Opening a picture (PNG, JPEG, GIF,
+  WebP, BMP, ICO, AVIF) in the Files browser showed a "Not a text file" error;
+  it's now displayed, scaled to fit, on a checkerboard backdrop so transparency
+  shows. PDFs open in the browser's built-in viewer. Other binary files show
+  that they can't be edited here instead of an error.
+
+- **The draw.io editor switches theme while a diagram is open.** It used to
+  stay in the theme it opened with until you reopened the file. Saving a new
+  theme in Settings now reloads it in light or dark, keeping your unsaved edits
+  (draw.io's own undo history starts over).
+
+- **A workflow gate can now recover from a FAIL.** Each loop-back re-ran the
+  producing step as a new execution, and the gate was handed every attempt's
+  artifacts side by side, so it saw two copies of the deliverable, then three,
+  then four. It then failed on the duplicates themselves until `max_loops` ran
+  out. A retry's artifacts now replace the attempt they supersede, both in the
+  hand-off and on the shared board, so the gate judges only the current attempt.
+
+- **MCP servers over streamable HTTP work with `mcp` 2.3.** A fresh install
+  that resolved `mcp` 2.3.0 failed every streamable-HTTP call with "SSE stream
+  ended without a response": Precursor's patch raising the SDK's 1 MiB limit on
+  a single server-sent event rejected the argument 2.3 now passes. On 2.3+ the
+  16 MiB limit is handed to the SDK's own `max_sse_event_size` setting instead;
+  2.2 keeps the patch. Tool results over 1 MiB still arrive on both.
+
+- **The macOS menu-bar icon no longer crashes on launch.** `precursor tray`
+  died with a `trace trap` a moment after starting on recent macOS releases:
+  its periodic refresh redrew the status item from a background thread, which
+  AppKit now refuses with a hard trap. Redraws are handed to the main thread.
+
+- **Large attached documents are no longer cut after a page or two.** Text
+  extracted from PDF, DOCX, PPTX and text attachments was capped at 4,000
+  characters, often less than a paper's introduction, and the only sign of the
+  cut was a trailing `…`. The cap is now 200,000 characters and configurable
+  (`llm_max_attachment_chars`, **Settings → Model → Prompt budgeting**). When
+  a document goes past it, the model is told how much it's seeing out of the
+  total. The per-tool-result cap also stopped applying to user messages, where
+  it had been cutting attachment text at about 60k characters. Extracted text
+  is cached next to its blob and parsed off the event loop, so a large PDF
+  isn't re-parsed on every later turn.
+
+- **Large MCP tool results no longer fail with "SSE stream ended without a
+  response".** Since the move to MCP 2, the client parsed server-sent events
+  with httpx2, which caps a single event at 1 MiB. A tool result is one event,
+  so anything bigger was dropped. The Live agenda was the most visible case:
+  "Couldn't read the agenda" as soon as a week of meetings exceeded the cap.
+  Precursor's MCP transport now allows events of up to 16 MiB. The agenda list
+  also stops downloading every meeting's full HTML body; the body is fetched
+  for one meeting when you link it.
+- **Workflow steps now publish their artifacts.** Every task step is told to
+  publish its deliverable with an `ARTIFACT` block, but the block was only read
+  for autonomous agents, and a step's agent usually isn't one. Its artifacts
+  were silently dropped, so later steps never saw the earlier steps' output that
+  `auto` and `selected` context promise. A step's `ARTIFACT:` and `PROGRESS:`
+  lines are now read whether or not its agent is autonomous. The step's
+  instructions now spell out the block syntax, and the next step receives each
+  artifact once instead of twice. A plain agent outside a workflow still
+  ignores these lines.
+- **Nightly installs no longer 404 after a quick run of pushes.** Two nightly
+  builds seconds apart could leave the new `nightly` release stuck as a draft.
+  Its files then answered 404, so installing, updating and adding a plugin all
+  failed on a nightly install while the build showed green. The workflow now
+  moves the tag instead of deleting it. It also checks the published files
+  download, and fails the build if they don't.
+- **An older build no longer breaks the database for newer ones.** Starting an
+  older Precursor on a database a newer build had migrated used to rewind its
+  schema version without changing the schema. The next newer build then tried
+  to re-apply those migrations and failed to start on every retry
+  (`duplicate column name`). Now the older build refuses to start, names the
+  unknown revision, and leaves the database untouched. Run a build at least as
+  new as the last one that used the database.
+- **A disabled or uninstalled plugin no longer warns on every prompt.** Its MCP
+  server's on/off switch outlived it, so each turn still asked for the server
+  and reported "MCP server 'kanban.board' unavailable: Unknown MCP server". A
+  turn now skips servers that aren't registered. The switch itself is kept, so
+  re-enabling or reinstalling the plugin brings the server back as you left it.
+  Disabling a plugin also closes its running MCP server at once instead of
+  after the idle timeout.
+- **Linux: a first install no longer fails to start.** The systemd units run in
+  the data directory, but nothing created it when port `8000` was free. systemd
+  then refused to start the app (`status=200/CHDIR`) and the installer reported
+  "did not come up on port 8000", pointing at a log that didn't exist. Writing
+  a login item now creates its working directory.
+- **Linux servers: no crash-looping tray.** The tray unit was registered
+  whenever the `tray` extra was installed, which it is by default. Over SSH onto
+  a headless box it crashed every 30 seconds for want of a display. The
+  installer now skips it when there is no `DISPLAY` or `WAYLAND_DISPLAY`, and
+  says so. With no desktop and lingering off, it also warns that Precursor stops
+  at logout and suggests `loginctl enable-linger`. See
+  [On a Linux server](website/guide/installation.md#on-a-linux-server).
 - **Windows: no console window left on screen.** The login items were
   Startup-folder `.cmd` files that ran the console script, so a terminal window
   stayed open for as long as Precursor ran, and closing it killed the app. They
@@ -72,6 +602,138 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Changed
 
+- **Deleting a workspace or a folder asks you to type its name.** Removing a
+  workspace, or deleting a folder in Files, now needs the exact name typed into
+  the confirmation (with a **Copy** button) before the button is enabled, so a
+  stray click or Enter can't wipe one out.
+- **Roles are referenced by name, not id.** Topics, chats, workspaces, live
+  sessions, agents, workflows and collections store the role's `name`
+  (case-insensitive); an unknown name falls back to the `default` role with a
+  warning. The API follows: `/api/roles/{name}`, `role` / `default_role` replace
+  `role_id` / `default_role_id`, and a role can no longer be renamed. An Alembic
+  migration backfills the names; the `roles` table and legacy `role_id` columns
+  stay for the time being.
+
+- **MCP servers are listed in a fixed order.** Settings → MCP now shows
+  `precursor`, `cmd-runner`, `fetch`, `github`, `playwright`, the `workiq*`
+  servers and `drawio`, then plugin-contributed servers, then your own.
+- **Breaking:** the `workspace-fs` MCP server is removed. A migration carries an
+  existing `workspace-fs` enablement over to `precursor` plus the two workspace
+  sections, and a `workspace-fs` agent scope now resolves to `precursor` (so
+  that step sees the rest of the server's enabled sections too).
+
+- **Agents stop archiving streaming fragments.** Every token of an agent's reply
+  and thinking was written to `agent_events` as its own row and commit, with its
+  text dropped on the way. Those fragments now only feed the live view; the
+  archive keeps the complete messages, thinking and tool events. That frees
+  `agent_event_max_per_session` for real history, and the live narration on
+  agent cards reads the streamed text again.
+
+- **Git workspaces merge, and conflicts are resolved in the editor.**
+  - **Starting a merge:** when Pull (or Push) finds that the branch and the
+    remote have both moved on, the bar offers **Merge remote changes**. It
+    records a merge commit and is refused while anything is uncommitted.
+  - **Conflicts:** a **Merge in progress** bar stays up, and the Changes tab
+    lists the conflicted files first.
+    - A text conflict opens in the editor, tinted, with **Accept current /
+      incoming / both** above each block. Save, then **Mark resolved**, which is
+      refused while a conflict marker remains.
+    - A binary conflict, or one side deleting the file, offers **Keep yours** or
+      **Keep theirs**, after a confirmation.
+  - **Finishing:** **Complete merge** once none are left, or **Abort merge**
+    after a confirmation.
+  - **Consistent behaviour:** the merge always runs as `git merge` and ignores
+    the user's git settings (rebasing pulls, `merge.ff`, conflict style,
+    editor).
+  - **API:** new `POST /api/workspaces/{id}/git/merge`, `GET /git/conflict`,
+    `POST /git/resolve`, `/git/merge/complete` and `/git/merge/abort`.
+  - **Stricter names:** branch names and paths with surrounding whitespace or
+    control characters are refused instead of trimmed. A new branch can't be
+    named like another kind of ref (`refs/…`, `origin/…`, `HEAD`…).
+- **Git workspaces switch and create branches.** The branch name in the git bar
+  opens a picker.
+  - **What it lists:** local branches (unpublished ones marked) and the
+    branches only the remote has. Picking a remote one creates a local branch
+    that tracks it, even in a single-branch clone.
+  - **Creating:** a new branch starts from the current commit and stays local
+    until published.
+  - **Nothing is lost:** switching is refused while anything is uncommitted
+    (the files are named), during a merge, or on a detached HEAD. Nothing is
+    ever forced or stashed.
+  - **The open file:** unsaved edits ask first. After the switch the file is
+    reloaded, or closed if the branch doesn't have it.
+  - **Robustness:** remote branch names git wouldn't accept are never listed,
+    and a new branch never tracks the one it started from, even with
+    `branch.autoSetupMerge=always`.
+  - **API:** new `GET`/`POST /api/workspaces/{id}/git/branches` and
+    `POST /git/switch`.
+- **Git workspaces have a History tab.**
+  - **Browsing:** the branch's commits, newest first, with **Load more**. A
+    commit opens to its message and changed files, and each file's diff
+    against the commit before it.
+  - **Merges and the first commit:** a merge is compared with its first parent
+    and says so. The first commit shows its files as added.
+  - **One file's history:** **File history** beside an open file's name lists
+    the commits that changed it, across renames, and opens that file's diff
+    directly.
+  - **Phones:** the commit message and opened commits now survive a look at a
+    file or diff.
+  - **API:** new `GET /api/workspaces/{id}/git/log` and
+    `/git/commits/{sha}`. The status gains `head`, and `file-versions`
+    compares against an empty original when given `head` without `base`.
+- **Git workspaces review changes in a Changes tab, with a real diff.** The
+  Files section's left pane gains a **Changes** tab beside **Files**, replacing
+  the Review & Push dialog.
+  - **What it shows:** every changed file, ticked to be committed, with a
+    commit message box and **Commit** or **Commit & Push**. The pane you last
+    used is remembered.
+  - **The diff:** a file opens in Monaco's diff editor, comparing the last
+    commit with the working copy, side by side or inline (always inline on a
+    phone). Binary and very large files say so.
+  - **Change bars:** the editor's margin marks lines added, modified or removed
+    since the last commit, refreshed on open and on save.
+  - **Discard asks plainly:** a new file's confirmation says that discarding
+    deletes it, with a **Delete file** button. A rename's says it restores the
+    old name.
+  - **Phones:** the git bar wraps instead of pushing Pull and Push off-screen.
+  - **API:** new `GET /api/workspaces/{id}/git/file-versions`.
+- **Git workspaces know where they stand against the remote.**
+  - **Refresh:** opening a git workspace, and Refresh, fetch from the remote,
+    so "↓ N behind" is real (fetching changes no file). If the remote can't be
+    reached, an icon says so.
+  - **Commit and Push are separate:** the review can commit locally, and
+    **Push N** sends commits later.
+  - **New branches:** a branch that isn't on the remote shows **not published**,
+    and **Publish** pushes it and sets its upstream. A branch that only tracks a
+    local one counts as unpublished too.
+  - **Branch switches outside Precursor:** Pull and Push follow the checked-out
+    branch, even when it was switched in a terminal or VS Code, and the
+    workspace remembers it.
+  - **Fixes:**
+    - A pushed branch other than the cloned one stays tracked.
+    - File names with spaces, non-ASCII characters and renames are reported
+      correctly.
+    - Change badges show in a workspace limited to a subfolder.
+    - Discard now also resets staged changes, and removes a file the last commit
+      doesn't have. It used to do nothing to such a file.
+  - **Hardening:** request paths are checked before git sees them. Pathspec
+    magic such as `:/` is literal, git never waits on a prompt, and a clone URL
+    can't pass options to git.
+  - **API:** new `POST /api/workspaces/{id}/git/fetch`, `/git/commit` and
+    `/git/push`. The status gains `upstream`, `detached`, `merging`, and per-file
+    `orig_path`, `conflicted` and `browse_path`.
+  - **Definition schemas:** `docs/schemas/` drops the titles Pydantic generated
+    from field names. The Files editor's hovers show only descriptions.
+- **The Files section edits with Monaco, the VS Code editor core.** It replaces
+  the plain text box:
+  - syntax highlighting, find and replace, multiple cursors and folding;
+  - <kbd>Cmd/Ctrl</kbd>+<kbd>S</kbd> saves;
+  - YAML and JSON are checked as you type;
+  - switching to a preview and back keeps undo history.
+
+  The editor follows the app's theme and works on phones. It downloads the first
+  time a file is edited, so the rest of the app is unchanged in size. New
+  frontend dependencies: `monaco-editor` and `monaco-yaml`.
 - **An agent's page now separates its result from its activity.** Refining a
   deliverable over several follow-ups used to stack every draft at the foot of
   the page, oldest last, so the current one was the hardest to find. The body
@@ -182,6 +844,85 @@ are the per-version history; releasing does not rewrite this file.
   everywhere else.
 
 ### Added
+
+- **Delete a folder in Files.** Hover a folder in the tree and choose **Delete
+  folder**: it goes with everything in it, after a confirmation that counts the
+  files and says whether they can be restored (committed files in a git
+  workspace, from Changes). The workspace's own folder, `.git`, and the folder
+  holding the agent and workflow definitions can't be deleted; a symlinked
+  folder loses only the link.
+
+- **Definition files get editor help in the Files section.** A `*.agent.yaml`
+  or `*.workflow.yaml` file is completed and validated against its JSON Schema
+  as you type: key suggestions, and unknown keys and wrong types underlined.
+  After a save, the definitions check's findings are underlined on the lines
+  they concern, and clicking one in the list under the editor jumps there.
+  - **API:** `GET /api/definitions/schema/{kind}` serves the schema, and
+    `/file-issues` findings carry `line`, `column`, `end_line` and
+    `end_column`.
+- **Open in VS Code from the Files section.** A button beside the open file's
+  path opens it in VS Code, and one in the workspace bar opens the whole working
+  copy as a folder. Both are `vscode://file/…` links to the server's copy, so VS
+  Code must run on the same computer. **Copy local path** now includes a
+  workspace's subdirectory; it used to drop it, which gave a path that didn't
+  exist.
+- **Agent and workflow definition files (work in progress).** A first step
+  toward declaring agents and workflows in YAML files, with only execution data
+  (runs, progress, scheduling, triggers) left in the database. Opt-in: by
+  default everything still runs from the database. See
+  [docs/definitions.md](docs/definitions.md).
+  - **File format.** `*.agent.yaml` and `*.workflow.yaml`, checked strictly:
+    unknown keys, duplicate YAML keys and contradictory settings are errors.
+    Workflow steps have stable keys, so `on_fail` and context sources survive
+    a reorder. JSON Schemas under `docs/schemas/` give editors completion.
+  - **Folder check.** `GET /api/definitions/check` and `precursor validate
+    [FOLDER]` report invalid files, duplicate ids and agent paths that point
+    nowhere. The app's check also warns about role and MCP server names this
+    instance doesn't have, and shows which agents and workflows have a file.
+  - **Export.** `POST /api/definitions/export` writes a file for every agent and
+    workflow, linked to its row, without deleting anything. The folder is
+    `PRECURSOR_DEFINITIONS_DIR`, by default `<data dir>/definitions`.
+  - **Files mode.** `PRECURSOR_DEFINITIONS_SOURCE=files` declares every linked
+    agent and workflow from its file, everywhere it is read. The database
+    columns are left untouched. A workflow's step rows follow the file's step
+    list between runs, and each run records the file and hash it ran from. A
+    broken file is refused rather than replaced by the old database copy.
+    New files join the Agents list and Workflows gallery, a moved file keeps
+    its history, and each agent and workflow page shows which file declares
+    it. Saving, creating or deleting an agent or workflow in the app writes
+    (or removes) its file, keeping step keys across saves; a file with errors
+    is never overwritten from the app. Comments in a file aren't kept when the
+    app rewrites it.
+  - **Permission review.** In files mode, a file that widens what an agent or
+    workflow may do (approval policy, autonomy, tools, MCP servers, budget, new
+    steps) can't run until someone accepts the change in the app; narrowing
+    never needs review, and what the app writes itself is accepted. The
+    assistant's file tools can't write the definitions folder.
+  - **Definitions in git.** `PRECURSOR_DEFINITIONS_WORKSPACE` keeps the
+    definitions folder in a workspace: a pull applies at once (still behind
+    the permission review), and opening a definition file in Files shows the
+    check's findings for it, refreshed on save.
+  - **Agents & workflows workspace.** By default the definition files live in
+    a built-in workspace that leads the Files section; it can't be removed
+    while it holds any.
+  - **Migration wizard.** Settings → Definition files walks through the move
+    to files: overview, a review that opens each file as it will be written
+    next to what's on disk, the migration itself (a database copy first, every
+    file verified against the database — nothing switches on a difference), a
+    try-it-out step where switching back is still possible, and finally, on
+    request, the **database cleanup**: once confirmed (tick and type *clean
+    up*), the declarations are cleared from the database and switching back is
+    no longer possible. The wizard then confirms the migration is finished.
+    The choice survives restarts; `PRECURSOR_DEFINITIONS_SOURCE=files` still
+    forces files mode.
+  - **Invitation to migrate.** The Agents and Workflows homes open with a
+    banner while the database still declares agents or workflows, leading to
+    the wizard ("Not now" hides it for a week). After the switch it only
+    offers to write the files of leftovers; after the cleanup it's gone.
+  - **Fixed in files mode:** the stall watchdog read its timeout from the
+    database instead of the workflow's file; agents stamped from a blueprint
+    got no file; search didn't find prompts that only the files held; titles
+    and names edited in files didn't reach search and name matching.
 
 - **Plugins install from GitHub, show their newest release, and upgrade on
   their own.** Settings → Plugins now takes a GitHub repository link as well as

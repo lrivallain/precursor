@@ -21,6 +21,7 @@ import {
   workflowRelativeTime,
 } from "../lib/workflows";
 import { useState } from "react";
+import { DefinitionsMigrationBanner } from "./DefinitionsMigrationBanner";
 import { ImportDialog } from "./ImportDialog";
 
 interface Props {
@@ -30,6 +31,8 @@ interface Props {
   onNew: () => void;
   onImported: (result: TransferImportResult) => void;
   onChanged: (workflow: Workflow) => void;
+  /** Opens Settings → Definition files (the migration wizard). */
+  onOpenMigration?: () => void;
 }
 
 /**
@@ -37,7 +40,15 @@ interface Props {
  * live status, a compact step trail with progress, schedule/webhook badges, and
  * inline run/pause quick controls. Clicking the body opens the detail board.
  */
-export function WorkflowList({ workflows, loading, onOpen, onNew, onImported, onChanged }: Props) {
+export function WorkflowList({
+  workflows,
+  loading,
+  onOpen,
+  onNew,
+  onImported,
+  onChanged,
+  onOpenMigration,
+}: Props) {
   const [busyId, setBusyId] = useState<number | null>(null);
   const [importing, setImporting] = useState(false);
 
@@ -52,6 +63,9 @@ export function WorkflowList({ workflows, loading, onOpen, onNew, onImported, on
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
+      {onOpenMigration && (
+        <DefinitionsMigrationBanner onOpenWizard={onOpenMigration} refreshKey={workflows.length} />
+      )}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-3">
         <div>
           <h1 className="text-lg font-semibold text-fg">Workflows</h1>

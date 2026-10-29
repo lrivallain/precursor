@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import Any
 
 from precursor.backend.models import AgentRun, AgentSession
+from precursor.backend.services.agents.live_stream import LiveStream
 
 #: Anything carrying the capability toggles a live session is built from: the
 #: executing ``AgentRun``'s immutable snapshot, or the ``AgentSession`` itself
@@ -80,6 +81,15 @@ class _LiveSession:
     # skip a redundant model switch when the selection hasn't drifted, so every
     # next turn can cheaply reconcile to the current selection.
     model_signature: tuple[str, str | None, str] | None = None
+    requested_model_signature: tuple[str, str | None, str] | None = None
+    requested_model_category: str | None = None
+    model_candidates: list[tuple[str, str | None, str]] = field(default_factory=list)
+    model_attempts: set[tuple[str, str | None, str]] = field(default_factory=set)
+    dispatched_prompt: str | None = None
+    model_output_started: bool = False
+    model_recovering: bool = False
+    model_retry_scheduled: bool = False
+    model_turn_id: int = 0
     # --- Autonomy goal-loop state (in-memory, per live session) --------------
     # The last directive block parsed from an assistant message (complete /
     # blocked / progress). Retained for debugging and to avoid double-handling.
@@ -94,3 +104,6 @@ class _LiveSession:
     # Monotonic time ``_ensure_live`` last handed this session out, so the idle
     # reaper never disconnects one a caller is about to send on.
     last_used: float = field(default_factory=time.monotonic)
+    # The round being streamed right now (thinking, the opening of the answer).
+    # Streaming frames are never archived, so the live views read them here.
+    stream: LiveStream = field(default_factory=LiveStream)

@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Check, ChevronDown } from "lucide-react";
 
 export interface SelectOption {
   value: string;
   label: string;
+  suffix?: ReactNode;
   disabled?: boolean;
 }
 
@@ -54,14 +55,9 @@ export function Select({
     const onDoc = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
     document.addEventListener("mousedown", onDoc);
-    document.addEventListener("keydown", onKey);
     return () => {
       document.removeEventListener("mousedown", onDoc);
-      document.removeEventListener("keydown", onKey);
     };
   }, [open]);
 
@@ -76,7 +72,18 @@ export function Select({
     : "px-2 py-1.5 text-sm";
 
   return (
-    <div ref={ref} className={`relative ${fullWidth ? "w-full" : "inline-block"}`}>
+    <div
+      ref={ref}
+      className={`relative ${fullWidth ? "w-full" : "inline-block"}`}
+      onKeyDown={(event) => {
+        if (open && event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation();
+          setOpen(false);
+          ref.current?.querySelector("button")?.focus();
+        }
+      }}
+    >
       <button
         type="button"
         disabled={disabled}
@@ -94,6 +101,7 @@ export function Select({
         <span className={`flex-1 truncate text-left ${current ? "" : "text-muted"}`}>
           {current ? current.label : placeholder}
         </span>
+        {current?.suffix}
         <ChevronDown size={sm ? 11 : 13} className="shrink-0 text-muted" />
       </button>
       {open && (
@@ -132,7 +140,8 @@ export function Select({
                     o.value === value ? "text-accent" : ""
                   }`}
                 >
-                  <span className="truncate">{o.label}</span>
+                  <span className="min-w-0 flex-1 truncate">{o.label}</span>
+                  {o.suffix}
                   {o.value === value && <Check size={12} className="shrink-0" />}
                 </button>
               </li>

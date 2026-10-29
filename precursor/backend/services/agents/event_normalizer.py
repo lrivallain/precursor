@@ -50,9 +50,43 @@ _EVENT_KINDS: dict[str, str] = {
     "AssistantTurnEndData": "turn_end",
     "AssistantUsageData": "usage",
     "SessionUsageInfoData": "context_usage",
+    "SessionCompactionStartData": "compaction_start",
+    "SessionCompactionCompleteData": "compaction",
     "SessionIdleData": "idle",
     "AbortData": "aborted",
 }
+
+# Streaming frames. They are published live (see ``LiveStream``) but never
+# archived: the complete message, reasoning and tool events that follow carry
+# the full content, and archiving every frame once filled ~89% of the table
+# with rows nothing renders.
+LIVE_ONLY_KINDS = frozenset(
+    {
+        "assistant_delta",
+        "reasoning_delta",
+        "AssistantStreamingDeltaData",
+        "AssistantToolCallDeltaData",
+        "AssistantMessageStartData",
+        # Emitted by the SDK while a rewind runs under the agent's event lock,
+        # so it would be archived just after the cut it reports, as a stray node.
+        "SessionSnapshotRewindData",
+    }
+)
+
+# Kinds whose only content is their text. Without it they render nothing: a
+# tool-call-only round's message, or a model's encrypted (textless) reasoning.
+_TEXT_ONLY_KINDS = frozenset({"assistant_message", "reasoning"})
+
+
+def is_content_free(kind: Any, text: Any) -> bool:
+    """Whether an event with this ``kind`` and ``text`` has nothing to keep.
+
+    Takes the two fields rather than an event so it applies equally to a fresh
+    ``AgentEvent`` and to an archived payload decoded as a plain dict.
+    """
+    if kind in LIVE_ONLY_KINDS:
+        return True
+    return kind in _TEXT_ONLY_KINDS and not (isinstance(text, str) and text.strip())
 
 
 def unwrap_result(value: Any) -> Any:
@@ -83,11 +117,15 @@ def normalize_event(event: Any) -> AgentEvent:
     name = type(data).__name__
     # ``message`` covers error events (SessionErrorData/ErrorData) whose detail
     # lives there rather than in ``content``/``text`` — otherwise their
-    # timeline node renders blank.
+    # timeline node renders blank. Streaming frames carry theirs in
+    # ``delta_content`` (message and reasoning deltas) or ``input_delta``
+    # (partial tool arguments).
     text = (
         getattr(data, "content", None)
         or getattr(data, "text", None)
         or getattr(data, "message", None)
+        or getattr(data, "delta_content", None)
+        or getattr(data, "input_delta", None)
     )
     tool_name = getattr(data, "tool_name", None) or getattr(data, "name", None)
     kind = _EVENT_KINDS.get(name, name)
@@ -166,10 +204,47 @@ def normalize_event(event: Any) -> AgentEvent:
         if model:
             extra["model"] = str(model)
     elif name == "SessionUsageInfoData":
-        for attr in ("current_tokens", "token_limit", "conversation_tokens"):
+        for attr in (
+            "current_tokens",
+            "token_limit",
+            "conversation_tokens",
+            "system_tokens",
+            "tool_definitions_tokens",
+        ):
             val = getattr(data, attr, None)
             if val is not None:
                 extra[attr] = int(val)
+    elif name in ("SessionCompactionStartData", "SessionCompactionCompleteData"):
+        # Surface compactions (the SDK's automatic ones as well as /compact) so
+        # the timeline can mark where older turns were replaced by a summary.
+        for attr in (
+            "current_tokens",
+            "pre_compaction_tokens",
+            "post_compaction_tokens",
+            "tokens_removed",
+            "messages_removed",
+            "token_limit",
+        ):
+            val = getattr(data, attr, None)
+            if val is not None:
+                extra[attr] = int(val)
+        trigger = getattr(data, "trigger", None)
+        if trigger is not None:
+            extra["trigger"] = str(getattr(trigger, "value", trigger))
+        success = getattr(data, "success", None)
+        if success is not None:
+            extra["success"] = bool(success)
+        error = getattr(data, "error", None)
+        if error:
+            extra["error"] = cap(str(error), TOOL_RESULT_CAP)
+        summary = getattr(data, "summary_content", None)
+        if summary:
+            text = summary
+    # A prompt's SDK id is what a rewind truncates from. It lives on the event
+    # envelope, not its data, and only prompts need it.
+    event_id = (
+        getattr(event, "id", None) if name == "UserMessageData" and data is not event else None
+    )
     return AgentEvent(
         kind=kind,
         # System prompts are boilerplate repeated on every session start, so
@@ -183,4 +258,5 @@ def normalize_event(event: Any) -> AgentEvent:
         tool_status=tool_status,
         request_id=getattr(data, "tool_call_id", None),
         data=extra or None,
+        event_id=str(event_id) if event_id else None,
     )

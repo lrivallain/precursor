@@ -7,6 +7,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from precursor.backend.schemas.agent_schedule import AgentScheduleSummary
+from precursor.backend.schemas.definitions_api import DefinitionSource
 from precursor.backend.schemas.schedule import UtcDateTime
 
 ContainerKind = Literal["topic", "chat"]
@@ -90,7 +91,11 @@ class AgentRunRead(BaseModel):
     # enabled server, ``"a,b"`` = only those, ``""`` = none at all.
     mcp_servers: str | None = None
     approval_policy: AgentApprovalPolicy | None = None
-    role_id: int | None = None
+    role: str | None = None
+    # Files mode: the definition file this run was declared by, and its SHA-256
+    # when the run opened.
+    definition_path: str | None = None
+    definition_hash: str | None = None
     started_at: UtcDateTime | None = None
     finished_at: UtcDateTime | None = None
     last_activity_at: UtcDateTime | None = None
@@ -130,7 +135,7 @@ class AgentSessionRead(BaseModel):
     finished_at: UtcDateTime | None = None
     topic_id: int | None = None
     chat_id: int | None = None
-    role_id: int | None = None
+    role: str | None = None
     # True when the agent is a workflow step's private execution vessel rather
     # than a reusable unit (hidden from the Agents roster).
     inline: bool = False
@@ -168,12 +173,17 @@ class AgentSessionRead(BaseModel):
     # A one-line, plain-language hint of what the agent is doing right now,
     # distilled from its own in-flight commentary (null when idle / not live).
     active_narration: str | None = None
+    # The tail of the thinking the model is streaming right now (null when it
+    # isn't thinking) — the card previews its latest step.
+    active_thinking: str | None = None
     pending_permission: AgentPendingPermission | None = None
     # --- Orchestration relations (eager-loaded by the router) ---
     # The execution currently driving this agent, if any. The execution columns
     # above mirror it so existing surfaces keep working; this is the authoritative
     # record and the handle for per-run artifacts, events and spend.
     current_run: AgentRunRead | None = None
+    # Files mode only: which file declares this agent (null in database mode).
+    definition: DefinitionSource | None = None
     # External webhook triggers registered on this agent.
     triggers: list[AgentTriggerRead] = []
     # Published blackboard outputs, newest first.
@@ -216,7 +226,7 @@ class AgentSessionCreate(BaseModel):
     model: str | None = None
     topic_id: int | None = None
     chat_id: int | None = None
-    role_id: int | None = None
+    role: str | None = None
     # Restrict which MCP servers the new agent may see. Null (the default)
     # attaches every enabled server; ``"a,b"`` attaches only those; ``""``
     # attaches none. Not validated against the local registry — an unknown name
@@ -250,12 +260,12 @@ class AgentUpdateRequest(BaseModel):
 
     Both fields are optional so a caller can patch either independently (the
     Settings drawer sends ``title`` on rename and ``task`` when the instructions
-    are edited). ``role_id`` reassigns the agent's Assistant Role.
+    are edited). ``role`` reassigns the agent's Assistant Role.
     """
 
     title: str | None = Field(default=None, min_length=1, max_length=200)
     task: str | None = Field(default=None, min_length=1)
-    role_id: int | None = None
+    role: str | None = None
     # Capability toggles — what the agent may draw on. Omit to leave unchanged.
     use_mcp: bool | None = None
     use_skills: bool | None = None
@@ -312,6 +322,22 @@ class AgentEvent(BaseModel):
     # spans every run, so without this a reusable agent driven by two workflows
     # at once renders one interleaved conversation (issue #242).
     agent_run_id: int | None = None
+    # The SDK's id for a user prompt event: the boundary a rewind truncates
+    # from. Only prompts carry it, and only those archived since rewind
+    # shipped, so older turns stay navigation-only.
+    event_id: str | None = None
+
+
+class AgentLiveThinking(BaseModel):
+    """The model's thinking for the round in flight, as it streams.
+
+    Streaming frames are never archived; once the round ends its complete
+    ``reasoning`` event lands in the timeline and this goes away.
+    """
+
+    text: str
+    # Still thinking: nothing of the answer or a tool call has streamed since.
+    active: bool = True
 
 
 class AgentEventPage(BaseModel):
@@ -327,15 +353,97 @@ class AgentEventPage(BaseModel):
     never archived and vanish as approvals are answered, so they sit outside the
     cursor and are replaced wholesale on every read rather than appended.
 
+    ``thinking`` is the other volatile tail: the thinking the model is
+    streaming right now, replaced on every read like ``pending``.
+
     ``reset`` means the cursor no longer addresses this transcript — it was
-    cleared, pruned by retention, or belongs to a different run — and ``events``
-    is therefore a complete replacement rather than a delta.
+    cleared, rewound, pruned by retention, or belongs to a different run — and
+    ``events`` is therefore a complete replacement rather than a delta.
+
+    ``epoch`` names the archive the cursor counts into. A rewind truncates the
+    archive, after which a position can point past or into a different tail;
+    a reader sends its last ``epoch`` back and gets a reset when it moved.
+
+    ``rewindable_run_ids`` are the runs whose prompts a rewind can cut: the
+    agent's current run and any earlier run continuing the same SDK session
+    (an edited task restarts on a new run but keeps the conversation). Empty
+    while the current run is driven by a workflow.
     """
 
     events: list[AgentEvent] = []
     pending: list[AgentEvent] = []
+    thinking: AgentLiveThinking | None = None
     cursor: int = 0
     reset: bool = False
+    epoch: str = ""
+    rewindable_run_ids: list[int] = []
+
+
+AgentRewindMode = Literal["conversation", "conversation-and-files"]
+
+
+class AgentRewindRequest(BaseModel):
+    """Drop a prompt and everything after it from the agent's current run.
+
+    ``event_id`` is the SDK id of the first prompt to drop (``AgentEvent.event_id``).
+    Rewinding *to* a turn therefore sends the id of the prompt that follows it.
+    """
+
+    event_id: str = Field(min_length=1, max_length=64)
+    # ``conversation-and-files`` also puts back the files the dropped turns
+    # changed, from the SDK's file-change captures.
+    mode: AgentRewindMode = "conversation"
+
+
+class AgentRewindSkippedFile(BaseModel):
+    """A captured file a rewind deliberately left as it is."""
+
+    path: str
+    # ``user-modified``: changed since the agent edited it. ``skipped-capture``:
+    # the SDK never captured a restorable copy.
+    reason: str
+
+
+class AgentRewindResult(BaseModel):
+    """What a rewind removed (and, in files mode, restored)."""
+
+    # Transcript events dropped from Precursor's archive.
+    events_removed: int
+    # Events the SDK removed from its own session history, when it reports them.
+    sdk_events_removed: int | None = None
+    # The SDK outcome: ``success``, a cleanup warning after the cut landed, or
+    # ``unconfirmed`` when the call failed but the session shows the cut landed
+    # (its file report was lost).
+    outcome: str = "success"
+    restored_files: list[str] = []
+    skipped_files: list[AgentRewindSkippedFile] = []
+
+
+class AgentRewindFile(BaseModel):
+    """A file a conversation-and-files rewind would put back."""
+
+    path: str
+    change_type: str  # created | modified | deleted
+    lines_added: int = 0
+    lines_removed: int = 0
+
+
+class AgentRewindPreview(BaseModel):
+    """What rewinding to ``event_id`` would do to the agent's files.
+
+    ``file_tracking`` says whether the SDK session captured file changes from
+    its first turn; without it only the conversation can be rewound.
+    ``files_available`` is authoritative for offering file restore, and
+    ``unavailable_reason`` explains a ``False`` (``file-change-tracking-disabled``,
+    ``unsupported-remote-session``).
+    """
+
+    event_id: str
+    file_tracking: bool = False
+    files_available: bool = False
+    unavailable_reason: str | None = None
+    file_count: int = 0
+    files: list[AgentRewindFile] = []
 
 
 class AgentModelInfo(BaseModel):
@@ -371,7 +479,7 @@ class AgentBlueprintRead(BaseModel):
     description: str | None = None
     task_prompt: str
     model: str | None = None
-    role_id: int | None = None
+    role: str | None = None
     approval_policy: AgentApprovalPolicy | None = None
     autonomy_enabled: bool = False
     max_steps: int = 12
@@ -388,7 +496,7 @@ class AgentBlueprintCreate(BaseModel):
     description: str | None = Field(default=None, max_length=2000)
     task_prompt: str = Field(default="", max_length=20000)
     model: str | None = None
-    role_id: int | None = None
+    role: str | None = None
     approval_policy: AgentApprovalPolicy | None = None
     autonomy_enabled: bool = False
     max_steps: int = Field(default=12, ge=1, le=100)
@@ -403,7 +511,7 @@ class AgentBlueprintUpdate(BaseModel):
     description: str | None = Field(default=None, max_length=2000)
     task_prompt: str | None = Field(default=None, max_length=20000)
     model: str | None = None
-    role_id: int | None = None
+    role: str | None = None
     approval_policy: AgentApprovalPolicy | None = None
     autonomy_enabled: bool | None = None
     max_steps: int | None = Field(default=None, ge=1, le=100)

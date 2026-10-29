@@ -26,17 +26,24 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from precursor.backend.db import SessionLocal
-from precursor.backend.models import Chat, Message, MessageRole, Topic
+from precursor.backend.models import MESSAGE_KIND_COMPACTION, Chat, Message, MessageRole, Topic
+from precursor.backend.models.tool_approval import APPROVAL_KIND_TOOL
+from precursor.backend.services import approval_rules as approval_rules_service
+from precursor.backend.services import approvals as approval_service
 from precursor.backend.services import memories as memory_service
+from precursor.backend.services import side_chats, step_plans
 from precursor.backend.services import skills as skills_service
+from precursor.backend.services.app_settings import DEFAULT_LLM_MAX_ATTACHMENT_CHARS
+from precursor.backend.services.artifacts import artifacts_prompt, record_written_file
 from precursor.backend.services.attachment_extraction import (
     attachments_to_image_urls,
     attachments_to_text_context,
     is_image_attachment,
 )
 from precursor.backend.services.collections import resolve_topic_github_repo
-from precursor.backend.services.context_budget import trim_messages
+from precursor.backend.services.context_budget import strip_inline_binaries, trim_messages
 from precursor.backend.services.events import (
+    publish_approval_changed,
     publish_message_changed,
     publish_message_changed_chat,
     publish_stream_ended,
@@ -49,6 +56,7 @@ from precursor.backend.services.github_client import GitHubClient
 from precursor.backend.services.llm.base import (
     ChatMessage,
     LLMError,
+    ReasoningDeltaEvent,
     TextDeltaEvent,
     ToolCallsEvent,
     ToolDef,
@@ -68,6 +76,7 @@ from precursor.backend.services.meeting_analysis import live_chat_grounding
 from precursor.backend.services.roles import resolve_role_prompt
 from precursor.backend.services.suggestions import SUGGESTIONS_INSTRUCTION, split_suggestions
 from precursor.backend.services.usage_stats import record_usage
+from precursor.backend.services.workspaces import WORKSPACE_READ_TOOLS, WORKSPACE_WRITE_TOOLS
 
 logger = logging.getLogger(__name__)
 
@@ -78,8 +87,14 @@ ContainerKind = Literal["topic", "chat"]
 # -- System context --------------------------------------------------------
 
 
-async def build_system_context(session: AsyncSession, topic: Topic) -> str:
-    """Compose system prompt: role persona + long-term memory + topic context + GitHub issue + labels (newest comments first)."""
+async def build_system_context(
+    session: AsyncSession, topic: Topic, *, fetch_issue: bool = True
+) -> str:
+    """Compose system prompt: role persona + long-term memory + topic context + GitHub issue + labels (newest comments first).
+
+    ``fetch_issue=False`` skips the GitHub round trip, for callers that only
+    need the prompt's rough size.
+    """
     parts: list[str] = [
         "You are Precursor, a focused assistant for the topic below. "
         "Use the linked GitHub issue context (when present) as authoritative; "
@@ -88,7 +103,7 @@ async def build_system_context(session: AsyncSession, topic: Topic) -> str:
         "anything that may have changed.",
     ]
 
-    role_prompt = await resolve_role_prompt(session, topic.role_id)
+    role_prompt = await resolve_role_prompt(session, topic.role)
     if role_prompt:
         parts.append(f"Active assistant role — adopt this persona for every reply:\n{role_prompt}")
 
@@ -99,10 +114,12 @@ async def build_system_context(session: AsyncSession, topic: Topic) -> str:
     parts.append(f"Topic title: {topic.title}")
     if topic.description:
         parts.append(f"Topic description: {topic.description}")
+    if topic.seed_content:
+        parts.append(side_chats.seed_prompt(topic.seed_content, "topic"))
 
     repo = await resolve_topic_github_repo(session, topic)
     token = await resolve_github_token(session)
-    if repo and topic.github_issue_number and token:
+    if fetch_issue and repo and topic.github_issue_number and token:
         try:
             gh = GitHubClient(token=token)
             issue = await gh.get_issue(repo, topic.github_issue_number)
@@ -124,6 +141,9 @@ async def build_system_context(session: AsyncSession, topic: Topic) -> str:
                 parts.append(f"Issue body:\n{issue['body']}")
             for c in list(reversed(comments))[:10]:
                 parts.append(f"Comment by {c['user']} @ {c['updated_at']}:\n{c['body']}")
+    artifacts_block = await artifacts_prompt(session, "topic", topic.id)
+    if artifacts_block:
+        parts.append(artifacts_block)
     parts.append(SUGGESTIONS_INSTRUCTION)
     return "\n\n".join(parts)
 
@@ -140,7 +160,7 @@ async def build_chat_system_context(session: AsyncSession, chat: Chat) -> str:
         "tool calls over stale context for anything that may have changed.",
     ]
 
-    role_prompt = await resolve_role_prompt(session, chat.role_id)
+    role_prompt = await resolve_role_prompt(session, chat.role)
     if role_prompt:
         parts.append(f"Active assistant role — adopt this persona for every reply:\n{role_prompt}")
 
@@ -157,11 +177,25 @@ async def build_chat_system_context(session: AsyncSession, chat: Chat) -> str:
         description = await skills_service.expand_references(session, chat.description)
         parts.append(f"Chat description: {description}")
 
+    # A side chat stays grounded in the topic (and reply) it was started from.
+    parent_context = await side_chats.build_parent_topic_context(session, chat)
+    if parent_context:
+        parts.append(parent_context)
+
+    # A step (or consolidation) chat stays grounded in its plan's ask and steps.
+    step_context = await step_plans.build_step_context(session, chat)
+    if step_context:
+        parts.append(step_context)
+
     # When this chat is attached to a live meeting session, fold in the current
     # meeting grounding (transcript/insights/notes/…), rebuilt every turn.
     grounding = await live_chat_grounding(session, chat.id)
     if grounding:
         parts.append(grounding)
+
+    artifacts_block = await artifacts_prompt(session, "chat", chat.id)
+    if artifacts_block:
+        parts.append(artifacts_block)
 
     parts.append(SUGGESTIONS_INSTRUCTION)
     return "\n\n".join(parts)
@@ -203,14 +237,68 @@ def apply_chat_system_prompt(
 # -- History hydration -----------------------------------------------------
 
 
-def hydrate_history(rows: list[Message]) -> list[ChatMessage]:
+def hydrate_history(
+    rows: list[Message],
+    *,
+    attachment_max_chars: int = DEFAULT_LLM_MAX_ATTACHMENT_CHARS,
+    prompt_override: str | None = None,
+) -> list[ChatMessage]:
     """Turn persisted Messages back into ChatMessages, preserving tool calls.
 
     Drops orphan assistant-with-tool_calls turns (and any partial tool
     results) whose tool_call ids are not all answered. Anthropic-backed
     models reject such transcripts with a 400; OpenAI tolerates them but
     we want consistent behaviour.
+
+    History starts at the latest compaction marker: the rows before it are
+    replaced by its summary (see :func:`compaction_summary_prefix`).
+
+    ``prompt_override`` replaces the content of the last user turn (a skill
+    invocation's expanded prompt), keeping its images.
     """
+    summary: str | None = None
+    for idx in range(len(rows) - 1, -1, -1):
+        if rows[idx].kind == MESSAGE_KIND_COMPACTION:
+            summary = rows[idx].content
+            rows = rows[idx + 1 :]
+            break
+    out = _hydrate_rows(rows, attachment_max_chars=attachment_max_chars)
+    if prompt_override:
+        for idx in range(len(out) - 1, -1, -1):
+            if out[idx].role == "user":
+                out[idx] = ChatMessage(
+                    role="user", content=prompt_override, image_urls=out[idx].image_urls
+                )
+                break
+    if summary:
+        out = _with_compaction_summary(out, summary)
+    return out
+
+
+def compaction_summary_prefix(summary: str) -> str:
+    """How a compaction summary is framed for the model."""
+    return (
+        "[Context summary: the earlier part of this conversation was compacted to "
+        "save context. It is summarised below; treat it as what was said before.]\n\n"
+        f"{summary.strip()}\n\n[End of summary — the conversation continues.]"
+    )
+
+
+def _with_compaction_summary(history: list[ChatMessage], summary: str) -> list[ChatMessage]:
+    # Merged into a leading user turn rather than sent as a separate one, so the
+    # transcript keeps strict user/assistant alternation for every provider.
+    prefix = compaction_summary_prefix(summary)
+    if history and history[0].role == "user":
+        first = history[0]
+        merged = f"{prefix}\n\n{first.content}" if first.content else prefix
+        return [
+            ChatMessage(role="user", content=merged, image_urls=first.image_urls),
+            *history[1:],
+        ]
+    return [ChatMessage(role="user", content=prefix), *history]
+
+
+def _hydrate_rows(rows: list[Message], *, attachment_max_chars: int) -> list[ChatMessage]:
     out: list[ChatMessage] = []
     i = 0
     while i < len(rows):
@@ -278,7 +366,8 @@ def hydrate_history(rows: list[Message]) -> list[ChatMessage]:
                 [att for att in user_attachments if is_image_attachment(att)]
             )
             non_image_context = attachments_to_text_context(
-                [att for att in user_attachments if not is_image_attachment(att)]
+                [att for att in user_attachments if not is_image_attachment(att)],
+                max_chars=attachment_max_chars,
             )
             if non_image_context:
                 content = f"{content}\n\n{non_image_context}" if content else non_image_context
@@ -302,7 +391,11 @@ async def load_enabled_mcp_servers(session: AsyncSession) -> list[str]:
         return []
     if not isinstance(data, dict):
         return []
-    return [name for name, enabled in data.items() if enabled]
+    # A disabled or uninstalled plugin's server keeps its toggle, so it comes back
+    # as the user left it; until then it isn't registered, and asking for it would
+    # fail every turn with "Unknown MCP server".
+    manager = get_mcp_client_manager()
+    return [name for name, enabled in data.items() if enabled and manager.get(name) is not None]
 
 
 def mcp_tools_to_provider(tools: list[MCPToolDef]) -> list[ToolDef]:
@@ -331,7 +424,11 @@ def format_tool_result(payload: Any) -> str:
             # ``by_alias`` keeps the MCP wire spelling (``mimeType``): MCP 2
             # models dump snake_case field names by default.
             dump = getattr(block, "model_dump", None)
-            blocks.append(json.dumps(dump(by_alias=True) if dump else {}, default=str))
+            # Image/audio blocks carry base64 the model can't see as text; keep
+            # the block's shape (type, mimeType) but not the payload.
+            blocks.append(
+                strip_inline_binaries(json.dumps(dump(by_alias=True) if dump else {}, default=str))
+            )
     if blocks:
         return "\n\n".join(blocks)
     # Some MCP servers (e.g. the hosted WorkIQ endpoint) return no text content
@@ -410,9 +507,15 @@ async def prepare_retry_turn(
     if user_msg.role != MessageRole.USER:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Only a user turn can be retried")
 
+    if kind == "topic":
+        await side_chats.detach_messages(
+            session, select(Message.id).where(fk == container_id, Message.id > message_id)
+        )
+    await approval_service.delete_after(session, kind, container_id, message_id)
     await session.execute(delete(Message).where(fk == container_id, Message.id > message_id))
     await session.commit()
     await publish_container_changed(kind, container_id)
+    await publish_approval_changed(**container_message_kwargs(kind, container_id))
     return user_msg
 
 
@@ -427,11 +530,21 @@ class AssistantTextDelta:
 
 
 @dataclass(slots=True)
+class AssistantReasoningDelta:
+    """A streamed chunk of the model's thinking for the current round."""
+
+    content: str
+
+
+@dataclass(slots=True)
 class AssistantFinalTurn:
     """The model finished with a plain-text answer (no tool calls)."""
 
     text: str
     usage: UsageEvent | None
+    reasoning: str = ""
+    model: str | None = None
+    provider: str | None = None
 
 
 @dataclass(slots=True)
@@ -442,6 +555,9 @@ class AssistantToolCallsTurn:
     tool_calls: list[Any]
     openai_tool_calls: list[dict[str, Any]]
     usage: UsageEvent | None
+    reasoning: str = ""
+    model: str | None = None
+    provider: str | None = None
 
 
 @dataclass(slots=True)
@@ -451,10 +567,11 @@ class ToolResultTurn:
     call: Any
     result_text: str
     is_error: bool
-    # ``{"slug", "path"}`` when the tool touched a workspace file, so the UI can
+    # ``{"slug", "path"}`` (+ ``written`` for a change) when the tool touched a
+    # workspace file, so the UI can
     # offer a link to it without parsing ``result_text`` — which for a read
     # embeds the whole file. None for every other tool.
-    link: dict[str, str] | None = None
+    link: dict[str, Any] | None = None
 
 
 @dataclass(slots=True)
@@ -480,7 +597,7 @@ class ToolCallOutcome:
     result_text: str
     is_error: bool
     # ``{"slug", "path"}`` when the tool touched a workspace file. None otherwise.
-    link: dict[str, str] | None = None
+    link: dict[str, Any] | None = None
 
 
 async def call_tool_with_auth_retry(
@@ -577,14 +694,63 @@ class RoundCapReached:
     max_tool_rounds: int
 
 
+@dataclass(slots=True)
+class ApprovalsRequested:
+    """The round's remaining calls wait on the user, so the turn parks here."""
+
+    items: list[approval_service.PendingCall]
+
+
 TurnEvent = (
     AssistantTextDelta
+    | AssistantReasoningDelta
     | AssistantFinalTurn
     | AssistantToolCallsTurn
     | ToolResultTurn
     | ToolAuthRequired
+    | ApprovalsRequested
     | RoundCapReached
 )
+
+
+def _effective_provider(provider: Any) -> str | None:
+    return getattr(provider, "effective_provider", None) or getattr(provider, "name", None)
+
+
+async def execute_tool_call(
+    active: Any, call: Any, auth_wait_timeout: float
+) -> AsyncIterator[ToolAuthRequired | ToolResultTurn]:
+    """Run one model-issued call against ``active``; always ends with its result.
+
+    Shared by the tool loop and the resume of a parked turn, so an approved call
+    behaves exactly like one the policy let straight through.
+    """
+    lookup = active.tool_to_server.get(call.name)
+    if lookup is None:
+        yield ToolResultTurn(
+            call, f"Unknown tool '{call.name}'. No MCP server exposes it.", True, None
+        )
+        return
+    server_name, raw_name = lookup
+    try:
+        args = json.loads(call.arguments or "{}")
+    except json.JSONDecodeError as exc:
+        yield ToolResultTurn(call, f"Invalid JSON arguments: {exc}", True, None)
+        return
+    result_text, is_error, link = "", False, None
+    async for step in call_tool_with_auth_retry(
+        active=active,
+        server=server_name,
+        raw_name=raw_name,
+        tool_name=call.name,
+        args=args,
+        auth_wait_timeout=auth_wait_timeout,
+    ):
+        if isinstance(step, ToolAuthRequired):
+            yield step
+        else:
+            result_text, is_error, link = step.result_text, step.is_error, step.link
+    yield ToolResultTurn(call, result_text, is_error, link)
 
 
 async def run_tool_loop(
@@ -599,6 +765,7 @@ async def run_tool_loop(
     max_input_tokens: int,
     max_tool_result_tokens: int,
     auth_wait_timeout: float = AUTH_PAUSE_TIMEOUT_SECONDS,
+    gate: approval_service.ApprovalGate | None = None,
 ) -> AsyncIterator[TurnEvent]:
     """Drive the provider + MCP tool loop, yielding semantic turn events.
 
@@ -612,9 +779,19 @@ async def run_tool_loop(
     sign-in. Pass ``0`` for unattended runs (the scheduler), where nobody is
     there to complete one: the prompt is still surfaced, but the call fails fast
     with a tool error instead of parking the run for minutes.
+
+    ``gate`` applies an approval policy (chats and topics). A call it holds back,
+    or a ``request_approval`` the model raised, gets no tool result: after the
+    round's other calls ran, an :class:`ApprovalsRequested` event is yielded and
+    the loop ends, leaving the turn parked until the user decides. ``None`` runs
+    every call, as workspace chat does.
     """
     tool_to_server = active.tool_to_server  # qualified -> (server, raw_name)
     provider_tools = mcp_tools_to_provider(active.tools)
+    tool_defs = {t.qualified_name: t for t in active.tools}
+    if gate is not None and gate.offers_intent:
+        provider_tools = [*provider_tools, approval_service.REQUEST_APPROVAL_DEF]
+        system_prompt = f"{system_prompt}\n\n{approval_service.APPROVAL_PROMPT}"
 
     messages: list[ChatMessage] = [
         ChatMessage(role="system", content=system_prompt),
@@ -623,6 +800,7 @@ async def run_tool_loop(
 
     for _round in range(max_tool_rounds):
         text_chunks: list[str] = []
+        reasoning_chunks: list[str] = []
         tool_calls: list[Any] = []
         round_usage: UsageEvent | None = None
 
@@ -639,6 +817,9 @@ async def run_tool_loop(
             if isinstance(event, TextDeltaEvent):
                 text_chunks.append(event.content)
                 yield AssistantTextDelta(event.content)
+            elif isinstance(event, ReasoningDeltaEvent):
+                reasoning_chunks.append(event.content)
+                yield AssistantReasoningDelta(event.content)
             elif isinstance(event, ToolCallsEvent):
                 tool_calls = event.calls
             elif isinstance(event, UsageEvent):
@@ -647,9 +828,17 @@ async def run_tool_loop(
                 pass
 
         assistant_text = "".join(text_chunks)
+        # Kept for the transcript only: it never goes back into ``messages``.
+        reasoning = "".join(reasoning_chunks).strip()
 
         if not tool_calls:
-            yield AssistantFinalTurn(assistant_text, round_usage)
+            yield AssistantFinalTurn(
+                assistant_text,
+                round_usage,
+                reasoning,
+                getattr(provider, "effective_model", None) or model,
+                _effective_provider(provider),
+            )
             return
 
         openai_tool_calls = [
@@ -660,7 +849,15 @@ async def run_tool_loop(
             }
             for c in tool_calls
         ]
-        yield AssistantToolCallsTurn(assistant_text, tool_calls, openai_tool_calls, round_usage)
+        yield AssistantToolCallsTurn(
+            assistant_text,
+            tool_calls,
+            openai_tool_calls,
+            round_usage,
+            reasoning,
+            getattr(provider, "effective_model", None) or model,
+            _effective_provider(provider),
+        )
 
         messages.append(
             ChatMessage(
@@ -670,38 +867,45 @@ async def run_tool_loop(
             )
         )
 
+        parked: list[approval_service.PendingCall] = []
         for call in tool_calls:
             server_lookup = tool_to_server.get(call.name)
-            is_error = False
-            link: dict[str, str] | None = None
-            if server_lookup is None:
-                result_text = f"Unknown tool '{call.name}'. No MCP server exposes it."
-                is_error = True
-            else:
-                server_name, raw_name = server_lookup
-                try:
-                    args = json.loads(call.arguments or "{}")
-                except json.JSONDecodeError as exc:
-                    args = None
-                    result_text = f"Invalid JSON arguments: {exc}"
-                    is_error = True
-                if args is not None:
-                    async for step in call_tool_with_auth_retry(
-                        active=active,
-                        server=server_name,
-                        raw_name=raw_name,
-                        tool_name=call.name,
-                        args=args,
-                        auth_wait_timeout=auth_wait_timeout,
-                    ):
-                        if isinstance(step, ToolAuthRequired):
-                            yield step
-                        else:
-                            result_text = step.result_text
-                            is_error = step.is_error
-                            link = step.link
-
-            yield ToolResultTurn(call, result_text, is_error, link)
+            if gate is not None and call.name == approval_service.REQUEST_APPROVAL_TOOL:
+                if gate.offers_intent:
+                    parked.append(approval_service.intent_pending(call.id, call.arguments))
+                    continue
+            elif gate is not None and server_lookup is not None:
+                verdict = gate.check(
+                    call.name,
+                    server_lookup[0],
+                    server_lookup[1],
+                    tool_defs.get(call.name),
+                    call.arguments or "{}",
+                )
+                if verdict.rule_id is not None:
+                    await approval_rules_service.touch_rule(verdict.rule_id)
+                if verdict.reason is not None:
+                    parked.append(
+                        approval_service.PendingCall(
+                            call_id=call.id,
+                            tool_name=call.name,
+                            server=server_lookup[0],
+                            raw_tool=server_lookup[1],
+                            arguments=call.arguments or "{}",
+                            kind=APPROVAL_KIND_TOOL,
+                            reason=verdict.reason,
+                        )
+                    )
+                    continue
+            outcome: ToolResultTurn | None = None
+            async for step in execute_tool_call(active, call, auth_wait_timeout):
+                if isinstance(step, ToolAuthRequired):
+                    yield step
+                else:
+                    outcome = step
+            assert outcome is not None
+            result_text = outcome.result_text
+            yield outcome
 
             messages.append(
                 ChatMessage(
@@ -711,6 +915,10 @@ async def run_tool_loop(
                     name=call.name,
                 )
             )
+
+        if parked:
+            yield ApprovalsRequested(parked)
+            return
 
     yield RoundCapReached(max_tool_rounds)
 
@@ -780,10 +988,12 @@ async def persist_final_turn(
         assistant = Message(
             role=MessageRole.ASSISTANT,
             content=text,
+            reasoning=ev.reasoning or None,
             suggestions=json.dumps(suggestions) if suggestions else None,
             prompt_tokens=usage.prompt_tokens if usage else None,
             completion_tokens=usage.completion_tokens if usage else None,
             model=model,
+            provider=ev.provider,
             elapsed_ms=elapsed_ms,
             **container_message_kwargs(kind, container_id),
         )
@@ -809,6 +1019,7 @@ async def persist_tool_calls_turn(
         assistant = Message(
             role=MessageRole.ASSISTANT,
             content=ev.text,
+            reasoning=ev.reasoning or None,
             tool_calls=json.dumps(ev.openai_tool_calls),
             prompt_tokens=usage.prompt_tokens if usage else None,
             completion_tokens=usage.completion_tokens if usage else None,
@@ -850,6 +1061,8 @@ async def persist_tool_result(kind: ContainerKind, container_id: int, ev: ToolRe
         await ws.refresh(tool_msg)
         tool_msg_id = tool_msg.id
     await publish_container_changed(kind, container_id)
+    # A file the assistant wrote becomes an artifact of this conversation.
+    await record_written_file(kind, container_id, ev.link)
     return tool_msg_id
 
 
@@ -877,7 +1090,7 @@ async def run_message_stream(
     container_id: int,
     system_prompt: str,
     history: list[ChatMessage],
-    user_echo: dict[str, Any],
+    user_echo: dict[str, Any] | None,
     model: str,
     reasoning_effort: str,
     max_tool_rounds: int,
@@ -887,6 +1100,8 @@ async def run_message_stream(
     github_token: str,
     enabled_servers: list[str],
     auth_wait_timeout: float = AUTH_PAUSE_TIMEOUT_SECONDS,
+    gate: approval_service.ApprovalGate | None = None,
+    restrict_precursor: bool = False,
 ) -> AsyncIterator[dict[str, str]]:
     """Container-agnostic SSE generator shared by topic and chat streaming.
 
@@ -897,13 +1112,17 @@ async def run_message_stream(
     ``auth_wait_timeout`` is how long a tool call may pause for an interactive
     sign-in; it defaults to the interactive window and is threaded through so a
     caller (or a test) can bound it, mirroring the scheduler's run_tool_loop.
+
+    ``user_echo`` is ``None`` when resuming a parked turn: there is no new user
+    message to echo. ``gate`` applies the conversation's approval policy.
     """
     manager = get_mcp_client_manager()
 
-    yield {
-        "event": "user_message",
-        "data": json.dumps(user_echo),
-    }
+    if user_echo is not None:
+        yield {
+            "event": "user_message",
+            "data": json.dumps(user_echo),
+        }
 
     # No pre-LLM auth gate: the turn starts now. The catalogue of a server whose
     # credential has lapsed is still advertised (from the stored one), so the
@@ -914,6 +1133,8 @@ async def run_message_stream(
     async with manager.acquired(
         enabled_servers, github_token=github_token, advertise_cached=True
     ) as active:
+        if restrict_precursor:
+            active.restrict_server_tools("precursor", WORKSPACE_READ_TOOLS | WORKSPACE_WRITE_TOOLS)
         # Warm MCP sessions for the enabled servers (reused across turns). Each
         # contributes tools we aggregate for the LLM; failures are surfaced but
         # don't abort the turn.
@@ -928,6 +1149,7 @@ async def run_message_stream(
                 "data": json.dumps({"message": f"MCP server '{server_name}' unavailable: {err}"}),
             }
 
+        last_assistant_id: int | None = None
         try:
             turn_started = time.monotonic()
             async for ev in run_tool_loop(
@@ -941,6 +1163,7 @@ async def run_message_stream(
                 max_input_tokens=max_input_tokens,
                 max_tool_result_tokens=max_tool_result_tokens,
                 auth_wait_timeout=auth_wait_timeout,
+                gate=gate,
             ):
                 if isinstance(ev, AssistantTextDelta):
                     yield {
@@ -948,12 +1171,19 @@ async def run_message_stream(
                         "data": json.dumps({"content": ev.content}),
                     }
 
+                elif isinstance(ev, AssistantReasoningDelta):
+                    yield {
+                        "event": "reasoning",
+                        "data": json.dumps({"content": ev.content}),
+                    }
+
                 elif isinstance(ev, AssistantFinalTurn):
                     # Final assistant turn — split off any suggested follow-ups,
                     # persist the clean text, and surface the chips separately.
                     elapsed_ms = int((time.monotonic() - turn_started) * 1000)
+                    actual_model = ev.model or model
                     answer = await persist_final_turn(
-                        kind, container_id, ev, model=model, elapsed_ms=elapsed_ms
+                        kind, container_id, ev, model=actual_model, elapsed_ms=elapsed_ms
                     )
                     if ev.usage is not None:
                         yield usage_event(answer.message_id, ev.usage)
@@ -963,7 +1193,8 @@ async def run_message_stream(
                             {
                                 "id": answer.message_id,
                                 "content": answer.text,
-                                "model": model,
+                                "model": actual_model,
+                                "provider": ev.provider,
                                 "elapsed_ms": elapsed_ms,
                             }
                         ),
@@ -979,8 +1210,9 @@ async def run_message_stream(
 
                 elif isinstance(ev, AssistantToolCallsTurn):
                     assistant_id = await persist_tool_calls_turn(
-                        kind, container_id, ev, model=model
+                        kind, container_id, ev, model=ev.model or model
                     )
+                    last_assistant_id = assistant_id
                     if ev.usage is not None:
                         yield usage_event(assistant_id, ev.usage)
                     yield {
@@ -1031,6 +1263,19 @@ async def run_message_stream(
                             }
                         ),
                     }
+
+                elif isinstance(ev, ApprovalsRequested):
+                    async with SessionLocal() as ws:
+                        rows = await approval_service.record_pending(
+                            ws, kind, container_id, last_assistant_id, ev.items
+                        )
+                        payload = [approval_service.serialize(r) for r in rows]
+                    await publish_approval_changed(**container_message_kwargs(kind, container_id))
+                    yield {
+                        "event": "approval_required",
+                        "data": json.dumps({"approvals": payload}),
+                    }
+                    return
 
                 elif isinstance(ev, RoundCapReached):
                     # Hit the iteration cap.

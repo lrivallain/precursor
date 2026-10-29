@@ -20,8 +20,8 @@ def test_default_role_seeded_and_protected() -> None:
         assert default["system_prompt"] == ""
 
         # Default cannot be deleted or renamed.
-        assert client.delete(f"/api/roles/{default['id']}").status_code == 400
-        rename = client.patch(f"/api/roles/{default['id']}", json={"name": "boss"})
+        assert client.delete("/api/roles/default").status_code == 400
+        rename = client.patch("/api/roles/default", json={"name": "boss"})
         assert rename.status_code == 400
 
 
@@ -36,20 +36,20 @@ def test_role_crud_lifecycle() -> None:
         role = r.json()
         assert role["name"] == "reviewer"
         assert role["is_default"] is False
-        rid = role["id"]
+        rid = role["name"]
 
         # Reserved name + duplicate (case-insensitive) are rejected.
         assert client.post("/api/roles", json={"name": "default"}).status_code == 400
         assert client.post("/api/roles", json={"name": "Reviewer"}).status_code == 409
 
-        # Edit the prompt + rename.
-        r = client.patch(
-            f"/api/roles/{rid}",
-            json={"name": "auditor", "system_prompt": "Audit carefully."},
-        )
+        # Edit the prompt; a rename isn't supported (everything refers by name).
+        r = client.patch(f"/api/roles/{rid}", json={"system_prompt": "Audit carefully."})
         assert r.status_code == 200
-        assert r.json()["name"] == "auditor"
+        assert r.json()["name"] == "reviewer"
         assert r.json()["system_prompt"] == "Audit carefully."
+        assert client.patch(f"/api/roles/{rid}", json={"name": "auditor"}).status_code == 400
+        # A case-only spelling of the same name is fine.
+        assert client.get("/api/roles/REVIEWER").status_code == 200
 
         assert client.delete(f"/api/roles/{rid}").status_code == 204
         assert client.get(f"/api/roles/{rid}").status_code == 404
@@ -64,17 +64,17 @@ def test_assign_role_to_topic_and_revert_on_delete() -> None:
         topic = client.post("/api/topics", json={"title": "Design"}).json()
 
         # Assign the role.
-        r = client.patch(f"/api/topics/{topic['id']}", json={"role_id": role["id"]})
+        r = client.patch(f"/api/topics/{topic['id']}", json={"role": role["name"]})
         assert r.status_code == 200
-        assert r.json()["role_id"] == role["id"]
+        assert r.json()["role"] == role["name"]
 
-        # Deleting the role reverts the topic to default (role_id cleared).
-        assert client.delete(f"/api/roles/{role['id']}").status_code == 204
+        # Deleting the role reverts the topic to default (role cleared).
+        assert client.delete(f"/api/roles/{role['name']}").status_code == 204
         refreshed = client.get(f"/api/topics/{topic['id']}").json()
-        assert refreshed["role_id"] is None
+        assert refreshed["role"] is None
 
 
-def test_assign_role_to_chat_and_workspace() -> None:
+def test_assign_role_to_chat() -> None:
     app = create_app()
     with TestClient(app) as client:
         role = client.post(
@@ -82,14 +82,9 @@ def test_assign_role_to_chat_and_workspace() -> None:
         ).json()
 
         chat = client.post("/api/chats", json={"title": "Notes"}).json()
-        r = client.patch(f"/api/chats/{chat['id']}", json={"role_id": role["id"]})
+        r = client.patch(f"/api/chats/{chat['id']}", json={"role": role["name"]})
         assert r.status_code == 200
-        assert r.json()["role_id"] == role["id"]
-
-        ws = client.post("/api/workspaces", json={"name": "Docs", "kind": "local"}).json()
-        r = client.patch(f"/api/workspaces/{ws['id']}", json={"role_id": role["id"]})
-        assert r.status_code == 200
-        assert r.json()["role_id"] == role["id"]
+        assert r.json()["role"] == role["name"]
 
 
 def test_creating_a_chat_with_a_role_assigns_it() -> None:
@@ -100,19 +95,19 @@ def test_creating_a_chat_with_a_role_assigns_it() -> None:
             "/api/roles", json={"name": "greeter", "system_prompt": "Say hello."}
         ).json()
 
-        created = client.post("/api/chats", json={"title": "Kickoff", "role_id": role["id"]})
+        created = client.post("/api/chats", json={"title": "Kickoff", "role": role["name"]})
         assert created.status_code == 201
-        assert created.json()["role_id"] == role["id"]
+        assert created.json()["role"] == role["name"]
         # And it survives a re-read rather than living only in the POST response.
-        assert client.get(f"/api/chats/{created.json()['id']}").json()["role_id"] == role["id"]
+        assert client.get(f"/api/chats/{created.json()['id']}").json()["role"] == role["name"]
 
-        # Omitting role_id still means "default" (null).
+        # Omitting role still means "default" (null).
         plain = client.post("/api/chats", json={"title": "Plain"})
-        assert plain.json()["role_id"] is None
+        assert plain.json()["role"] is None
 
 
-def test_selecting_default_clears_role_id() -> None:
-    """PATCHing role_id=null (the default selection) must clear an assigned role."""
+def test_selecting_default_clears_role() -> None:
+    """PATCHing role=null (the default selection) must clear an assigned role."""
     app = create_app()
     with TestClient(app) as client:
         role = client.post(
@@ -120,10 +115,10 @@ def test_selecting_default_clears_role_id() -> None:
         ).json()
         chat = client.post("/api/chats", json={"title": "Standup"}).json()
 
-        client.patch(f"/api/chats/{chat['id']}", json={"role_id": role["id"]})
-        cleared = client.patch(f"/api/chats/{chat['id']}", json={"role_id": None})
+        client.patch(f"/api/chats/{chat['id']}", json={"role": role["name"]})
+        cleared = client.patch(f"/api/chats/{chat['id']}", json={"role": None})
         assert cleared.status_code == 200
-        assert cleared.json()["role_id"] is None
+        assert cleared.json()["role"] is None
 
 
 def test_role_prompt_injected_into_topic_system_context() -> None:
@@ -141,7 +136,7 @@ def test_role_prompt_injected_into_topic_system_context() -> None:
             json={"name": "pirate", "system_prompt": "Always answer like a pirate."},
         ).json()
         topic = client.post("/api/topics", json={"title": "Yarr"}).json()
-        client.patch(f"/api/topics/{topic['id']}", json={"role_id": role["id"]})
+        client.patch(f"/api/topics/{topic['id']}", json={"role": role["name"]})
 
         async def _check() -> str:
             async with SessionLocal() as session:
@@ -163,18 +158,18 @@ def test_assign_role_to_live_session_and_revert_on_delete() -> None:
         ).json()
         sid = client.post("/api/live", json={"title": "Standup"}).json()["id"]
 
-        r = client.patch(f"/api/live/{sid}", json={"role_id": role["id"]})
+        r = client.patch(f"/api/live/{sid}", json={"role": role["name"]})
         assert r.status_code == 200
-        assert r.json()["role_id"] == role["id"]
+        assert r.json()["role"] == role["name"]
 
         # Selecting the default (null) clears it.
-        cleared = client.patch(f"/api/live/{sid}", json={"role_id": None})
-        assert cleared.json()["role_id"] is None
+        cleared = client.patch(f"/api/live/{sid}", json={"role": None})
+        assert cleared.json()["role"] is None
 
         # Reassign, then delete the role — the session reverts to default.
-        client.patch(f"/api/live/{sid}", json={"role_id": role["id"]})
-        assert client.delete(f"/api/roles/{role['id']}").status_code == 204
-        assert client.get(f"/api/live/{sid}").json()["role_id"] is None
+        client.patch(f"/api/live/{sid}", json={"role": role["name"]})
+        assert client.delete(f"/api/roles/{role['name']}").status_code == 204
+        assert client.get(f"/api/live/{sid}").json()["role"] is None
 
 
 def test_assign_role_to_agent_and_revert_on_delete() -> None:
@@ -201,12 +196,12 @@ def test_assign_role_to_agent_and_revert_on_delete() -> None:
 
         agent_id = anyio.run(_make)
 
-        r = client.patch(f"/api/agents/{agent_id}", json={"role_id": role["id"]})
+        r = client.patch(f"/api/agents/{agent_id}", json={"role": role["name"]})
         assert r.status_code == 200
-        assert r.json()["role_id"] == role["id"]
+        assert r.json()["role"] == role["name"]
 
-        assert client.delete(f"/api/roles/{role['id']}").status_code == 204
-        assert client.get(f"/api/agents/{agent_id}").json()["role_id"] is None
+        assert client.delete(f"/api/roles/{role['name']}").status_code == 204
+        assert client.get(f"/api/agents/{agent_id}").json()["role"] is None
 
 
 def test_role_persona_grounds_live_chat() -> None:
@@ -223,7 +218,7 @@ def test_role_persona_grounds_live_chat() -> None:
             json={"name": "sme", "system_prompt": "Answer as a domain expert."},
         ).json()
         sid = client.post("/api/live", json={"title": "Review"}).json()["id"]
-        client.patch(f"/api/live/{sid}", json={"role_id": role["id"]})
+        client.patch(f"/api/live/{sid}", json={"role": role["name"]})
         # Spawn the assistant chat so grounding can resolve the session by chat_id.
         chat = client.post(f"/api/live/{sid}/chat").json()
 
@@ -256,13 +251,13 @@ def test_role_prompt_expands_skill_references() -> None:
             json={"name": "haiku-bot", "system_prompt": "For every reply: /role-skill"},
         ).json()
 
-        async def _resolve(role_id: int | None) -> str:
+        async def _resolve(role: str | None) -> str:
             async with SessionLocal() as session:
-                return await resolve_role_prompt(session, role_id)
+                return await resolve_role_prompt(session, role)
 
-        prompt = anyio.run(_resolve, role["id"])
+        prompt = anyio.run(_resolve, role["name"])
         assert prompt == "For every reply: Speak only in haiku."
 
         # A disabled skill must not leak its body into any role prompt.
         client.patch("/api/skills/role-skill", json={"enabled": False})
-        assert anyio.run(_resolve, role["id"]) == "For every reply: /role-skill"
+        assert anyio.run(_resolve, role["name"]) == "For every reply: /role-skill"

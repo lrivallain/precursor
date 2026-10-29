@@ -114,6 +114,40 @@ Windows itself does differently:
   Precursor is stopped: `precursor service stop`, that command, then
   `precursor service start`.
 
+## On a Linux server
+
+The same installer works over SSH on a headless box. Two things differ from a
+desktop:
+
+- **No tray.** With no `DISPLAY` or `WAYLAND_DISPLAY`, `precursor service
+  install` registers only the app and says why it skipped the icon.
+- **Logging out stops it.** A systemd *user* unit lives as long as your login
+  session, so Precursor would stop when your SSH session closes and wouldn't
+  come back at boot. The installer points this out. To keep it running, turn on
+  lingering once:
+
+  ```bash
+  loginctl enable-linger
+  ```
+
+Precursor listens on `127.0.0.1` only. The safest way to reach it from another
+machine is an SSH tunnel: run `ssh -L 8000:127.0.0.1:8000 you@server`, then
+open `http://127.0.0.1:8000/`. To serve it on the network instead, set the
+bind address in the `.env` of the
+[data directory](/features/background-app#where-the-data-lives) and restart:
+
+```bash
+echo 'PRECURSOR_HOST=0.0.0.0' >> "$(precursor service data-dir)/.env"
+precursor service restart
+```
+
+::: warning No authentication
+Precursor has no login of its own. Anyone who can reach the port can use your
+GitHub credentials and everything the app can do, so only do this on a network
+you trust. Off loopback, the MCP HTTP endpoint and in-app plugin installs are
+turned off.
+:::
+
 ## Other ways to install
 
 The command above is the supported path; use it unless one of these reasons

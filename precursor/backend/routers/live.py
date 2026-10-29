@@ -8,6 +8,8 @@ direct Q&A endpoint. Summary-to-topic lands in the next phase.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 import logging
 import re
@@ -31,7 +33,9 @@ from precursor.backend.models import (
     Message,
     MessageRole,
     Topic,
+    Workspace,
 )
+from precursor.backend.routers.workspaces import browse_root
 from precursor.backend.schemas import (
     AgendaEvent,
     AgendaResponse,
@@ -40,6 +44,7 @@ from precursor.backend.schemas import (
     ContextNoteAdd,
     ContextNotesUpdate,
     LinkMeetingRequest,
+    LiveSuggestRequest,
     MeetingAnalyzeResult,
     MeetingAskRequest,
     MeetingAttachmentRead,
@@ -53,38 +58,59 @@ from precursor.backend.schemas import (
     MeetingSessionUpdate,
     MeetingSummaryPost,
     MeetingSummaryPostResult,
+    MeetingSummaryRequest,
     MeetingSummaryResult,
     MeetingTranscriptListResult,
     MeetingTranscriptPart,
     MeetingTranscriptSummaryRequest,
     MeetingTranscriptSummaryResult,
+    SpeakerMeRequest,
     SpeakerRenameRequest,
+    SummaryLanguage,
+    SummaryTemplateCatalog,
+    SummaryTemplateFileRequest,
+    SummaryTemplateFileResult,
+    SummaryTemplateRead,
+    SummaryTemplateSelection,
     TopicSummaryResult,
     TranslateRequest,
     TranslateResult,
 )
+from precursor.backend.schemas.definitions_api import DefinitionsWorkspaceRef
+from precursor.backend.services import summary_templates
 from precursor.backend.services.app_settings import (
     resolve_issue_associations_enabled,
     resolve_live_fast_model,
     resolve_live_reasoning_effort,
+    resolve_live_summary_language,
+    resolve_live_summary_template,
+    resolve_llm_model,
 )
 from precursor.backend.services.blob_store import blob_path, write_blob
 from precursor.backend.services.collections import resolve_topic_github_repo
+from precursor.backend.services.definitions.home import (
+    definitions_workspace,
+    ensure_definitions_workspace,
+)
+from precursor.backend.services.definitions.overlay import definitions_root
 from precursor.backend.services.events import publish_meeting_changed, publish_message_changed
 from precursor.backend.services.github_auth import resolve_github_token
 from precursor.backend.services.github_client import GitHubClient
 from precursor.backend.services.image_uploads import read_validated_attachment
+from precursor.backend.services.live_suggest import prepare_suggestion, stream_suggestion
 from precursor.backend.services.llm import get_llm_provider
 from precursor.backend.services.llm.base import ChatMessage, TextDeltaEvent, UsageEvent
-from precursor.backend.services.meeting_agenda import fetch_agenda
+from precursor.backend.services.meeting_agenda import fetch_agenda, fetch_event_body
 from precursor.backend.services.meeting_analysis import (
     analyze_session,
     context_notes_text,
     display_label,
+    is_known_language,
+    known_languages,
     language_name,
     meeting_context_text,
     meeting_details_markdown,
-    role_persona_instruction,
+    session_persona,
     translate_lines,
     translate_transcript,
 )
@@ -97,7 +123,6 @@ from precursor.backend.services.meeting_transcript import (
     fetch_meeting_transcript,
     list_meeting_transcripts,
 )
-from precursor.backend.services.roles import resolve_role_prompt
 from precursor.backend.services.slugs import allocate_unique_slug, slugify
 from precursor.backend.services.usage_stats import record_usage
 
@@ -106,7 +131,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/live", tags=["live"])
 
 # Optional Live features a session can enable (gates tabs + background work).
-VALID_FEATURES = frozenset({"insights", "notes", "assistant", "proactive", "translation"})
+VALID_FEATURES = frozenset(
+    {"insights", "notes", "assistant", "proactive", "translation", "answers"}
+)
 
 
 async def _allocate_slug(session: AsyncSession, base: str) -> str:
@@ -130,11 +157,13 @@ async def _get_session_or_404(session_id: int, session: AsyncSession) -> Meeting
     return ms
 
 
-async def _validate_topic(topic_id: int | None, session: AsyncSession) -> None:
+async def _validate_topic(topic_id: int | None, session: AsyncSession) -> Topic | None:
     if topic_id is None:
-        return
-    if await session.get(Topic, topic_id) is None:
+        return None
+    topic = await session.get(Topic, topic_id)
+    if topic is None:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Attached topic not found")
+    return topic
 
 
 @router.get("", response_model=list[MeetingSessionRead])
@@ -162,12 +191,104 @@ async def list_archived_sessions(
     return list(result.scalars().all())
 
 
+# --------------------------------------------------------------------------
+# Summary templates (declared before ``/{session_id}``, which would match them)
+# --------------------------------------------------------------------------
+
+
+def _workspace_ref(ws: Workspace | None) -> DefinitionsWorkspaceRef | None:
+    return DefinitionsWorkspaceRef(id=ws.id, slug=ws.slug, name=ws.name) if ws else None
+
+
+@router.get("/summary-templates", response_model=SummaryTemplateCatalog)
+async def list_summary_templates(
+    session: AsyncSession = Depends(get_session),
+) -> SummaryTemplateCatalog:
+    """The templates a recap can be written from, the languages, and the last used."""
+    catalog = await summary_templates.load_catalog()
+    last = await resolve_live_summary_template(session)
+    if catalog.find(last) is None:
+        last = catalog.default().id
+    language = await resolve_live_summary_language(session)
+    return SummaryTemplateCatalog(
+        templates=[
+            SummaryTemplateRead(
+                id=t.id,
+                name=t.name,
+                description=t.description,
+                source="builtin" if t.path is None else "file",
+                path=t.path,
+                overrides_builtin=t.path is not None and t.builtin,
+            )
+            for t in catalog.templates
+        ],
+        problems=catalog.problems,
+        languages=[SummaryLanguage(code=code, name=name) for code, name in known_languages()],
+        last_template=last,
+        last_language=language if is_known_language(language) else "",
+        folder=str(definitions_root()),
+        workspace=_workspace_ref(await definitions_workspace(session)),
+    )
+
+
+@router.put("/summary-templates/selection", status_code=status.HTTP_204_NO_CONTENT)
+async def select_summary_template(
+    payload: SummaryTemplateSelection, session: AsyncSession = Depends(get_session)
+) -> None:
+    """Remember the picker's choice, so the next recap (and session) starts there."""
+    catalog = await summary_templates.load_catalog()
+    if catalog.find(payload.template) is None:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, f"No summary template '{payload.template}'"
+        )
+    await summary_templates.remember(session, payload.template, payload.language)
+    await session.commit()
+
+
+@router.post("/summary-templates/files", response_model=SummaryTemplateFileResult)
+async def summary_template_file(
+    payload: SummaryTemplateFileRequest, session: AsyncSession = Depends(get_session)
+) -> SummaryTemplateFileResult:
+    """The definition file to edit a template in, written first when needed.
+
+    A built-in is saved to the definitions folder under its own id (the copy
+    replaces it); ``duplicate`` saves any template as a new one to adapt.
+    """
+    await ensure_definitions_workspace(session)
+    try:
+        ident, rel, created = await asyncio.to_thread(
+            summary_templates.template_file, payload.template, duplicate=payload.duplicate
+        )
+    except LookupError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except (summary_templates.TemplateFileError, OSError) as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, f"Couldn't write the template file: {exc}"
+        ) from exc
+    root = definitions_root()
+    ws = await definitions_workspace(session)
+    workspace_path: str | None = None
+    if ws is not None:
+        with contextlib.suppress(ValueError):
+            workspace_path = (
+                (root / rel).resolve().relative_to(browse_root(ws).resolve()).as_posix()
+            )
+    return SummaryTemplateFileResult(
+        id=ident,
+        path=rel,
+        created=created,
+        folder=str(root),
+        workspace=_workspace_ref(ws),
+        workspace_path=workspace_path,
+    )
+
+
 @router.post("", response_model=MeetingSessionRead, status_code=status.HTTP_201_CREATED)
 async def create_session_endpoint(
     payload: MeetingSessionCreate,
     session: AsyncSession = Depends(get_session),
 ) -> MeetingSession:
-    await _validate_topic(payload.topic_id, session)
+    topic = await _validate_topic(payload.topic_id, session)
 
     title = (payload.title or "").strip() or (f"Live session — {datetime.now(UTC):%Y-%m-%d %H:%M}")
     slug = await _allocate_slug(session, slugify(payload.slug or title))
@@ -178,6 +299,8 @@ async def create_session_endpoint(
         status="active",
         language=(payload.language or "").strip() or None,
         topic_id=payload.topic_id,
+        # The session starts with the role of the topic it is attached to.
+        role=topic.role if topic is not None else None,
     )
     session.add(ms)
     await session.commit()
@@ -203,11 +326,15 @@ async def update_session_endpoint(
     data = payload.model_dump(exclude_unset=True)
 
     if "topic_id" in data:
-        await _validate_topic(data["topic_id"], session)
+        topic = await _validate_topic(data["topic_id"], session)
         # Attaching a different topic invalidates the cached context summary so
         # the Context tab regenerates it for the new topic.
         if data["topic_id"] != ms.topic_id:
             ms.topic_summary = None
+            # The session adopts the new topic's role (an explicit role in the
+            # same request wins; detaching leaves the role as it is).
+            if topic is not None and "role" not in data:
+                data["role"] = topic.role
     if "title" in data and data["title"] is not None:
         data["title"] = data["title"].strip() or ms.title
     if "language" in data:
@@ -229,6 +356,10 @@ async def update_session_endpoint(
 
     for key, value in data.items():
         setattr(ms, key, value)
+    if "role" in data and ms.chat_id is not None:
+        chat = await session.get(Chat, ms.chat_id)
+        if chat is not None:
+            chat.role = ms.role
     await session.commit()
     await session.refresh(ms)
     await publish_meeting_changed(ms.id)
@@ -379,6 +510,26 @@ async def rename_speaker(
     return ms
 
 
+@router.post("/{session_id}/speakers/me", response_model=MeetingSessionRead)
+async def mark_speaker_me(
+    session_id: int,
+    payload: SpeakerMeRequest,
+    session: AsyncSession = Depends(get_session),
+) -> MeetingSession:
+    """Mark (or unmark) a diarization label as the user's own voice, so suggested
+    answers skip questions the user asks themselves."""
+    ms = await _get_session_or_404(session_id, session)
+    label = payload.label.strip()
+    labels = [x for x in ms.me_labels if x != label]
+    if payload.me:
+        labels.append(label)
+    ms.me_labels_json = json.dumps(labels, ensure_ascii=False)
+    await session.commit()
+    await session.refresh(ms)
+    await publish_meeting_changed(ms.id)
+    return ms
+
+
 @router.put("/{session_id}/attendees", response_model=MeetingSessionRead)
 async def set_attendees(
     session_id: int,
@@ -510,7 +661,7 @@ async def ensure_chat(session_id: int, session: AsyncSession = Depends(get_sessi
             return existing
 
     slug = await allocate_unique_slug(session, slugify(ms.title) or "live-chat", Chat)
-    chat = Chat(title=f"{ms.title} — Live chat", slug=slug)
+    chat = Chat(title=f"{ms.title} — Live chat", slug=slug, role=ms.role)
     session.add(chat)
     await session.commit()
     await session.refresh(chat)
@@ -618,7 +769,7 @@ async def ask(
     lang = language_name(ms.language)
     if lang:
         system += f" Respond in {lang}."
-    persona = role_persona_instruction(await resolve_role_prompt(session, ms.role_id))
+    persona = await session_persona(session, ms.role)
     if persona:
         system += f"\n\n{persona}"
     user_parts = [
@@ -634,15 +785,23 @@ async def ask(
     if notes_ctx:
         user_parts.append(f"\nPinned context notes:\n{notes_ctx}")
 
-    provider = await get_llm_provider(session)
-    model = await resolve_live_fast_model(session)
+    from precursor.backend.services.model_fallbacks import resolve_model_category
+
+    model = await resolve_live_fast_model(session, use_default=False)
+    category = await resolve_model_category(session) if not model else None
+    provider = (
+        await get_llm_provider(session, model_category=category)
+        if category is not None
+        else await get_llm_provider(session)
+    )
+    model = model or await resolve_llm_model(session)
     effort = await resolve_live_reasoning_effort(session)
     topic_id = ms.topic_id
 
     async def event_stream() -> AsyncIterator[dict[str, str]]:
         try:
             async for event in provider.stream_chat_with_tools(
-                model=model,
+                model=getattr(provider, "effective_model", None) or model,
                 messages=[
                     ChatMessage(role="system", content=system),
                     ChatMessage(role="user", content="\n".join(user_parts)),
@@ -673,6 +832,28 @@ async def ask(
             yield {"event": "error", "data": json.dumps({"message": str(exc)})}
 
     return EventSourceResponse(event_stream())
+
+
+@router.post("/{session_id}/suggest")
+async def suggest_answer(
+    session_id: int,
+    payload: LiveSuggestRequest,
+    session: AsyncSession = Depends(get_session),
+) -> EventSourceResponse:
+    """Stream a suggested answer to a question heard from another participant.
+
+    SSE ``token`` frames, then ``done`` (the exchange was saved to the session's
+    chat) or ``none`` (the model judged nothing needs answering). Opt-in per
+    session through the ``answers`` feature.
+    """
+    ms = await _get_session_or_404(session_id, session)
+    if "answers" not in ms.features:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Suggested answers are not enabled")
+    chat = await ensure_chat(session_id, session)
+    plan = await prepare_suggestion(
+        session, ms, payload.question.strip(), payload.speaker_label, chat.id
+    )
+    return EventSourceResponse(stream_suggestion(plan, payload.question.strip()))
 
 
 @router.post("/{session_id}/translate", response_model=TranslateResult)
@@ -711,18 +892,52 @@ async def translate(
 # --------------------------------------------------------------------------
 
 
+async def _summary_options(
+    session: AsyncSession, payload: MeetingSummaryRequest | None
+) -> tuple[summary_templates.SummaryTemplate, str]:
+    """The template and language a recap is written with.
+
+    What the request names, else what was last used — falling back to the
+    default template when that one is gone, and to the session's language.
+    """
+    catalog = await summary_templates.load_catalog()
+    requested = payload.template if payload else None
+    if requested is not None:
+        template = catalog.find(requested)
+        if template is None:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"No summary template '{requested}': it was removed, or its file has errors.",
+            )
+    else:
+        template = catalog.find(await resolve_live_summary_template(session)) or catalog.default()
+    if payload is not None and payload.language is not None:
+        language = payload.language
+    else:
+        language = await resolve_live_summary_language(session)
+        if not is_known_language(language):
+            language = ""
+    return template, language
+
+
 @router.post("/{session_id}/summary", response_model=MeetingSummaryResult)
 async def summarize(
-    session_id: int, session: AsyncSession = Depends(get_session)
+    session_id: int,
+    payload: MeetingSummaryRequest | None = None,
+    session: AsyncSession = Depends(get_session),
 ) -> MeetingSummaryResult:
     """Generate a markdown recap of the session and persist it on the session.
 
     Stored so a reopened session shows the recap without regenerating; a new
-    generation only happens on the user's explicit request.
+    generation only happens on the user's explicit request. The template and
+    language used are remembered for the next recap.
     """
     ms = await _get_session_or_404(session_id, session)
+    template, language = await _summary_options(session, payload)
     try:
-        text, model = await generate_summary(session, session_id)
+        text, model = await generate_summary(
+            session, session_id, instructions=template.prompt, language=language
+        )
     except Exception as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Summary failed: {exc}") from exc
     if not text:
@@ -731,9 +946,10 @@ async def summarize(
             "Nothing to summarise yet — record some of the meeting first.",
         )
     ms.summary = text
+    await summary_templates.remember(session, template.id, language)
     await session.commit()
     await publish_meeting_changed(ms.id)
-    return MeetingSummaryResult(summary=text, model=model)
+    return MeetingSummaryResult(summary=text, model=model, template=template.id, language=language)
 
 
 @router.get("/{session_id}/transcripts", response_model=MeetingTranscriptListResult)
@@ -788,6 +1004,7 @@ async def summarize_from_transcript(
             "Link a Teams meeting to this session first.",
         )
 
+    template, language = await _summary_options(session, payload)
     transcript_ids = list(payload.transcript_ids) if payload else []
     available, transcript, detail = await fetch_meeting_transcript(
         ms.external_meeting, transcript_ids or None
@@ -799,7 +1016,9 @@ async def summarize_from_transcript(
         )
 
     try:
-        text, model = await generate_summary_from_transcript(session, session_id, transcript)
+        text, model = await generate_summary_from_transcript(
+            session, session_id, transcript, instructions=template.prompt, language=language
+        )
     except Exception as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Summary failed: {exc}") from exc
     if not text:
@@ -808,9 +1027,16 @@ async def summarize_from_transcript(
             "The transcript couldn't be summarised.",
         )
     ms.summary = text
+    await summary_templates.remember(session, template.id, language)
     await session.commit()
     await publish_meeting_changed(ms.id)
-    return MeetingTranscriptSummaryResult(summary=text, model=model, transcript_ids=transcript_ids)
+    return MeetingTranscriptSummaryResult(
+        summary=text,
+        model=model,
+        template=template.id,
+        language=language,
+        transcript_ids=transcript_ids,
+    )
 
 
 @router.post(
@@ -935,7 +1161,9 @@ async def topic_summary(
     if ms.topic_id is None:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "No topic attached to this session.")
     try:
-        text, model = await summarize_topic_conversation(session, ms.topic_id, language=ms.language)
+        text, model = await summarize_topic_conversation(
+            session, ms.topic_id, language=ms.language, role=ms.role
+        )
     except Exception as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Summary failed: {exc}") from exc
     # Persist the summary so we serve it from cache on later opens instead of
@@ -973,6 +1201,9 @@ async def link_meeting(
     to attendees — only speakers confirmed in the transcript seed that list;
     invitees stay suggestions in the summary."""
     ms = await _get_session_or_404(session_id, session)
+    # The agenda list omits bodies to stay small; fetch this one's on link.
+    if not payload.body and payload.id:
+        payload = payload.model_copy(update={"body": await fetch_event_body(payload.id)})
     ms.external_meeting_json = payload.model_dump_json()
     await session.commit()
     await session.refresh(ms)

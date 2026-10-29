@@ -102,7 +102,7 @@ async function openSettings(page, tab) {
   await page.locator('[data-tooltip="Settings"]').first().click();
   await page.waitForSelector("text=Appearance", { timeout: 10000 });
   await sleep(500);
-  const byRole = page.getByRole("button", { name: tab, exact: true }).first();
+  const byRole = page.getByRole("dialog", { name: "Settings", exact: true }).getByRole("button", { name: tab, exact: true });
   if (await byRole.count()) await byRole.click().catch(() => {});
   else await page.locator(`text="${tab}"`).first().click().catch(() => {});
   await sleep(800);
@@ -199,6 +199,39 @@ async function stubPluginReleases(page, { installed }) {
 }
 
 // The seeded "Onboarding guide writer": one run whose result was refined twice.
+// The demo has no Copilot runtime to ask, so answer the rewind file preview
+// with fixed files (an empty list: the turns changed no tracked files).
+async function mockRewindPreview(page, files) {
+  await page.route("**/api/agents/*/rewind/preview**", (route) =>
+    route.fulfill({
+      json: {
+        event_id: "demo",
+        file_tracking: true,
+        files_available: true,
+        unavailable_reason: null,
+        file_count: files.length,
+        files,
+      },
+    }),
+  );
+}
+
+// Preview a rewind to the refined agent's first turn; returns the main-pane clip.
+async function previewAgentRewind(page, ready = async () => {}) {
+  await gotoRefinedAgent(page);
+  await page.getByRole("tab", { name: /Activity/ }).click();
+  const nav = page.locator('nav[aria-label="Conversation timeline"]');
+  await nav.locator("[data-tick]").nth(0).hover();
+  await nav.getByRole("button", { name: "Rewind here" }).click();
+  await page.getByRole("button", { name: "Rewind", exact: true }).waitFor();
+  await ready();
+  await page.mouse.move(0, 0);
+  await sleep(1200);
+  const main = await page.locator("main").first().boundingBox();
+  if (!main) throw new Error("Seed the demo Onboarding guide writer first.");
+  return { x: Math.floor(main.x), y: 0, width: Math.ceil(main.width), height: page.viewportSize().height };
+}
+
 async function gotoRefinedAgent(page) {
   const response = await page.request.get(`${BASE}/api/agents`);
   const agents = await response.json();
@@ -211,6 +244,23 @@ async function gotoRefinedAgent(page) {
 // Scenes. `viewport` is per scene because these surfaces have very different
 // natural heights; the clip trims whatever is left over.
 // --------------------------------------------------------------------------
+// The OpenAI-compatible endpoint as a user sees it once switched on. The key is
+// an obvious placeholder: a screenshot must never carry a working credential.
+const OPENAI_ENDPOINT_SETTINGS = {
+  llm_provider: "github_copilot",
+  openai_proxy_enabled: true,
+  openai_proxy_url: "http://127.0.0.1:8000/api/openai/v1",
+  openai_proxy_key: "sk-precursor-demo-0000000000000000000000000000",
+  openai_proxy_available: true,
+  openai_proxy_unavailable_reason: null,
+};
+const OPENAI_ENDPOINT_MODELS = [
+  ["claude-sonnet-5", "Claude Sonnet 5", "Anthropic"],
+  ["gemini-3.6-flash", "Gemini 3.6 Flash", "Google"],
+  ["gpt-5-mini", "GPT-5 mini", "OpenAI"],
+  ["gpt-5.5", "GPT-5.5", "OpenAI"],
+].map(([id, name, publisher]) => ({ id, name, publisher, summary: "", tags: [] }));
+
 const scenes = {
   home: {
     viewport: { width: 1440, height: 1000 },
@@ -229,6 +279,19 @@ const scenes = {
     },
   },
 
+  // A step plan mid-way: the tree with its statuses on the left, the artifact
+  // of a step waiting for validation on the right.
+  "step-by-step": {
+    viewport: { width: 1440, height: 900 },
+    async go(page) {
+      await page.goto(`${BASE}/steps/1`, { waitUntil: "networkidle" });
+      await page.getByTestId("step-plan-view").waitFor();
+      await page.getByText("Confirm EU data residency", { exact: true }).first().click();
+      await sleep(1200);
+      return undefined;
+    },
+  },
+
   chats: {
     viewport: { width: 1440, height: 1000 },
     async go(page) {
@@ -238,12 +301,166 @@ const scenes = {
     },
   },
 
+  "conversation-providers": {
+    viewport: { width: 1440, height: 900 },
+    async go(page) {
+      await page.route("**/api/settings", async (route) => {
+        const response = await route.fetch();
+        const settings = await response.json();
+        await route.fulfill({ response, json: {
+          ...settings, llm_provider: "github_copilot", llm_model: "gpt-4o",
+          github_token_source: "settings",
+          llm_providers: { azure_foundry: {
+            endpoint: "https://demo.openai.azure.com", deployment: "my-gpt-4o",
+          } },
+          llm_providers_present: { azure_foundry: { key: true } },
+        } });
+      });
+      await page.route("**/api/llm/models*", (route) => {
+        const provider = new URL(route.request().url()).searchParams.get("provider");
+        const models = provider === "azure_foundry"
+          ? [{ id: "my-gpt-4o", name: "my-gpt-4o", publisher: "Azure", catalog_provider: provider }]
+          : provider === "github_copilot"
+            ? [{ id: "gpt-4o", name: "GPT-4o", publisher: "OpenAI", catalog_provider: provider }]
+            : [];
+        return route.fulfill({ json: models });
+      });
+      await page.goto(`${BASE}/chats/regex-for-semver-tags`, { waitUntil: "networkidle" });
+      await page.getByRole("button", { name: "Model", exact: true }).click();
+      await page.getByRole("option", { name: "my-gpt-4o", exact: true }).waitFor();
+      await page.mouse.move(0, 0);
+      return clipOf(page, "main");
+    },
+  },
+
+  "provider-configuration": {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await scenes["conversation-providers"].go(page);
+      await page.getByRole("button", { name: "Model", exact: true }).click();
+      await openSettings(page, "Model");
+      const picker = page.getByRole("button", { name: "LLM provider", exact: true });
+      await picker.click();
+      await page.getByRole("option", { name: /^Azure AI Foundry/ }).click();
+      await picker.click();
+      const trigger = await picker.boundingBox();
+      const menu = await page.getByRole("listbox").boundingBox();
+      return {
+        x: trigger.x - 12, y: trigger.y - 32,
+        width: trigger.width + 24, height: menu.y + menu.height - trigger.y + 44,
+      };
+    },
+  },
+
+  // The parent topic's right panel listing its side chats. Listed before
+  // `side-chats`, which opens (and so marks read) the chat that has a badge.
+  "side-chats-panel": {
+    viewport: { width: 1440, height: 900 },
+    async go(page) {
+      await page.addInitScript(() =>
+        localStorage.setItem("precursor:chat-stats:collapsed", "0"),
+      );
+      await page.goto(`${BASE}/topics/billing-db-migration`, { waitUntil: "networkidle" });
+      await page.locator("[data-testid=side-chats] li").first().waitFor();
+      await page.mouse.move(0, 0);
+      return clipOf(page, "main");
+    },
+  },
+
+  // A side chat started from a topic reply: the quoted reply, and the back-link
+  // to its topic in the header. Clipped to the main pane so the sidebar persona
+  // stays out.
+  "side-chats": {
+    viewport: { width: 1440, height: 900 },
+    async go(page) {
+      await page.addInitScript(() =>
+        localStorage.setItem("precursor:chat-stats:collapsed", "0"),
+      );
+      await page.goto(`${BASE}/chats/logical-replication-gotchas`, { waitUntil: "networkidle" });
+      const seed = page.locator("[data-testid=side-chat-seed]");
+      await seed.waitFor();
+      // The transcript opens at its latest turn; the quoted reply is on top.
+      await seed.evaluate((el) => {
+        const box = el.closest(".overflow-y-auto");
+        if (box) box.scrollTop = 0;
+      });
+      await page.mouse.move(0, 0);
+      await sleep(300);
+      return clipOf(page, "main");
+    },
+  },
+
+  // A reply's collapsed "Thinking" area, opened — just the exchange, so the
+  // sidebar and its persona footer stay out of the shot.
+  thinking: {
+    viewport: { width: 1280, height: 900 },
+    async go(page) {
+      await page.goto(`${BASE}/topics/search-latency-regression`, { waitUntil: "networkidle" });
+      await page.locator("button[aria-expanded]", { hasText: "Thinking" }).first().click();
+      await page.mouse.move(0, 0);
+      await sleep(400);
+      const prompt = await page.getByText("p95 went from 180ms", { exact: false }).first().boundingBox();
+      const label = await page.getByText("Assistant", { exact: true }).first().boundingBox();
+      const answer = await page.getByText("recover most of it", { exact: false }).first().boundingBox();
+      if (!prompt || !label || !answer) throw new Error("Seed the search-latency topic first.");
+      const x = Math.floor(label.x - 24);
+      const y = Math.floor(prompt.y - 44);
+      return {
+        x,
+        y,
+        width: Math.ceil(prompt.x + prompt.width + 36 - x),
+        height: Math.ceil(answer.y + answer.height + 44 - y),
+      };
+    },
+  },
+
   live: {
     viewport: { width: 1440, height: 1000 },
     async go(page) {
+      await page.addInitScript(() => {
+        localStorage.setItem("precursor:live-panel", JSON.stringify({
+          panes: [
+            { tabs: ["transcript"], active: "transcript" },
+            { tabs: ["insights"], active: "insights" },
+          ],
+        }));
+      });
+      await page.route("**/api/live/*/analyze", (route) => route.fulfill({
+        json: {
+          insights: [
+            { id: 1, kind: "action_item", content: "Sam: Add a bounded-retry regression test." },
+            { id: 2, kind: "decision", content: "Cap retries and add jitter to the backoff." },
+            { id: 3, kind: "question", content: "What retry limit keeps recovery fast without amplifying load?" },
+            { id: 4, kind: "risk", content: "Slow gateways can amplify load during retries." },
+            { id: 5, kind: "note", content: "The release checklist needs an update." },
+          ],
+          suggestion: "**Recommendation:** Cap retries and add jitter to prevent slow gateways from amplifying load.\n\n- **Next step:** Add a regression test for slow gateway responses.\n- **Check:** Confirm the retry limit with the team.",
+        },
+      }));
       await page.goto(`${BASE}/live/weekly-platform-sync`, { waitUntil: "networkidle" });
       await page.getByText("Let's review the latency regression and agree on next steps.", { exact: true }).waitFor();
+      await page.getByRole("button", { name: "Analyze now" }).click();
+      await page.getByText("Recommendation", { exact: false }).waitFor();
       return undefined;
+    },
+  },
+
+  // The Summary tab's Generate panel: the source, the templates (built-ins
+  // plus one of our own, a `*.summary.yaml` definition file) and the language.
+  "live-summary-templates": {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await page.goto(`${BASE}/live/weekly-platform-sync`, { waitUntil: "networkidle" });
+      await page.getByRole("button", { name: /^Summary/ }).first().click();
+      await page.getByRole("button", { name: /Regenerate|Generate/ }).first().click();
+      await page.getByRole("radio", { name: /Customer call notes/ }).waitFor();
+      await page.mouse.move(0, 0);
+      await sleep(400);
+      // The section (not the sidebar's persona footer), cut below the panel.
+      const clip = await clipOf(page, "[data-live-summary]");
+      const panel = await page.getByRole("dialog", { name: "Generate summary" }).boundingBox();
+      const bottom = panel ? Math.ceil(panel.y + panel.height + 16) : clip.y + 560;
+      return clip && { ...clip, height: Math.min(clip.height, bottom - clip.y) };
     },
   },
 
@@ -252,6 +469,146 @@ const scenes = {
     async go(page) {
       await page.goto(`${BASE}/ws/design-notes/README.md`, { waitUntil: "networkidle" });
       await page.getByRole("heading", { name: "Release checklist", exact: true }).waitFor();
+      return undefined;
+    },
+  },
+
+  // The same file in Monaco. Left unfocused so no blinking cursor differs
+  // between the light and dark shots.
+  "workspaces-editor": {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await page.goto(`${BASE}/ws/design-notes/README.md`, { waitUntil: "networkidle" });
+      await page.getByRole("button", { name: "Edit", exact: true }).click();
+      await page.locator(".monaco-editor .view-line", { hasText: "Release checklist" }).waitFor();
+      await sleep(500);
+      return undefined;
+    },
+  },
+
+  // The Discuss picker beside an open file: a new chat, the discussions that
+  // already attach handbook files, and a search over every other chat/topic.
+  "workspaces-discussion": {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await page.goto(`${BASE}/ws/handbook/on-call.md`, { waitUntil: "networkidle" });
+      await page.getByRole("button", { name: "Discuss", exact: true }).click();
+      await page.getByText("Tighten the on-call handoff").first().waitFor();
+      await page.mouse.move(700, 900);
+      await sleep(500);
+      return undefined;
+    },
+  },
+
+  // A chat's right-hand area with its workspace artifacts under the reminder.
+  "chat-artifacts": {
+    viewport: { width: 1440, height: 900 },
+    async go(page) {
+      await page.goto(`${BASE}/chats/tighten-the-on-call-handoff`, { waitUntil: "networkidle" });
+      const rail = page.getByRole("button", { name: "Show artifacts" });
+      if (await rail.count()) await rail.click();
+      await page.getByText("incident-review.md").first().waitFor();
+      await page.mouse.move(700, 600);
+      await sleep(500);
+      return undefined;
+    },
+  },
+
+  // A workflow definition whose first step names a missing agent file: the
+  // check's finding, underlined, with its hover and the list below.
+  "workspaces-definitions": {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await page.goto(`${BASE}/ws/definitions/workflows/weekly-digest.workflow.yaml`, {
+        waitUntil: "networkidle",
+      });
+      await page.getByLabel("Definition check").getByText("1 error").waitFor();
+      await page.locator(".monaco-editor .squiggly-error").first().waitFor();
+      await page
+        .locator(".monaco-editor .view-line", { hasText: "change-collector" })
+        .hover({ position: { x: 220, y: 6 } });
+      await page.locator(".monaco-hover", { hasText: "no agent file" }).first().waitFor();
+      await sleep(400);
+      return undefined;
+    },
+  },
+
+  // The git workspace's Changes tab, with one file's diff against HEAD. The
+  // pane is chosen through the stored preference, as a returning user has it.
+  "workspaces-changes": {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await page.addInitScript(() =>
+        localStorage.setItem("precursor:workspace:leftTab", "changes"),
+      );
+      await page.goto(`${BASE}/ws/handbook`, { waitUntil: "networkidle" });
+      const changes = page.getByLabel("Changes", { exact: true });
+      await changes.getByRole("button", { name: /^on-call\.md,/ }).click();
+      await page.locator(".monaco-diff-editor .view-line", { hasText: "error budget" }).first().waitFor();
+      await page.getByText("3 of 3 to commit").waitFor();
+      await changes.getByLabel("Commit message").fill("Document handoffs and incident reviews");
+      await page.mouse.move(1200, 900);
+      await sleep(600);
+      return undefined;
+    },
+  },
+
+  // The History tab: a commit opened to its files, one of them compared with
+  // the commit's parent.
+  "workspaces-history": {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await page.addInitScript(() =>
+        localStorage.setItem("precursor:workspace:leftTab", "history"),
+      );
+      await page.goto(`${BASE}/ws/handbook`, { waitUntil: "networkidle" });
+      const history = page.getByLabel("History", { exact: true });
+      await history.getByRole("button", { name: /Page owners sooner/ }).click();
+      await history.getByRole("button", { name: /^on-call\.md,/ }).click();
+      await page.locator(".monaco-diff-editor .view-line", { hasText: "15 minutes" }).first().waitFor();
+      await page.mouse.move(1200, 900);
+      await sleep(600);
+      return undefined;
+    },
+  },
+
+  // The git bar's branch picker, open: local branches (one unpublished) and
+  // the ones only the remote has.
+  "workspaces-branches": {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await page.goto(`${BASE}/ws/handbook/README.md`, { waitUntil: "networkidle" });
+      await page.getByRole("heading", { name: "Team handbook", exact: true }).waitFor();
+      await page.getByRole("button", { name: /Switch or create a branch/ }).click();
+      await page.getByRole("dialog", { name: "Branches" }).getByText("On the remote").waitFor();
+      await page.mouse.move(1200, 900);
+      await sleep(400);
+      return undefined;
+    },
+  },
+
+  // A merge stopped on a conflict: the banner, the Changes tab's conflict,
+  // and the file in the editor with Accept lenses above the block. The first
+  // (light) run does the Pull and the Merge; the dark one finds it in progress.
+  "workspaces-conflict": {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await page.addInitScript(() =>
+        localStorage.setItem("precursor:workspace:leftTab", "changes"),
+      );
+      await page.goto(`${BASE}/ws/runbooks`, { waitUntil: "networkidle" });
+      const banner = page.getByText("Merge in progress");
+      if (!(await banner.isVisible())) {
+        await page.getByRole("button", { name: "Pull" }).click();
+        await page.getByRole("button", { name: "Merge remote changes" }).click();
+        await banner.waitFor();
+      }
+      const changes = page.getByLabel("Changes", { exact: true });
+      await changes.getByRole("button", { name: /^escalation\.md, conflict/ }).click();
+      await page.getByRole("button", { name: "Resolve in the editor" }).click();
+      await page.locator(".monaco-editor .codelens-decoration", { hasText: "Accept current" }).first().waitFor();
+      await page.mouse.move(1200, 900);
+      await sleep(600);
       return undefined;
     },
   },
@@ -292,6 +649,40 @@ const scenes = {
       await page.locator('[data-tooltip^="Guest"][data-tooltip*="GitHub not connected"]').waitFor();
       await sleep(800);
       return undefined;
+    },
+  },
+
+  // An agent's answer with the thinking that led to it, opened — just the
+  // exchange, so the sidebar and its persona footer stay out of the shot.
+  "agents-thinking": {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      const response = await page.request.get(`${BASE}/api/agents`);
+      const agents = await response.json();
+      const agent = agents.find((item) => item.title === "Digest writer");
+      if (!agent) throw new Error("Seed the demo Digest writer before capturing agents.");
+      await page.goto(`${BASE}/agents/${agent.public_id}`, { waitUntil: "networkidle" });
+      await page.getByText("The draft is ready for review before publishing.").waitFor();
+      await page.locator("button[aria-expanded]", { hasText: "Thinking" }).first().click();
+      await page.mouse.move(0, 0);
+      await sleep(400);
+      const node = (text) =>
+        page
+          .getByText(text)
+          .first()
+          .locator("xpath=ancestor::div[contains(@class, 'group/node')][1]")
+          .boundingBox();
+      const prompt = await node("Draft this week's engineering digest");
+      const answer = await node("The draft is ready for review before publishing.");
+      if (!prompt || !answer) throw new Error("Seed the demo Digest writer first.");
+      const x = Math.floor(Math.min(prompt.x, answer.x) - 24);
+      const y = Math.floor(prompt.y - 10);
+      return {
+        x,
+        y,
+        width: Math.ceil(Math.max(prompt.x + prompt.width, answer.x + answer.width) + 24 - x),
+        height: Math.ceil(answer.y + answer.height + 24 - y),
+      };
     },
   },
 
@@ -417,6 +808,96 @@ const scenes = {
     },
   },
 
+  // ⌘K ranked by Precursor IQ: words matched out of order, title hits first,
+  // then the most relevant passages across topics, chats and live sessions.
+  "iq-palette": {
+    viewport: { width: 1280, height: 860 },
+    async go(page) {
+      await page.goto(`${BASE}/`, { waitUntil: "networkidle" });
+      await page.keyboard.press("ControlOrMeta+k");
+      await page.waitForSelector("#command-palette-input");
+      await page.fill("#command-palette-input", "retries latency regression");
+      await page.locator("text=Ask Precursor").first().waitFor({ timeout: 10000 });
+      await sleep(700);
+      return clipOf(page, "[role=dialog]", 0);
+    },
+  },
+
+  // Ask mode: a cited answer grounded on the same index. The demo has no model,
+  // so the answer text is a fixture built from the real retrieved sources.
+  "iq-ask": {
+    viewport: { width: 1280, height: 860 },
+    async go(page) {
+      await page.route("**/api/iq/ask", async (route) => {
+        const { question } = JSON.parse(route.request().postData() || "{}");
+        const found = await (
+          await page.request.get(
+            `${BASE}/api/iq/retrieve?q=${encodeURIComponent(question)}&limit=5`,
+          )
+        ).json();
+        await route.fulfill({
+          json: {
+            question,
+            model: "claude-sonnet-5",
+            answer:
+              "The latency regression came from **retries amplifying load** when " +
+              "the search backend slowed down [^1]. The weekly sync agreed to cap " +
+              "retries and add jittered backoff before the next release [^2], and " +
+              "the follow-up is tracked in the release notes [^3].",
+            citations: found.hits.slice(0, 3),
+            sources: found.hits,
+          },
+        });
+      });
+      await page.goto(`${BASE}/`, { waitUntil: "networkidle" });
+      await page.keyboard.press("ControlOrMeta+k");
+      await page.waitForSelector("#command-palette-input");
+      await page.fill("#command-palette-input", "why did search latency regress?");
+      await page.locator("text=Ask Precursor").first().waitFor({ timeout: 10000 });
+      await page.keyboard.press("Tab");
+      await page.locator("text=Precursor answer").first().waitFor({ timeout: 10000 });
+      await page.getByText("Sources", { exact: true }).waitFor({ timeout: 10000 });
+      await sleep(700);
+      return clipOf(page, "[role=dialog]", 0);
+    },
+  },
+
+  // The IQ section: one question box, a cited answer and the sources it rests
+  // on. As in Ask mode, the answer is a fixture over the real retrieved hits.
+  "iq-section": {
+    viewport: { width: 1440, height: 900 },
+    async go(page) {
+      await page.route("**/api/iq/ask", async (route) => {
+        const { question } = JSON.parse(route.request().postData() || "{}");
+        const found = await (
+          await page.request.get(`${BASE}/api/iq/retrieve?q=${encodeURIComponent(question)}&limit=8`)
+        ).json();
+        // Cite the passages that actually carry each claim, as a model would.
+        const n = (field) => found.hits.find((h) => h.field === field)?.id ?? 1;
+        const [decision, cause, owner] = [n("summary"), n("transcript"), n("insight")];
+        await route.fulfill({
+          json: {
+            question,
+            model: "claude-sonnet-5",
+            answer:
+              `The team agreed to **cap retries and add jitter to the backoff** [^${decision}], ` +
+              `because retries amplified load whenever the gateway slowed down [^${cause}]. ` +
+              "Sam owns the follow-up: a bounded-retry regression test and an update " +
+              `to the release checklist [^${owner}].`,
+            citations: [decision, cause, owner].map((id) => found.hits.find((h) => h.id === id)),
+            sources: found.hits,
+          },
+        });
+      });
+      await page.goto(`${BASE}/iq`, { waitUntil: "networkidle" });
+      await page.fill('input[aria-label="Question for Precursor IQ"]', "What did we decide about the latency regression?");
+      await page.keyboard.press("Enter");
+      await page.getByText("Sources", { exact: true }).waitFor({ timeout: 15000 });
+      await sleep(600);
+      return clipToContent(page);
+    },
+  },
+
   // Settings → Skills, listing the demo SKILL.md fixtures found on disk.
   "skills-memory": {
     viewport: { width: 1440, height: 1000 },
@@ -470,6 +951,145 @@ const scenes = {
     },
   },
 
+  "foundry-models": {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await page.route("**/api/settings", async (route) => {
+        if (route.request().method() !== "GET") return route.fallback();
+        const response = await route.fetch();
+        const settings = await response.json();
+        await route.fulfill({ response, json: {
+          ...settings, llm_provider: "azure_foundry", llm_model: "my-gpt-4o",
+          llm_providers: { azure_foundry: {
+            endpoint: "https://demo.openai.azure.com", deployment: "my-gpt-4o",
+            api_version: "2024-10-21",
+          } },
+          llm_providers_present: { azure_foundry: { key: true } },
+        } });
+      });
+      await page.route("**/api/llm/models*", (route) => route.fulfill({ json: [
+        { id: "my-gpt-4o", name: "my-gpt-4o", publisher: "Azure", catalog_provider: "azure_foundry" },
+      ] }));
+      await page.goto(`${BASE}/`, { waitUntil: "networkidle" });
+      await openSettings(page, "Model");
+      await page.getByRole("textbox", { name: "Deployment names", exact: true }).fill("my-gpt-4o-mini");
+      await page.getByRole("button", { name: "Add model", exact: true }).click();
+      await page.locator('[data-llm-provider-config="azure_foundry"]').scrollIntoViewIfNeeded();
+      await page.mouse.move(0, 0);
+      return clipOf(page, '[data-llm-provider-config="azure_foundry"]', 12);
+    },
+  },
+
+  presets: {
+    viewport: { width: 1440, height: 1500 },
+    async go(page) {
+      const slot = (provider, model, effort, ctx, tier = "default") => ({
+        provider, model, reasoning_effort: effort, context_tokens: ctx, context_tier: tier,
+      });
+      await page.route("**/api/settings", async (route) => {
+        if (route.request().method() !== "GET") return route.fallback();
+        const response = await route.fetch();
+        const settings = await response.json();
+        await route.fulfill({ response, json: {
+          ...settings,
+          // Presence/catalogue fixtures only; the real demo remains Guest with no token.
+          github_token_source: "settings",
+          agents_enabled: true, agents_available: true, agents_runtime_started: true,
+          llm_provider: "github_copilot",
+          llm_providers: { ...settings.llm_providers, azure_foundry: { endpoint: "https://demo.openai.azure.com", deployment: "gpt-5-mini" } },
+          llm_providers_present: { ...settings.llm_providers_present, azure_foundry: { key: true } },
+          llm_model: "claude-sonnet-5", llm_reasoning_effort: "medium", llm_max_input_tokens: 128000,
+          llm_model_category: "balanced",
+          llm_category_preset: slot("github_copilot", "claude-sonnet-5", "medium", 128000),
+          model_fallbacks: { categories: [
+            { id: "efficiency", label: "Efficiency", presets: [
+              slot("github_copilot", "claude-haiku-4.5", "", 128000),
+              slot("azure_foundry", "gpt-5-mini", "low", 128000),
+            ] },
+            { id: "balanced", label: "Balanced", presets: [
+              slot("github_copilot", "claude-sonnet-5", "medium", 128000),
+              slot("azure_foundry", "gpt-5.5", "medium", 128000),
+            ] },
+            { id: "deep-research", label: "Deep research", presets: [
+              slot("azure_foundry", "gpt-5.5", "high", 256000),
+              slot("agents", "gpt-5.5", "high", 128000, "long_context"),
+            ] },
+          ] },
+        } });
+      });
+      const catalogue = (provider, ids) => ids.map((id) => ({
+        id, name: id, publisher: id.startsWith("claude") ? "Anthropic" : "OpenAI",
+        context_window: 512000, supported_reasoning_efforts: ["low", "medium", "high", "max"],
+        catalog_provider: provider,
+      }));
+      await page.route("**/api/llm/models*", (route) => {
+        const provider = new URL(route.request().url()).searchParams.get("provider") || "github_copilot";
+        return route.fulfill({ json: provider === "azure_foundry"
+          ? catalogue(provider, ["gpt-5-mini", "gpt-5.5"])
+          : catalogue(provider, ["claude-haiku-4.5", "claude-sonnet-5", "gpt-5.5"]) });
+      });
+      await page.route("**/api/agents/models", (route) => route.fulfill({ json: catalogue("agents", ["gpt-5.5", "claude-sonnet-5"]) }));
+      await page.goto(`${BASE}/`, { waitUntil: "networkidle" });
+      await openSettings(page, "Presets");
+      await page.locator("[data-presets-settings]").waitFor();
+      await sleep(600);
+      await page.mouse.move(0, 0);
+      const clip = await clipOf(page, "[data-presets-settings]", 12);
+      const footer = await page.getByRole("button", { name: "Cancel", exact: true }).first().boundingBox();
+      if (clip && footer) clip.height = Math.min(clip.height, Math.floor(footer.y - clip.y - 24));
+      return clip;
+    },
+  },
+
+  "model-presets": {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await scenes.presets.go(page);
+      await page.getByRole("button", { name: "Close", exact: true }).click();
+      await page.goto(`${BASE}/chats/regex-for-semver-tags`, { waitUntil: "networkidle" });
+      await page.getByRole("button", { name: "Model", exact: true }).click();
+      await page.getByRole("listbox", { name: "Model", exact: true }).waitFor();
+      await page.mouse.move(0, 0);
+      await sleep(200);
+      return clipOf(page, '[role="listbox"][aria-label="Model"]', 12);
+    },
+  },
+
+  // Settings → Model: the OpenAI-compatible endpoint, switched on. The Guest
+  // demo has no provider to relay to, so the switch, key and catalogue are
+  // fixtures — never a real key.
+  "openai-endpoint": {
+    // Tall enough for the whole Model tab, so the card isn't cut by the footer.
+    viewport: { width: 1440, height: 1800 },
+    async go(page) {
+      await page.route("**/api/settings", async (route) => {
+        if (route.request().method() !== "GET") return route.fallback();
+        const response = await route.fetch();
+        const settings = await response.json();
+        await route.fulfill({ response, json: { ...settings, ...OPENAI_ENDPOINT_SETTINGS } });
+      });
+      await page.route("**/api/llm/models*", (route) =>
+        route.fulfill({ json: OPENAI_ENDPOINT_MODELS }),
+      );
+      await page.goto(`${BASE}/`, { waitUntil: "networkidle" });
+      await openSettings(page, "Model");
+      const heading = page.getByRole("heading", { name: "OpenAI-compatible endpoint" });
+      // The innermost div holding the heading is the card itself.
+      const card = page.locator("div", { has: heading }).last();
+      await card.evaluate((el) => el.scrollIntoView({ block: "center" }));
+      await sleep(400);
+      const box = await card.boundingBox();
+      if (!box) return undefined;
+      const pad = 16;
+      return {
+        x: Math.max(0, Math.floor(box.x - pad)),
+        y: Math.max(0, Math.floor(box.y - pad)),
+        width: Math.ceil(box.width + pad * 2),
+        height: Math.ceil(box.height + pad * 2),
+      };
+    },
+  },
+
   // Settings → System, where the command-runner sandbox is configured.
   "command-runner": {
     viewport: { width: 1440, height: 1000 },
@@ -482,6 +1102,21 @@ const scenes = {
 
   // Settings → Appearance: theme toggle + the reading-font picker (dyslexia /
   // low-vision friendly options).
+  // Settings -> MCP servers with the "Precursor capabilities" card open, so the
+  // Select all / Unselect all controls and the workspace sections show.
+  "mcp-settings": {
+    viewport: { width: 1440, height: 1100 },
+    async go(page) {
+      await page.goto(`${BASE}/`, { waitUntil: "networkidle" });
+      await openSettings(page, "MCP servers");
+      await page.getByRole("button", { name: /Precursor capabilities/ }).click();
+      await page.getByRole("button", { name: "Select all", exact: true }).waitFor();
+      await page.mouse.move(0, 0);
+      await sleep(600);
+      return clipOf(page, "div.fixed.inset-0 > div, [role=dialog]", 0);
+    },
+  },
+
   accessibility: {
     viewport: { width: 1440, height: 1000 },
     async go(page) {
@@ -569,6 +1204,173 @@ const scenes = {
         width: page.viewportSize().width - clip.x,
         height: 196,
       };
+    },
+  },
+
+  // A compacted topic: the dimmed turns above the marker, the summary opened,
+  // and the stats panel's context bar + Compact button. Clipped right of the
+  // sidebar so its persona footer stays out.
+  "context-compression": {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await page.addInitScript(() => localStorage.setItem("precursor:chat-stats:collapsed", "0"));
+      await page.goto(`${BASE}/topics/hosting-options-review`, { waitUntil: "networkidle" });
+      await page.getByRole("button", { name: "Show summary" }).click();
+      await page.getByText("Next turn (estimate)").waitFor();
+      await page.mouse.move(0, 0);
+      await sleep(600);
+      const main = await page.locator("main").first().boundingBox();
+      if (!main) throw new Error("Seed the hosting-options-review topic first.");
+      return { x: Math.floor(main.x), y: 0, width: Math.ceil(main.width), height: page.viewportSize().height };
+    },
+  },
+
+  // The stats panel nudging to compact once the window is 80% full.
+  "context-compression-nudge": {
+    viewport: { width: 1440, height: 900 },
+    async go(page) {
+      await page.addInitScript(() => localStorage.setItem("precursor:chat-stats:collapsed", "0"));
+      await page.goto(`${BASE}/chats/quarterly-capacity-plan`, { waitUntil: "networkidle" });
+      await page.getByText(/Context is \d+% full/).waitFor();
+      await page.mouse.move(0, 0);
+      await sleep(400);
+      const aside = await page.locator("aside", { hasText: "Conversation" }).last().boundingBox();
+      if (!aside) throw new Error("Seed the quarterly-capacity-plan chat first.");
+      return {
+        x: Math.floor(aside.x),
+        y: Math.floor(aside.y),
+        width: Math.ceil(aside.width),
+        height: 420,
+      };
+    },
+  },
+
+  // The stats panel's context-window breakdown: system prompt, system tools,
+  // MCP tools and messages, plus the free space and the compaction buffer.
+  // Clipped to the panel so the sidebar's persona footer stays out.
+  "context-breakdown": {
+    viewport: { width: 1440, height: 900 },
+    async go(page) {
+      await page.addInitScript(() => localStorage.setItem("precursor:chat-stats:collapsed", "0"));
+      await page.goto(`${BASE}/chats/reporting-capacity-plan`, { waitUntil: "networkidle" });
+      await page.getByText("System prompt").waitFor();
+      await page.mouse.move(0, 0);
+      await sleep(400);
+      const aside = await page.locator("aside", { hasText: "Conversation" }).last().boundingBox();
+      if (!aside) throw new Error("Seed the reporting-capacity-plan chat first.");
+      return { x: Math.floor(aside.x), y: Math.floor(aside.y), width: Math.ceil(aside.width), height: 460 };
+    },
+  },
+
+  // The agent Insights panel reports the SDK's own split of the window.
+  "agents-context": {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      const response = await page.request.get(`${BASE}/api/agents`);
+      const agents = await response.json();
+      const agent = agents.find((item) => item.title === "Digest writer");
+      if (!agent) throw new Error("Seed the demo Digest writer before capturing agents.");
+      await page.addInitScript(() => localStorage.setItem("precursor:agent-show-panel:collapsed", "0"));
+      await page.goto(`${BASE}/agents/${agent.public_id}`, { waitUntil: "networkidle" });
+      await page.getByText("System prompt").waitFor();
+      await page.mouse.move(0, 0);
+      await sleep(400);
+      const aside = await page.locator("aside", { hasText: "Insights" }).last().boundingBox();
+      if (!aside) throw new Error("Insights panel not found.");
+      return { x: Math.floor(aside.x), y: Math.floor(aside.y), width: Math.ceil(aside.width), height: 440 };
+    },
+  },
+
+  // The transcript timeline: scrolled back to an earlier turn, a later dash
+  // hovered for its preview card, and the "Reading turn N" bar above the
+  // composer. Clipped right of the sidebar so its persona footer stays out.
+  "rewind-timeline": {
+    viewport: { width: 1440, height: 900 },
+    async go(page) {
+      await page.addInitScript(() => localStorage.setItem("precursor:chat-stats:collapsed", "1"));
+      await page.goto(`${BASE}/chats/garden-irrigation-plan`, { waitUntil: "networkidle" });
+      const ticks = page.locator('nav[aria-label="Conversation timeline"] [data-tick]');
+      await ticks.nth(4).click();
+      await page.getByText(/^Reading/).waitFor();
+      await sleep(1200);
+      await ticks.nth(6).hover();
+      await page.locator('nav[aria-label="Conversation timeline"]').getByRole("button", { name: "Rewind here" }).waitFor();
+      await sleep(300);
+      const main = await page.locator("main").first().boundingBox();
+      if (!main) throw new Error("Seed the garden-irrigation-plan chat first.");
+      return { x: Math.floor(main.x), y: 0, width: Math.ceil(main.width), height: page.viewportSize().height };
+    },
+  },
+
+  // An edited reply with its original opened underneath. Clipped to the
+  // exchange so the sidebar persona stays out.
+  "reply-edit": {
+    viewport: { width: 1280, height: 1000 },
+    async go(page) {
+      await page.addInitScript(() => localStorage.setItem("precursor:chat-stats:collapsed", "1"));
+      await page.goto(`${BASE}/chats/vendor-renewal-email`, { waitUntil: "networkidle" });
+      await page.getByRole("button", { name: "Edited", exact: true }).click();
+      await page.getByText("Original reply", { exact: true }).waitFor();
+      await page.mouse.move(0, 0);
+      await sleep(400);
+      const top = await page.getByText("Draft a short email", { exact: false }).first().boundingBox();
+      const original = await page.getByText("Original reply", { exact: true })
+        .locator("xpath=ancestor::div[contains(@class,'border-dashed')][1]").boundingBox();
+      if (!top || !original) throw new Error("Seed the vendor-renewal-email chat first.");
+      const x = Math.max(0, Math.floor(original.x - 24));
+      const y = Math.max(0, Math.floor(top.y - 40));
+      return {
+        x,
+        y,
+        width: Math.ceil(original.width + 48),
+        height: Math.ceil(original.y + original.height + 24 - y),
+      };
+    },
+  },
+
+  // A rewind being previewed: later turns dimmed under the cut line, their
+  // dashes red, and the confirmation above the composer. Never confirmed, so
+  // the scene can be retaken.
+  "rewind-preview": {
+    viewport: { width: 1440, height: 900 },
+    async go(page) {
+      await page.addInitScript(() => localStorage.setItem("precursor:chat-stats:collapsed", "1"));
+      await page.goto(`${BASE}/chats/garden-irrigation-plan`, { waitUntil: "networkidle" });
+      const ticks = page.locator('nav[aria-label="Conversation timeline"] [data-tick]');
+      await ticks.nth(5).hover();
+      await page.locator('nav[aria-label="Conversation timeline"]').getByRole("button", { name: "Rewind here" }).click();
+      await page.getByRole("button", { name: "Rewind", exact: true }).waitFor();
+      await page.mouse.move(0, 0);
+      await sleep(1200);
+      const main = await page.locator("main").first().boundingBox();
+      if (!main) throw new Error("Seed the garden-irrigation-plan chat first.");
+      return { x: Math.floor(main.x), y: 0, width: Math.ceil(main.width), height: page.viewportSize().height };
+    },
+  },
+
+  // A rewind previewed in an agent session: no undo, so the confirmation warns
+  // it's final. Never confirmed (the demo has no runtime to rewind anyway).
+  "rewind-agent": {
+    viewport: { width: 1440, height: 900 },
+    async go(page) {
+      await mockRewindPreview(page, []);
+      return previewAgentRewind(page);
+    },
+  },
+
+  // The same preview offering to restore the files the dropped turns changed.
+  "rewind-agent-files": {
+    viewport: { width: 1440, height: 900 },
+    async go(page) {
+      await mockRewindPreview(page, [
+        { path: "/Users/demo/guide/docs/onboarding.md", change_type: "modified", lines_added: 42, lines_removed: 7 },
+        { path: "/Users/demo/guide/docs/checklist.md", change_type: "created", lines_added: 18, lines_removed: 0 },
+      ]);
+      const clip = await previewAgentRewind(page, async () => {
+        await page.getByText(/Also restore 2 files/).waitFor();
+        await page.getByText("Show files").click();
+      });
+      return clip;
     },
   },
 

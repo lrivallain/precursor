@@ -30,7 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from precursor import __version__
-from precursor.backend.models import AgentSession, Role, Workflow, WorkflowStep
+from precursor.backend.models import AgentSession, Workflow, WorkflowStep
 from precursor.backend.models.agent_schedule import AgentSchedule
 from precursor.backend.models.recurrence import RecurrenceMixin
 from precursor.backend.models.workflow import (
@@ -55,7 +55,9 @@ from precursor.backend.schemas.transfer import (
     TransferWarning,
     TransferWorkflow,
 )
+from precursor.backend.services import roles as roles_service
 from precursor.backend.services.agents.mcp_scope import _PRECURSOR_SERVER, parse_mcp_scope
+from precursor.backend.services.roles import RoleInfo
 from precursor.backend.services.schedule_timing import normalize_rules, rules_to_json
 
 logger = logging.getLogger(__name__)
@@ -71,7 +73,7 @@ def _mint_export_id() -> str:
 # --- Export -----------------------------------------------------------------
 
 
-def _role_doc(role: Role | None) -> TransferRole | None:
+def _role_doc(role: RoleInfo | None) -> TransferRole | None:
     # The seeded ``default`` role injects nothing and exists everywhere, so
     # carrying it would just create noise (and a pointless conflict) on import.
     if role is None or role.is_default:
@@ -127,7 +129,7 @@ def _workflow_schedule_doc(workflow: Workflow) -> TransferSchedule | None:
     )
 
 
-def _agent_doc(agent: AgentSession, role: Role | None) -> TransferAgent:
+def _agent_doc(agent: AgentSession, role: RoleInfo | None) -> TransferAgent:
     return TransferAgent(
         export_id=agent.export_id,
         title=agent.title,
@@ -147,8 +149,8 @@ def _agent_doc(agent: AgentSession, role: Role | None) -> TransferAgent:
     )
 
 
-async def _role_for(session: AsyncSession, role_id: int | None) -> Role | None:
-    return await session.get(Role, role_id) if role_id is not None else None
+async def _role_for(session: AsyncSession, name: str | None) -> RoleInfo | None:
+    return await roles_service.find_role(session, name)
 
 
 async def _ensure_export_id(session: AsyncSession, obj: AgentSession | Workflow) -> str:
@@ -177,7 +179,7 @@ async def export_agent(session: AsyncSession, agent: AgentSession) -> TransferDo
     await _ensure_export_id(session, agent)
     doc = TransferDocument(
         **_header("agent"),
-        agents=[_agent_doc(agent, await _role_for(session, agent.role_id))],
+        agents=[_agent_doc(agent, await _role_for(session, agent.role))],
     )
     await session.commit()
     return doc
@@ -209,7 +211,7 @@ async def export_workflow(session: AsyncSession, workflow: Workflow) -> Transfer
                     # vessel is recreated fresh with its step every time.
                     await _ensure_export_id(session, agent)
                 index_of[agent.id] = len(agents)
-                agents.append(_agent_doc(agent, await _role_for(session, agent.role_id)))
+                agents.append(_agent_doc(agent, await _role_for(session, agent.role)))
             agent_index = index_of[agent.id]
         steps.append(
             TransferStep(
@@ -242,7 +244,7 @@ async def export_workflow(session: AsyncSession, workflow: Workflow) -> Transfer
             clear_artifacts=workflow.clear_artifacts,
             max_loops=workflow.max_loops,
             step_timeout_seconds=workflow.step_timeout_seconds,
-            role=_role_doc(await _role_for(session, workflow.role_id)),
+            role=_role_doc(await _role_for(session, workflow.role)),
             schedule=_workflow_schedule_doc(workflow),
             steps=steps,
         ),
@@ -574,7 +576,7 @@ async def preview_document(session: AsyncSession, doc: TransferDocument) -> Tran
 # --- Import -----------------------------------------------------------------
 
 
-async def _resolve_role(session: AsyncSession, incoming: TransferRole | None) -> int | None:
+async def _resolve_role(session: AsyncSession, incoming: TransferRole | None) -> str | None:
     """Match a carried persona by name, creating it only if it's genuinely new.
 
     Roles are small, name-addressed and shared by convention, so importing two
@@ -586,15 +588,10 @@ async def _resolve_role(session: AsyncSession, incoming: TransferRole | None) ->
     name = incoming.name.strip()[:64]
     if not name:
         return None
-    existing = (
-        await session.execute(select(Role).where(func.lower(Role.name) == name.lower()))
-    ).scalar_one_or_none()
+    existing = await roles_service.find_role(session, name)
     if existing is not None:
-        return existing.id
-    role = Role(name=name, system_prompt=incoming.system_prompt or "")
-    session.add(role)
-    await session.flush()
-    return role.id
+        return existing.name
+    return (await roles_service.create_role(session, name, incoming.system_prompt or "")).name
 
 
 async def _unique_agent_title(session: AsyncSession, title: str) -> str:
@@ -635,7 +632,7 @@ async def _unique_workflow_name(session: AsyncSession, name: str) -> str:
 
 
 def _apply_agent_fields(
-    agent: AgentSession, incoming: TransferAgent, *, title: str, role_id: int | None
+    agent: AgentSession, incoming: TransferAgent, *, title: str, role: str | None
 ) -> None:
     agent.title = title
     agent.task_prompt = incoming.task or ""
@@ -648,7 +645,7 @@ def _apply_agent_fields(
     agent.use_mcp = incoming.use_mcp
     agent.use_skills = incoming.use_skills
     agent.use_memory = incoming.use_memory
-    agent.role_id = role_id
+    agent.role = role
 
 
 async def _apply_agent_schedule(
@@ -703,7 +700,7 @@ async def _materialise_agent(
     result: TransferImportResult,
 ) -> AgentSession:
     """Create, overwrite or reuse the row an incoming agent maps to."""
-    role_id = await _resolve_role(session, incoming.role)
+    role = await _resolve_role(session, incoming.role)
 
     if action == "link" and existing is not None:
         # Deliberately untouched: the point of linking is to keep the agent the
@@ -719,7 +716,7 @@ async def _materialise_agent(
             existing,
             incoming,
             title=incoming.title.strip()[:200] or existing.title,
-            role_id=role_id,
+            role=role,
         )
         if incoming.export_id:
             existing.export_id = incoming.export_id
@@ -738,7 +735,7 @@ async def _materialise_agent(
     # must not inherit its portable identity — otherwise the next import of the
     # same file would silently target this copy.
     agent.export_id = None if action == "create" else (incoming.export_id or None)
-    _apply_agent_fields(agent, incoming, title=title, role_id=role_id)
+    _apply_agent_fields(agent, incoming, title=title, role=role)
     session.add(agent)
     await session.flush()
     await _apply_agent_schedule(session, agent, incoming.schedule)
@@ -784,7 +781,7 @@ async def import_document(
     wf_existing, _ = await _find_workflow_match(session, incoming_wf)
     wf_action = _resolution_for(resolutions, preview.conflicts, "workflow", None)
 
-    role_id = await _resolve_role(session, incoming_wf.role)
+    role = await _resolve_role(session, incoming_wf.role)
 
     if wf_action == "replace" and wf_existing is not None:
         workflow = wf_existing
@@ -814,7 +811,7 @@ async def import_document(
     workflow.clear_artifacts = incoming_wf.clear_artifacts
     workflow.max_loops = incoming_wf.max_loops
     workflow.step_timeout_seconds = incoming_wf.step_timeout_seconds
-    workflow.role_id = role_id
+    workflow.role = role
     if incoming_wf.schedule is not None:
         # Imported paused, like an agent's cadence.
         workflow.schedule_enabled = False

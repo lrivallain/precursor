@@ -42,9 +42,11 @@ import type {
   WorkflowSummary,
 } from "../lib/types";
 import { api } from "../lib/api";
+import { DefinitionsMigrationBanner } from "./DefinitionsMigrationBanner";
 import { AgentStatusBadge } from "./AgentStatusBadge";
 import { AgentMedallion } from "./AgentMedallion";
 import { ImportDialog } from "./ImportDialog";
+import { ThinkingPreview } from "./ReasoningDisclosure";
 import { WorkflowAgentFilter } from "./WorkflowAgentFilter";
 import {
   AGENT_STATUS_DOT,
@@ -63,6 +65,8 @@ interface AgentDashboardProps {
   /** Refresh + focus the agent an imported YAML file produced. */
   onImported?: (result: TransferImportResult) => void;
   onOpenWorkflow?: (workflowId: number) => void;
+  /** Opens Settings → Definition files (the migration wizard). */
+  onOpenMigration?: () => void;
 }
 
 // Compact token count for the header rollup (e.g. 12.4k, 3.1M).
@@ -118,6 +122,7 @@ export function AgentDashboard({
   onNew,
   onImported,
   onOpenWorkflow,
+  onOpenMigration,
 }: AgentDashboardProps) {
   const groups = useMemo(
     () => groupAgentsByWorkflow(agents, showWorkflowAgents),
@@ -210,6 +215,9 @@ export function AgentDashboard({
 
   return (
     <div className="@container flex h-full flex-col overflow-hidden bg-gradient-to-b from-transparent to-surface/30">
+      {onOpenMigration && (
+        <DefinitionsMigrationBanner onOpenWizard={onOpenMigration} refreshKey={agents.length} />
+      )}
       {/* Control-tower header: title + KPI stat tiles. */}
       <div className="border-b border-border px-4 pb-3 pt-4">
         <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -704,7 +712,8 @@ function AgentCard({
       )}
 
       {/* Live activity: the current tool + sub-agent fan-out while working, with
-          the agent's own words about what it's doing underneath. */}
+          the agent's own words about what it's doing underneath — or, while the
+          model thinks, the step it's on. */}
       {agent.active_tool ? (
         <div className="space-y-1">
           <div className="flex items-center gap-1.5 rounded-lg bg-violet-500/5 px-2 py-1 text-[11px] text-violet-500 dark:text-violet-300">
@@ -722,6 +731,11 @@ function AgentCard({
             </p>
           )}
         </div>
+      ) : agent.active_thinking ? (
+        <ThinkingPreview
+          reasoning={agent.active_thinking}
+          className="rounded-lg bg-cyan-500/5 px-2 py-1"
+        />
       ) : agent.active_narration ? (
         <p className="line-clamp-2 rounded-lg bg-violet-500/5 px-2 py-1 text-[11px] italic leading-relaxed text-violet-500 dark:text-violet-300">
           {agent.active_narration}

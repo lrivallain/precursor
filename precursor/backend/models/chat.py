@@ -11,9 +11,12 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from precursor.backend.models.base import Base, TimestampMixin
 
 if TYPE_CHECKING:
+    from precursor.backend.models.approval_rule import ApprovalRule
+    from precursor.backend.models.conversation_artifact import ConversationArtifact
     from precursor.backend.models.message import Message
     from precursor.backend.models.note_draft import NoteDraft
     from precursor.backend.models.reminder import Reminder
+    from precursor.backend.models.tool_approval import ToolApproval
 
 
 class Chat(Base, TimestampMixin):
@@ -23,6 +26,7 @@ class Chat(Base, TimestampMixin):
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     slug: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    llm_selection: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # When True and a description is set, the description is enforced as a
     # system instruction prepended to every user turn rather than injected once
@@ -32,10 +36,12 @@ class Chat(Base, TimestampMixin):
     )
 
     # Assistant Role assigned to this chat. Null resolves to the default role
-    # (no persona injected). SET NULL on delete reverts to default.
-    role_id: Mapped[int | None] = mapped_column(
-        ForeignKey("roles.id", ondelete="SET NULL"), nullable=True, index=True
-    )
+    # (no persona injected). Stored by name; an unknown name falls back to it.
+    role: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+
+    # Tool-approval policy (manual / balanced / autonomous). Null inherits the
+    # global ``chat_approval_policy`` setting.
+    approval_policy: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
     # Timestamp of the last time the user opened this chat. Used to compute
     # unread badge (non-user messages newer than this are unread).
@@ -60,11 +66,53 @@ class Chat(Base, TimestampMixin):
     # intact (messages, metadata) so it can be restored later.
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # Side chat: started from a topic (and optionally one of its replies) so a
+    # tangent doesn't pollute the topic's transcript. SET NULL keeps the chat
+    # when its parent goes away; SQLite doesn't enforce it, so the delete paths
+    # in services/side_chats.py null these explicitly.
+    parent_topic_id: Mapped[int | None] = mapped_column(
+        ForeignKey("topics.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    # ``use_alter`` because chats <-> messages is a cycle.
+    parent_message_id: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "messages.id", ondelete="SET NULL", use_alter=True, name="fk_chat_parent_message"
+        ),
+        nullable=True,
+        index=True,
+    )
+    # Frozen copy of the reply the chat was started from, so the chat keeps
+    # its grounding after the source turn is rewound or deleted.
+    seed_content: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Step-by-step links (see services/step_plans.py): the step this chat works
+    # on, or — for a plan's consolidation chat — the plan itself. Such chats are
+    # reached through their plan and kept out of the main chat list. SQLite
+    # doesn't enforce SET NULL; the plan delete paths remove these chats.
+    step_id: Mapped[int | None] = mapped_column(
+        ForeignKey("steps.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    step_plan_id: Mapped[int | None] = mapped_column(
+        ForeignKey("step_plans.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+
     messages: Mapped[list[Message]] = relationship(
         "Message",
         back_populates="chat",
         cascade="all, delete-orphan",
         order_by="Message.created_at",
+        foreign_keys="Message.chat_id",
+    )
+    approvals: Mapped[list[ToolApproval]] = relationship(
+        "ToolApproval", cascade="all, delete-orphan", foreign_keys="ToolApproval.chat_id"
+    )
+    approval_rules: Mapped[list[ApprovalRule]] = relationship(
+        "ApprovalRule", cascade="all, delete-orphan", foreign_keys="ApprovalRule.chat_id"
+    )
+    artifacts: Mapped[list[ConversationArtifact]] = relationship(
+        "ConversationArtifact",
+        cascade="all, delete-orphan",
+        foreign_keys="ConversationArtifact.chat_id",
     )
 
     # Optional one-shot reminder. One-to-one; deleting the chat cascades to it.

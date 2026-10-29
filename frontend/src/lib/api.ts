@@ -1,5 +1,19 @@
 import type {
+  Step,
+  StepArtifactVersion,
+  StepCreate,
+  StepMove,
+  StepPlan,
+  StepPlanCreate,
+  StepPlanItem,
+  StepPlanReview,
+  StepPlanUpdate,
+  SettableStepStatus,
+  StepUpdate,
   AgentArtifact,
+  ContextEstimate,
+  RewindResult,
+  TurnIndexItem,
   AgentArtifactCreate,
   AgentBlueprint,
   AgentBlueprintCreate,
@@ -13,10 +27,19 @@ import type {
   AgentModelInfo,
   AgentPermissionDecisionValue,
   AgentPermissionGrant,
+  AgentRewindMode,
+  AgentRewindPreview,
+  AgentRewindResult,
   AgentRun,
   AgentRuntimeStatus,
   AgentSchedule,
   AgentApprovalPolicy,
+  ApprovalDecisionResult,
+  ToolApproval,
+  ToolApprovalDecision,
+  ApprovalRule,
+  ApprovalRuleCreate,
+  ApprovalRuleUpdate,
   AgentScheduleCreate,
   AgentScheduleUpdate,
   AgentSession,
@@ -32,14 +55,32 @@ import type {
   ChatUpdate,
   CommentDraft,
   CommentPostResult,
+  DefinitionFileKind,
+  DefinitionFileReport,
+  DefinitionKind,
+  MigrationKind,
+  DefinitionsCheckReport,
+  DefinitionsExportResult,
+  DefinitionsStatus,
+  DefinitionSource,
+  FinalizeResult,
+  MigrationItemDetail,
+  MigrationPreview,
+  MigrationResult,
+  RevertResult,
   DrawioStatus,
   GhCloseResult,
   GhCreateDraft,
   GhCreatePostResult,
   GhSyncResult,
   FileDiff,
+  FileVersions,
   GitActionResult,
+  GitBranches,
+  GitCommitDetail,
+  GitConflict,
   GitHubIssue,
+  GitLog,
   GitStatus,
   IssueComment,
   IssueLabel,
@@ -66,9 +107,14 @@ import type {
   MeetingSession,
   MeetingSessionCreate,
   MeetingSessionUpdate,
+  MeetingSummaryOptions,
+  MeetingSummaryResult,
   MeetingTranscriptListResult,
+  MeetingTranscriptSummaryResult,
   Message,
+  SideChatItem,
   StoppedTurn,
+  TopicNoteDraft,
   NotesDraft,
   NoteDraftAttachment,
   InstalledPlugin,
@@ -96,11 +142,18 @@ import type {
   ScheduleUpdate,
   TopicScheduleCreate,
   SearchResponse,
+  IQAskResponse,
+  IQRetrieveResponse,
+  IQSection,
+  IQEmbeddingTestResponse,
+  IQStatus,
   Settings,
   SettingsUpdate,
   Skill,
   SkillCreate,
   SkillUpdate,
+  SummaryTemplateCatalog,
+  SummaryTemplateFileResult,
   SystemStats,
   CleanupPreview,
   CleanupRunResult,
@@ -121,11 +174,12 @@ import type {
   WorkflowStepRejectPolicy,
   WorkflowSummary,
   WorkflowUpdate,
+  ConversationArtifact,
   Workspace,
+  WorkspaceDiscussion,
   WorkspaceCreate,
   WorkspaceFileContent,
   WorkspaceFileNode,
-  WorkspaceUpdate,
 } from "./types";
 import { CLIENT_ID } from "./clientId";
 
@@ -180,11 +234,15 @@ function parseDetail(body: string): string | null {
 
 // Build an Error from a failed response: prefer the server's `detail` message
 // (clean, user-facing) and fall back to the HTTP status when there's none.
-async function httpError(res: Response): Promise<Error> {
+export async function httpError(res: Response): Promise<Error> {
   const body = await res.text().catch(() => "");
   const detail = parseDetail(body);
-  if (detail) return new Error(detail);
-  return new Error(body ? `${res.status} ${res.statusText}: ${body}` : `${res.status} ${res.statusText}`);
+  const err = new Error(
+    detail ??
+      (body ? `${res.status} ${res.statusText}: ${body}` : `${res.status} ${res.statusText}`),
+  );
+  // Lets callers tell an expected conflict (e.g. 409) from a real failure.
+  return Object.assign(err, { status: res.status });
 }
 
 // FastAPI errors surface through `request`/`postForm` already reduced to their
@@ -239,6 +297,8 @@ function messageWindowQuery(opts?: MessageWindow): string {
 export interface ContainerApi {
   listMessages: (opts?: MessageWindow) => Promise<Message[]>;
   deleteMessage: (messageId: number) => Promise<void>;
+  /** Edit an assistant reply; sending its original text restores it. */
+  editMessage: (messageId: number, content: string) => Promise<Message>;
   /** Erase the whole transcript server-side. */
   clearMessages: () => Promise<void>;
   /**
@@ -246,7 +306,24 @@ export interface ContainerApi {
    * tool calls still running. Returns the rows created, oldest first.
    */
   saveStopped: (turn: StoppedTurn) => Promise<Message[]>;
+  /**
+   * Summarise the conversation so far into a compaction marker; the model sees
+   * the summary instead of older turns. Deleting the marker undoes it.
+   */
+  compact: (instructions?: string) => Promise<Message>;
+  /** Estimated history the next turn sends to the model. */
+  contextEstimate: () => Promise<ContextEstimate>;
+  /** One entry per prompt, oldest first — the transcript timeline's index. */
+  listTurns: () => Promise<TurnIndexItem[]>;
+  /**
+   * Delete the turn opened by `fromMessageId` (a user prompt) and everything
+   * after it, up to `throughMessageId` when given.
+   */
+  rewind: (fromMessageId: number, throughMessageId?: number) => Promise<RewindResult>;
   uploadAttachment: (file: File) => Promise<Attachment>;
+  /** Tool calls waiting on the user, plus decided ones not yet run. */
+  listApprovals: () => Promise<ToolApproval[]>;
+  decideApproval: (approvalId: number, decision: ToolApprovalDecision) => Promise<ApprovalDecisionResult>;
   notes: {
     getDraft: () => Promise<NotesDraft>;
     saveDraft: (text: string) => Promise<NotesDraft>;
@@ -256,6 +333,37 @@ export interface ContainerApi {
     uploadAttachment: (file: File) => Promise<NoteDraftAttachment>;
     deleteAttachment: (attachmentId: number) => Promise<void>;
   };
+}
+
+function rewindContainer(
+  base: string,
+  fromMessageId: number,
+  throughMessageId?: number,
+): Promise<RewindResult> {
+  return request<RewindResult>(`${base}/rewind`, {
+    method: "POST",
+    body: JSON.stringify({
+      from_message_id: fromMessageId,
+      through_message_id: throughMessageId ?? null,
+    }),
+  });
+}
+
+function decideApproval(
+  url: string,
+  decision: ToolApprovalDecision,
+): Promise<ApprovalDecisionResult> {
+  return request<ApprovalDecisionResult>(url, {
+    method: "POST",
+    body: JSON.stringify(decision),
+  });
+}
+
+function compactContainer(base: string, instructions?: string): Promise<Message> {
+  return request<Message>(`${base}/compact`, {
+    method: "POST",
+    body: JSON.stringify({ instructions: instructions?.trim() || null }),
+  });
 }
 
 export const api = {
@@ -301,8 +409,13 @@ export const api = {
           ? `/api/topics/archived`
           : `/api/topics/archived?collection_id=${collectionId}`,
       ),
-    archive: (id: number) =>
-      request<Topic>(`/api/topics/${id}/archive`, { method: "POST" }),
+    // `sideChatsToo` archives the topic's open side chats with it; restoring
+    // the topic brings those back.
+    archive: (id: number, opts?: { sideChatsToo?: boolean }) =>
+      request<Topic>(
+        `/api/topics/${id}/archive${opts?.sideChatsToo ? "?side_chats_too=true" : ""}`,
+        { method: "POST" },
+      ),
     unarchive: (id: number) =>
       request<Topic>(`/api/topics/${id}/unarchive`, { method: "POST" }),
 
@@ -326,6 +439,30 @@ export const api = {
       request<Schedule>(`/api/topics/${topicId}/schedule/run`, { method: "POST" }),
   },
 
+  sideChats: {
+    // Chats started from a topic, or from one of its assistant replies.
+    list: (topicId: number) => request<SideChatItem[]>(`/api/topics/${topicId}/chats`),
+    // `quote` narrows the copied reply to an excerpt of it (a text selection).
+    create: (topicId: number, messageId?: number | null, quote?: string | null) =>
+      request<Chat>(`/api/topics/${topicId}/chats`, {
+        method: "POST",
+        body: JSON.stringify({ message_id: messageId ?? null, quote: quote ?? null }),
+      }),
+    // Delete a side chat left untouched; rejects (409) when it was used.
+    discard: (chatId: number) =>
+      request<void>(`/api/chats/${chatId}/discard`, { method: "POST" }),
+    // Have the model sum up a side chat for its parent topic (nothing saved).
+    draftTopicNote: (chatId: number, instructions?: string) =>
+      request<TopicNoteDraft>(`/api/chats/${chatId}/topic-note/draft`, {
+        method: "POST",
+        body: JSON.stringify({ instructions: instructions || null }),
+      }),
+    sendTopicNote: (chatId: number, text: string) =>
+      request<Message>(`/api/chats/${chatId}/topic-note`, {
+        method: "POST",
+        body: JSON.stringify({ text }),
+      }),
+  },
   chats: {
     // Chats (flat conversation sessions — no tree, no GitHub link)
     list: (q?: string) =>
@@ -348,13 +485,13 @@ export const api = {
       request<Chat>(`/api/chats/${id}/unarchive`, { method: "POST" }),
     // Promote a flat chat into a full topic (moves the transcript over). Chats
     // have no collection, so the caller names the one it is looking at.
-    promote: (id: number, collectionId?: number | null) =>
-      request<Topic>(
-        collectionId == null
-          ? `/api/chats/${id}/promote`
-          : `/api/chats/${id}/promote?collection_id=${collectionId}`,
-        { method: "POST" },
-      ),
+    promote: (id: number, collectionId?: number | null, parentId?: number | null) => {
+      const qs = new URLSearchParams();
+      if (collectionId != null) qs.set("collection_id", String(collectionId));
+      if (parentId != null) qs.set("parent_id", String(parentId));
+      const q = qs.toString();
+      return request<Topic>(`/api/chats/${id}/promote${q ? `?${q}` : ""}`, { method: "POST" });
+    },
 
     // Chat messages (mirror topic message endpoints)
     listMessages: (chatId: number, opts?: MessageWindow) =>
@@ -363,6 +500,11 @@ export const api = {
       request<void>(`/api/chats/${chatId}/messages`, { method: "DELETE" }),
     deleteMessage: (chatId: number, messageId: number) =>
       request<void>(`/api/chats/${chatId}/messages/${messageId}`, { method: "DELETE" }),
+    editMessage: (chatId: number, messageId: number, content: string) =>
+      request<Message>(`/api/chats/${chatId}/messages/${messageId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ content }),
+      }),
     saveStoppedMessage: (chatId: number, turn: StoppedTurn) =>
       request<Message[]>(`/api/chats/${chatId}/messages/stopped`, {
         method: "POST",
@@ -446,16 +588,31 @@ export const api = {
       }),
     // `agentRunId` narrows the transcript to one execution — without it a
     // reusable agent driven by two workflows at once reads as one conversation.
-    // `after` is the cursor from the previous read: the timeline is append-only,
-    // so a live view asks only for the events it hasn't seen. Omit it for the
-    // whole transcript.
-    getEvents: (id: number, agentRunId?: number | null, after = 0) => {
+    // `after` is the cursor from the previous read: the timeline only grows
+    // between rewinds, so a live view asks only for the events it hasn't seen.
+    // `epoch` from that read resets the cursor when a rewind happened since.
+    // Omit both for the whole transcript.
+    getEvents: (id: number, agentRunId?: number | null, after = 0, epoch?: string | null) => {
       const qs = new URLSearchParams();
       if (agentRunId != null) qs.set("agent_run_id", String(agentRunId));
       if (after > 0) qs.set("after", String(after));
+      if (after > 0 && epoch) qs.set("epoch", epoch);
       const suffix = qs.toString() ? `?${qs.toString()}` : "";
       return request<AgentEventPage>(`/api/agents/${id}/events${suffix}`);
     },
+    // Drop the prompt `eventId` (an `AgentEvent.event_id`) of the current run
+    // and everything after it, in the SDK session and the transcript. Irreversible.
+    // `conversation-and-files` also restores the files the dropped turns changed.
+    rewind: (id: number, eventId: string, mode: AgentRewindMode = "conversation") =>
+      request<AgentRewindResult>(`/api/agents/${id}/rewind`, {
+        method: "POST",
+        body: JSON.stringify({ event_id: eventId, mode }),
+      }),
+    // Checks a rewind to `eventId` and lists the files it could restore. Changes nothing.
+    previewRewind: (id: number, eventId: string) =>
+      request<AgentRewindPreview>(
+        `/api/agents/${id}/rewind/preview?${new URLSearchParams({ event_id: eventId })}`,
+      ),
     listModels: () => request<AgentModelInfo[]>(`/api/agents/models`),
     // Runtime capability + provisioning. Unlike the rest of this namespace these
     // stay reachable when the runtime is down — they are how it gets fixed.
@@ -502,7 +659,7 @@ export const api = {
       payload: {
         title?: string;
         task?: string;
-        role_id?: number | null;
+        role?: string | null;
         autonomy_enabled?: boolean;
         max_steps?: number;
         approval_policy?: AgentApprovalPolicy | null;
@@ -633,6 +790,110 @@ export const api = {
       request<void>(`/api/agents/${id}/triggers/${triggerId}`, {
         method: "DELETE",
       }),
+  },
+
+  stepPlans: {
+    // Step by step: a topic's long ask split into an editable tree of steps, each
+    // with a versioned Markdown artifact and its own chat, then consolidated into
+    // one final output. Model-backed calls (create with propose, propose,
+    // suggest-*, generate) are slow and answer 502 when the model fails.
+    list: (topicId?: number) =>
+      request<StepPlanItem[]>(
+        `/api/step-plans${topicId != null ? `?topic_id=${topicId}` : ""}`,
+      ),
+    create: (payload: StepPlanCreate) =>
+      request<StepPlan>(`/api/step-plans`, { method: "POST", body: JSON.stringify(payload) }),
+    get: (id: number) => request<StepPlan>(`/api/step-plans/${id}`),
+    update: (id: number, payload: StepPlanUpdate) =>
+      request<StepPlan>(`/api/step-plans/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+      }),
+    remove: (id: number) => request<void>(`/api/step-plans/${id}`, { method: "DELETE" }),
+    propose: (id: number, instructions?: string) =>
+      request<StepPlan>(`/api/step-plans/${id}/propose`, {
+        method: "POST",
+        body: JSON.stringify({ instructions: instructions || null }),
+      }),
+    suggestMissing: (id: number, instructions?: string) =>
+      request<StepPlan>(`/api/step-plans/${id}/suggest-missing`, {
+        method: "POST",
+        body: JSON.stringify({ instructions: instructions || null }),
+      }),
+    start: (id: number, acceptProposed = true) =>
+      request<StepPlan>(`/api/step-plans/${id}/start`, {
+        method: "POST",
+        body: JSON.stringify({ accept_proposed: acceptProposed }),
+      }),
+    review: (id: number) =>
+      request<StepPlanReview>(`/api/step-plans/${id}/review`, { method: "POST" }),
+    createStep: (id: number, payload: StepCreate) =>
+      request<Step>(`/api/step-plans/${id}/steps`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }),
+    consolidationChat: (id: number) =>
+      request<Chat>(`/api/step-plans/${id}/consolidation/chat`, { method: "POST" }),
+    generateFinal: (id: number, opts?: { instructions?: string; force?: boolean }) =>
+      request<StepPlan>(`/api/step-plans/${id}/consolidate/generate`, {
+        method: "POST",
+        body: JSON.stringify({
+          instructions: opts?.instructions || null,
+          force: opts?.force ?? false,
+        }),
+      }),
+    writeFinal: (id: number, content: string) =>
+      request<StepPlan>(`/api/step-plans/${id}/final`, {
+        method: "PUT",
+        body: JSON.stringify({ content }),
+      }),
+    sendToTopic: (id: number, text?: string) =>
+      request<Message>(`/api/step-plans/${id}/send-to-topic`, {
+        method: "POST",
+        body: JSON.stringify({ text: text ?? null }),
+      }),
+    updateStep: (stepId: number, payload: StepUpdate) =>
+      request<Step>(`/api/steps/${stepId}`, {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+      }),
+    removeStep: (stepId: number) => request<void>(`/api/steps/${stepId}`, { method: "DELETE" }),
+    moveStep: (stepId: number, payload: StepMove) =>
+      request<Step>(`/api/steps/${stepId}/move`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }),
+    acceptStep: (stepId: number) =>
+      request<Step>(`/api/steps/${stepId}/accept`, { method: "POST" }),
+    setStepStatus: (stepId: number, status: SettableStepStatus) =>
+      request<Step>(`/api/steps/${stepId}/status`, {
+        method: "POST",
+        body: JSON.stringify({ status }),
+      }),
+    writeArtifact: (stepId: number, content: string) =>
+      request<Step>(`/api/steps/${stepId}/artifact`, {
+        method: "PUT",
+        body: JSON.stringify({ content }),
+      }),
+    versions: (stepId: number) =>
+      request<StepArtifactVersion[]>(`/api/steps/${stepId}/versions`),
+    revertArtifact: (stepId: number, version: number) =>
+      request<Step>(`/api/steps/${stepId}/artifact/revert`, {
+        method: "POST",
+        body: JSON.stringify({ version }),
+      }),
+    generateArtifact: (stepId: number, instructions?: string) =>
+      request<Step>(`/api/steps/${stepId}/artifact/generate`, {
+        method: "POST",
+        body: JSON.stringify({ instructions: instructions || null }),
+      }),
+    suggestSubsteps: (stepId: number, instructions?: string) =>
+      request<StepPlan>(`/api/steps/${stepId}/suggest-substeps`, {
+        method: "POST",
+        body: JSON.stringify({ instructions: instructions || null }),
+      }),
+    stepChat: (stepId: number) =>
+      request<Chat>(`/api/steps/${stepId}/chat`, { method: "POST" }),
   },
 
   workflows: {
@@ -778,6 +1039,47 @@ export const api = {
       }),
   },
 
+  definitions: {
+    // Work in progress (docs/definitions.md): the folder check and the one-shot
+    // export of database agents/workflows into definition files.
+    check: () => request<DefinitionsCheckReport>(`/api/definitions/check`),
+    // The migration from database-declared to file-declared agents and workflows.
+    status: () => request<DefinitionsStatus>(`/api/definitions/status`),
+    migration: () => request<MigrationPreview>(`/api/definitions/migration`),
+    migrate: (acknowledge: boolean) =>
+      request<MigrationResult>(`/api/definitions/migrate`, {
+        method: "POST",
+        body: JSON.stringify({ acknowledge }),
+      }),
+    revert: () => request<RevertResult>(`/api/definitions/revert`, { method: "POST" }),
+    migrationItem: (kind: MigrationKind, id: number) =>
+      request<MigrationItemDetail>(`/api/definitions/migration/items/${kind}/${id}`),
+    // The last, irreversible step: clears the declarations out of the database.
+    finalize: () =>
+      request<FinalizeResult>(`/api/definitions/finalize`, {
+        method: "POST",
+        body: JSON.stringify({ confirm: true }),
+      }),
+    fileIssues: (workspaceId: number, path: string) =>
+      request<DefinitionFileReport>(
+        `/api/definitions/file-issues?workspace_id=${workspaceId}&path=${encodeURIComponent(path)}`,
+      ),
+    // The JSON Schema of a kind of definition file, for the Files editor.
+    schema: (kind: DefinitionFileKind) =>
+      request<Record<string, unknown>>(`/api/definitions/schema/${kind}`),
+    // Files mode: accept the permissions an agent's or workflow's file grants now.
+    accept: (kind: DefinitionKind, id: number | string, contentHash?: string | null) =>
+      request<DefinitionSource>(`/api/definitions/accept`, {
+        method: "POST",
+        body: JSON.stringify({ kind, id, content_hash: contentHash ?? null }),
+      }),
+    export: (overwrite = false) =>
+      request<DefinitionsExportResult>(
+        `/api/definitions/export${overwrite ? "?overwrite=true" : ""}`,
+        { method: "POST" },
+      ),
+  },
+
   messages: {
     // Messages
     list: (topicId: number, opts?: MessageWindow) =>
@@ -787,6 +1089,11 @@ export const api = {
     remove: (topicId: number, messageId: number) =>
       request<void>(`/api/topics/${topicId}/messages/${messageId}`, {
         method: "DELETE",
+      }),
+    edit: (topicId: number, messageId: number, content: string) =>
+      request<Message>(`/api/topics/${topicId}/messages/${messageId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ content }),
       }),
     // Persist a partial assistant reply when the user stops generation.
     saveStopped: (topicId: number, turn: StoppedTurn) =>
@@ -801,9 +1108,18 @@ export const api = {
       ? {
           listMessages: (opts) => api.messages.list(id, opts),
           deleteMessage: (mid) => api.messages.remove(id, mid),
+          editMessage: (mid, content) => api.messages.edit(id, mid, content),
           clearMessages: () => api.messages.clear(id),
           saveStopped: (turn) => api.messages.saveStopped(id, turn),
+          compact: (instructions) => compactContainer(`/api/topics/${id}/messages`, instructions),
+          contextEstimate: () =>
+            request<ContextEstimate>(`/api/topics/${id}/messages/context`),
+          listTurns: () => request<TurnIndexItem[]>(`/api/topics/${id}/messages/turns`),
+          rewind: (fromId, throughId) =>
+            rewindContainer(`/api/topics/${id}/messages`, fromId, throughId),
           uploadAttachment: (file) => api.attachments.uploadForTopic(id, file),
+          listApprovals: () => request<ToolApproval[]>(`/api/topics/${id}/approvals`),
+          decideApproval: (aid, decision) => decideApproval(`/api/topics/${id}/approvals/${aid}`, decision),
           notes: {
             getDraft: () => api.notes.getDraft(id),
             saveDraft: (text) => api.notes.saveDraft(id, text),
@@ -817,9 +1133,18 @@ export const api = {
       : {
           listMessages: (opts) => api.chats.listMessages(id, opts),
           deleteMessage: (mid) => api.chats.deleteMessage(id, mid),
+          editMessage: (mid, content) => api.chats.editMessage(id, mid, content),
           clearMessages: () => api.chats.clearMessages(id),
           saveStopped: (turn) => api.chats.saveStoppedMessage(id, turn),
+          compact: (instructions) => compactContainer(`/api/chats/${id}/messages`, instructions),
+          contextEstimate: () =>
+            request<ContextEstimate>(`/api/chats/${id}/messages/context`),
+          listTurns: () => request<TurnIndexItem[]>(`/api/chats/${id}/messages/turns`),
+          rewind: (fromId, throughId) =>
+            rewindContainer(`/api/chats/${id}/messages`, fromId, throughId),
           uploadAttachment: (file) => api.attachments.uploadForChat(id, file),
+          listApprovals: () => request<ToolApproval[]>(`/api/chats/${id}/approvals`),
+          decideApproval: (aid, decision) => decideApproval(`/api/chats/${id}/approvals/${aid}`, decision),
           notes: {
             getDraft: () => api.chats.getNotesDraft(id),
             saveDraft: (text) => api.chats.saveNotesDraft(id, text),
@@ -849,6 +1174,8 @@ export const api = {
       request<Settings>(`/api/settings`, { method: "PUT", body: JSON.stringify(data) }),
     runBackupNow: () =>
       request<BackupRunResult>(`/api/settings/backup/run`, { method: "POST" }),
+    regenerateOpenAIProxyKey: () =>
+      request<{ key: string }>(`/api/settings/openai-proxy/key`, { method: "POST" }),
   },
 
   stt: {
@@ -947,6 +1274,24 @@ export const api = {
       }),
   },
 
+  approvalRules: {
+    list: (owner?: { topicId?: number; chatId?: number }) => {
+      const qs = new URLSearchParams();
+      if (owner?.topicId != null) qs.set("topic_id", String(owner.topicId));
+      if (owner?.chatId != null) qs.set("chat_id", String(owner.chatId));
+      else if (owner?.topicId == null) qs.set("scope", "global");
+      return request<ApprovalRule[]>(`/api/approval-rules?${qs}`);
+    },
+    create: (body: ApprovalRuleCreate) =>
+      request<ApprovalRule>("/api/approval-rules", { method: "POST", body: JSON.stringify(body) }),
+    update: (id: number, body: ApprovalRuleUpdate) =>
+      request<ApprovalRule>(`/api/approval-rules/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify(body),
+      }),
+    remove: (id: number) => request<void>(`/api/approval-rules/${id}`, { method: "DELETE" }),
+  },
+
   mcp: {
     // MCP
     list: (probe = true) =>
@@ -1010,7 +1355,8 @@ export const api = {
       request<LLMModel[]>(
         `/api/llm/models${provider ? `?provider=${encodeURIComponent(provider)}` : ""}`,
       ),
-    listProviders: () => request<LLMProviderSpec[]>(`/api/llm/providers`),
+    listProviders: (includeDisabled = false) =>
+      request<LLMProviderSpec[]>(`/api/llm/providers${includeDisabled ? "?include_disabled=true" : ""}`),
   },
 
   notes: {
@@ -1142,13 +1488,13 @@ export const api = {
     list: () => request<Role[]>(`/api/roles`),
     create: (data: RoleCreate) =>
       request<Role>(`/api/roles`, { method: "POST", body: JSON.stringify(data) }),
-    update: (id: number, data: RoleUpdate) =>
-      request<Role>(`/api/roles/${id}`, {
+    update: (name: string, data: RoleUpdate) =>
+      request<Role>(`/api/roles/${encodeURIComponent(name)}`, {
         method: "PATCH",
         body: JSON.stringify(data),
       }),
-    remove: (id: number) =>
-      request<void>(`/api/roles/${id}`, { method: "DELETE" }),
+    remove: (name: string) =>
+      request<void>(`/api/roles/${encodeURIComponent(name)}`, { method: "DELETE" }),
   },
 
   collections: {
@@ -1238,6 +1584,11 @@ export const api = {
         method: "POST",
         body: JSON.stringify({ label, name }),
       }),
+    markSpeakerMe: (id: number, label: string, me: boolean) =>
+      request<MeetingSession>(`/api/live/${id}/speakers/me`, {
+        method: "POST",
+        body: JSON.stringify({ label, me }),
+      }),
     setAttendees: (id: number, attendees: string[]) =>
       request<MeetingSession>(`/api/live/${id}/attendees`, {
         method: "PUT",
@@ -1275,21 +1626,40 @@ export const api = {
       request<{ insights: MeetingInsight[]; suggestion: string }>(`/api/live/${id}/analyze`, {
         method: "POST",
       }),
-    summarize: (id: number) =>
-      request<{ summary: string; model: string }>(`/api/live/${id}/summary`, {
+    summarize: (id: number, options: MeetingSummaryOptions = {}) =>
+      request<MeetingSummaryResult>(`/api/live/${id}/summary`, {
         method: "POST",
+        body: JSON.stringify(options),
+      }),
+    /** Summary templates (built in + definition files), languages, last used. */
+    summaryTemplates: () => request<SummaryTemplateCatalog>("/api/live/summary-templates"),
+    /**
+     * The definition file to edit a template in — a built-in is saved to the
+     * folder first; `duplicate` saves it as a new template instead.
+     */
+    /** Remember the picker's template + language for the next recap. */
+    selectSummaryTemplate: (template: string, language: string) =>
+      request<void>("/api/live/summary-templates/selection", {
+        method: "PUT",
+        body: JSON.stringify({ template, language }),
+      }),
+    summaryTemplateFile: (template: string, duplicate = false) =>
+      request<SummaryTemplateFileResult>("/api/live/summary-templates/files", {
+        method: "POST",
+        body: JSON.stringify({ template, duplicate }),
       }),
     /** The linked Teams meeting's transcription sessions (fail-closed). */
     listTranscripts: (id: number) =>
       request<MeetingTranscriptListResult>(`/api/live/${id}/transcripts`),
-    summarizeFromTranscript: (id: number, transcriptIds?: string[]) =>
-      request<{ summary: string; model: string; transcript_ids: string[] }>(
-        `/api/live/${id}/summary/from-transcript`,
-        {
-          method: "POST",
-          body: JSON.stringify({ transcript_ids: transcriptIds ?? [] }),
-        },
-      ),
+    summarizeFromTranscript: (
+      id: number,
+      transcriptIds?: string[],
+      options: MeetingSummaryOptions = {},
+    ) =>
+      request<MeetingTranscriptSummaryResult>(`/api/live/${id}/summary/from-transcript`, {
+        method: "POST",
+        body: JSON.stringify({ transcript_ids: transcriptIds ?? [], ...options }),
+      }),
     postSummary: (id: number, summary: string) =>
       request<{
         topic_id: number;
@@ -1333,7 +1703,6 @@ export const api = {
           attendees: event.attendees,
           is_online: event.is_online,
           join_url: event.join_url,
-          body: event.body,
           body_preview: event.body_preview,
         }),
       }),
@@ -1343,6 +1712,31 @@ export const api = {
       request<{ topic_id: number; message_id: number }>(`/api/live/${id}/meeting/post`, {
         method: "POST",
       }),
+  },
+
+  artifacts: {
+    // Workspace files attached to a topic or chat.
+    list: (kind: ReminderContainer, id: number) =>
+      request<ConversationArtifact[]>(`/api/${kind === "topic" ? "topics" : "chats"}/${id}/artifacts`),
+    attach: (
+      kind: ReminderContainer,
+      id: number,
+      data: { workspace_id: number; path: string; source?: "manual" | "opened" },
+    ) =>
+      request<ConversationArtifact>(
+        `/api/${kind === "topic" ? "topics" : "chats"}/${id}/artifacts`,
+        { method: "POST", body: JSON.stringify(data) },
+      ),
+    detach: (kind: ReminderContainer, id: number, artifactId: number) =>
+      request<void>(
+        `/api/${kind === "topic" ? "topics" : "chats"}/${id}/artifacts/${artifactId}`,
+        { method: "DELETE" },
+      ),
+    // Topics and chats attaching files of a workspace; the ones on `path` lead.
+    discussions: (workspaceId: number, path?: string | null) =>
+      request<WorkspaceDiscussion[]>(
+        `/api/workspaces/${workspaceId}/discussions${path ? `?path=${encodeURIComponent(path)}` : ""}`,
+      ),
   },
 
   workspaces: {
@@ -1355,11 +1749,6 @@ export const api = {
       }),
     remove: (id: number) =>
       request<void>(`/api/workspaces/${id}`, { method: "DELETE" }),
-    update: (id: number, data: WorkspaceUpdate) =>
-      request<Workspace>(`/api/workspaces/${id}`, {
-        method: "PATCH",
-        body: JSON.stringify(data),
-      }),
     listFiles: (workspaceId: number) =>
       request<WorkspaceFileNode[]>(`/api/workspaces/${workspaceId}/files`),
     readFile: (workspaceId: number, path: string) =>
@@ -1386,6 +1775,12 @@ export const api = {
         `/api/workspaces/${workspaceId}/file?path=${encodeURIComponent(path)}`,
         { method: "DELETE" },
       ),
+    // A folder and everything in it (never the workspace's own folder).
+    deleteFolder: (workspaceId: number, path: string) =>
+      request<void>(
+        `/api/workspaces/${workspaceId}/folder?path=${encodeURIComponent(path)}`,
+        { method: "DELETE" },
+      ),
     renameEntry: (workspaceId: number, path: string, newPath: string) =>
       request<WorkspaceFileNode>(`/api/workspaces/${workspaceId}/rename`, {
         method: "POST",
@@ -1393,8 +1788,24 @@ export const api = {
       }),
     gitStatus: (workspaceId: number) =>
       request<GitStatus>(`/api/workspaces/${workspaceId}/git/status`),
+    // Updates the remote-tracking branch (ahead/behind); changes no file.
+    gitFetch: (workspaceId: number) =>
+      request<GitActionResult>(`/api/workspaces/${workspaceId}/git/fetch`, {
+        method: "POST",
+      }),
     gitPull: (workspaceId: number) =>
       request<GitActionResult>(`/api/workspaces/${workspaceId}/git/pull`, {
+        method: "POST",
+      }),
+    // Commit locally; `paths` selects files, otherwise every change.
+    gitCommit: (workspaceId: number, message: string, paths?: string[]) =>
+      request<GitActionResult>(`/api/workspaces/${workspaceId}/git/commit`, {
+        method: "POST",
+        body: JSON.stringify(paths ? { message, paths } : { message }),
+      }),
+    // Push the checked-out branch, publishing it the first time.
+    gitPush: (workspaceId: number) =>
+      request<GitActionResult>(`/api/workspaces/${workspaceId}/git/push`, {
         method: "POST",
       }),
     gitCommitPush: (
@@ -1411,6 +1822,71 @@ export const api = {
         `/api/workspaces/${workspaceId}/git/discard?path=${encodeURIComponent(path)}`,
         { method: "POST" },
       ),
+    // A file at `base` (HEAD) and in the working copy — or at `head` — for the
+    // diff editor. `originalPath` is a rename's old name.
+    // With `head` and no `base` (a root commit), the original side is empty.
+    gitFileVersions: (
+      workspaceId: number,
+      path: string,
+      opts: { originalPath?: string | null; base?: string | null; head?: string } = {},
+    ) => {
+      const q = new URLSearchParams({ path });
+      if (opts.originalPath) q.set("original_path", opts.originalPath);
+      if (opts.base) q.set("base", opts.base);
+      if (opts.head) q.set("head", opts.head);
+      return request<FileVersions>(`/api/workspaces/${workspaceId}/git/file-versions?${q}`);
+    },
+    // A page of history, newest first; `path` limits it to one file (by its
+    // repository path), following renames.
+    gitLog: (workspaceId: number, opts: { limit?: number; skip?: number; path?: string | null } = {}) => {
+      const q = new URLSearchParams();
+      if (opts.limit) q.set("limit", String(opts.limit));
+      if (opts.skip) q.set("skip", String(opts.skip));
+      if (opts.path) q.set("path", opts.path);
+      return request<GitLog>(`/api/workspaces/${workspaceId}/git/log?${q}`);
+    },
+    // Local branches and the remote's (asked of the remote itself).
+    gitBranches: (workspaceId: number) =>
+      request<GitBranches>(`/api/workspaces/${workspaceId}/git/branches`),
+    // Check out a branch (local, or only on the remote). 409 names what stands
+    // in the way: nothing is ever forced or stashed.
+    gitSwitch: (workspaceId: number, name: string) =>
+      request<GitActionResult>(`/api/workspaces/${workspaceId}/git/switch`, {
+        method: "POST",
+        body: JSON.stringify({ name }),
+      }),
+    // Create a branch from HEAD and check it out (unpublished until pushed).
+    gitCreateBranch: (workspaceId: number, name: string) =>
+      request<GitActionResult>(`/api/workspaces/${workspaceId}/git/branches`, {
+        method: "POST",
+        body: JSON.stringify({ name }),
+      }),
+    // Merge the remote's branch; `ok: false` with `status.merging` means it
+    // stopped on conflicts.
+    gitMerge: (workspaceId: number) =>
+      request<GitActionResult>(`/api/workspaces/${workspaceId}/git/merge`, { method: "POST" }),
+    gitConflict: (workspaceId: number, path: string) =>
+      request<GitConflict>(
+        `/api/workspaces/${workspaceId}/git/conflict?path=${encodeURIComponent(path)}`,
+      ),
+    // Mark a conflict resolved: as edited (refused while markers remain), or
+    // by keeping one side.
+    gitResolve: (workspaceId: number, path: string, side?: "ours" | "theirs") =>
+      request<GitStatus>(`/api/workspaces/${workspaceId}/git/resolve`, {
+        method: "POST",
+        body: JSON.stringify(side ? { path, side } : { path }),
+      }),
+    gitMergeComplete: (workspaceId: number) =>
+      request<GitActionResult>(`/api/workspaces/${workspaceId}/git/merge/complete`, {
+        method: "POST",
+      }),
+    gitMergeAbort: (workspaceId: number) =>
+      request<GitActionResult>(`/api/workspaces/${workspaceId}/git/merge/abort`, {
+        method: "POST",
+      }),
+    // One commit: message, first parent and changed files.
+    gitCommitDetail: (workspaceId: number, sha: string) =>
+      request<GitCommitDetail>(`/api/workspaces/${workspaceId}/git/commits/${sha}`),
     gitDiff: (workspaceId: number, path: string) =>
       request<FileDiff>(
         `/api/workspaces/${workspaceId}/git/diff?path=${encodeURIComponent(path)}`,
@@ -1451,6 +1927,28 @@ export const api = {
       request<SearchResponse>(
         `/api/search?q=${encodeURIComponent(q)}&limit=${limit}`,
       ),
+  },
+
+  iq: {
+    // Precursor IQ: ranked retrieval (the ⌘K palette), cited answers, index state.
+    retrieve: (q: string, sections: IQSection[] = [], limit = 20) =>
+      request<IQRetrieveResponse>(
+        `/api/iq/retrieve?q=${encodeURIComponent(q)}&limit=${limit}` +
+          (sections.length ? `&sections=${sections.join(",")}` : ""),
+      ),
+    ask: (question: string, sections?: IQSection[]) =>
+      request<IQAskResponse>(`/api/iq/ask`, {
+        method: "POST",
+        body: JSON.stringify({ question, sections: sections ?? null }),
+      }),
+    status: () => request<IQStatus>(`/api/iq/status`),
+    reindex: () => request<IQStatus>(`/api/iq/reindex`, { method: "POST" }),
+    // Tries the unsaved provider/model; omitted fields fall back to the saved ones.
+    testEmbeddings: (provider?: string, model?: string) =>
+      request<IQEmbeddingTestResponse>(`/api/iq/embeddings/test`, {
+        method: "POST",
+        body: JSON.stringify({ provider, model }),
+      }),
   },
 
   topicSummary: {

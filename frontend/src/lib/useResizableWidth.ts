@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { beginDrag } from "./dragGuard";
 
 interface Options {
   storageKey: string;
@@ -28,6 +29,7 @@ export function useResizableWidth({
   const dragging = useRef(false);
   const startX = useRef(0);
   const startW = useRef(0);
+  const endGuard = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -40,6 +42,8 @@ export function useResizableWidth({
       dragging.current = true;
       startX.current = e.clientX;
       startW.current = width;
+      endGuard.current?.();
+      endGuard.current = beginDrag();
       document.body.style.userSelect = "none";
       document.body.style.cursor = "col-resize";
     },
@@ -54,6 +58,8 @@ export function useResizableWidth({
       setWidth(clamp(next, min, max));
     }
     function onUp(): void {
+      endGuard.current?.();
+      endGuard.current = null;
       if (!dragging.current) return;
       dragging.current = false;
       document.body.style.userSelect = "";
@@ -61,9 +67,12 @@ export function useResizableWidth({
     }
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
+    window.addEventListener("blur", onUp);
     return () => {
+      onUp();
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
+      window.removeEventListener("blur", onUp);
     };
   }, [side, min, max]);
 

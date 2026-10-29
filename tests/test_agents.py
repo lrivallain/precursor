@@ -17,9 +17,23 @@ from precursor.backend.config import get_settings
 from precursor.backend.main import create_app
 
 
+async def _delete_all_agents() -> None:
+    from sqlalchemy import delete
+
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AgentSession
+
+    async with SessionLocal() as session:
+        await session.execute(delete(AgentSession))
+        await session.commit()
+
+
 def test_agents_disabled_by_default() -> None:
     app = create_app()
     with TestClient(app) as client:
+        # The scratch DB is shared, so start from no agents rather than trusting
+        # every earlier test to have deleted the ones it seeded.
+        client.portal.call(_delete_all_agents)
         listed = client.get("/api/agents")
         assert listed.status_code == 200
         assert listed.json() == []
@@ -668,7 +682,7 @@ async def _make_agent(**overrides: object) -> int:
             use_memory=agent.use_memory,
             mcp_servers=agent.mcp_servers,
             approval_policy=agent.approval_policy,
-            role_id=agent.role_id,
+            role=agent.role,
         )
         session.add(run)
         await session.flush()
@@ -957,7 +971,6 @@ async def test_run_command_role_assigns_by_name() -> None:
         role = Role(name="Sceptic", system_prompt="Question everything.")
         session.add(role)
         await session.commit()
-        role_id = role.id
         default_role = (
             await session.scalars(select(Role).where(Role.is_default.is_(True)))
         ).first()
@@ -967,15 +980,15 @@ async def test_run_command_role_assigns_by_name() -> None:
     async with SessionLocal() as session:
         agent = await session.get(AgentSession, agent_id)
         assert agent is not None
-        assert agent.role_id == role_id
+        assert agent.role == "Sceptic"
 
-    # The built-in default is stored as NULL, never by its own id.
+    # The built-in default is stored as NULL, never by its own name.
     assert default_role is not None
     await mgr.run_command(agent_id, "role", default_role.name)
     async with SessionLocal() as session:
         agent = await session.get(AgentSession, agent_id)
         assert agent is not None
-        assert agent.role_id is None
+        assert agent.role is None
 
     with pytest.raises(ValueError, match="Unknown role"):
         await mgr.run_command(agent_id, "role", "nope")
@@ -991,6 +1004,7 @@ def test_agent_command_registry_is_source_of_truth() -> None:
         "rename",
         "archive",
         "clear",
+        "compact",
         "role",
         "memory-store",
         "memory-update",
@@ -1033,6 +1047,8 @@ def test_normalise_context_usage_event_captures_window() -> None:
             self.current_tokens = 8000
             self.token_limit = 128000
             self.conversation_tokens = 7500
+            self.system_tokens = 300
+            self.tool_definitions_tokens = 200
 
     event = normalize_event(SessionUsageInfoData())
 
@@ -1041,6 +1057,8 @@ def test_normalise_context_usage_event_captures_window() -> None:
     assert event.data["current_tokens"] == 8000
     assert event.data["token_limit"] == 128000
     assert event.data["conversation_tokens"] == 7500
+    assert event.data["system_tokens"] == 300
+    assert event.data["tool_definitions_tokens"] == 200
 
 
 def test_normalise_tool_completion_failure_captures_error() -> None:
@@ -1627,6 +1645,7 @@ def _tool_event(
 def test_live_activity_snapshots_parallel_tools_and_resets_per_turn() -> None:
     """``live_activity`` derives the in-flight tool, parallel fan-out count, and
     resets running state at turn boundaries (a dropped completion can't leak)."""
+    from precursor.backend.services.agents.live_session import _LiveSession
     from precursor.backend.services.agents.manager import AgentManager
 
     mgr = AgentManager()
@@ -1643,15 +1662,31 @@ def test_live_activity_snapshots_parallel_tools_and_resets_per_turn() -> None:
         _tool_event("turn_end"),
     ]
     # Agent 4: streaming commentary (deltas) is distilled into live narration,
-    # preferred over the last completed message and stripped of directives.
+    # preferred over the last completed message and stripped of directives. The
+    # deltas are never archived: they reach it through the run's live stream.
     mgr._events[4] = [  # type: ignore[attr-defined]
         _tool_event("turn_start"),
         _tool_event("assistant_message", text="An earlier full message."),
+    ]
+    live4 = _LiveSession(sdk_session=object())
+    mgr._live[40] = live4  # type: ignore[attr-defined]
+    mgr._agent_runs[4] = 40  # type: ignore[attr-defined]
+    for ev in (
         _tool_event("assistant_delta", text="Reading the config "),
         _tool_event("assistant_delta", text="to find the setting.\nPROGRESS: 20 | scanning"),
-    ]
+    ):
+        live4.stream.observe(ev)
+    # Agent 5: thinking streams in, and is reported while the model is at it.
+    live5 = _LiveSession(sdk_session=object())
+    mgr._live[50] = live5  # type: ignore[attr-defined]
+    mgr._agent_runs[5] = 50  # type: ignore[attr-defined]
+    for ev in (
+        _tool_event("reasoning_delta", text="**Checking the config**\n"),
+        _tool_event("reasoning_delta", text="The key is under agents."),
+    ):
+        live5.stream.observe(ev)
 
-    snap = mgr.live_activity([1, 2, 3, 4])
+    snap = mgr.live_activity([1, 2, 3, 4, 5])
 
     assert snap[1]["active_tool"] == "view"
     assert snap[1]["active_tool_count"] == 1
@@ -1665,10 +1700,19 @@ def test_live_activity_snapshots_parallel_tools_and_resets_per_turn() -> None:
         "active_tool_count": 0,
         "pending_permission": None,
         "active_narration": None,
+        "active_thinking": None,
     }
     # In-flight deltas win over the older message; the PROGRESS directive line and
     # trailing prose are dropped, leaving the first meaningful sentence.
     assert snap[4]["active_narration"] == "Reading the config to find the setting."
+    # Answering, not thinking.
+    assert snap[4]["active_thinking"] is None
+    assert snap[5]["active_thinking"] == "**Checking the config**\nThe key is under agents."
+    # Once the answer starts streaming the model is no longer thinking.
+    live5.stream.observe(_tool_event("assistant_delta", text="Found it."))
+    after = mgr.live_activity([5])[5]
+    assert after["active_thinking"] is None
+    assert after["active_narration"] == "Found it."
 
 
 def test_sanitize_model_downgrades_stale_pin_but_respects_empty_catalog() -> None:
@@ -1737,7 +1781,7 @@ async def test_spawn_agent_parked_stays_waiting() -> None:
             model=None,
             topic_id=None,
             chat_id=None,
-            role_id=None,
+            role=None,
             mcp_servers=None,
             autonomy_enabled=False,
             max_steps=8,
@@ -1991,14 +2035,14 @@ async def _seed_run_spend(agent_id: int, input_tokens: int, output_tokens: int) 
 
 async def test_metrics_rollup_counts_and_tokens() -> None:
     await _ensure_schema()
-    busy = await _make_agent(status="running", total_input_tokens=100, total_output_tokens=50)
-    done = await _make_agent(status="completed", total_input_tokens=10, total_output_tokens=5)
-    await _make_agent(status="failed")
-    await _make_agent(status="needs_approval")
-    await _seed_run_spend(busy, 100, 50)
-    await _seed_run_spend(done, 10, 5)
-
     with TestClient(create_app()) as client:
+        # Seeded after startup: boot marks any ``running`` run interrupted.
+        busy = await _make_agent(status="running", total_input_tokens=100, total_output_tokens=50)
+        done = await _make_agent(status="completed", total_input_tokens=10, total_output_tokens=5)
+        await _make_agent(status="failed")
+        await _make_agent(status="needs_approval")
+        await _seed_run_spend(busy, 100, 50)
+        await _seed_run_spend(done, 10, 5)
         metrics = _get(client, "/api/agents/metrics")
     assert metrics["total"] >= 4
     assert metrics["active"] >= 2  # running + needs_approval
@@ -2872,7 +2916,7 @@ async def _seed_agent_run(session, agent_id: int, workflow_run_id: int | None):
         use_memory=agent.use_memory,
         mcp_servers=agent.mcp_servers,
         approval_policy=agent.approval_policy,
-        role_id=agent.role_id,
+        role=agent.role,
         started_at=datetime.now(UTC),
     )
     session.add(run)
@@ -4098,12 +4142,11 @@ async def test_step_capability_overrides_and_workflow_role_apply_at_launch() -> 
         session.add(role)
         await session.commit()
         await session.refresh(role)
-        role_id = role.id
 
     wf_id, agents = await _seed_linear_workflow(
         kinds=["task", "task"],
         step_kwargs=[{}, {"use_mcp": False, "use_memory": False}],
-        role_id=role_id,
+        role="Terse",
     )
 
     mgr = _FakeWorkflowManager()
@@ -4119,14 +4162,14 @@ async def test_step_capability_overrides_and_workflow_role_apply_at_launch() -> 
     assert run.use_mcp is False
     assert run.use_memory is False
     assert run.use_skills is True  # not overridden → inherited
-    assert run.role_id == role_id  # workflow-wide persona
+    assert run.role == "Terse"  # workflow-wide persona
 
     async with SessionLocal() as session:
         agent = await session.get(AgentSession, agents[1])
         assert agent is not None
         assert agent.use_mcp is True  # the definition is untouched
         assert agent.use_memory is True
-        assert agent.role_id is None
+        assert agent.role is None
 
 
 async def test_workflow_events_carry_status_for_notifications() -> None:
@@ -5473,10 +5516,19 @@ async def test_step_attempt_events_are_sliced_to_their_own_attempt() -> None:
             session.add(
                 AgentEventRecord(
                     agent_session_id=agent_id,
-                    payload=json.dumps({"kind": kind}),
+                    payload=json.dumps({"kind": kind, "text": f"{kind} text"}),
                     created_at=base + timedelta(seconds=offset),
                 )
             )
+        # A streaming frame archived before they stopped being kept renders
+        # nothing, so it isn't served.
+        session.add(
+            AgentEventRecord(
+                agent_session_id=agent_id,
+                payload=json.dumps({"kind": "assistant_delta", "text": None}),
+                created_at=base + timedelta(seconds=7),
+            )
+        )
         await session.commit()
         first_id, second_id = first.id, second.id
 
@@ -6684,7 +6736,7 @@ async def _seed_shared_agent_workflows(
             task_prompt="do the thing",
             status="idle",
             use_mcp=False,
-            approval_policy="ask",
+            approval_policy="balanced",
         )
         session.add(shared)
         await session.commit()
@@ -6780,15 +6832,15 @@ async def test_step_overrides_land_on_the_run_not_the_shared_agent() -> None:
     wf_a_id, wf_b_id, agent_id = await _seed_shared_agent_workflows(
         a_use_mcp=True,
         b_use_mcp=False,
-        a_policy="auto",
-        b_policy="ask",
+        a_policy="autonomous",
+        b_policy="manual",
     )
     await _start_both(wf_a_id, wf_b_id)
 
     runs = await _runs_for_agent(agent_id)
     by_wf = {r.workflow_run_id: r for r in runs}
     snapshots = sorted((r.use_mcp, r.approval_policy) for r in by_wf.values())
-    assert snapshots == [(False, "ask"), (True, "auto")], (
+    assert snapshots == [(False, "manual"), (True, "autonomous")], (
         "each run must carry its own workflow's capability snapshot"
     )
 
@@ -6797,7 +6849,7 @@ async def test_step_overrides_land_on_the_run_not_the_shared_agent() -> None:
         agent = await session.get(AgentSession, agent_id)
         assert agent is not None
         assert agent.use_mcp is False
-        assert agent.approval_policy == "ask"
+        assert agent.approval_policy == "balanced"
 
 
 async def test_editing_the_agent_mid_run_does_not_change_an_in_flight_snapshot() -> None:
@@ -7743,6 +7795,162 @@ async def test_cumulative_board_still_scopes_the_handoff_body_to_this_run() -> N
 
     assert "the shared board entry" in context
     assert "last run's prose" not in context
+
+
+async def _seed_step_attempt(
+    session,
+    agent_id: int,
+    workflow_run_id: int,
+    position: int,
+    attempt: int,
+    artifact: str | None,
+    *,
+    title: str = "Draft",
+):
+    """One step attempt as ``_launch_step`` leaves it: a run, its trace, its artifact."""
+    from precursor.backend.models import AgentArtifact
+    from precursor.backend.models.workflow import WorkflowRunStep
+
+    run = await _seed_agent_run(session, agent_id, workflow_run_id)
+    session.add(
+        WorkflowRunStep(
+            run_id=workflow_run_id,
+            position=position,
+            kind="task",
+            label=f"Step {position + 1}",
+            agent_id=agent_id,
+            agent_run_id=run.id,
+            attempt=attempt,
+            status="completed",
+        )
+    )
+    if artifact is not None:
+        session.add(
+            AgentArtifact(agent_id=agent_id, agent_run_id=run.id, title=title, content=artifact)
+        )
+    await session.commit()
+    return run
+
+
+async def _seed_board_workflow(session, *, clear_artifacts: bool = True):
+    from precursor.backend.models import AgentSession
+    from precursor.backend.models.workflow import Workflow, WorkflowRun
+
+    producer = AgentSession(title="Drafter", task_prompt="draft", status="idle")
+    wf = Workflow(name="Loop", status="running", clear_artifacts=clear_artifacts)
+    session.add_all([producer, wf])
+    await session.commit()
+    await session.refresh(producer)
+    await session.refresh(wf)
+    wf_run = WorkflowRun(workflow_id=wf.id, run_number=1, status="running", trigger="manual")
+    session.add(wf_run)
+    await session.commit()
+    await session.refresh(wf_run)
+    return producer, wf, wf_run
+
+
+@pytest.mark.asyncio
+async def test_gate_loop_back_hands_over_only_the_current_attempts_artifact() -> None:
+    """#397: a retry's deliverable replaces the failed attempt's, it doesn't stack.
+
+    Each loop-back opens a new agent run under the same workflow run. Reading
+    every one of them handed the gate 1, 2, 3… copies of the draft, and it
+    failed on the duplication until ``max_loops`` ran out.
+    """
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.services.agents.workflow import collect_step_context
+
+    await _ensure_schema()
+    async with SessionLocal() as session:
+        producer, _wf, wf_run = await _seed_board_workflow(session)
+        for attempt in (1, 2, 3):
+            await _seed_step_attempt(
+                session, producer.id, wf_run.id, 0, attempt, f"draft v{attempt}"
+            )
+
+        context = await collect_step_context(session, producer.id, workflow_run_id=wf_run.id)
+
+    assert context.count("[Draft]") == 1
+    assert "draft v3" in context
+    assert "draft v1" not in context and "draft v2" not in context
+
+
+@pytest.mark.asyncio
+async def test_retry_that_publishes_nothing_does_not_inherit_the_failed_attempts_artifact() -> None:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.services.agents.workflow import collect_step_context
+
+    await _ensure_schema()
+    async with SessionLocal() as session:
+        producer, _wf, wf_run = await _seed_board_workflow(session)
+        await _seed_step_attempt(session, producer.id, wf_run.id, 0, 1, "the rejected draft")
+        await _seed_step_attempt(session, producer.id, wf_run.id, 0, 2, None)
+
+        context = await collect_step_context(session, producer.id, workflow_run_id=wf_run.id)
+
+    assert "the rejected draft" not in context
+
+
+@pytest.mark.asyncio
+async def test_board_keeps_only_each_earlier_steps_latest_attempt() -> None:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.services.agents.workflow import collect_prior_artifacts
+
+    await _ensure_schema()
+    async with SessionLocal() as session:
+        producer, _wf, wf_run = await _seed_board_workflow(session)
+        await _seed_step_attempt(session, producer.id, wf_run.id, 0, 1, "inventory v1")
+        await _seed_step_attempt(session, producer.id, wf_run.id, 0, 2, "inventory v2")
+
+        digest = await collect_prior_artifacts(session, [producer.id], workflow_run_id=wf_run.id)
+
+    assert digest.count("[Draft]") == 1
+    assert "inventory v2" in digest
+    assert "inventory v1" not in digest
+
+
+@pytest.mark.asyncio
+async def test_agent_reused_at_two_steps_keeps_both_steps_deliverables() -> None:
+    """Superseding is per step, not per agent: a second step is not a retry of the first."""
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.services.agents.workflow import collect_prior_artifacts
+
+    await _ensure_schema()
+    async with SessionLocal() as session:
+        producer, _wf, wf_run = await _seed_board_workflow(session)
+        await _seed_step_attempt(session, producer.id, wf_run.id, 0, 1, "outline", title="Outline")
+        await _seed_step_attempt(session, producer.id, wf_run.id, 2, 1, "chapter", title="Chapter")
+
+        digest = await collect_prior_artifacts(session, [producer.id], workflow_run_id=wf_run.id)
+
+    assert "outline" in digest and "chapter" in digest
+
+
+@pytest.mark.asyncio
+async def test_cumulative_board_drops_an_earlier_runs_superseded_attempts() -> None:
+    """``clear_artifacts`` unset keeps earlier runs' final deliverables, not their retries."""
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models.workflow import WorkflowRun
+    from precursor.backend.services.agents.workflow import collect_step_context
+
+    await _ensure_schema()
+    async with SessionLocal() as session:
+        producer, wf, first = await _seed_board_workflow(session, clear_artifacts=False)
+        await _seed_step_attempt(session, producer.id, first.id, 0, 1, "first run, rejected")
+        await _seed_step_attempt(session, producer.id, first.id, 0, 2, "first run, accepted")
+        second = WorkflowRun(workflow_id=wf.id, run_number=2, status="running", trigger="manual")
+        session.add(second)
+        await session.commit()
+        await session.refresh(second)
+        await _seed_step_attempt(session, producer.id, second.id, 0, 1, "second run")
+
+        context = await collect_step_context(
+            session, producer.id, workflow_run_id=second.id, artifacts_run_id=None
+        )
+
+    assert "first run, accepted" in context
+    assert "second run" in context
+    assert "first run, rejected" not in context
 
 
 @pytest.mark.asyncio

@@ -395,8 +395,13 @@ async def toggle_plugin(
     await set_enabled(session, plugin_id, payload.enabled)
 
     from precursor.backend.plugins.mcp import hydrate_plugin_servers
+    from precursor.backend.services.mcp.client import get_mcp_client_manager
 
-    hydrate_plugin_servers()
+    manager = get_mcp_client_manager()
+    # A removed server is no longer requested by any turn, so its pooled worker
+    # (and, for stdio, its process) would otherwise linger until the idle TTL.
+    for name in hydrate_plugin_servers():
+        await manager.retire_worker(name)
     return {"id": plugin_id, "enabled": payload.enabled}
 
 

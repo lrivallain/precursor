@@ -6,6 +6,9 @@
 # (`make sync UV_FROZEN=0`) only when you intend to change the lockfile.
 export UV_FROZEN ?= 1
 
+# Parallel test run, as in CI. `make test PYTEST_ARGS=` runs serially.
+PYTEST_ARGS ?= -n auto --dist loadgroup
+
 help:  ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
@@ -55,7 +58,7 @@ check: lockcheck  ## Run all backend + frontend quality gates
 	uv run ruff check .
 	uv run ruff format --check .
 	uv run mypy precursor
-	uv run pytest -q
+	uv run pytest -q $(PYTEST_ARGS)
 	npm --prefix frontend run typecheck
 	npm --prefix frontend run build
 
@@ -63,7 +66,7 @@ lockcheck:  ## Verify lockfiles pin public artifacts with strong hashes
 	python3 scripts/check_lockfiles.py
 
 test:  ## Run the backend test suite (uv)
-	uv run pytest -q
+	uv run pytest -q $(PYTEST_ARGS)
 
 # Autogenerate a migration from model changes (brings the local DB to head
 # first so the diff is correct). Usage: make migration m="add foo to chats".

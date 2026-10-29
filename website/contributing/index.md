@@ -89,7 +89,7 @@ make check
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy precursor
-uv run pytest
+uv run pytest -n auto --dist loadgroup   # parallel, as in CI; drop -n to debug serially
 
 npm --prefix frontend run typecheck
 npm --prefix frontend run build

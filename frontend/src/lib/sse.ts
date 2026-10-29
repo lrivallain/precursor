@@ -6,6 +6,8 @@
  */
 
 import { CLIENT_ID } from "./clientId";
+import { httpError } from "./api";
+import type { WorkspaceTurnContext } from "./types";
 
 export interface SSEEvent {
   event: string;
@@ -37,6 +39,7 @@ export async function postSSE(
     signal,
   });
   if (!res.ok || !res.body) {
+    if (!res.ok) throw await httpError(res);
     throw new Error(`Stream failed: ${res.status} ${res.statusText}`);
   }
 
@@ -51,6 +54,8 @@ export interface ChatStreamBody {
   attachment_ids?: number[];
   note_attachment_ids?: number[];
   retry_message_id?: number;
+  /** Held from the workspace panel: the open file rides in this turn's prompt only. */
+  workspace_context?: WorkspaceTurnContext;
 }
 
 export function streamChat(
@@ -59,24 +64,6 @@ export function streamChat(
   opts: StreamChatOptions,
 ): Promise<void> {
   return postSSE(`/api/topics/${topicId}/messages/stream`, body, opts);
-}
-
-/**
- * POST to a Workspace's ephemeral chat endpoint and stream the reply.
- * History is supplied by the caller (workspace chat is not server-persisted).
- */
-export function streamWorkspaceChat(
-  workspaceId: number,
-  body: {
-    content: string;
-    history: { role: "user" | "assistant"; content: string }[];
-    path?: string | null;
-    model?: string;
-    prompt_override?: string;
-  },
-  opts: StreamChatOptions,
-): Promise<void> {
-  return postSSE(`/api/workspaces/${workspaceId}/chat/stream`, body, opts);
 }
 
 /**
@@ -89,6 +76,16 @@ export function streamChatSession(
   opts: StreamChatOptions,
 ): Promise<void> {
   return postSSE(`/api/chats/${chatId}/messages/stream`, body, opts);
+}
+
+/** Continue a turn parked on tool approvals once every one is decided. */
+export function resumeConversation(
+  kind: "topic" | "chat",
+  id: number,
+  opts: StreamChatOptions,
+): Promise<void> {
+  const base = kind === "topic" ? "topics" : "chats";
+  return postSSE(`/api/${base}/${id}/approvals/resume`, {}, opts);
 }
 
 async function consumeStream(

@@ -24,6 +24,7 @@ import type {
 } from "../lib/types";
 import { api } from "../lib/api";
 import { useSettings } from "../lib/settingsStore";
+import { useSummaryTemplates } from "../lib/useSummaryTemplates";
 import {
   listAudioInputDevices,
   useConversationTranscriber,
@@ -43,6 +44,7 @@ import { LiveChatSection } from "./LiveChatSection";
 import { TranslationSection } from "./TranslationSection";
 import { FeaturePicker, type FeatureOption } from "./FeaturePicker";
 import { SpeakerNamePicker } from "./SpeakerNamePicker";
+import { useLiveSuggestions } from "../lib/useLiveSuggestions";
 import { TranscriptPartPicker } from "./TranscriptPartPicker";
 import { Markdown } from "./Markdown";
 import { HighlightedText } from "../lib/searchHighlight";
@@ -98,6 +100,11 @@ const FEATURE_OPTIONS: FeatureOption[] = [
   },
   { id: "notes", label: "Notes", description: "Your Markdown scratch pad" },
   { id: "assistant", label: "Assistant", description: "A grounded chat about the meeting" },
+  {
+    id: "answers",
+    label: "Suggested answers",
+    description: "Drafts a reply when someone else asks a question",
+  },
   { id: "translation", label: "Translation", description: "Live transcript translation" },
 ];
 
@@ -209,6 +216,8 @@ export function LiveView({
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const [summarySaving, setSummarySaving] = useState(false);
   const [summarySaved, setSummarySaved] = useState(false);
+  // The summary template + output language (last used, remembered server-side).
+  const summaryTemplates = useSummaryTemplates();
   // Last text known to be persisted server-side. Generation and posting also
   // write the recap, so we re-seed this from the session (below) to keep those
   // paths from tripping a redundant autosave.
@@ -282,7 +291,9 @@ export function LiveView({
     try {
       const updated = await api.meetings.setFeatures(session.id, next);
       onUpdated(updated);
-      if (next.includes("assistant") && !chat) void startAssistant();
+      if ((next.includes("assistant") || next.includes("answers")) && !chat) {
+        void startAssistant();
+      }
     } catch {
       /* non-fatal */
     }
@@ -334,8 +345,9 @@ export function LiveView({
   const translateNextRef = useRef(0);
 
   // Proactive suggestions now ride along on the unified analysis pass (see
-  // runAnalysis). Surfaced as dismissible cards in the Insights tab.
-  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  // runAnalysis). Surfaced as a single dismissible card in the Insights tab; a
+  // newer suggestion replaces it rather than stacking above the insights.
+  const [suggestion, setSuggestion] = useState<Suggestion | null>(null);
   const assistLastTextRef = useRef("");
 
   const transcriptRef = useRef<HTMLDivElement>(null);
@@ -351,6 +363,15 @@ export function LiveView({
   const notesOn = features.includes("notes");
   const assistantOn = features.includes("assistant");
   const translationOn = features.includes("translation");
+  const answersOn = features.includes("answers");
+  const meLabels = session.me_labels ?? [];
+  const {
+    suggestion: liveSuggestion,
+    push: pushSuggestion,
+    dismiss: dismissSuggestion,
+    unseen: unseenSuggestions,
+    clearUnseen: clearUnseenSuggestions,
+  } = useLiveSuggestions({ sessionId: session.id, enabled: answersOn && !isEnded, meLabels });
 
   const allTopics = useMemo(() => flattenTopicNodes(topics), [topics]);
   const linkedTopic = useMemo(
@@ -366,6 +387,7 @@ export function LiveView({
     (seg: { text: string; speakerLabel: string | null; offsetMs: number }) => {
       // Scope the raw diarization label to the current recording run.
       const scopedLabel = seg.speakerLabel ? `${runRef.current}:${seg.speakerLabel}` : null;
+      pushSuggestion(seg.text, scopedLabel);
       void (async () => {
         try {
           const saved = await api.meetings.appendSegment(session.id, {
@@ -389,7 +411,7 @@ export function LiveView({
         }
       })();
     },
-    [session.id],
+    [session.id, pushSuggestion],
   );
 
   // A transparent reconnect (Azure ~20-min 1006 drop, recovered without a hard
@@ -454,11 +476,12 @@ export function LiveView({
       const res = await api.meetings.analyze(session.id);
       setInsights(res.insights);
       // A proactive suggestion rides along on the same pass — surface genuinely
-      // new ones as dismissible cards in the Insights tab.
+      // new one in the Insights tab, replacing the previous card. An empty
+      // result keeps the current card so it never blanks mid-meeting.
       const text = (res.suggestion ?? "").trim();
       if (text && text !== assistLastTextRef.current) {
         assistLastTextRef.current = text;
-        setSuggestions((prev) => [{ id: Date.now(), text, at: Date.now() }, ...prev].slice(0, 12));
+        setSuggestion({ id: Date.now(), text, at: Date.now() });
       }
     } catch {
       // Non-fatal — keep the prior snapshot.
@@ -474,6 +497,8 @@ export function LiveView({
     setSegments([]);
     setInterim("");
     setInsights([]);
+    setSuggestion(null);
+    assistLastTextRef.current = "";
     // Seed the editable recap from the persisted summary (empty when none).
     // Must not clear it: this effect re-runs on every open/remount, so blanking
     // here would drop a stored summary when returning to the session.
@@ -579,8 +604,8 @@ export function LiveView({
     }
   }
 
-  async function applyRole(roleId: number | null): Promise<void> {
-    onUpdated(await api.meetings.updateSession(session.id, { role_id: roleId }));
+  async function applyRole(roleName: string | null): Promise<void> {
+    onUpdated(await api.meetings.updateSession(session.id, { role: roleName }));
   }
 
   async function generateTopicSummary(): Promise<void> {
@@ -638,7 +663,7 @@ export function LiveView({
     setSummaryGenerating(true);
     setSummaryError(null);
     try {
-      const res = await api.meetings.summarize(session.id);
+      const res = await api.meetings.summarize(session.id, summaryTemplates.options);
       setSummaryText(res.summary);
       // The backend persisted the recap; mirror it onto the session so a later
       // open (or the "Summary ●" dot) stays in sync without regenerating. Merge
@@ -660,7 +685,11 @@ export function LiveView({
     setTranscriptScraping(true);
     setSummaryError(null);
     try {
-      const res = await api.meetings.summarizeFromTranscript(session.id, transcriptIds);
+      const res = await api.meetings.summarizeFromTranscript(
+        session.id,
+        transcriptIds,
+        summaryTemplates.options,
+      );
       setSummaryText(res.summary);
       onUpdated({ ...session, summary: res.summary || null });
     } catch (e) {
@@ -877,6 +906,20 @@ export function LiveView({
       setSegments((prev) =>
         prev.map((s) => (s.id === seg.id ? { ...s, text: seg.text } : s)),
       );
+    }
+  }
+
+  async function toggleMe(rawLabel: string): Promise<void> {
+    setEditingSegId(null);
+    try {
+      const updated = await api.meetings.markSpeakerMe(
+        session.id,
+        rawLabel,
+        !meLabels.includes(rawLabel),
+      );
+      onUpdated(updated);
+    } catch {
+      // Non-fatal — the toggle simply doesn't change.
     }
   }
 
@@ -1106,14 +1149,6 @@ export function LiveView({
         ariaLabel="Meeting language"
         size="sm"
       />
-
-      <RoleSelector
-        value={session.role_id ?? null}
-        onChange={(roleId) => void applyRole(roleId)}
-        open={roleOpen}
-        onOpenChange={setRoleOpen}
-        variant="toolbar"
-      />
     </>
   );
 
@@ -1123,6 +1158,71 @@ export function LiveView({
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border px-4 py-2">
         {recordControls}
       </div>
+      {liveSuggestion && (
+        <div className="border-b border-border bg-accent/5 px-4 py-2" aria-live="polite">
+          <div className="mx-auto max-w-3xl">
+            <div className="flex items-start gap-2 text-[12px]">
+              <Lightbulb size={13} className="mt-0.5 shrink-0 text-accent" aria-hidden="true" />
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-muted">
+                  <span className="font-medium text-text">
+                    {displayName(liveSuggestion.speakerLabel) ?? "Someone"}
+                  </span>{" "}
+                  asked: <span className="italic">{liveSuggestion.question}</span>
+                </p>
+                <p className="mt-1 whitespace-pre-wrap text-sm text-text">
+                  {liveSuggestion.text || (
+                    <span className="inline-flex items-center gap-1 text-muted">
+                      <Loader2 size={12} className="animate-spin" aria-hidden="true" />
+                      Thinking of an answer…
+                    </span>
+                  )}
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-1">
+                {liveSuggestion.status === "done" && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void navigator.clipboard?.writeText(liveSuggestion.text);
+                      }}
+                      className="rounded px-1.5 py-0.5 text-[11px] text-muted hover:bg-surface hover:text-text"
+                    >
+                      Copy
+                    </button>
+                    {chat && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          clearUnseenSuggestions();
+                          focusTab("assistant");
+                        }}
+                        data-tooltip="Continue in the Assistant chat"
+                        className="rounded px-1.5 py-0.5 text-[11px] text-muted hover:bg-surface hover:text-text"
+                      >
+                        Dig deeper
+                      </button>
+                    )}
+                  </>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    clearUnseenSuggestions();
+                    dismissSuggestion();
+                  }}
+                  aria-label="Dismiss suggestion"
+                  data-tooltip="Dismiss"
+                  className="rounded p-0.5 text-muted hover:bg-surface hover:text-text"
+                >
+                  <X size={13} aria-hidden="true" />
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       <div ref={transcriptRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
       {segments.length === 0 && !interim ? (
         <div className="flex h-full flex-col items-center justify-center text-center text-sm text-muted">
@@ -1169,6 +1269,10 @@ export function LiveView({
                           void commitRename(seg.speaker_label as string, name)
                         }
                         onCancel={() => setEditingSegId(null)}
+                        isMe={meLabels.includes(seg.speaker_label)}
+                        onToggleMe={
+                          answersOn ? () => void toggleMe(seg.speaker_label as string) : undefined
+                        }
                       />
                     ) : (
                       <button
@@ -1180,6 +1284,9 @@ export function LiveView({
                         )}`}
                       >
                         {displayName(seg.speaker_label)}
+                        {answersOn && meLabels.includes(seg.speaker_label) && (
+                          <span className="ml-1 text-[10px] font-normal text-muted">(me)</span>
+                        )}
                       </button>
                     ))}
                   <span className="text-text">
@@ -1243,40 +1350,34 @@ export function LiveView({
           <RefreshCw size={14} className={analyzing ? "animate-spin" : ""} />
         </button>
       </div>
-      <div className="flex-1 overflow-y-auto px-3 py-3">
+      <div className="flex-1 overflow-y-auto px-4 py-4">
         {/* Proactive help rides along on the analysis pass: shown as cards when
             the assistant judges it can materially help right now. */}
-        {suggestions.length > 0 && (
-          <div className="mb-3 space-y-2">
-            {suggestions.map((s) => (
-              <div key={s.id} className="rounded border border-accent/40 bg-accent/5 px-3 py-2">
-                <div className="mb-1 flex items-center gap-1.5">
-                  <Lightbulb size={12} className="text-accent" />
-                  <span className="text-[11px] font-medium uppercase tracking-wide text-muted">
-                    Suggestion
-                  </span>
-                  <span className="ml-auto text-[10px] text-muted">
-                    {new Date(s.at).toLocaleTimeString(undefined, {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setSuggestions((prev) => prev.filter((x) => x.id !== s.id))
-                    }
-                    aria-label="Dismiss"
-                    className="text-muted hover:text-red-500"
-                  >
-                    <X size={12} />
-                  </button>
-                </div>
-                <div className="prose prose-sm dark:prose-invert max-w-none text-[13px]">
-                  <Markdown>{s.text}</Markdown>
-                </div>
-              </div>
-            ))}
+        {suggestion && (
+          <div className="mb-4 rounded-lg border border-accent/40 bg-accent/5 px-4 py-3">
+            <div className="mb-2 flex items-center gap-2">
+              <Lightbulb size={14} className="text-accent" />
+              <span className="text-xs font-semibold uppercase tracking-wide text-text">
+                Suggestion
+              </span>
+              <span className="ml-auto text-[11px] text-muted">
+                {new Date(suggestion.at).toLocaleTimeString(undefined, {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}
+              </span>
+              <button
+                type="button"
+                onClick={() => setSuggestion(null)}
+                aria-label="Dismiss"
+                className="text-muted hover:text-red-500"
+              >
+                <X size={14} />
+              </button>
+            </div>
+            <div className="prose prose-sm dark:prose-invert max-w-none text-[13px] leading-relaxed">
+              <Markdown>{suggestion.text}</Markdown>
+            </div>
           </div>
         )}
         {groupedInsights.length === 0 ? (
@@ -1288,21 +1389,27 @@ export function LiveView({
         ) : (
           <div className="space-y-3">
             {groupedInsights.map((g) => (
-              <div key={g.kind}>
-                <div className="mb-1 flex items-center gap-1.5">
+              <section key={g.kind} className="rounded-lg border border-border bg-bg/60 px-3 py-3">
+                <div className="mb-2 flex items-center gap-2">
                   <span className={`h-1.5 w-1.5 rounded-full ${g.dot}`} />
-                  <span className="text-[11px] font-medium uppercase tracking-wide text-muted">
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-text">
                     {g.label}
-                  </span>
+                  </h3>
                 </div>
-                <ul className="space-y-1">
+                <ul className="space-y-2">
                   {g.items.map((it) => (
-                    <li key={it.id} className="text-[13px] leading-snug text-text">
-                      <HighlightedText text={it.content} />
+                    <li key={it.id} className="flex items-start gap-2 text-sm leading-relaxed text-text">
+                      <span
+                        className={`mt-[0.45rem] h-1.5 w-1.5 shrink-0 rounded-full ${g.dot}`}
+                        aria-hidden="true"
+                      />
+                      <span className="min-w-0">
+                        <HighlightedText text={it.content} />
+                      </span>
                     </li>
                   ))}
                 </ul>
-              </div>
+              </section>
             ))}
           </div>
         )}
@@ -1312,8 +1419,11 @@ export function LiveView({
 
   // A linked Teams meeting + WorkIQ lets the user build the recap from the
   // meeting's own transcript — no local recording needed.
-  const canSummarizeFromTranscript =
-    (settings?.mcp_enabled?.workiq ?? false) && session.external_meeting != null;
+  const transcriptUnavailable = !(settings?.mcp_enabled?.workiq ?? false)
+    ? "Needs the WorkIQ MCP server (Microsoft 365), enabled in Settings → MCP servers"
+    : session.external_meeting == null
+      ? "Link the Teams meeting in the Context tab first"
+      : null;
 
   const summaryNode = (
     <SummarySection
@@ -1323,16 +1433,18 @@ export function LiveView({
       setText={setSummaryText}
       generating={summaryGenerating}
       error={summaryError}
-      onGenerate={() => void generateSummary()}
+      onGenerate={(source) =>
+        void (source === "transcript" ? generateFromTranscript() : generateSummary())
+      }
       suggestedAttendees={suggestedAttendees}
       topicTitle={topicTitle}
       topicIssueNumber={topicIssueNumber}
       canGenerate={segments.length > 0}
-      canSummarizeFromTranscript={canSummarizeFromTranscript}
-      onSummarizeFromTranscript={() => void generateFromTranscript()}
+      transcriptUnavailable={transcriptUnavailable}
       transcriptScraping={transcriptScraping}
       saving={summarySaving}
       saved={summarySaved}
+      templates={summaryTemplates}
     />
   );
 
@@ -1395,11 +1507,13 @@ export function LiveView({
           {
             id: "insights",
             label: "Live insights",
-            badge: insights.length + suggestions.length || null,
+            badge: insights.length + (suggestion ? 1 : 0) || null,
           },
         ]
       : []),
-    ...(assistantOn && chat ? [{ id: "assistant", label: "Assistant" }] : []),
+    ...((assistantOn || answersOn) && chat
+      ? [{ id: "assistant", label: "Assistant", badge: unseenSuggestions || null }]
+      : []),
     ...(translationOn ? [{ id: "translation", label: "Translation" }] : []),
     ...(notesOn ? [{ id: "notes", label: notes.trim() ? "Notes ●" : "Notes" }] : []),
     { id: "summary", label: hasSummary ? "Summary ●" : "Summary" },
@@ -1454,6 +1568,20 @@ export function LiveView({
             collections={collections}
           />
         </label>
+
+        <div
+          className="inline-flex items-center gap-1 text-[11px] text-muted"
+          data-tooltip={"Assistant role for every AI feature of this session.\nInherited from the topic when you attach one."}
+        >
+          Role
+          <RoleSelector
+            value={session.role ?? null}
+            onChange={(roleName) => void applyRole(roleName)}
+            open={roleOpen}
+            onOpenChange={setRoleOpen}
+            variant="toolbar"
+          />
+        </div>
 
         <div className="ml-auto flex items-center gap-2">
           <FeaturePicker

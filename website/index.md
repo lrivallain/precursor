@@ -39,13 +39,16 @@ features:
     details: >-
       Simple conversations for when you just need an answer fast. Streaming
       replies, markdown, diagrams generation, and code highlighting out of the box.
+      Pick GitHub Copilot or Azure AI Foundry per conversation without switching
+      other chats or topics.
     link: /features/chats
     linkText: About chats
   - icon: 🎙️
     title: Live meeting assistant
     details: >-
       Transcribe a meeting with speaker labels via Azure Speech, and
-      get live insights, Q&A, notes and an editable summary you can post to a topic.
+      get live insights, suggested answers to the questions you're asked, Q&A, notes and an editable summary — from the template
+      and in the language you pick — you can post to a topic.
     link: /features/live-sessions
     linkText: About live sessions
   - icon: 🤖
@@ -62,6 +65,14 @@ features:
       webhook triggers.
     link: /features/workflows
     linkText: About workflows
+  - icon: ✅
+    title: Step by step
+    details: >-
+      Split a long ask into a tree of steps, work and validate each one in its
+      own chat, then consolidate the results into one answer filed back into
+      the topic.
+    link: /features/step-by-step
+    linkText: About step plans
   - icon: 🗂️
     title: Workspaces & files
     details: >-
@@ -81,10 +92,26 @@ features:
     title: MCP, both ways
     details: >-
       Precursor is an MCP server (it exposes your conversations) and an MCP
-      client (it attaches tool servers per turn) — GitHub, fetch, workspace-fs,
+      client (it attaches tool servers per turn) — GitHub, fetch, workspaces,
       a command runner, WorkIQ, and your own.
     link: /features/mcp
     linkText: About MCP
+  - icon: 🛡️
+    title: Tool approvals
+    details: >-
+      Choose per conversation whether tool calls run freely, only when
+      read-only, or always wait for you. Pending approvals survive a reload
+      and show in the sidebar.
+    link: /features/approvals
+    linkText: About approvals
+  - icon: 🔎
+    title: Precursor IQ
+    details: >-
+      Ask questions about your own topics, chats, agents and meetings in the
+      IQ section, ⌘K or over MCP, and get cited answers that open their
+      sources.
+    link: /features/iq
+    linkText: About Precursor IQ
   - icon: 🧠
     title: Skills & memory
     details: >-
@@ -92,6 +119,21 @@ features:
       the Copilot CLI) plus long-term memory injected into conversation.
     link: /features/skills-memory
     linkText: About skills & memory
+  - icon: 🗜️
+    title: Context compression
+    details: >-
+      Long threads stay usable: screenshots and older tool output are trimmed
+      automatically, and /compact summarises the conversation so far so you
+      can keep going.
+    link: /features/context-compression
+    linkText: About context compression
+  - icon: ⏪
+    title: Timeline & rewind
+    details: >-
+      A timeline of dashes on the right edge of every conversation and agent session. Jump to any
+      turn, or rewind there and continue, with a preview and an undo.
+    link: /features/rewind
+    linkText: About timeline & rewind
   - icon: ⏰
     title: Scheduler & reminders
     details: >-
@@ -105,6 +147,13 @@ features:
       or a deterministic mock provider for offline development.
     link: /guide/configuration
     linkText: Configure a provider
+  - icon: 🔁
+    title: An OpenAI endpoint for your models
+    details: >-
+      Point VS Code, Open WebUI or any OpenAI client at Precursor and use the
+      active provider's models — Copilot included — with a key you control.
+    link: /features/openai-endpoint
+    linkText: About the endpoint
   - icon: 📱
     title: Works on your phone
     details: >-

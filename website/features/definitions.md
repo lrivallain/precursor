@@ -1,0 +1,142 @@
+---
+title: Definition files
+---
+
+# Definition files
+
+Declare agents and workflows in **YAML files** — one per agent, one per
+workflow — and let the database keep only what happens when they run: status,
+progress, run history, schedules, triggers. Files can live in git, be reviewed
+like code, and move between machines.
+
+The same folder holds the **summary templates** of
+[live sessions](/features/live-sessions#your-own-templates) — see
+[below](#summary-templates).
+
+::: warning Work in progress
+Still evolving. A new install starts in files mode, with nothing to migrate.
+An install that already has agents, workflows or custom roles keeps running from
+the database, as it always has, until you migrate it. The full design, file format and roadmap live
+in [`docs/definitions.md`](https://github.com/lrivallain/precursor/blob/main/docs/definitions.md).
+:::
+
+## The files
+
+```yaml
+# agents/inbox-triager.agent.yaml
+kind: agent
+id: inbox-triager          # stable identity: never change it
+title: Inbox triager
+prompt: Sort every thread into act now / this week / later.
+approval_policy: balanced
+capabilities:
+  mcp_servers: [workiq]
+```
+
+```yaml
+# workflows/morning-briefing.workflow.yaml
+kind: workflow
+id: morning-briefing
+name: Morning briefing
+steps:
+  - key: triage
+    agent: agents/inbox-triager.agent.yaml
+  - key: check
+    kind: gate
+    prompt: PASS if every point is backed by a thread.
+    on_fail: triage
+```
+
+Steps have **keys**, so references (`on_fail`, context sources,
+<code v-pre>{{step.triage.output}}</code>) survive a reorder. Files are checked strictly —
+unknown keys, duplicate keys and contradictions are errors — and JSON Schemas
+give editors completion.
+
+## Roles as files
+
+[Assistant roles](/features/skills-memory#assistant-roles) are definition files
+too — `roles/<name>.role.yaml` with a `name` and a `prompt`. Topics, chats,
+agents and workflows refer to a role by its **name** (case-insensitive), so it
+can't be renamed in the app, and a name nothing defines falls back to the
+`default` role. `roles/default.role.yaml` is always there: Precursor re-creates
+it when it's missing. The migration wizard writes your existing roles with the
+agents and workflows, and switching back copies their prompts into the
+database again.
+
+Deleting a role from Settings also clears matching role names from agent and
+workflow files, including definitions not yet listed in the app. Unrelated
+settings and permission reviews are preserved. Uncheckable definitions and
+conflicting or unwritable affected files block deletion instead of leaving a
+stale assignment; see [assistant roles](/features/skills-memory#assistant-roles).
+
+## Getting there from today's data
+
+While the database still declares them, the **Agents** and **Workflows** homes
+open with an invitation to migrate — **Start the migration** takes you to the
+wizard; **Not now** hides it for a week. Or open **Settings → Definition
+files** directly. The wizard takes you through it:
+
+1. **Overview** — what's declared today, where the files will go (the
+   **Definitions** workspace), what stays in the database, and anything
+   in the way (a workflow mid-run, two files with the same id).
+2. **Review** — every agent, workflow and role with what happens to its file: new,
+   rewritten from the database (and why), or already up to date. Open a line to
+   see the **file itself**, as it will be written, next to what's on disk now.
+3. **Migrate** — a copy of the database is taken, the files are written and
+   **verified** against the database; if anything differs, nothing switches.
+4. **Try it out** — the files now declare your agents and workflows. Edit them
+   in Files, run workflows, watch the folder check. **Switch back to the
+   database** is still one click away.
+5. **Clean up** — when you're sure, and only then: the database stops holding a
+   copy of your agents and workflows. You confirm by ticking a box and typing
+   *clean up*. **After this, switching back isn't possible** (a copy of the
+   database is taken first).
+6. **Done** — the wizard confirms the migration is finished, with what was
+   cleared and where the database copies are.
+
+`precursor validate <folder>` checks a folder from a terminal or CI.
+
+## Summary templates
+
+A `*.summary.yaml` file is a template a live session's recap can be written
+from. Unlike agents and workflows, templates have no database side: they're
+always read from the folder, with or without the migration, and edits apply to
+the next recap.
+
+```yaml
+# summaries/customer-call.summary.yaml
+kind: summary
+id: customer-call            # remembered as the last template used
+name: Customer call notes    # shown in the picker
+description: Needs, commitments on each side, and next steps.
+prompt: |
+  You are an account manager writing up a call with a customer…
+```
+
+The `prompt` sets the recap's sections, tone and length; the transcript,
+notes, insights and linked context are passed for you, and so is the language.
+Precursor ships a few built-in templates; a file with the **id of a built-in**
+replaces it (delete the file to get it back). **Edit** in the Summary tab's
+**Generate** form writes that file for you and opens it. A template file with
+errors is skipped — the form lists why — and never stops a recap: the built-in
+of that id stays available.
+
+## Working in files mode
+
+- **Edit either side.** Saving in the app writes the file; editing the file
+  shows up in the app within a second. (Comments in a file aren't kept when the
+  app rewrites it.)
+- **New files appear on their own**, and moving a file keeps its history.
+- **A broken file never runs the old copy**: the run is refused with the reason.
+- **Permission changes need you.** A file that widens what an agent may do —
+  approval policy, autonomy, tools, MCP servers, budget, new steps — can't run
+  until you choose **Review & accept** on its page. The assistant's own file
+  tools can't write definition files at all.
+- **Keep them in git** with `PRECURSOR_DEFINITIONS_WORKSPACE`: a
+  [workspace](/features/workspaces) becomes the definitions folder, so you pull,
+  edit and push from the Files section. The editor completes and validates
+  definition files as you type, and marks the check's findings in the file
+  (see [the Definitions workspace](/features/workspaces#the-definitions-workspace)).
+
+See also [Import & export](/features/transfer) for sharing a single agent or
+workflow as a file, and the [configuration reference](/reference/configuration).

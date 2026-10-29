@@ -6,9 +6,14 @@ import os
 import sys
 from functools import cached_property, lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Slug of the built-in workspace that holds agent and workflow definition files
+# by default. Reserved: user workspaces never get it.
+DEFINITIONS_WORKSPACE_SLUG = "definitions"
 
 
 def is_source_checkout() -> bool:
@@ -135,6 +140,40 @@ class Settings(BaseSettings):
             base = Path(xdg) / "copilot" if xdg else Path.home() / ".copilot"
         return str((base / "skills").expanduser())
 
+    # Definition files: agents and workflows (``*.agent.yaml`` /
+    # ``*.workflow.yaml``, read at runtime in files mode) and live summary
+    # templates (``*.summary.yaml``, always read). See docs/definitions.md.
+    definitions_dir_override: str = Field(default="", validation_alias="PRECURSOR_DEFINITIONS_DIR")
+    # Keep the definitions in a Precursor workspace (e.g. a git clone), named by
+    # its slug, optionally followed by a folder inside it: ``team-defs`` or
+    # ``team-defs/precursor``. Ignored when PRECURSOR_DEFINITIONS_DIR is set.
+    definitions_workspace: str = ""
+
+    @cached_property
+    def definitions_dir(self) -> str:
+        if self.definitions_dir_override.strip():
+            return str(Path(self.definitions_dir_override).expanduser().resolve())
+        inside = Path(self.definitions_workspace.strip().strip("/"))
+        if inside.parts and ".." not in inside.parts and not inside.is_absolute():
+            return str(Path(self.workspaces_dir) / inside)
+        # The built-in "Definitions" workspace, so the files can be browsed
+        # and edited in the Files section.
+        return str(Path(self.workspaces_dir) / DEFINITIONS_WORKSPACE_SLUG)
+
+    @property
+    def definitions_in_builtin_workspace(self) -> bool:
+        """Whether the definitions live in the built-in workspace (the default)."""
+        return (
+            not self.definitions_dir_override.strip()
+            and not Path(self.definitions_workspace.strip().strip("/")).parts
+        )
+
+    # Where agents and workflows take their declarations from. ``database`` is
+    # the default: the migration in Settings → Workflows switches an install
+    # over (and back), and remembers it. ``files`` here forces files mode
+    # regardless (work in progress, see docs/definitions.md).
+    definitions_source: Literal["database", "files"] = "database"
+
     # LLM — the active provider and its credentials live in the app settings
     # (Settings → Model), not in the environment, so they can be changed at
     # runtime without a restart. See services/llm/registry.py. The prompt budget
@@ -164,6 +203,16 @@ class Settings(BaseSettings):
     # sweep that prunes the archived agent timeline runs. Gated by
     # ``scheduler_enabled``; the retention *levers* are Settings → System values.
     agent_event_retention_poll_seconds: int = 86_400
+
+    # Precursor IQ (services/iq/) — the retrieval index behind the ``retrieve`` /
+    # ``ask`` MCP tools, /api/iq and the ⌘K palette. When off, the palette falls
+    # back to the plain substring search and the IQ endpoints answer 404. The
+    # ticker drains the change queue every ``iq_index_poll_seconds`` (gated by
+    # ``scheduler_enabled``; retrieval drains a bounded batch itself regardless)
+    # and runs the catch-up sweep every ``iq_reconcile_poll_seconds``.
+    iq_enabled: bool = True
+    iq_index_poll_seconds: int = 20
+    iq_reconcile_poll_seconds: int = 3_600
 
     # WorkIQ token keep-alive (services/mcp/workiq_keepalive.py) — a background
     # ticker that silently refreshes the WorkIQ preview OAuth token before it

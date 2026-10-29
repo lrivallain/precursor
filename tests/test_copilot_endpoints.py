@@ -24,6 +24,7 @@ from precursor.backend.services.llm._openai_compat import (
 )
 from precursor.backend.services.llm._responses_compat import (
     to_responses_input,
+    to_responses_options,
     to_responses_tools,
 )
 from precursor.backend.services.llm.base import ChatMessage, ToolDef, TurnDoneEvent
@@ -107,6 +108,23 @@ async def test_list_models_keeps_entries_without_the_field(
     assert [m.id for m in models] == ["legacy"]
     # Unrecorded means "assume chat-completions", not "unusable".
     assert not _prefers_responses("legacy")
+
+
+async def test_catalogue_reports_output_limit_and_vision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    item = _model("seeing", ["/chat/completions"])
+    item["capabilities"] = {
+        "type": "chat",
+        "limits": {"max_prompt_tokens": 128000, "max_output_tokens": 16000},
+        "supports": {"vision": True},
+    }
+    _stub_catalogue(monkeypatch, [item, _model("blind", ["/chat/completions"])])
+    models = {m.id: m for m in await GitHubCopilotProvider(token="t").list_models()}
+
+    # An OpenAI client sizes its requests from these, so they must survive.
+    assert (models["seeing"].max_output_tokens, models["seeing"].vision) == (16000, True)
+    assert (models["blind"].max_output_tokens, models["blind"].vision) == (None, False)
 
 
 async def test_catalogue_teaches_the_router(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -335,3 +353,45 @@ def test_tool_schemas_are_flattened() -> None:
             "parameters": {"type": "object"},
         }
     ]
+
+
+def test_request_options_are_respelled_for_responses() -> None:
+    options = to_responses_options(
+        {
+            "temperature": 0.2,
+            "max_completion_tokens": 500,
+            "stop": ["END"],
+            "tool_choice": {"type": "function", "function": {"name": "lookup"}},
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {"name": "answer", "schema": {"type": "object"}, "strict": True},
+            },
+        }
+    )
+
+    # ``stop`` has no Responses equivalent: dropped rather than failing the turn.
+    assert options == {
+        "temperature": 0.2,
+        "max_output_tokens": 500,
+        "tool_choice": {"type": "function", "name": "lookup"},
+        "text": {
+            "format": {
+                "type": "json_schema",
+                "name": "answer",
+                "schema": {"type": "object"},
+                "strict": True,
+            }
+        },
+    }
+
+
+def test_json_mode_and_plain_tool_choice_map_directly() -> None:
+    options = to_responses_options(
+        {"max_tokens": 64, "tool_choice": "required", "response_format": {"type": "json_object"}}
+    )
+
+    assert options == {
+        "max_output_tokens": 64,
+        "tool_choice": "required",
+        "text": {"format": {"type": "json_object"}},
+    }

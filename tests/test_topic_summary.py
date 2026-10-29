@@ -470,10 +470,14 @@ async def test_refresh_prompt_prefers_no_change_for_every_existing_brief(
     monkeypatch: pytest.MonkeyPatch, preserve: bool
 ) -> None:
     existing = "## My release notes\n- QA approved the build.\n- [ ] Run load test\n"
+    monkeypatch.setattr(
+        "precursor.backend.services.conversation_llm.saved_selection", AsyncMock(return_value=None)
+    )
     complete = AsyncMock(return_value=(existing, None))
     monkeypatch.setattr(svc, "build_context", AsyncMock(return_value="user: QA signed off."))
     monkeypatch.setattr(one_shot, "get_llm_provider", AsyncMock())
     monkeypatch.setattr(one_shot, "resolve_llm_model", AsyncMock(return_value="test"))
+    monkeypatch.setattr(one_shot, "resolve_model_category", AsyncMock(return_value=None))
     monkeypatch.setattr(one_shot, "complete_text_with_usage", complete)
 
     text, _ = await svc.generate_summary(
@@ -503,9 +507,13 @@ async def test_an_identical_refresh_preserves_a_user_authored_code_fence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     existing = "\n```text\nKeep the release gate closed.\n```\n"
+    monkeypatch.setattr(
+        "precursor.backend.services.conversation_llm.saved_selection", AsyncMock(return_value=None)
+    )
     monkeypatch.setattr(svc, "build_context", AsyncMock(return_value="No new facts."))
     monkeypatch.setattr(one_shot, "get_llm_provider", AsyncMock())
     monkeypatch.setattr(one_shot, "resolve_llm_model", AsyncMock(return_value="test"))
+    monkeypatch.setattr(one_shot, "resolve_model_category", AsyncMock(return_value=None))
     monkeypatch.setattr(
         one_shot, "complete_text_with_usage", AsyncMock(return_value=(existing.strip(), None))
     )
@@ -519,10 +527,14 @@ async def test_an_identical_refresh_preserves_a_user_authored_code_fence(
 async def test_first_generation_still_uses_the_standard_brief_template(
     monkeypatch: pytest.MonkeyPatch, existing: str
 ) -> None:
+    monkeypatch.setattr(
+        "precursor.backend.services.conversation_llm.saved_selection", AsyncMock(return_value=None)
+    )
     complete = AsyncMock(return_value=("## Status\n- Starting", None))
     monkeypatch.setattr(svc, "build_context", AsyncMock(return_value="user: Start a pilot."))
     monkeypatch.setattr(one_shot, "get_llm_provider", AsyncMock())
     monkeypatch.setattr(one_shot, "resolve_llm_model", AsyncMock(return_value="test"))
+    monkeypatch.setattr(one_shot, "resolve_model_category", AsyncMock(return_value=None))
     monkeypatch.setattr(one_shot, "complete_text_with_usage", complete)
 
     await svc.generate_summary(

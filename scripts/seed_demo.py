@@ -17,8 +17,12 @@ GitHub token saved, so the persona footer reads "Guest / Not connected".
 from __future__ import annotations
 
 import asyncio
+import json
 import os
+import shutil
+import subprocess
 import sys
+import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -48,16 +52,22 @@ from precursor.backend.models.agent_run import AgentRun  # noqa: E402
 from precursor.backend.models.agent_session import AgentSession  # noqa: E402
 from precursor.backend.models.chat import Chat  # noqa: E402
 from precursor.backend.models.collection import Collection  # noqa: E402
+from precursor.backend.models.conversation_artifact import ConversationArtifact  # noqa: E402
 from precursor.backend.models.meeting import (  # noqa: E402
     MeetingInsight,
     MeetingSegment,
     MeetingSession,
 )
 from precursor.backend.models.memory import Memory  # noqa: E402
-from precursor.backend.models.message import Message, MessageRole  # noqa: E402
+from precursor.backend.models.message import (  # noqa: E402
+    MESSAGE_KIND_COMPACTION,
+    Message,
+    MessageRole,
+)
 from precursor.backend.models.role import Role  # noqa: E402
 from precursor.backend.models.settings import AppSetting  # noqa: E402
 from precursor.backend.models.skill import Skill  # noqa: E402
+from precursor.backend.models.step_plan import Step, StepArtifactVersion, StepPlan  # noqa: E402
 from precursor.backend.models.topic import Topic  # noqa: E402
 from precursor.backend.models.topic_schedule import TopicSchedule  # noqa: E402
 from precursor.backend.models.topic_summary import TopicSummary  # noqa: E402
@@ -75,6 +85,7 @@ from precursor.backend.services.agents.directives import (  # noqa: E402
     strip_control_directives,
 )
 from precursor.backend.services.schedule_timing import RecurrenceRule  # noqa: E402
+from scripts.demo_side_chats import seed_side_chats  # noqa: E402
 
 NOW = datetime.now(UTC)
 
@@ -111,6 +122,201 @@ DEMO_SKILLS = {
         "then name the area of the codebase most likely responsible.",
     ),
 }
+
+
+# The "Handbook" git workspace: a local bare repository stands in for the
+# remote, with a short history and a few uncommitted edits in the working copy.
+_HANDBOOK_HISTORY: list[tuple[str, str, str, dict[str, str]]] = [
+    (
+        "Alex Chen <alex@example.com>",
+        "2026-09-14T09:30:00+02:00",
+        "Start the team handbook",
+        {
+            "README.md": "# Team handbook\n\nHow the platform team works: on-call, releases and reviews.\n\n"
+            "- [On-call](on-call.md)\n- [Releases](releases.md)\n",
+            "on-call.md": "# On-call\n\nThe on-call engineer owns production alerts for one week,\n"
+            "Monday to Monday.\n\n## Handoff\n\n- Walk through open incidents with the next on-call.\n"
+            "- Hand over the pager in the team channel.\n\n## Escalation\n\n"
+            "Page the service owner after 30 minutes without progress.\n",
+        },
+    ),
+    (
+        "Sam Rivera <sam@example.com>",
+        "2026-09-17T14:05:00+02:00",
+        "Add the release checklist",
+        {
+            "releases.md": "# Releases\n\n1. Freeze the branch on Wednesday.\n"
+            "2. Run the load test against staging.\n3. Publish the engineering digest.\n",
+        },
+    ),
+    (
+        "Alex Chen <alex@example.com>",
+        "2026-09-22T11:40:00+02:00",
+        "Page owners sooner",
+        {
+            "on-call.md": "# On-call\n\nThe on-call engineer owns production alerts for one week,\n"
+            "Monday to Monday.\n\n## Handoff\n\n- Walk through open incidents with the next on-call.\n"
+            "- Hand over the pager in the team channel.\n\n## Escalation\n\n"
+            "Page the service owner after 15 minutes without progress.\n",
+        },
+    ),
+]
+
+# Branches only the remote has (the clone is single-branch), for the picker.
+_HANDBOOK_REMOTE_BRANCHES: list[tuple[str, str, str, dict[str, str]]] = [
+    (
+        "release/2026.10",
+        "2026-09-24T16:20:00+02:00",
+        "Cut the October release notes",
+        {
+            "releases.md": "# Releases\n\n1. Freeze the branch on Wednesday.\n"
+            "2. Run the load test against staging.\n3. Publish the engineering digest.\n"
+            "4. Tag the release.\n"
+        },
+    ),
+    (
+        "drafts/incident-template",
+        "2026-09-25T10:05:00+02:00",
+        "Draft an incident report template",
+        {
+            "incident-template.md": "# Incident report\n\n## Impact\n\n## Timeline\n\n## Follow-ups\n"
+        },
+    ),
+]
+
+_HANDBOOK_EDITS = {
+    "README.md": "# Team handbook\n\nHow the platform team works: on-call, releases and reviews.\n\n"
+    "- [On-call](on-call.md)\n- [Releases](releases.md)\n- [Incident reviews](incident-review.md)\n",
+    "on-call.md": "# On-call\n\nThe on-call engineer owns production alerts for one week,\n"
+    "Monday to Monday.\n\n## Handoff\n\n- Walk through open incidents with the next on-call.\n"
+    "- Review the error budget together.\n"
+    "- Hand over the pager and post the handoff note in #platform-oncall.\n\n## Escalation\n\n"
+    "Page the service owner after 15 minutes without progress.\n",
+    "incident-review.md": "# Incident reviews\n\nHold a blameless review within five working days\n"
+    "of any customer-facing incident.\n",
+}
+
+
+def _git(cwd: Path, *args: str, env: dict[str, str] | None = None) -> None:
+    # The developer's own git config (signing, hooks, aliases) stays out of it.
+    base = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+    subprocess.run(
+        ["git", *args], cwd=cwd, env={**base, **(env or {})}, check=True, capture_output=True
+    )
+
+
+def seed_handbook_repo(data_dir: Path) -> str:
+    """Create the bare remote and the working copy; return the remote's URL."""
+    remotes = data_dir / "git-remotes"
+    bare = remotes / "handbook.git"
+    seed = remotes / "seed"
+    shutil.rmtree(remotes, ignore_errors=True)
+    remotes.mkdir(parents=True)
+    _git(remotes, "init", "--bare", "--initial-branch=main", str(bare))
+    _git(remotes, "init", "--initial-branch=main", str(seed))
+
+    def commit(author: str, date: str, message: str, files: dict[str, str]) -> None:
+        for name, text in files.items():
+            (seed / name).write_text(text, encoding="utf-8")
+        who, email = author[: author.index(" <")], author[author.index("<") + 1 : -1]
+        env = {
+            "GIT_AUTHOR_NAME": who,
+            "GIT_AUTHOR_EMAIL": email,
+            "GIT_COMMITTER_NAME": who,
+            "GIT_COMMITTER_EMAIL": email,
+            "GIT_AUTHOR_DATE": date,
+            "GIT_COMMITTER_DATE": date,
+        }
+        _git(seed, "add", "-A", env=env)
+        _git(seed, "commit", "-m", message, env=env)
+
+    for author, date, message, files in _HANDBOOK_HISTORY:
+        commit(author, date, message, files)
+    for branch, date, message, files in _HANDBOOK_REMOTE_BRANCHES:
+        _git(seed, "switch", "-c", branch, "main")
+        commit("Sam Rivera <sam@example.com>", date, message, files)
+    _git(seed, "push", str(bare), "main", *(b for b, *_ in _HANDBOOK_REMOTE_BRANCHES))
+    shutil.rmtree(seed)
+
+    url = bare.resolve().as_uri()
+    clone = data_dir / "workspaces" / "handbook"
+    shutil.rmtree(clone, ignore_errors=True)
+    _git(data_dir, "clone", "--branch", "main", "--single-branch", url, str(clone))
+    # A local branch not pushed yet.
+    _git(clone, "branch", "--no-track", "notes/onboarding")
+    for name, text in _HANDBOOK_EDITS.items():
+        (clone / name).write_text(text, encoding="utf-8")
+    return url
+
+
+_ESCALATION = (
+    "# Escalation\n\n"
+    "1. Page the on-call engineer.\n"
+    "2. After 15 minutes, page the service owner.\n"
+    "3. After an hour, page the engineering manager.\n"
+)
+
+
+def seed_runbooks_repo(data_dir: Path) -> str:
+    """A clone that diverged from its remote on the same line: Pull, then Merge,
+    stops on a conflict (the conflict screenshot)."""
+    remotes = data_dir / "git-remotes"
+    bare = remotes / "runbooks.git"
+    seed = remotes / "runbooks-seed"
+    _git(remotes, "init", "--bare", "--initial-branch=main", str(bare))
+    _git(remotes, "init", "--initial-branch=main", str(seed))
+
+    def commit(where: Path, who: str, email: str, date: str, message: str, text: str) -> None:
+        (where / "escalation.md").write_text(text, encoding="utf-8")
+        env = {
+            "GIT_AUTHOR_NAME": who,
+            "GIT_AUTHOR_EMAIL": email,
+            "GIT_COMMITTER_NAME": who,
+            "GIT_COMMITTER_EMAIL": email,
+            "GIT_AUTHOR_DATE": date,
+            "GIT_COMMITTER_DATE": date,
+        }
+        _git(where, "add", "-A", env=env)
+        _git(where, "commit", "-m", message, env=env)
+
+    commit(
+        seed,
+        "Alex Chen",
+        "alex@example.com",
+        "2026-09-15T10:00:00+02:00",
+        "Write the escalation runbook",
+        _ESCALATION,
+    )
+    _git(seed, "push", str(bare), "main")
+    url = bare.resolve().as_uri()
+    clone = data_dir / "workspaces" / "runbooks"
+    shutil.rmtree(clone, ignore_errors=True)
+    _git(data_dir, "clone", "--branch", "main", "--single-branch", url, str(clone))
+    commit(
+        seed,
+        "Sam Rivera",
+        "sam@example.com",
+        "2026-09-26T09:10:00+02:00",
+        "Page owners after 10 minutes",
+        _ESCALATION.replace(
+            "2. After 15 minutes, page the service owner.",
+            "2. After 10 minutes, page the service owner and post in #incidents.",
+        ),
+    )
+    _git(seed, "push", str(bare), "main")
+    shutil.rmtree(seed)
+    commit(
+        clone,
+        "Alex Chen",
+        "alex@example.com",
+        "2026-09-25T16:45:00+02:00",
+        "Loop in the team lead",
+        _ESCALATION.replace(
+            "2. After 15 minutes, page the service owner.",
+            "2. After 15 minutes, page the service owner and the team lead.",
+        ),
+    )
+    return url
 
 
 def write_skill_files(skills_dir: Path) -> None:
@@ -266,7 +472,15 @@ async def _seed_refined_agent(s: AsyncSession) -> None:
             clock[0] = clock[0] + timedelta(seconds=seconds)
             return clock[0]
 
-        events.append(AgentEvent(kind="UserMessageData", text=turn["prompt"], at=start))
+        # Prompts carry an SDK id, as live ones do, so the demo can preview a rewind.
+        events.append(
+            AgentEvent(
+                kind="UserMessageData",
+                text=turn["prompt"],
+                at=start,
+                event_id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"demo-guide-{n}")),
+            )
+        )
         events.append(AgentEvent(kind="turn_start", at=tick(1)))
         for i, step in enumerate(turn["steps"]):
             if step[0] == "say":
@@ -353,12 +567,463 @@ async def _seed_refined_agent(s: AsyncSession) -> None:
         )
 
 
+async def _seed_compacted_topic(s: AsyncSession, collection_id: int) -> None:
+    topic = Topic(
+        title="Hosting options for the reporting stack",
+        slug="hosting-options-review",
+        description="Where the nightly reporting jobs should run next year.",
+        collection_id=collection_id,
+    )
+    s.add(topic)
+    await s.flush()
+    call = {
+        "id": "call_pricing",
+        "type": "function",
+        "function": {
+            "name": "fetch__fetch",
+            "arguments": '{"url": "https://example.com/pricing/batch"}',
+        },
+    }
+    rows = [
+        Message(
+            role=MessageRole.USER,
+            content=(
+                "Compare running the nightly reporting jobs on managed batch versus "
+                "our own Kubernetes cluster. Cost first, then operations."
+            ),
+            created_at=ago(hours=5),
+        ),
+        Message(
+            role=MessageRole.ASSISTANT,
+            content="",
+            tool_calls=json.dumps([call]),
+            created_at=ago(hours=5),
+        ),
+        Message(
+            role=MessageRole.TOOL,
+            content=(
+                "Batch pricing — pay per vCPU-hour, spot capacity at up to 80% off, "
+                "no charge while idle. Low-priority nodes can be evicted."
+            ),
+            tool_calls=json.dumps(
+                {
+                    "tool_call_id": "call_pricing",
+                    "name": "fetch__fetch",
+                    "arguments": call["function"]["arguments"],
+                }
+            ),
+            created_at=ago(hours=5),
+        ),
+        Message(
+            role=MessageRole.ASSISTANT,
+            content=(
+                "On cost, managed batch wins for a job that runs 2 hours a night: "
+                "you pay for about 60 vCPU-hours a month instead of a cluster that "
+                "idles 22 hours a day. Spot capacity cuts it further, as long as the "
+                "jobs checkpoint so an eviction only loses the current step."
+            ),
+            prompt_tokens=6_450,
+            completion_tokens=310,
+            model="mock",
+            created_at=ago(hours=5),
+        ),
+        Message(
+            role=MessageRole.USER,
+            content="And operationally? We have one person on call.",
+            created_at=ago(hours=4),
+        ),
+        Message(
+            role=MessageRole.ASSISTANT,
+            content=(
+                "With one person on call, managed batch removes node upgrades, "
+                "autoscaler tuning and cluster certificates from their list. What "
+                "stays is the job definitions and alerting on failed runs."
+            ),
+            prompt_tokens=7_020,
+            completion_tokens=240,
+            model="mock",
+            created_at=ago(hours=4),
+        ),
+        Message(
+            role=MessageRole.SYSTEM,
+            kind=MESSAGE_KIND_COMPACTION,
+            content=(
+                "## Goal and context\n"
+                "Choose where the nightly reporting jobs (about 2 h a night) run next "
+                "year: managed batch or the team's own Kubernetes cluster. One person "
+                "is on call.\n\n"
+                "## Key facts and decisions\n"
+                "- Batch bills per vCPU-hour, nothing while idle; spot is up to 80% off "
+                "but can be evicted.\n"
+                "- About 60 vCPU-hours a month on batch versus a cluster idle 22 h a "
+                "day.\n\n"
+                "## Current state and next step\n"
+                "Leaning towards managed batch with spot and checkpointing. Next: "
+                "decide how failed runs are retried and alerted."
+            ),
+            prompt_tokens=5_200,
+            completion_tokens=380,
+            model="mock",
+            created_at=ago(hours=3),
+        ),
+        Message(
+            role=MessageRole.USER,
+            content="How should a failed nightly run be retried?",
+            created_at=ago(hours=2),
+        ),
+        Message(
+            role=MessageRole.ASSISTANT,
+            content=(
+                "Retry each step up to 3 times with backoff, resuming from its last "
+                "checkpoint so a spot eviction doesn't restart the whole night. After "
+                "the third failure, page the on-call person with the step and its log."
+            ),
+            prompt_tokens=1_960,
+            completion_tokens=150,
+            model="mock",
+            created_at=ago(hours=2),
+        ),
+    ]
+    for row in rows:
+        row.topic_id = topic.id
+        s.add(row)
+        # One at a time so ids follow transcript order.
+        await s.flush()
+
+    # A chat that has filled most of the window, so the stats panel shows the
+    # nudge to compact.
+    chat = Chat(title="Quarterly capacity plan", slug="quarterly-capacity-plan")
+    s.add(chat)
+    await s.flush()
+    for row in (
+        Message(
+            role=MessageRole.USER,
+            content="Draft the Q3 capacity plan from the usage exports I pasted above.",
+            created_at=ago(hours=1),
+        ),
+        Message(
+            role=MessageRole.ASSISTANT,
+            content=(
+                "Here is a first cut: storage grows 14% a quarter and compute stays "
+                "flat, so the plan adds two storage nodes in July and holds compute."
+            ),
+            prompt_tokens=6_930,
+            completion_tokens=420,
+            model="mock",
+            created_at=ago(hours=1),
+        ),
+    ):
+        row.chat_id = chat.id
+        s.add(row)
+        await s.flush()
+
+
+# A long chat for the transcript timeline and rewind shots: enough turns that the
+# rail shows a run of dashes and the transcript scrolls well past one screen.
+_TIMELINE_TURNS = [
+    (
+        "I want to automate watering for a 60 m² vegetable garden. Where do I start?",
+        "Start by zoning: group plants with similar water needs. For 60 m² that is "
+        "likely three zones — raised beds, berries and a lawn strip. Then measure the "
+        "tap's flow rate with a bucket and a stopwatch.",
+    ),
+    (
+        "Flow is about 14 L/min at the outdoor tap.",
+        "Enough for one drip zone at a time, but not drip and sprinklers together. "
+        "Plan the zones to run one after another.",
+    ),
+    (
+        "Drip or soaker hose for the raised beds?",
+        "Drip line with inline emitters every 30 cm. Soaker hoses are cheaper but water "
+        "unevenly over long runs and clog with hard water.",
+    ),
+    (
+        "What controller should I buy?",
+        "A 4-zone controller is plenty. For weather skips, pick one with a rain-sensor "
+        "input or a Wi-Fi model with a local API.",
+    ),
+    (
+        "Is Wi-Fi worth it?",
+        "Mostly for remote rain delays and run logs. Without Wi-Fi in the garden, a rain "
+        "sensor gets you most of the benefit.",
+    ),
+    (
+        "Let's go with Wi-Fi. How do I protect the valves in winter?",
+        "Fit a drain valve at the lowest point and blow the lines out before the first "
+        "frost. Keep the controller indoors or in an insulated box.",
+    ),
+    (
+        "Draft a shopping list for zone 1, the beds.",
+        '- 1 solenoid valve, 3/4"\n- 25 m of 16 mm drip line, 30 cm spacing\n'
+        "- Pressure reducer (1.5 bar) and a 120-mesh filter\n"
+        "- End caps, tees and 30 stakes\n- Backflow preventer",
+    ),
+    (
+        "And zone 2, the berries?",
+        "Point-source emitters (4 L/h) on a 16 mm header, two per bush, under a mulch "
+        "layer — berries don't like wet leaves.",
+    ),
+    (
+        "What about the lawn strip?",
+        "Two pop-up rotors on their own valve, early morning, 20 minutes twice a week in summer.",
+    ),
+    (
+        "Schedule for July?",
+        "Beds daily for 25 min at 06:00, berries every other day for 40 min, lawn on "
+        "Tuesday and Saturday for 20 min. Skip any run after more than 5 mm of rain.",
+    ),
+    (
+        "I travel in August, adjust for that.",
+        "Raise the beds to 30 min, add a mid-week deep run for the berries and turn on "
+        "valve-fault notifications.",
+    ),
+    (
+        "Total budget estimate?",
+        "Roughly €330: controller €120, valves €75, drip line and fittings €90, rotors "
+        "€40, the rest in small parts.",
+    ),
+    (
+        "Summarise everything in five bullets.",
+        "- Three zones: beds on drip, berries on emitters, lawn on rotors\n"
+        "- Wi-Fi 4-zone controller with weather skip\n"
+        "- July schedule plus an August travel profile\n"
+        "- Drain valve and blow-out before frost\n- Budget about €330",
+    ),
+]
+
+
+async def _seed_timeline_chat(s: AsyncSession) -> None:
+    chat = Chat(title="Garden irrigation plan", slug="garden-irrigation-plan")
+    s.add(chat)
+    await s.flush()
+    for i, (prompt, answer) in enumerate(_TIMELINE_TURNS):
+        hours = 30 - i * 2
+        for row in (
+            Message(role=MessageRole.USER, content=prompt, created_at=ago(hours=hours)),
+            Message(
+                role=MessageRole.ASSISTANT,
+                content=answer,
+                prompt_tokens=900 + 140 * i,
+                completion_tokens=120,
+                model="mock",
+                created_at=ago(hours=hours - 0.1),
+            ),
+        ):
+            row.chat_id = chat.id
+            s.add(row)
+            await s.flush()
+
+
+_BREAKDOWN_TURNS: list[tuple[str, str, int]] = [
+    (
+        "We need a capacity plan for the reporting stack next year. Start from the "
+        "current peak of 180 concurrent jobs and a 35% yearly growth rate.",
+        "At 35% growth the peak reaches roughly **243 concurrent jobs** by the end of "
+        "next year. Planning for 20% headroom on top of that gives **~290 slots**.\n\n"
+        "- Today: 180 slots (peak)\n- Year end: 243 slots\n- With headroom: 290 slots",
+        4_700,
+    ),
+    (
+        "Now compare running those 290 slots on managed batch versus our own cluster, "
+        "cost first and then operational load.",
+        "Managed batch is cheaper below ~200 slots and the cluster wins above that, "
+        "provided one engineer owns upgrades.\n\n"
+        "| Option | Monthly cost | Ops load |\n| --- | --- | --- |\n"
+        "| Managed batch | $18.4k | Low |\n| Own cluster | $14.1k | Medium |",
+        5_600,
+    ),
+]
+
+
+async def _seed_breakdown_chat(s: AsyncSession) -> None:
+    chat = Chat(title="Reporting stack capacity plan", slug="reporting-capacity-plan")
+    s.add(chat)
+    await s.flush()
+    for i, (prompt, answer, prompt_tokens) in enumerate(_BREAKDOWN_TURNS):
+        hours = 3 - i
+        for row in (
+            Message(role=MessageRole.USER, content=prompt, created_at=ago(hours=hours)),
+            Message(
+                role=MessageRole.ASSISTANT,
+                content=answer,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=420,
+                model="mock",
+                created_at=ago(hours=hours - 0.1),
+            ),
+        ):
+            row.chat_id = chat.id
+            s.add(row)
+            await s.flush()
+
+
+_EMAIL_PROMPT = "Draft a short email telling the vendor we need the renewal quote by Friday."
+_EMAIL_ORIGINAL = (
+    "**Subject:** Renewal quote needed by Friday\n\n"
+    "Hi Dana,\n\n"
+    "I hope you're doing well. We're finalising next year's budget and need the "
+    "renewal quote for our support contract **by Friday**.\n\n"
+    "Could you include:\n\n"
+    "- the price for 50 seats,\n"
+    "- any multi-year discount.\n\n"
+    "Thanks,\nAlex"
+)
+# The user's in-place edit: a later deadline and one more line item.
+_EMAIL_EDITED = (
+    "**Subject:** Renewal quote needed by Monday\n\n"
+    "Hi Dana,\n\n"
+    "We're finalising next year's budget and need the renewal quote for our "
+    "support contract **by Monday noon**.\n\n"
+    "Could you include:\n\n"
+    "- the price for 50 seats,\n"
+    "- any multi-year discount,\n"
+    "- the premium SLA option.\n\n"
+    "Thanks,\nAlex"
+)
+
+
+async def _seed_edited_reply_chat(s: AsyncSession) -> None:
+    """A chat whose drafted email the user edited, for the reply-edit shot."""
+    chat = Chat(title="Vendor renewal email", slug="vendor-renewal-email")
+    s.add(chat)
+    await s.flush()
+    s.add(
+        Message(
+            chat_id=chat.id, role=MessageRole.USER, content=_EMAIL_PROMPT, created_at=ago(hours=3)
+        )
+    )
+    s.add(
+        Message(
+            chat_id=chat.id,
+            role=MessageRole.ASSISTANT,
+            content=_EMAIL_EDITED,
+            original_content=_EMAIL_ORIGINAL,
+            edited_at=ago(hours=2.5),
+            prompt_tokens=620,
+            completion_tokens=110,
+            model="mock",
+            created_at=ago(hours=2.9),
+        )
+    )
+    await s.flush()
+
+
+_STEP_PLAN_ASK = (
+    "Hi team,\n\nBefore we renew we need answers on five points: (1) the p95 latency "
+    "regression on search, (2) a data-residency statement for the EU region, (3) the "
+    "price impact of moving to the reserved tier, (4) the SSO migration timeline, and "
+    "(5) who our escalation contact is during the cut-over.\n\nThanks, Morgan"
+)
+
+# (title, instruction, status, artifact, parent index in this list)
+_STEP_PLAN_STEPS: list[tuple[str, str, str, str, int | None]] = [
+    (
+        "Explain the search latency regression",
+        "Say what changed, how bad it is and when it is fixed.",
+        "validated",
+        "p95 doubled after the 2026.7 indexing change: the new analyzer re-tokenises "
+        "every query. A fix is in review and ships in 2026.8; until then, enabling the "
+        "query cache brings p95 back to its previous level.",
+        None,
+    ),
+    (
+        "Confirm EU data residency",
+        "State where customer data is stored and processed.",
+        "to_validate",
+        "All customer data for EU tenants stays in `westeurope` and `northeurope`; "
+        "backups are replicated between the two. Support access is logged and limited "
+        "to EU-based staff.",
+        None,
+    ),
+    (
+        "Price the reserved tier",
+        "Compare the current plan with the reserved tier over 12 months.",
+        "in_progress",
+        "",
+        None,
+    ),
+    (
+        "Plan the SSO migration",
+        "Give the customer a realistic timeline.",
+        "open",
+        "",
+        None,
+    ),
+    (
+        "Name the cut-over escalation contact",
+        "Who they call, and when.",
+        "open",
+        "",
+        None,
+    ),
+    (
+        "Inventory the identity providers in use",
+        "List the providers and which tenants use each.",
+        "validated",
+        "Two providers: Entra ID (14 tenants) and a legacy SAML IdP (3 tenants).",
+        3,
+    ),
+    (
+        "Schedule the SAML cut-over",
+        "Pick a window that avoids the release freeze.",
+        "open",
+        "",
+        3,
+    ),
+]
+
+
+async def _seed_step_plan(s: AsyncSession, topic_id: int) -> None:
+    """A plan mid-way: one step validated, one awaiting review, three to go."""
+    plan = StepPlan(
+        title="Answer the renewal questions",
+        source_text=_STEP_PLAN_ASK,
+        status="active",
+        source_topic_id=topic_id,
+        output_instructions="A short, friendly reply, one section per question.",
+    )
+    s.add(plan)
+    await s.flush()
+    ids: list[int] = []
+    positions: dict[int | None, int] = {}
+    for title, instruction, status, artifact, parent in _STEP_PLAN_STEPS:
+        position = positions.get(parent, 0)
+        positions[parent] = position + 1
+        step = Step(
+            plan_id=plan.id,
+            parent_step_id=None if parent is None else ids[parent],
+            position=position,
+            title=title,
+            instruction=instruction,
+            status=status,
+            artifact=artifact,
+            artifact_version=1 if artifact else 0,
+            created_by="model",
+        )
+        s.add(step)
+        await s.flush()
+        ids.append(step.id)
+        if artifact:
+            s.add(StepArtifactVersion(step_id=step.id, version=1, content=artifact, author="model"))
+    await s.flush()
+
+
 async def seed() -> None:
     await init_db()
 
     async with SessionLocal() as s:
         # Screenshots render archived fixtures, never a real Copilot session.
         await s.merge(AppSetting(key="agents_enabled", value="false"))
+        await s.merge(AppSetting(key="llm_provider", value='"mock"'))
+        await s.merge(AppSetting(key="llm_model", value='"mock"'))
+        # Built-in servers only: they spawn locally, so the context breakdown
+        # sees a real system-tools vs MCP-tools split without any network.
+        await s.merge(
+            AppSetting(
+                key="mcp_enabled",
+                value='{"precursor": true, "fetch": true, "drawio": true, "cmd-runner": true}',
+            )
+        )
 
         # ---------------- roles ----------------
         # The built-in `default` role is seeded by a migration; only add extras.
@@ -585,10 +1250,36 @@ async def seed() -> None:
                         "Check `search/expand.py` first: if the expansion moved above the "
                         "cache check, moving it back below should recover most of it."
                     ),
+                    # The collapsed "Thinking" area in the docs screenshot.
+                    reasoning=(
+                        "**Reading the numbers**\n\n"
+                        "180ms to 410ms is about 2.3x, and the user says it is flat "
+                        "across query types. A worse plan would hurt some queries far "
+                        "more than others, so this reads like a cost every query pays.\n\n"
+                        "**Matching it to the change**\n\n"
+                        "The indexing change added a synonym-expansion pass. If it now "
+                        "runs before the cache lookup, even cache hits pay for it — "
+                        "that fits a uniform slowdown.\n\n"
+                        "**Choosing where to look first**\n\n"
+                        "Point at `search/expand.py` and the order of expansion versus "
+                        "the cache check before suggesting any profiling."
+                    ),
                     created_at=ago(days=1, hours=2),
                 ),
             ]
         )
+
+        # ---------------- a compacted topic ----------------
+        # A long research thread summarised with /compact: the older turns stay
+        # (dimmed) above the marker, one exchange follows it. Token counts are
+        # sized against the mock model's 8k window so the stats bar reads true.
+        await _seed_compacted_topic(s, platform.id)
+        await _seed_timeline_chat(s)
+        await _seed_breakdown_chat(s)
+        await _seed_edited_reply_chat(s)
+        # A topic with side chats started from it and from its replies.
+        await seed_side_chats(s, platform.id)
+        await _seed_step_plan(s, t_release.id)
 
         # ---------------- chats ----------------
         c_regex = Chat(title="Regex for semver tags", slug="regex-for-semver-tags")
@@ -755,14 +1446,6 @@ async def seed() -> None:
                 at=ago(days=1, minutes=2),
             ),
             AgentEvent(
-                kind="assistant_reasoning",
-                text=(
-                    "I will group the survey by user impact, distinguish shipped changes "
-                    "from investigations, and keep the digest short."
-                ),
-                at=ago(days=1, minutes=1),
-            ),
-            AgentEvent(
                 kind="assistant_message",
                 text=(
                     "## This week in the platform\n\n"
@@ -772,6 +1455,31 @@ async def seed() -> None:
                     "in progress.\n\n"
                     "The draft is ready for review before publishing.\n\n"
                     "```suggest\nMake it shorter\nAdd a next-steps section\n```"
+                ),
+                at=ago(days=1),
+            ),
+            AgentEvent(
+                kind="context_usage",
+                data={
+                    "current_tokens": 52_400,
+                    "token_limit": 200_000,
+                    "conversation_tokens": 31_200,
+                    "system_tokens": 8_900,
+                    "tool_definitions_tokens": 12_300,
+                },
+                at=ago(days=1),
+            ),
+            # The SDK sends a round's thinking right after its message; the
+            # timeline shows it collapsed on that message.
+            AgentEvent(
+                kind="reasoning",
+                text=(
+                    "**Grouping by user impact**\n\n"
+                    "The survey mixes shipped changes with open investigations. Readers "
+                    "care about what changed for them, so lead with shipped work and "
+                    "flag the search regression as still in progress.\n\n"
+                    "**Keeping it short**\n\n"
+                    "Three bullets cover it; anything longer belongs in the release notes."
                 ),
                 at=ago(days=1),
             ),
@@ -1073,7 +1781,16 @@ async def seed() -> None:
             started_at=ago(hours=2),
             ended_at=ago(hours=1),
             speaker_names_json='{"Guest-1":"Alex","Guest-2":"Sam"}',
-            summary="Add bounded retries and publish the release checklist.",
+            summary=(
+                "## Summary\n"
+                "The team reviewed the latency regression: retries amplify load when the "
+                "gateway is slow. They agreed to bound retries and add jitter.\n\n"
+                "## Attendees\n- Alex\n- Sam\n\n"
+                "## Decisions\n- Cap the retries and add jitter to the backoff.\n\n"
+                "## Action items\n"
+                "- **Sam** — add a bounded-retry regression test.\n"
+                "- **Sam** — update the release checklist."
+            ),
         )
         s.add(meeting)
         await s.flush()
@@ -1107,6 +1824,124 @@ async def seed() -> None:
             encoding="utf-8",
         )
         s.add(Workspace(name="Design notes", slug="design-notes", kind="local"))
+
+        # The built-in "Definitions" workspace (created at startup once
+        # Agents mode is on), with a workflow whose first step names an agent
+        # file that doesn't exist: the Files editor marks it. And a summary
+        # template of our own, next to the built-in ones in the Live picker.
+        definitions_dir = Path(os.environ["PRECURSOR_DATA_DIR"]) / "workspaces" / "definitions"
+        (definitions_dir / "agents").mkdir(parents=True, exist_ok=True)
+        (definitions_dir / "workflows").mkdir(parents=True, exist_ok=True)
+        (definitions_dir / "summaries").mkdir(parents=True, exist_ok=True)
+        (definitions_dir / "summaries" / "customer-call.summary.yaml").write_text(
+            "kind: summary\n"
+            "id: customer-call\n"
+            "name: Customer call notes\n"
+            "description: What the customer needs, what each side committed to, and what's next.\n"
+            "prompt: |\n"
+            "  You are an account manager writing up a call with a customer. Write\n"
+            "  markdown notes: context, needs & pain points, commitments (us / the\n"
+            "  customer) and next steps. Never invent figures, dates or commitments.\n",
+            encoding="utf-8",
+        )
+        (definitions_dir / "agents" / "digest-writer.agent.yaml").write_text(
+            "kind: agent\n"
+            "id: digest-writer\n"
+            "title: Digest writer\n"
+            "prompt: |\n"
+            "  Turn the week's merged pull requests and incident notes into a short\n"
+            "  engineering digest: highlights first, then risks, then thanks.\n"
+            "autonomy:\n"
+            "  enabled: true\n"
+            "  max_steps: 6\n",
+            encoding="utf-8",
+        )
+        (definitions_dir / "workflows" / "weekly-digest.workflow.yaml").write_text(
+            "kind: workflow\n"
+            "id: weekly-digest\n"
+            "name: Weekly engineering digest\n"
+            "description: Gather the week's changes, write the digest, and wait for an OK.\n"
+            "steps:\n"
+            "  - key: gather\n"
+            "    agent: agents/change-collector.agent.yaml\n"
+            "  - key: write\n"
+            "    agent: agents/digest-writer.agent.yaml\n"
+            "    context:\n"
+            "      mode: selected\n"
+            "      from: [gather]\n"
+            "  - key: review\n"
+            "    kind: approval\n"
+            "    instructions: Read the digest before it goes out.\n"
+            "    on_fail: write\n",
+            encoding="utf-8",
+        )
+        s.add(Workspace(name="Definitions", slug="definitions", kind="local"))
+
+        handbook_url = seed_handbook_repo(Path(os.environ["PRECURSOR_DATA_DIR"]))
+        runbooks_url = seed_runbooks_repo(Path(os.environ["PRECURSOR_DATA_DIR"]))
+        s.add(
+            Workspace(
+                name="Runbooks",
+                slug="runbooks",
+                kind="git",
+                repo_url=runbooks_url,
+                branch="main",
+                cloned_at=ago(days=13),
+                last_synced_at=ago(days=3),
+            )
+        )
+        handbook = Workspace(
+            name="Team handbook",
+            slug="handbook",
+            kind="git",
+            repo_url=handbook_url,
+            branch="main",
+            cloned_at=ago(days=6),
+            last_synced_at=ago(hours=3),
+        )
+        s.add(handbook)
+        await s.flush()
+
+        # Chats that attach handbook files: they fill the workspace's
+        # "continue a discussion" list and show an Artifacts section.
+        c_oncall = Chat(title="Tighten the on-call handoff", slug="tighten-the-on-call-handoff")
+        c_release = Chat(title="Release notes wording", slug="release-notes-wording")
+        s.add_all([c_oncall, c_release])
+        await s.flush()
+        s.add_all(
+            [
+                Message(
+                    chat_id=c_oncall.id,
+                    role=MessageRole.USER,
+                    content="Make the on-call handoff steps shorter.",
+                    created_at=ago(hours=2),
+                ),
+                Message(
+                    chat_id=c_oncall.id,
+                    role=MessageRole.ASSISTANT,
+                    content="I trimmed the handoff to three steps in `on-call.md`.",
+                    created_at=ago(hours=2),
+                ),
+                ConversationArtifact(
+                    chat_id=c_oncall.id,
+                    workspace_id=handbook.id,
+                    path="on-call.md",
+                    source="assistant",
+                ),
+                ConversationArtifact(
+                    chat_id=c_oncall.id,
+                    workspace_id=handbook.id,
+                    path="incident-review.md",
+                    source="manual",
+                ),
+                ConversationArtifact(
+                    chat_id=c_release.id,
+                    workspace_id=handbook.id,
+                    path="releases.md",
+                    source="opened",
+                ),
+            ]
+        )
 
         await s.commit()
 

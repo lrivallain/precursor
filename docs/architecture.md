@@ -116,6 +116,10 @@ detached background process, so Precursor can run without a terminal:
    attachments), snapshots history and resolves the turn's LLM/MCP settings; the
    router adds a system prompt that includes the linked GitHub issue body +
    most-recent comments + labels, plus any attached skills/memory.
+   `services/conversation_llm.py` resolves a saved chat/topic selection first,
+   otherwise global defaults. Provider, model/category, effort and budget are
+   snapshotted together; catalogues are cached by provider. Explicit provider
+   configuration errors fail visibly instead of substituting Mock.
 3. Enabled MCP tool servers are opened for the turn; their tools are advertised
    to the provider. `services/turn_engine.run_tool_loop` runs a **tool loop**:
    stream text, collect tool calls, execute them, append `tool` results, call
@@ -131,9 +135,19 @@ detached background process, so Precursor can run without a terminal:
 
 Chats (`/api/chats/{id}/messages/stream`) take the same path. Scheduled topics
 and MCP `post_message` run the *same* preparation, tool loop and persistence off
-the request path via `services/turn.py`. The workspace assistant
-(`services/workspace_chat.py`) is ephemeral — the client sends its history and
-nothing is stored — but it drives the same tool loop and meters its rounds too.
+the request path via `services/turn.py`. The workspace's discussion panel is not
+a separate engine: it renders a real chat or topic, so its turns take this same
+path. The client adds `workspace_context {workspace_id, path}` to the stream
+body while the conversation is viewed in a workspace, and the turn engine tells
+the model which file is open.
+
+**Artifacts.** `ConversationArtifact` (`models/conversation_artifact.py`) links a
+chat or topic to a workspace file — many-to-many, stored as `(workspace_id,
+path)`. `services/artifacts.py` records a link when a workspace *write* tool
+succeeds (`persist_tool_result`; reads never attach), and the router exposes
+`GET/POST/DELETE /api/{topics|chats}/{id}/artifacts` plus
+`GET /api/workspaces/{id}/discussions?path=` for the "continue a discussion"
+list.
 Tool-less features that ask the model once (`/refine`, summaries, auto-naming,
 …) don't take this path; they use `complete_once()` — see *One-shot calls*
 under [LLM provider abstraction](#llm-provider-abstraction).
@@ -188,8 +202,11 @@ remains separate.
   head` on startup, which both builds a fresh database from migrations and
   migrates an existing one (dev and prod alike — no `create_all`). Generate a
   migration from model changes with `make migration m="…"` (autogenerate). A
-  database stamped at a squashed-away revision is auto-adopted to the current
-  baseline on next startup (a version-row update only — no schema/data change).
+  database stamped at one of the revisions squashed into `0001_baseline` is
+  auto-adopted to the current baseline on next startup (a version-row update
+  only — no schema/data change). Any other unknown revision means a newer build
+  migrated the database, so startup fails with `DatabaseNewerThanAppError` and
+  writes nothing, rather than rewinding the version row.
 
 Runtime settings are owned by the database: `services/app_settings.py` resolves
 each one as "the `AppSetting` row if present and valid, clamped to a sane range,
@@ -216,6 +233,14 @@ the mock provider. The resolved source is surfaced to the UI as
 `settings | gh-cli | none` (tokens themselves are never returned).
 
 ## LLM provider abstraction
+
+Chats and topics persist nullable, JSON-encoded `llm_selection` preferences.
+Their shared turn and one-shot services use those preferences for replies,
+retries, compaction, summaries, notes, naming and scheduled/MCP turns. Side chats
+copy the override; promotion preserves it. `complete_once` has an explicit
+`use_conversation_selection=False` opt-out for Live/IQ work attributed to a
+conversation. Agents remain on the independent Copilot SDK, while the OpenAI relay continue using app defaults. Credentials stay in the existing
+provider configuration map and never enter conversation read models.
 
 `services/llm/base.py` defines a small protocol — two streaming methods
 (plain text and a tool-capable event stream) plus `list_models()`:
@@ -248,7 +273,10 @@ back to the mock when credentials are missing. Shipped providers:
   code is retried while the stream is being opened (before any token is
   yielded) rather than surfaced as a failure.
 - `AzureFoundryProvider` — Azure OpenAI / AI Foundry deployments via
-  `AsyncAzureOpenAI` (endpoint + key + deployment).
+  `AsyncAzureOpenAI` (endpoint + key + comma-separated deployment names).
+  Its configured names populate the model picker without remote discovery;
+  requests use the selected deployment, or the first configured name when
+  no model is supplied.
 - `OpenAICompatibleProvider` — OpenAI, Mistral, Hugging Face, Ollama, and any
   OpenAI-compatible gateway (base URL + key).
 - `MockProvider` — deterministic streamed reply, used automatically when no
@@ -261,6 +289,19 @@ onto the same four provider events — lives in `services/llm/_responses_compat.
 Adding a provider is one `ProviderSpec` in the registry plus an implementation
 class.
 
+**Serving the models outward.** The OpenAI-compatible endpoint
+(`routers/openai_proxy.py` → `services/openai_proxy.py`, under `/api/openai/v1`)
+lets outside OpenAI clients use the active provider. It is a pure relay: the
+client's messages and function tools are translated into `ChatMessage` /
+`ToolDef`, `stream_chat_with_tools` runs once (the client owns the tool loop),
+and the provider events are rendered back as chat-completion chunks or a single
+completion. Sampling options travel as the protocol's `request_options`, which
+`_responses_compat.to_responses_options` respells for Responses-only models. The
+first event is pulled before the response starts so a provider refusal is a real
+HTTP error. It is opt-in (`openai_proxy_enabled`), needs the generated
+`openai_proxy_key` as a bearer token, and only relays to providers whose
+`ProviderSpec.openai_proxy` is set — never to the mock fallback.
+
 **One-shot calls.** Features that ask the model once with no tools (the `/gh-*`
 drafts, `/notes rephrase`, `/refine`, auto-naming, the issue and topic
 summaries, the live recap, analysis and translation) go through
@@ -271,13 +312,47 @@ topic or chat it belongs to. Failures raise `LLMCallFailed`; if a router doesn't
 catch it, `create_app` maps it to a `502`. Prompts, output clean-up and
 fallbacks stay with each feature.
 
+**Optional model alternatives.** `model_fallbacks` is an `AppSetting` holding
+user-defined categories of ordered presets; each preset names its provider (or
+`agents`), so categories can span providers. `services/model_fallbacks.py` matches the selected model,
+effort and context to a category without guessing ambiguous assignments.
+`get_llm_provider` decorates configured providers with
+`services/llm/fallback.CategoryFallbackProvider`: missing catalogue ids or
+recognised model/configuration rejections try same-category presets before
+any event is yielded. Replacement history is re-budgeted and actual models
+flow through final/tool turns and usage accounting. The SDK `ModelSelector`
+applies the same policy at creation/model switch and on pre-output rejection
+events; it keeps a per-live-session attempt set and suppresses a rejected
+attempt's trailing idle while recovery is pending. Receipt of model output
+or a permission/tool request closes the replay window. Saved pins stay intact.
+The provider and SDK scopes deliberately do not share presets: chat uses a
+token budget while SDK sessions use `default`/`long_context` tiers.
+
+Preset-health indicators reread settings/readiness and provider/SDK catalogues,
+never inference. Model API reads include the actual `catalog_provider`, so an
+offline-mock fallback cannot validate the selected provider's presets. Local
+checks flag missing/duplicate model configurations and advertised effort/window
+mismatches; failed, empty and non-discoverable catalogues leave ids unverified.
+Fetch generations discard obsolete provider responses without rewriting drafts.
+
+Selected category intent lives in `llm_model_category` / `agents_model_category`
+independently of manual model, effort and context defaults. Default conversation
+and inherited one-shot/live calls pass it to the provider wrapper; SDK sessions
+resolve it only when no explicit agent/run model is pinned. Ordered presets are
+resolved at execution with their own configuration; the manual model is never
+an initial category candidate. The tool loop keeps history for all candidate
+budgets, and the wrapper trims each invocation. SDK live signatures track both
+the requested category and actual applied model. Missing categories fail clearly,
+and inference failures cannot turn a credential-less provider into mock success.
+`llm_category_preset` is a read-only catalogue preview, not a persisted model pin.
+
 ## MCP
 
 Precursor is *both* an MCP client and an MCP server, with working transports.
 
 **As client** (`services/mcp/client.py`) — `MCPClientManager` holds a registry
 of tool servers. Built-ins ship in-tree as stdio subprocesses or remote
-streamable-HTTP: `github`, `workiq`, `fetch`, `workspace-fs`, `cmd-runner`, and
+streamable-HTTP: `github`, `workiq`, `fetch`, `cmd-runner`, and
 `precursor` itself. Users add their own (`MCPServer` rows). Each server is
 toggled in Settings (the `mcp_enabled` map); sessions are opened per chat turn
 and their tools surfaced to the provider. A host-dependency *preflight* gates
@@ -407,7 +482,7 @@ A `Workspace` is a git clone or a local directory the assistant can browse and
 edit. `services/workspace_git.py` clones/pulls/commits (token injected at op
 time, never stored on the row); `services/workspace_fs.py` does sandboxed file
 ops — every path is routed through `safe_join`, which rejects traversal outside
-the workspace root and blocks `.git`. The same sandbox backs the `workspace-fs`
+the workspace root and blocks `.git`. The same sandbox backs the workspace tools of the `precursor`
 MCP server so the assistant edits files within the jail.
 
 ## Command runner (jail)

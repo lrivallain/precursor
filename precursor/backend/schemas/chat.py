@@ -6,13 +6,19 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from precursor.backend.schemas.approval import ApprovalPolicy
+from precursor.backend.schemas.conversation_llm import ConversationLLMFields
+from precursor.backend.schemas.schedule import UtcDateTime
 
-class ChatBase(BaseModel):
+
+class ChatBase(ConversationLLMFields):
     title: str = Field(min_length=1, max_length=255)
     description: str | None = None
     description_as_system_prompt: bool = False
     pinned: bool = False
-    role_id: int | None = None
+    role: str | None = None
+    # Null inherits the global conversation approval policy.
+    approval_policy: ApprovalPolicy | None = None
 
 
 class ChatCreate(ChatBase):
@@ -24,12 +30,13 @@ class ChatCreate(ChatBase):
     autoname: bool = False
 
 
-class ChatUpdate(BaseModel):
+class ChatUpdate(ConversationLLMFields):
     title: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = None
     description_as_system_prompt: bool | None = None
     pinned: bool | None = None
-    role_id: int | None = None
+    role: str | None = None
+    approval_policy: ApprovalPolicy | None = None
     # When present, the router normalizes and uniquifies it before storing.
     slug: str | None = Field(default=None, min_length=1, max_length=255)
 
@@ -44,3 +51,55 @@ class ChatRead(ChatBase):
     archived_at: datetime | None = None
     last_read_at: datetime | None = None
     unread_count: int = 0  # Computed server-side
+    pending_approvals: int = 0  # Tool calls parked on the user's approval
+    # Side chat link (see services/side_chats.py). The title is resolved
+    # server-side so the chat list can show its "from <topic>" chip.
+    parent_topic_id: int | None = None
+    parent_topic_title: str | None = None
+    parent_message_id: int | None = None
+    seed_content: str | None = None
+
+
+class SideChatCreate(BaseModel):
+    """Start a side chat from a topic, optionally from one of its replies.
+
+    ``quote`` narrows the copied reply to an excerpt of it (a text selection).
+    """
+
+    message_id: int | None = None
+    quote: str | None = Field(default=None, max_length=50_000)
+
+
+class TopicNoteDraftRequest(BaseModel):
+    instructions: str | None = Field(default=None, max_length=2_000)
+
+
+class TopicNoteDraft(BaseModel):
+    text: str
+    topic_id: int
+    topic_title: str
+
+
+class TopicNoteSend(BaseModel):
+    text: str = Field(min_length=1, max_length=100_000)
+
+
+class SideChatReminder(BaseModel):
+    remind_at: UtcDateTime
+    status: str
+
+
+class SideChatItem(BaseModel):
+    """One side chat as listed in its parent topic's right panel."""
+
+    id: int
+    slug: str
+    title: str
+    parent_message_id: int | None = None
+    from_reply: bool = False
+    unread_count: int = 0
+    pending_approvals: int = 0
+    message_count: int = 0
+    last_message_at: UtcDateTime | None = None
+    created_at: UtcDateTime
+    reminder: SideChatReminder | None = None

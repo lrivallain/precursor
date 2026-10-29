@@ -11,21 +11,34 @@ from sqlalchemy.orm import selectinload
 
 from precursor.backend.db import get_session
 from precursor.backend.models import Message, MessageRole, Topic, TopicSchedule
-from precursor.backend.schemas import TopicCreate, TopicNode, TopicRead, TopicUpdate
+from precursor.backend.schemas import (
+    ChatRead,
+    SideChatCreate,
+    SideChatItem,
+    TopicCreate,
+    TopicNode,
+    TopicRead,
+    TopicUpdate,
+)
 from precursor.backend.schemas.schedule import (
     ScheduleRead,
     ScheduleSummary,
     ScheduleUpdate,
     TopicScheduleCreate,
 )
+from precursor.backend.services import approvals as approval_service
+from precursor.backend.services import roles as roles_service
+from precursor.backend.services import side_chats, step_plans
 from precursor.backend.services.collections import (
     move_subtree_to_collection,
-    resolve_collection_default_role_id,
+    resolve_collection_default_role,
     resolve_collection_id,
 )
 from precursor.backend.services.events import (
+    publish_chat_changed,
     publish_message_changed,
     publish_read_changed,
+    publish_step_plan_changed,
     publish_topic_changed,
     set_current_client_id,
 )
@@ -111,6 +124,7 @@ async def topic_tree(
     # One query for all unread counts: non-user messages newer than the topic's
     # last_read_at. Topics with last_read_at IS NULL are treated as fully read.
     unread_map = await message_unread_counts(session, Topic, Message.topic_id)
+    pending_map = await approval_service.pending_counts(session, "topic")
 
     # Schedule summaries for scheduled topics, keyed by topic id.
     schedule_rows = await session.execute(select(TopicSchedule))
@@ -137,6 +151,7 @@ async def topic_tree(
             updated_at=node.updated_at,
             children=[build(c) for c in children],
             unread_count=unread_map.get(node.id, 0),
+            pending_approvals=pending_map.get(node.id, 0),
             schedule=schedule_map.get(node.id),
         )
 
@@ -156,6 +171,12 @@ async def create_topic(
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "parent_id does not exist")
 
     data = payload.model_dump()
+    from precursor.backend.services.conversation_llm import validate_selection
+
+    await validate_selection(session, payload.llm_selection)
+    data["llm_selection"] = (
+        payload.llm_selection.model_dump_json() if payload.llm_selection else None
+    )
     create_linked_issue = data.pop("create_linked_issue", False)
     requested_slug = data.pop("slug", None)
     base = slugify(requested_slug) if requested_slug else slugify(payload.title)
@@ -172,8 +193,9 @@ async def create_topic(
 
     # When no role is picked, a new topic inherits its collection's default
     # Assistant Role (null leaves it on the built-in default role).
-    if data.get("role_id") is None:
-        data["role_id"] = await resolve_collection_default_role_id(session, data["collection_id"])
+    data["role"] = await roles_service.require_role(session, data.get("role"))
+    if data["role"] is None:
+        data["role"] = await resolve_collection_default_role(session, data["collection_id"])
 
     if create_linked_issue:
         # Create the issue first so a GitHub failure aborts before the topic is
@@ -242,6 +264,13 @@ async def update_topic(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
 
     data = payload.model_dump(exclude_unset=True)
+    if "llm_selection" in data:
+        from precursor.backend.services.conversation_llm import validate_selection
+
+        await validate_selection(session, payload.llm_selection)
+        data["llm_selection"] = (
+            payload.llm_selection.model_dump_json() if payload.llm_selection else None
+        )
     if "parent_id" in data and data["parent_id"] == topic_id:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Topic cannot be its own parent")
     if "slug" in data:
@@ -314,9 +343,37 @@ async def delete_topic(topic_id: int, session: AsyncSession = Depends(get_sessio
     await session.execute(
         update(Topic).where(Topic.parent_id == topic_id).values(parent_id=new_parent_id)
     )
+    detached = await side_chats.detach_topic(session, topic_id)
+    detached_plans = await step_plans.detach_topic(session, topic_id)
     await session.delete(topic)
     await session.commit()
     await publish_topic_changed(topic_id)
+    for plan_id in detached_plans:
+        await publish_step_plan_changed(plan_id)
+    for chat_id in detached:
+        await publish_chat_changed(chat_id)
+
+
+@router.get("/{topic_id}/chats", response_model=list[SideChatItem])
+async def list_topic_side_chats(
+    topic_id: int, session: AsyncSession = Depends(get_session)
+) -> list[SideChatItem]:
+    """Side chats started from this topic (archived ones excluded)."""
+    return await side_chats.list_side_chats(session, topic_id)
+
+
+@router.post("/{topic_id}/chats", response_model=ChatRead, status_code=status.HTTP_201_CREATED)
+async def create_topic_side_chat(
+    topic_id: int,
+    payload: SideChatCreate,
+    session: AsyncSession = Depends(get_session),
+) -> ChatRead:
+    """Start a side chat from this topic, or from one of its assistant replies."""
+    chat = await side_chats.create_side_chat(
+        session, topic_id, message_id=payload.message_id, quote=payload.quote
+    )
+    await publish_topic_changed(topic_id)
+    return await side_chats.to_chat_read(session, chat)
 
 
 @router.post("/{topic_id}/read", status_code=status.HTTP_204_NO_CONTENT)
@@ -357,16 +414,25 @@ async def mark_topic_unread(
 @router.post("/{topic_id}/archive", response_model=TopicRead)
 async def archive_topic(
     topic_id: int,
+    side_chats_too: bool = False,
     session: AsyncSession = Depends(get_session),
 ) -> Topic:
+    """Archive a topic; ``side_chats_too`` archives its open side chats with it."""
     topic = await session.get(Topic, topic_id)
     if topic is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
     if topic.archived_at is None:
         topic.archived_at = datetime.now(UTC)
+        archived_chats = (
+            await side_chats.archive_with_topic(session, topic_id, topic.archived_at)
+            if side_chats_too
+            else []
+        )
         await session.commit()
         await session.refresh(topic)
         await publish_topic_changed(topic_id)
+        if archived_chats:
+            await publish_chat_changed()
     return topic
 
 
@@ -379,10 +445,14 @@ async def unarchive_topic(
     if topic is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
     if topic.archived_at is not None:
+        # Side chats archived along with the topic come back with it.
+        restored = await side_chats.unarchive_with_topic(session, topic_id, topic.archived_at)
         topic.archived_at = None
         await session.commit()
         await session.refresh(topic)
         await publish_topic_changed(topic_id)
+        if restored:
+            await publish_chat_changed()
     return topic
 
 
@@ -443,6 +513,7 @@ async def create_topic_schedule(
         enabled=payload.enabled,
         prompt=payload.prompt,
         clear_context=payload.clear_context,
+        approval_timeout_minutes=payload.approval_timeout_minutes,
         status="idle",
     )
     # Seeds the primary columns + extra_rules from the resolved rule set, so a
@@ -469,6 +540,8 @@ async def update_topic_schedule(
         schedule.prompt = data["prompt"]
     if "clear_context" in data and data["clear_context"] is not None:
         schedule.clear_context = data["clear_context"]
+    if "approval_timeout_minutes" in data:
+        schedule.approval_timeout_minutes = data["approval_timeout_minutes"]
 
     # Cadence is tri-state per field: omitted = unchanged, value = set, and for
     # run_at_minute an explicit null = back to interval mode. `resolved_rules`

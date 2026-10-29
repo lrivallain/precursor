@@ -462,3 +462,37 @@ def test_migrations_run_without_alembic_ini(
     stale = Config(str(tmp_path / "nope.ini"))
     stale.set_main_option("script_location", cfg.get_main_option("script_location") or "")
     command.upgrade(stale, "head")
+
+
+# --- b5e19c7a3d42: roles referenced by name ----------------------------------
+
+
+def test_roles_migration_backfills_names_from_the_role_ids() -> None:
+    """A row keeps its role across the id → name switch; unset stays unset."""
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+
+    migration = _load_revision("b5e19c7a3d42")
+    tables = [(t, old) for t, old, _new in migration._COLUMNS]
+
+    fd, db_path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    engine = sa.create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.begin() as conn:
+            conn.execute(sa.text("CREATE TABLE roles (id INTEGER PRIMARY KEY, name TEXT)"))
+            conn.execute(sa.text("INSERT INTO roles VALUES (1, 'default'), (2, 'Reviewer')"))
+            for table, old in tables:
+                conn.execute(sa.text(f"CREATE TABLE {table} (id INTEGER PRIMARY KEY, {old} INT)"))
+                conn.execute(sa.text(f"INSERT INTO {table} (id, {old}) VALUES (1, 2), (2, NULL)"))
+
+        with engine.begin() as conn, Operations.context(MigrationContext.configure(conn)):
+            migration.upgrade()
+
+        with engine.connect() as conn:
+            for table, _old, new in migration._COLUMNS:
+                got = conn.execute(sa.text(f"SELECT {new} FROM {table} ORDER BY id")).all()
+                assert [r[0] for r in got] == ["Reviewer", None], table
+    finally:
+        engine.dispose()
+        os.unlink(db_path)

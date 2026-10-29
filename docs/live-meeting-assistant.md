@@ -73,9 +73,21 @@ box; answers stream from the transcript plus the attached topic. **Click a
 speaker label** in the transcript to rename it (`Guest-2` → `Thomas`) — the name
 applies to every past and future phrase from that voice.
 
+Enable **Suggested answers** for a session and the assistant streams a short,
+first-person reply in a card above the transcript whenever someone else asks a
+question (detected client-side, answered by one fast-model call that returns
+`[[NONE]]` for non-questions). Mark your own voice with **This is me** on its
+speaker label so it is never answered. Each finished suggestion is saved to the
+session chat as a `live_question` / `live_suggestion` message pair. See
+[Suggested answers](../website/features/live-sessions.md#suggested-answers).
+
 The **Summary** tab generates an editable markdown recap — including an
 **Attendees** list (seeded from renamed speakers and any linked meeting's
-invitees) — which you can **post into the linked topic** as a message.
+invitees) — which you can **post into the linked topic** as a message. The
+recap is written from a **summary template** (meeting recap, executive brief,
+action items, detailed minutes, follow-up email, or your own
+`*.summary.yaml` [definition files](definitions.md#summary-template-files--summaryyaml))
+in the **language** you pick; both are remembered for the next recap.
 
 The **Context** tab shows an AI summary of the attached topic's conversation and,
 via the **WorkIQ MCP** (Microsoft 365), lets you **link a meeting from your

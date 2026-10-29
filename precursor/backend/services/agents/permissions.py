@@ -26,7 +26,9 @@ from precursor.backend.services.app_settings import (
     DEFAULT_AGENTS_APPROVAL_POLICY,
     resolve_agents_approval_policy,
 )
+from precursor.backend.services.definitions import overlay as definition_overlay
 from precursor.backend.services.events import publish_agent_changed
+from precursor.backend.services.workspaces import WORKSPACE_WRITE_TOOLS
 
 if TYPE_CHECKING:
     from precursor.backend.services.agents.manager import AgentManager
@@ -52,7 +54,12 @@ def should_auto_approve(request: Any) -> bool:
         return True
     if name == "PermissionRequestMcp":
         server = str(getattr(request, "server_name", "") or "")
-        return server == "precursor" or bool(getattr(request, "read_only", False))
+        if server == "precursor":
+            tool = str(getattr(request, "tool_name", "") or "")
+            # The workspace writes used to live in a separate server whose calls
+            # always prompted; folding them in must not silently lift that.
+            return tool not in WORKSPACE_WRITE_TOOLS
+        return bool(getattr(request, "read_only", False))
     return False
 
 
@@ -123,6 +130,8 @@ class PermissionBroker:
             req_name = type(request).__name__
             try:
                 live = self._manager._live.get(run_id)
+                if live is not None:
+                    live.model_output_started = True
                 policy = (live.approval_policy if live else None) or DEFAULT_AGENTS_APPROVAL_POLICY
                 logger.info(
                     "run %s: permission handler hit — request=%s policy=%s live=%s",
@@ -310,7 +319,12 @@ async def approval_policy(agent: AgentSession | None = None, run: AgentRun | Non
     # The executing run's snapshot wins (it froze the policy a workflow step
     # asked for), then a per-agent override, then the DB-backed global
     # setting. ``None``/unset at each level falls through.
-    for source in (run, agent):
+    #
+    # Files mode skips the agent's live value while a run exists: it comes
+    # straight from the file, and a loosened policy must not reach a run in
+    # flight before someone reviews it. It applies from the next run.
+    sources = (run,) if run is not None and definition_overlay.files_mode() else (run, agent)
+    for source in sources:
         override = getattr(source, "approval_policy", None)
         if override in AGENTS_APPROVAL_POLICIES:
             return str(override)

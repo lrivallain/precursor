@@ -22,7 +22,10 @@ from precursor.backend.models import (
 from precursor.backend.routers.deps import get_chat_or_404
 from precursor.backend.schemas import (
     ChatRequest,
+    CompactRequest,
+    ContextEstimateRead,
     MessageRead,
+    MessageUpdate,
     NoteDraftAttachmentRead,
     NotesAppendRequest,
     NotesAppendResponse,
@@ -30,18 +33,32 @@ from precursor.backend.schemas import (
     NotesDraftSaveRequest,
     NotesRephraseRequest,
     NotesRephraseResponse,
+    RewindRequest,
+    RewindResult,
     StoppedTurn,
     SuggestNameResponse,
+    TurnIndexRead,
 )
 from precursor.backend.services import notes as notes_service
 from precursor.backend.services import skills as skills_service
+from precursor.backend.services.artifacts import workspace_turn_context
 from precursor.backend.services.chat_autoname import schedule_autoname, suggest_chat_name
+from precursor.backend.services.compaction import (
+    CompactionError,
+    ContextEstimate,
+    compact_container,
+    estimate_context,
+)
 from precursor.backend.services.conversation_turn import (
+    TurnIndexEntry,
     clear_container_messages,
     delete_container_message,
+    edit_container_message,
     list_container_messages,
+    list_container_turns,
     persist_user_turn,
     resolve_turn_settings,
+    rewind_container,
     save_stopped_container_turn,
     snapshot_history,
     stream_turn,
@@ -94,6 +111,66 @@ async def delete_message(
     await delete_container_message(session, "chat", chat_id, message_id)
 
 
+@router.patch("/{message_id}", response_model=MessageRead)
+async def edit_message(
+    chat_id: int,
+    message_id: int,
+    payload: MessageUpdate,
+    session: AsyncSession = Depends(get_session),
+) -> Message:
+    """Edit an assistant reply in place; the model's original is kept to restore."""
+    return await edit_container_message(session, "chat", chat_id, message_id, payload.content)
+
+
+@router.get("/turns", response_model=list[TurnIndexRead], dependencies=[Depends(get_chat_or_404)])
+async def list_turns(
+    chat_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> list[TurnIndexEntry]:
+    """The chat's turn index (one entry per prompt) for the transcript timeline."""
+    return await list_container_turns(session, "chat", chat_id)
+
+
+@router.post("/rewind", response_model=RewindResult, dependencies=[Depends(get_chat_or_404)])
+async def rewind_messages(
+    chat_id: int,
+    payload: RewindRequest,
+    session: AsyncSession = Depends(get_session),
+) -> RewindResult:
+    """Rewind the chat: delete the turn opened by ``from_message_id`` and everything after."""
+    deleted = await rewind_container(
+        session, "chat", chat_id, payload.from_message_id, payload.through_message_id
+    )
+    return RewindResult(deleted=deleted)
+
+
+@router.post(
+    "/compact",
+    response_model=MessageRead,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(get_chat_or_404)],
+)
+async def compact_messages(
+    chat_id: int,
+    payload: CompactRequest,
+    session: AsyncSession = Depends(get_session),
+) -> Message:
+    """Summarise the chat so far into a compaction marker (see services/compaction)."""
+    try:
+        return await compact_container(session, "chat", chat_id, instructions=payload.instructions)
+    except CompactionError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+
+
+@router.get("/context", response_model=ContextEstimateRead, dependencies=[Depends(get_chat_or_404)])
+async def context_estimate(
+    chat_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> ContextEstimate:
+    """Estimated tokens of history the next turn sends to the model."""
+    return await estimate_context(session, "chat", chat_id)
+
+
 @router.post("/stopped", response_model=list[MessageRead])
 async def save_stopped_turn(
     chat_id: int,
@@ -104,7 +181,7 @@ async def save_stopped_turn(
     if await session.get(Chat, chat_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Chat not found")
     return await save_stopped_container_turn(
-        session, "chat", chat_id, payload.content, payload.tool_call_ids
+        session, "chat", chat_id, payload.content, payload.tool_call_ids, payload.reasoning
     )
 
 
@@ -132,6 +209,8 @@ async def stream_chat(
 
     # Snapshot history + system context now, before the session closes.
     system_prompt = await build_chat_system_context(session, chat)
+    if payload.workspace_context is not None:
+        system_prompt += "\n\n" + await workspace_turn_context(session, payload.workspace_context)
     history = await snapshot_history(
         session, "chat", chat_id, prompt_override=payload.prompt_override
     )
@@ -145,7 +224,7 @@ async def stream_chat(
         description=await skills_service.expand_references(session, chat.description or ""),
     )
 
-    settings = await resolve_turn_settings(session, model_override=payload.model)
+    settings = await resolve_turn_settings(session, chat_id=chat_id, model_override=payload.model)
     return EventSourceResponse(
         stream_turn(
             "chat",

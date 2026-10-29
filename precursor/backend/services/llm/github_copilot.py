@@ -13,7 +13,8 @@ the endpoint that model actually serves.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
+from typing import Any
 
 import httpx
 from openai import AsyncOpenAI
@@ -21,11 +22,13 @@ from openai import AsyncOpenAI
 from precursor.backend.services.llm._openai_compat import (
     ModelNotEntitledError,
     UnsupportedEndpointError,
+    embed_openai,
     stream_openai_tools,
 )
 from precursor.backend.services.llm._responses_compat import stream_responses_tools
 from precursor.backend.services.llm.base import (
     ChatMessage,
+    EmbeddingResult,
     LLMModel,
     ProviderEvent,
     TextDeltaEvent,
@@ -101,6 +104,7 @@ class GitHubCopilotProvider:
         messages: Sequence[ChatMessage],
         tools: Sequence[ToolDef],
         reasoning_effort: str | None = None,
+        request_options: Mapping[str, Any] | None = None,
     ) -> AsyncIterator[ProviderEvent]:
         if not _prefers_responses(model):
             # The rejection is raised while opening the stream, before anything
@@ -113,6 +117,7 @@ class GitHubCopilotProvider:
                     messages=messages,
                     tools=tools,
                     reasoning_effort=reasoning_effort,
+                    request_options=request_options,
                 ):
                     yielded = True
                     yield event
@@ -139,8 +144,14 @@ class GitHubCopilotProvider:
             messages=messages,
             tools=tools,
             reasoning_effort=reasoning_effort,
+            request_options=request_options,
         ):
             yield event
+
+    async def embed(
+        self, texts: Sequence[str], *, model: str, dimensions: int | None = None
+    ) -> EmbeddingResult:
+        return await embed_openai(self._client, texts, model=model, dimensions=dimensions)
 
     async def list_models(self) -> list[LLMModel]:
         headers = {
@@ -179,6 +190,7 @@ class GitHubCopilotProvider:
                 _MODEL_ENDPOINTS[mid] = endpoints
             limits = capabilities.get("limits") or {}
             ctx = limits.get("max_prompt_tokens") or limits.get("max_context_window_tokens")
+            max_out = limits.get("max_output_tokens")
             supports = capabilities.get("supports") or {}
             efforts = supports.get("reasoning_effort")
             efforts = [str(e) for e in efforts] if isinstance(efforts, list) else []
@@ -191,6 +203,8 @@ class GitHubCopilotProvider:
                     tags=[],
                     context_window=int(ctx) if isinstance(ctx, (int, float)) else None,
                     supported_reasoning_efforts=efforts,
+                    max_output_tokens=int(max_out) if isinstance(max_out, (int, float)) else None,
+                    vision=bool(supports.get("vision")),
                 )
             )
         models.sort(key=lambda m: (m.publisher.lower(), m.name.lower()))

@@ -1,6 +1,7 @@
 import {
   ChevronRight,
   FileText,
+  MessageSquarePlus,
   Pin,
   PinOff,
   Settings as SettingsIcon,
@@ -12,6 +13,8 @@ import { IssueLabelChip, IssueStateBadge } from "./IssueTags";
 import { TopicStartHero } from "./StartHero";
 import { TopicSettingsPanel } from "./TopicSettingsPanel";
 import { api } from "../lib/api";
+import { startSideChat } from "../lib/sideChats";
+import { StartStepPlanButton } from "./steps/StartStepPlanButton";
 import { toggleTopicSummary } from "../lib/summaryOpen";
 import { topicAncestors } from "../lib/topicTree";
 import type { TopicsController } from "../lib/useTopicsController";
@@ -99,6 +102,17 @@ export function TopicsHeader({
       {activeTopic && (
         <button
           className="p-2 rounded hover:bg-surface shrink-0"
+          aria-label="New side chat"
+          data-tooltip={"New side chat\nStart a chat linked to this topic, to explore a tangent without adding it here"}
+          onClick={() => void startSideChat(activeTopic.id).catch(() => {})}
+        >
+          <MessageSquarePlus size={18} />
+        </button>
+      )}
+      {activeTopic && <StartStepPlanButton topicId={activeTopic.id} />}
+      {activeTopic && (
+        <button
+          className="p-2 rounded hover:bg-surface shrink-0"
           aria-label={activeTopic.pinned ? "Unpin topic" : "Pin topic"}
           data-tooltip={activeTopic.pinned ? "Unpin topic" : "Pin topic"}
           onClick={togglePin}
@@ -132,7 +146,7 @@ export function TopicsMain({
 }: {
   controller: TopicsController;
   onRemindersChanged: () => void;
-  onSetRole: (roleId: number | null) => Promise<void>;
+  onSetRole: (roleName: string | null) => Promise<void>;
 }) {
   const {
     tree,

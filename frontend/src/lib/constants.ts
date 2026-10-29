@@ -18,6 +18,11 @@ export const TIMING = {
    * so they must stay in lockstep.
    */
   UNDO_DELETE_MS: 5000,
+  /**
+   * Grace window before a conversation rewind is committed. Longer than a
+   * single delete: a rewind can drop many turns at once.
+   */
+  UNDO_REWIND_MS: 8000,
 } as const;
 
 /**

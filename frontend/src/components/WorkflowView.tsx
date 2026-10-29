@@ -31,6 +31,7 @@ import {
 } from "lucide-react";
 import { api, apiErrorMessage } from "../lib/api";
 import { CopyableMarkdown } from "./CopyableMarkdown";
+import { DefinitionBadge } from "./DefinitionBadge";
 import { PermissionBody } from "./AgentPermissionBody";
 import type {
   AgentModelInfo,
@@ -84,6 +85,7 @@ import {
   type DraftStep,
 } from "./WorkflowStepEditor";
 import { WorkflowRunTrace } from "./WorkflowRunTrace";
+import { ThinkingPreview } from "./ReasoningDisclosure";
 import { WorkflowStatePanel } from "./WorkflowStatePanel";
 import { WorkflowScheduleEditor } from "./WorkflowScheduleEditor";
 import { useConfirm } from "./ConfirmDialog";
@@ -668,6 +670,17 @@ export function WorkflowView({
                 {workflow.status === "running" && <Loader2 size={10} className="animate-spin" />}
                 {WORKFLOW_STATUS_LABEL[workflow.status]}
               </span>
+              <DefinitionBadge
+                source={workflow.definition}
+                onAccept={async () => {
+                  await api.definitions.accept(
+                    "workflow",
+                    workflow.id,
+                    workflow.definition?.content_hash,
+                  );
+                  onChanged(await api.workflows.get(workflow.id));
+                }}
+              />
             </div>
             {workflow.description && (
               <p className="truncate text-xs text-muted">{workflow.description}</p>
@@ -1403,11 +1416,19 @@ export function WorkflowView({
                     )}
 
 
-                    {step.agent?.active_narration && state === "active" && (
-                      <p className="mt-1.5 line-clamp-2 text-[11px] text-muted">
-                        {step.agent.active_narration}
-                      </p>
-                    )}
+                    {state === "active" &&
+                      (step.agent?.active_thinking ? (
+                        <ThinkingPreview
+                          reasoning={step.agent.active_thinking}
+                          className="mt-1.5"
+                        />
+                      ) : (
+                        step.agent?.active_narration && (
+                          <p className="mt-1.5 line-clamp-2 text-[11px] text-muted">
+                            {step.agent.active_narration}
+                          </p>
+                        )
+                      ))}
                     {step.agent?.result_summary && state === "done" && (
                       <p className="mt-1.5 line-clamp-2 text-[11px] text-muted">
                         {step.agent.result_summary}

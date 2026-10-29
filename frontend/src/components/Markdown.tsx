@@ -18,6 +18,7 @@ import rehypeHighlight from "rehype-highlight";
 import { SvgBlock } from "./SvgBlock";
 import { MermaidBlock } from "./MermaidBlock";
 import { makeHighlightRehype, useSearchHighlight } from "../lib/searchHighlight";
+import { openChatBySlug } from "../lib/sideChats";
 import { makeMarkdownCaretRehype, markdownCaretAtPoint } from "../lib/markdownCaret";
 
 interface MarkdownProps {
@@ -28,6 +29,8 @@ interface MarkdownProps {
   onTaskChange?: (markdown: string) => void;
   tasksDisabled?: boolean;
   onTextDoubleClick?: (sourceOffset: number) => void;
+  /** Tag rendered text with its source offsets so a selection maps back to Markdown. */
+  sourceAnnotated?: boolean;
 }
 
 interface TaskListOptions {
@@ -84,6 +87,13 @@ const TaskListItem: NonNullable<Components["li"]> = ({ node, children, ...props 
 };
 
 /** Open external (http/https) links in a new tab; keep in-app anchors inline. */
+// An in-app chat link (`/chats/<slug>`, e.g. a side chat's note filed into its
+// topic) opens in place rather than reloading the app.
+function inAppChatSlug(href: string | undefined): string | null {
+  const m = href?.match(/^\/chats\/([^/?#]+)$/);
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
 function isExternalHref(href: string | undefined): boolean {
   if (!href) return false;
   return /^https?:\/\//i.test(href);
@@ -228,7 +238,7 @@ function CodeBlock({ children, ...props }: { children?: ReactNode }) {
  * caused visible layout thrash / scrollbar flicker on content-heavy topics.
  */
 export const Markdown = memo(function Markdown({
-  children, className, onTaskChange, tasksDisabled = false, onTextDoubleClick,
+  children, className, onTaskChange, tasksDisabled = false, onTextDoubleClick, sourceAnnotated,
 }: MarkdownProps) {
   // A non-empty highlight term (set when a content-search hit is opened) adds a
   // rehype pass that wraps matches in <mark>. Kept off the plugin list entirely
@@ -242,7 +252,7 @@ export const Markdown = memo(function Markdown({
         makeHighlightRehype(highlight),
       ]
     : [[rehypeHighlight, { detect: true, ignoreMissing: true }]];
-  if (onTextDoubleClick) {
+  if (onTextDoubleClick || sourceAnnotated) {
     rehypePlugins.unshift(makeMarkdownCaretRehype((offset) => offset - insertions.reduce(
       (sum, insertion) => sum + Math.min(insertion.length, Math.max(0, offset - insertion.offset)), 0,
     )));
@@ -275,12 +285,24 @@ export const Markdown = memo(function Markdown({
           },
           a({ href, children: linkChildren, ...props }) {
             const external = isExternalHref(href);
+            const chatSlug = inAppChatSlug(href);
             return (
               <a
                 href={href}
                 {...props}
                 {...(external
                   ? { target: "_blank", rel: "noopener noreferrer" }
+                  : {})}
+                {...(chatSlug
+                  ? {
+                      onClick: (e: React.MouseEvent<HTMLAnchorElement>) => {
+                        if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+                        e.preventDefault();
+                        void openChatBySlug(chatSlug).catch(() => {
+                          window.location.assign(href ?? "/chats");
+                        });
+                      },
+                    }
                   : {})}
               >
                 {linkChildren}
@@ -294,7 +316,7 @@ export const Markdown = memo(function Markdown({
             }
             const body = stripWarningMarker(quoteChildren);
             return (
-              <div className="my-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-amber-900 dark:text-amber-200">
+              <div data-callout="warning" className="my-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-amber-900 dark:text-amber-200">
                 <div className="flex items-start gap-2">
                   <AlertTriangle size={16} className="mt-0.5 shrink-0" />
                   <div className="min-w-0 [&>:last-child]:mb-0">{body}</div>

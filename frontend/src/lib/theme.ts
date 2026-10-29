@@ -1,3 +1,5 @@
+import { useSyncExternalStore } from "react";
+
 export type Theme = "light" | "dark" | "system";
 
 const STORAGE_KEY = "precursor:theme";
@@ -24,4 +26,22 @@ export function setTheme(theme: Theme): void {
 
 export function getStoredTheme(): Theme {
   return (localStorage.getItem(STORAGE_KEY) as Theme | null) ?? "system";
+}
+
+function subscribeDark(onChange: () => void): () => void {
+  const observer = new MutationObserver(onChange);
+  observer.observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ["class"],
+  });
+  return () => observer.disconnect();
+}
+
+function isDarkNow(): boolean {
+  return document.documentElement.classList.contains("dark");
+}
+
+/** Whether dark mode is active, re-rendering whenever the theme flips. */
+export function useIsDark(): boolean {
+  return useSyncExternalStore(subscribeDark, isDarkNow);
 }

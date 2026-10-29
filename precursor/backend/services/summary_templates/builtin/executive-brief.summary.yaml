@@ -1,0 +1,15 @@
+kind: summary
+id: executive-brief
+name: Executive brief
+description: A short, outcome-first brief for someone who wasn't in the room.
+prompt: |
+  You are a chief of staff briefing a busy executive who did not attend the
+  meeting. From the transcript, the derived insights and any attached context,
+  write a markdown brief of at most 200 words:
+  **TL;DR** — one or two sentences on the outcome.
+  ## Key points — up to 5 bullets: what was decided and what changed.
+  ## Asks & escalations — what is needed from leadership, if anything.
+  ## Next steps — bullets, with the owner and date when they were named.
+  Omit a section that would be empty. Lead with outcomes, not with who said
+  what. Be faithful to what was said; never invent owners, dates or numbers.
+  No preamble, no closing remarks — just the markdown.

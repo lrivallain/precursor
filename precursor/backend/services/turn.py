@@ -22,6 +22,7 @@ import anyio
 
 from precursor.backend.db import SessionLocal
 from precursor.backend.models import Message, MessageRole, Topic
+from precursor.backend.services import approvals as approval_service
 from precursor.backend.services.conversation_turn import (
     clear_container_messages,
     persist_user_message,
@@ -35,6 +36,7 @@ from precursor.backend.services.events import (
 )
 from precursor.backend.services.mcp.client import get_mcp_client_manager
 from precursor.backend.services.turn_engine import (
+    ApprovalsRequested,
     AssistantFinalTurn,
     AssistantTextDelta,
     AssistantToolCallsTurn,
@@ -47,6 +49,8 @@ from precursor.backend.services.turn_engine import (
     persist_tool_result,
     run_tool_loop,
 )
+from precursor.backend.services.unattended_approvals import announce_parked
+from precursor.backend.services.workspaces import WORKSPACE_READ_TOOLS, WORKSPACE_WRITE_TOOLS
 
 logger = logging.getLogger(__name__)
 
@@ -102,18 +106,21 @@ async def _run(
 
         system_prompt = await build_system_context(session, topic)
         history = await snapshot_history(session, "topic", topic_id, prompt_override=llm_prompt)
-        # Never let a programmatically-driven turn (scheduler / MCP post_message)
-        # re-expose Precursor's own MCP server to itself — that would let a
-        # post_message-triggered turn recursively call post_message.
-        settings = await resolve_turn_settings(session, exclude_servers={"precursor"})
+        settings = await resolve_turn_settings(session, topic_id=topic_id)
 
     async with manager.acquired(
         settings.enabled_servers, github_token=settings.github_token, advertise_cached=True
     ) as active:
+        # Never let a programmatically-driven turn (scheduler / MCP post_message)
+        # re-expose Precursor's own MCP server to itself — that would let a
+        # post_message-triggered turn recursively call post_message. Only the
+        # workspace file tools stay, as they did when they were a separate server.
+        active.restrict_server_tools("precursor", WORKSPACE_READ_TOOLS | WORKSPACE_WRITE_TOOLS)
         for server_name, err in active.unavailable:
             logger.warning("Scheduled run: MCP server %s unavailable: %s", server_name, err)
 
         turn_started = time.monotonic()
+        last_assistant_id: int | None = None
         async for ev in run_tool_loop(
             active=active,
             provider=settings.provider,
@@ -128,6 +135,7 @@ async def _run(
             # tool that needs one raises the app-global banner and fails fast
             # rather than parking the run for the full interactive window.
             auth_wait_timeout=0.0,
+            gate=settings.gate,
         ):
             if isinstance(ev, AssistantTextDelta):
                 # The scheduler doesn't stream deltas; it persists whole turns.
@@ -145,12 +153,26 @@ async def _run(
             if isinstance(ev, AssistantFinalTurn):
                 elapsed_ms = int((time.monotonic() - turn_started) * 1000)
                 await persist_final_turn(
-                    "topic", topic_id, ev, model=settings.model, elapsed_ms=elapsed_ms
+                    "topic", topic_id, ev, model=ev.model or settings.model, elapsed_ms=elapsed_ms
                 )
                 return
 
             if isinstance(ev, AssistantToolCallsTurn):
-                await persist_tool_calls_turn("topic", topic_id, ev, model=settings.model)
+                last_assistant_id = await persist_tool_calls_turn(
+                    "topic", topic_id, ev, model=ev.model or settings.model
+                )
+
+            elif isinstance(ev, ApprovalsRequested):
+                # Nobody is watching, so park: the cards (and the sidebar badge)
+                # wait for the user, who resumes the turn from the topic.
+                async with SessionLocal() as ws:
+                    rows = await approval_service.record_pending(
+                        ws, "topic", topic_id, last_assistant_id, ev.items
+                    )
+                    parked_ids = [r.id for r in rows]
+                # Starts the auto-deny clock and notifies the windows.
+                await announce_parked(topic_id, parked_ids)
+                return
 
             elif isinstance(ev, ToolResultTurn):
                 await persist_tool_result("topic", topic_id, ev)

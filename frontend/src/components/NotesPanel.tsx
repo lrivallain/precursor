@@ -13,6 +13,7 @@ import { GithubIcon as Github } from "./icons/GithubIcon";
 import { CommandPanel } from "./CommandPanel";
 import { api } from "../lib/api";
 import { ATTACHMENT_ACCEPT } from "../lib/attachments";
+import { joinNote, type NoteAppendRequest } from "../lib/notesOpen";
 import type { NoteDraftAttachment } from "../lib/types";
 
 export type NotesAction =
@@ -51,6 +52,8 @@ interface Props {
    * owns the seed, this component owns the live edits.
    */
   rephrasedText?: string;
+  /** Text to add below the live content, applied once per nonce. */
+  appendRequest?: NoteAppendRequest;
   /** Layout mode forwarded to the shared panel shell. */
   variant?: "floating" | "embedded";
   /** Hand the current note off to a separate window (floating variant only). */
@@ -78,6 +81,7 @@ export function NotesPanel({
   onCancel,
   initialText,
   rephrasedText,
+  appendRequest,
   variant,
   onPopOut,
   onTextChange,
@@ -88,6 +92,16 @@ export function NotesPanel({
   useEffect(() => {
     setText(initialText ?? "");
   }, [initialText]);
+
+  const textRef = useRef(text);
+  textRef.current = text;
+  useEffect(() => {
+    if (!appendRequest) return;
+    const next = joinNote(textRef.current, appendRequest.text);
+    setText(next);
+    onTextChange?.(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appendRequest?.nonce]);
 
   // Apply an AI rephrase result exactly when a rephrase round-trip finishes
   // (rephrasing: true → false), not on every render. Keying on that lifecycle

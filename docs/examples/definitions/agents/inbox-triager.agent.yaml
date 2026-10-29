@@ -1,0 +1,17 @@
+# yaml-language-server: $schema=../../../schemas/agent.schema.json
+kind: agent
+id: inbox-triager
+title: Inbox triager
+prompt: |
+  Read the last 24 hours of email and sort every thread into one of:
+  act now, reply this week, read later, ignore. Publish the result as an
+  ARTIFACT named "triage" with one line per thread.
+model: gpt-5.4
+role: Analyst
+approval_policy: balanced
+capabilities:
+  skills: false
+  mcp_servers: [workiq]
+limits:
+  token_budget: 200000
+  max_retries: 1

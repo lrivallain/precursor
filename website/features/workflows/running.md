@@ -79,6 +79,10 @@ nodes, each with a live status ring — **done**, **active**, **failed**, or
 - **Pause / Resume** halt the coordinator between steps and pick back up.
 - **Cancel** stops the run.
 
+While the active step's agent is working, its node shows the first line of what
+it is writing, or a pulsing *Thinking…* line with the step it is on while the
+model [thinks](/features/agents-mode/running#watching-an-agent-think).
+
 Clicking a step opens a **modal** that drills into that agent's run — its
 timeline, artifacts, and answer — while the workflow stays live in the
 background. From there you can jump to the full agent in agents mode.
@@ -112,7 +116,8 @@ autonomous runs, so a busy workflow doesn't leave a trail of unread agents.
 
 Every attempt carries an **Activity** section: the same timeline the
 [Agents](/features/agents-mode) cockpit renders — tool calls with their arguments
-and output, reasoning, assistant messages — sliced to that attempt's own window.
+and output, assistant messages with their collapsed **Thinking**, errors —
+sliced to that attempt's own window.
 It's the difference between "the step stalled" and "the step asked to run
 `workiq-do_action` and nobody approved it". Activity is fetched on demand, so
 opening one attempt doesn't load the rest.

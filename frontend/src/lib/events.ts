@@ -19,6 +19,14 @@ export type BusEvent =
   | { type: "message.changed"; topic_id?: number | null; chat_id?: number | null }
   | { type: "stream.started"; topic_id?: number | null; chat_id?: number | null }
   | { type: "stream.ended"; topic_id?: number | null; chat_id?: number | null }
+  | { type: "approval.changed"; topic_id?: number | null; chat_id?: number | null }
+  | {
+      type: "approval.parked";
+      topic_id: number;
+      title: string;
+      count: number;
+      expires_at: string | null;
+    }
   | { type: "reminder.changed"; topic_id?: number | null; chat_id?: number | null }
   | {
       type: "read.changed";
@@ -39,7 +47,8 @@ export type BusEvent =
       /** Run state at the moment of the change, so the client can notify on it. */
       workflow_status?: string | null;
       workflow_name?: string | null;
-    };
+    }
+  | { type: "step-plan.changed"; step_plan_id?: number | null };
 
 type Handler = (event: BusEvent) => void;
 
@@ -56,6 +65,7 @@ function dispatch(type: BusEvent["type"], raw: string): void {
     agent_session_id?: number | null;
     meeting_session_id?: number | null;
     workflow_id?: number | null;
+    step_plan_id?: number | null;
     status?: string | null;
     name?: string | null;
   };
@@ -72,6 +82,7 @@ function dispatch(type: BusEvent["type"], raw: string): void {
     agent_session_id: payload.agent_session_id ?? null,
     meeting_session_id: payload.meeting_session_id ?? null,
     workflow_id: payload.workflow_id ?? null,
+    step_plan_id: payload.step_plan_id ?? null,
     workflow_status: payload.status ?? null,
     workflow_name: payload.name ?? null,
   } as BusEvent;
@@ -105,6 +116,12 @@ function connect(): void {
   source.addEventListener("stream.ended", (e) =>
     dispatch("stream.ended", (e as MessageEvent).data),
   );
+  source.addEventListener("approval.changed", (e) =>
+    dispatch("approval.changed", (e as MessageEvent).data),
+  );
+  source.addEventListener("approval.parked", (e) =>
+    dispatch("approval.parked", (e as MessageEvent).data),
+  );
   source.addEventListener("reminder.changed", (e) =>
     dispatch("reminder.changed", (e as MessageEvent).data),
   );
@@ -119,6 +136,9 @@ function connect(): void {
   );
   source.addEventListener("workflow.changed", (e) =>
     dispatch("workflow.changed", (e as MessageEvent).data),
+  );
+  source.addEventListener("step-plan.changed", (e) =>
+    dispatch("step-plan.changed", (e as MessageEvent).data),
   );
   // A background run (e.g. a scheduled /guard probe) found an MCP server parked
   // in needs_auth. Drive the app-global re-authenticate banner directly — this

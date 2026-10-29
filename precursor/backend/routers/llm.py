@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.db import get_session
 from precursor.backend.schemas.llm import LLMModelRead, ProviderFieldRead, ProviderRead
+from precursor.backend.services.app_settings import resolve_mock_provider_enabled
 from precursor.backend.services.llm import get_llm_provider
 from precursor.backend.services.llm.registry import selectable_providers
 
@@ -18,14 +19,18 @@ logger = logging.getLogger(__name__)
 
 
 @router.get("/providers", response_model=list[ProviderRead])
-async def list_providers() -> list[ProviderRead]:
+async def list_providers(
+    include_disabled: bool = False, session: AsyncSession = Depends(get_session)
+) -> list[ProviderRead]:
     """Return the selectable LLM providers and their config field metadata."""
+    mock_enabled = await resolve_mock_provider_enabled(session)
     return [
         ProviderRead(
             id=spec.id,
             label=spec.label,
             uses_github_token=spec.uses_github_token,
             discovers_models=spec.discovers_models,
+            openai_proxy=spec.openai_proxy,
             fields=[
                 ProviderFieldRead(
                     name=f.name,
@@ -39,6 +44,7 @@ async def list_providers() -> list[ProviderRead]:
             ],
         )
         for spec in selectable_providers()
+        if spec.id != "mock" or mock_enabled or include_disabled
     ]
 
 
@@ -46,7 +52,7 @@ async def list_providers() -> list[ProviderRead]:
 async def list_models(
     provider: str | None = None, session: AsyncSession = Depends(get_session)
 ) -> list[LLMModelRead]:
-    llm = await get_llm_provider(session, override_provider=provider)
+    llm = await get_llm_provider(session, override_provider=provider, strict=provider is not None)
     lister = getattr(llm, "list_models", None)
     if lister is None:
         return []
@@ -55,4 +61,4 @@ async def list_models(
     except Exception as exc:  # network / auth failures shouldn't 500 the UI
         logger.warning("Failed to fetch model catalog from %s: %s", llm.name, exc)
         raise HTTPException(status_code=502, detail=f"catalog fetch failed: {exc}") from exc
-    return [LLMModelRead(**asdict(m)) for m in models]
+    return [LLMModelRead(**asdict(m), catalog_provider=llm.name) for m in models]

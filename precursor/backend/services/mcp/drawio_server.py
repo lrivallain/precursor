@@ -1,6 +1,6 @@
 """Built-in MCP server: draw.io diagram authoring (sandboxed).
 
-Runs as a stdio subprocess (like ``workspace_fs_server``) and writes native
+Runs as a stdio subprocess (like ``fetch_server``) and writes native
 ``.drawio`` files — plain mxGraph XML — into a Workspace working tree. Every
 path is routed through :func:`workspace_fs.safe_join`, so nothing outside
 ``workspaces_dir/<slug>`` is ever reachable, and the result lands in a
@@ -777,7 +777,7 @@ def normalize_path(path: str) -> str:
 def _browse_root(ws: Workspace) -> Path:
     """File root for a workspace: ``workspaces_dir/<slug>[/<subdir>]``.
 
-    Mirrors ``workspace_fs_server._browse_root`` — same reason: we don't want to
+    Mirrors ``services.workspaces.browse_root`` — same reason: we don't want to
     import the workspaces router and drag in the LLM/git stack.
     """
     root = Path(get_settings().workspaces_dir) / ws.slug
@@ -805,6 +805,7 @@ async def _resolve_root(
 
 def _persist(root: Path, path: str, content: str, *, overwrite: bool, slug: str) -> dict[str, Any]:
     try:
+        fs.refuse_definitions_for_tools(root, path)
         if overwrite:
             fs.write_text(root, path, content)
         else:

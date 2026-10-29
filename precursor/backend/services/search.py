@@ -25,6 +25,7 @@ from precursor.backend.models.meeting import MeetingInsight, MeetingSegment, Mee
 from precursor.backend.models.message import Message, MessageRole
 from precursor.backend.models.topic import Topic
 from precursor.backend.schemas.search import SearchField, SearchResponse, SearchResult
+from precursor.backend.services.definitions import overlay as definition_overlay
 
 # Upper bound on hits pulled per surface before merging, and on the final list.
 # Keeps the palette snappy and the payload small even on huge instances.
@@ -182,6 +183,7 @@ async def search(session: AsyncSession, query: str, limit: int = _MAX_RESULTS) -
         )
 
     # -- Agents: title / prompt / final answer only ------------------------
+    file_matches = definition_overlay.search_prompts(q)
     agents = (
         (
             await session.execute(
@@ -191,6 +193,9 @@ async def search(session: AsyncSession, query: str, limit: int = _MAX_RESULTS) -
                     AgentSession.title.ilike(like)
                     | AgentSession.task_prompt.ilike(like)
                     | AgentSession.result_summary.ilike(like)
+                    # Files mode: prompts live in the definition files.
+                    | AgentSession.export_id.in_(file_matches.agent_ids)
+                    | AgentSession.definition_ref.in_(file_matches.step_refs)
                 )
                 .order_by(AgentSession.updated_at.desc())
                 .limit(_PER_SURFACE)

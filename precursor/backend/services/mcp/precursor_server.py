@@ -1,6 +1,6 @@
 """Built-in MCP server: Precursor's own capabilities (outbound).
 
-Runs as a stdio subprocess (like ``fetch_server`` / ``workspace_fs_server``).
+Runs as a stdio subprocess (like ``fetch_server``).
 This is how Precursor exposes *itself* over MCP: the same in-tree entrypoint
 serves the app's own agent (when the ``precursor`` built-in is enabled) and any
 external MCP host that launches::
@@ -13,13 +13,17 @@ Settings → MCP servers → "Precursor capabilities", because exposing
 conversation history / write actions outbound is a deliberate disclosure.
 
 Sections → tools:
-- ``topics``       → list_topics, get_topic
+- ``topics``       → list_topics, get_topic (its side chats are listed only
+                     when ``chats`` is exposed too)
 - ``messages``     → list_messages
 - ``chats``        → list_chats, get_chat, list_chat_messages
 - ``agents``       → list_agents, get_agent
 - ``live``         → list_live_sessions, get_live_session
 - ``search``       → search (cross-entity; chats/agents/live hits are only
                      included when their own section is also exposed)
+- ``iq``           → retrieve (ranked passages + grounding markdown with [^n]
+                     citations; each hit gated by its own section)
+- ``iq_ask``       → ask (retrieve + one model call → cited answer)
 - ``skills``       → list_skills, get_skill
 - ``memory``       → list_memories
 - ``memory_write`` → store_memory, update_memory (write — edits long-term memory)
@@ -30,10 +34,20 @@ Sections → tools:
                      memory, readable by every step and across runs)
 - ``notes``       → append_note (write — persists text verbatim, no LLM turn)
 - ``post_message`` → post_message (write — runs a full assistant turn)
+- ``side_chats``   → create_side_chat (write — starts a chat linked to a topic)
 - ``schedules``    → list_schedules, get_schedule, create_schedule,
                      set_schedule_enabled, run_schedule_now
 - ``reminders``    → list_reminders, get_reminder, set_reminder,
                      cancel_reminder (write — one-shot topic reminders)
+- ``workspaces``   → list_workspaces, list_workspace_files, read_workspace_file
+                     (read — sandboxed to a workspace's working tree)
+- ``workspaces_write`` → create_workspace, create_workspace_file,
+                     write_workspace_file, create_workspace_folder (write —
+                     lands in the working tree only; committing/pushing stays
+                     a separate user action)
+
+The two workspace sections are *strict*: first-party agents run this server with
+full access, but file writes and workspace creation must still be opted into.
 """
 
 from __future__ import annotations
@@ -41,8 +55,9 @@ from __future__ import annotations
 import os
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, TypeVar
 from urllib.parse import quote
+from urllib.parse import quote as quote_url
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
@@ -67,18 +82,27 @@ from precursor.backend.models import (
     TopicSchedule,
     Workflow,
     WorkflowStep,
+    Workspace,
 )
 from precursor.backend.schemas.schedule import RecurrenceRule
+from precursor.backend.services import workspace_fs
 from precursor.backend.services.app_settings import (
     MCP_EXPOSE_SECTIONS,
     resolve_mcp_expose,
     resolve_scheduled_run_timeout_seconds,
 )
 from precursor.backend.services.collections import (
-    resolve_collection_default_role_id,
+    resolve_collection_default_role,
     resolve_collection_id,
 )
+from precursor.backend.services.links import app_base_url
+from precursor.backend.services.links import topic_paths as _topic_paths
+from precursor.backend.services.mcp import basic_tools
+from precursor.backend.services.mcp.server import TOOL_SECTIONS
+from precursor.backend.services.mcp.workspace_links import with_open_link
 from precursor.backend.services.slugs import allocate_unique_slug, slugify
+from precursor.backend.services.workspaces import WorkspaceError, browse_root
+from precursor.backend.services.workspaces import create_workspace as create_workspace_row
 
 if TYPE_CHECKING:
     from starlette.applications import Starlette
@@ -139,9 +163,23 @@ _registrar = _ToolRegistrar()
 mcp = _registrar
 
 
+class _GatedMCPServer(MCPServer):
+    """An ``MCPServer`` whose ``tools/list`` only advertises exposed tools.
+
+    Calls were already refused per section, but a client still saw (and a model
+    still paid context for) every tool with nothing exposed. Listing the same
+    gate keeps the advertised surface in step with Settings.
+    """
+
+    async def list_tools(self) -> list[Any]:
+        tools = await super().list_tools()
+        visible = await _exposed_sections()
+        return [t for t in tools if _tool_visible(t.name, visible)]
+
+
 def build_mcp() -> MCPServer:
     """Build a fresh MCPServer 'precursor' server with all tools registered."""
-    server = MCPServer("precursor")
+    server = _GatedMCPServer("precursor")
     for fn in _registrar.tools:
         server.tool()(fn)
     return server
@@ -168,6 +206,10 @@ _GATED = (
 )
 
 
+# Sections that always honour their toggle, even for Precursor's own agents.
+_STRICT_SECTIONS = frozenset({"workspaces", "workspaces_write"})
+
+
 def _now() -> datetime:
     return datetime.now(UTC)
 
@@ -176,15 +218,32 @@ def _iso(dt: datetime | None) -> str | None:
     return dt.isoformat() if dt is not None else None
 
 
-async def _section_enabled(section: str) -> bool:
+async def _section_enabled(section: str, *, strict: bool = False) -> bool:
     # First-party agent sessions launch this server with full access — the
     # ``mcp_expose`` toggles gate *external* MCP clients, not Precursor's own
-    # agents, which must read topic content and post results back.
-    if os.environ.get("PRECURSOR_MCP_FULL_ACCESS") == "1":
+    # agents, which must read topic content and post results back. ``strict``
+    # sections (the filesystem ones) always honour their toggle.
+    if not strict and os.environ.get("PRECURSOR_MCP_FULL_ACCESS") == "1":
         return True
     async with SessionLocal() as session:
         expose = await resolve_mcp_expose(session)
     return bool(expose.get(section))
+
+
+async def _exposed_sections() -> set[str]:
+    """Sections whose tools this caller may see right now (see ``_section_enabled``)."""
+    async with SessionLocal() as session:
+        expose = await resolve_mcp_expose(session)
+    on = {s for s, enabled in expose.items() if enabled}
+    if os.environ.get("PRECURSOR_MCP_FULL_ACCESS") == "1":
+        on |= set(MCP_EXPOSE_SECTIONS) - _STRICT_SECTIONS
+    return on
+
+
+def _tool_visible(name: str, exposed: set[str]) -> bool:
+    section = TOOL_SECTIONS.get(name)
+    # A tool with no gating section (``precursor_info``) is always advertised.
+    return section is None or section in exposed
 
 
 def _topic_dict(
@@ -215,49 +274,6 @@ def _topic_dict(
 async def _collection_names(session: AsyncSession) -> dict[int, str]:
     rows = await session.execute(select(Collection.id, Collection.name))
     return {cid: name for cid, name in rows.all()}
-
-
-async def _topic_paths(session: AsyncSession) -> dict[int, str]:
-    """Root-first slug path (``collection/parent/child``) for every topic.
-
-    Mirrors the readable URL the SPA uses (``/topics/<collection>/…``), so a
-    path handed to a caller can be pasted straight into the browser.
-
-    Resolved from a single index load rather than a chain walk per topic, so a
-    200-topic ``list_topics`` stays one query instead of 200 — the same trick as
-    :func:`_collection_names`. Callers used to rebuild this by re-fetching each
-    ancestor over MCP.
-    """
-    rows = (
-        await session.execute(select(Topic.id, Topic.slug, Topic.parent_id, Topic.collection_id))
-    ).all()
-    collection_slugs = {
-        cid: slug
-        for cid, slug in (await session.execute(select(Collection.id, Collection.slug))).all()
-    }
-    index: dict[int, tuple[str, int | None]] = {
-        tid: (slug, parent_id) for tid, slug, parent_id, _ in rows
-    }
-    collection_of: dict[int, int | None] = {tid: cid for tid, _, _, cid in rows}
-    paths: dict[int, str] = {}
-    for tid in index:
-        chain: list[str] = []
-        # A self-parenting or cyclic row must terminate, not spin forever.
-        seen: set[int] = set()
-        current: int | None = tid
-        while current is not None and current not in seen:
-            seen.add(current)
-            entry = index.get(current)
-            if entry is None:
-                break
-            slug, parent_id = entry
-            chain.append(slug)
-            current = parent_id
-        chain.reverse()
-        cid = collection_of.get(tid)
-        prefix = collection_slugs.get(cid) if cid is not None else None
-        paths[tid] = "/".join([prefix, *chain]) if prefix else "/".join(chain)
-    return paths
 
 
 async def _topic_ref(session: AsyncSession, topic: Topic) -> dict[str, Any]:
@@ -301,6 +317,8 @@ def _chat_dict(c: Chat) -> dict[str, Any]:
         "description": c.description,
         "pinned": c.pinned,
         "archived": c.archived_at is not None,
+        "parent_topic_id": c.parent_topic_id,
+        "parent_message_id": c.parent_message_id,
         "created_at": _iso(c.created_at),
         "updated_at": _iso(c.updated_at),
     }
@@ -461,7 +479,23 @@ async def get_topic(topic_id: int) -> dict[str, Any]:
             return {"error": f"Topic {topic_id} not found"}
         names = await _collection_names(session)
         paths = await _topic_paths(session)
-    return _topic_dict(topic, names, paths)
+        data = _topic_dict(topic, names, paths)
+        # Side chat titles disclose chat content: listed only with ``chats`` on.
+        if await _section_enabled("chats"):
+            from precursor.backend.services import side_chats
+
+            items = await side_chats.list_side_chats(session, topic_id)
+            data["side_chats"] = [
+                {
+                    "id": i.id,
+                    "title": i.title,
+                    "parent_message_id": i.parent_message_id,
+                    "message_count": i.message_count,
+                    "last_message_at": _iso(i.last_message_at),
+                }
+                for i in items
+            ]
+    return data
 
 
 # --------------------------------------------------------------------------
@@ -750,6 +784,105 @@ async def search(query: str, limit: int = 25) -> dict[str, Any]:
             hit["path"] = topic_paths.get(r.entity_id) or r.ref
         results.append(hit)
     return {"query": query, "results": results, "count": len(results)}
+
+
+# --------------------------------------------------------------------------
+# Precursor IQ (ranked retrieval + cited answers)
+# --------------------------------------------------------------------------
+async def _iq_gates(sources: list[str] | None) -> set[str] | dict[str, Any]:
+    """Exposure sections a caller may retrieve from, narrowed by ``sources``.
+
+    Every hit is gated by its own section (topic metadata and briefs by
+    ``topics``, topic conversations by ``messages``, and so on), so IQ never
+    reveals more than the per-section tools would.
+    """
+    from precursor.backend.services.iq.sources import GATE_SECTIONS
+
+    gates = {s for s in GATE_SECTIONS if await _section_enabled(s)}
+    if sources:
+        unknown = sorted(set(sources) - set(GATE_SECTIONS))
+        if unknown:
+            return {
+                "error": f"Unknown source(s): {', '.join(unknown)}. "
+                f"Use any of: {', '.join(GATE_SECTIONS)}."
+            }
+        gates &= set(sources)
+    return gates
+
+
+@mcp.tool()
+async def retrieve(query: str, sources: list[str] | None = None, limit: int = 10) -> dict[str, Any]:
+    """Semantic lookup over this Precursor workspace, ready to ground an answer.
+
+    Ranks passages from topics, topic briefs, messages and attachments, chats,
+    agent prompts/answers, live meeting notes/summaries/transcripts/insights and
+    long-term memory by relevance to a natural-language ``query`` (full-text
+    BM25, fused with vector similarity when embeddings are enabled).
+
+    Returns ``markdown`` — numbered excerpts to ground on, citing them inline as
+    ``[^n]`` — plus ``hits`` with each passage's ``id`` (its citation number),
+    the entity it belongs to (``section``, ``entity_id``, ``ref``, ``path``,
+    ``url``), the matched ``field``, a ``snippet`` and the ``accessor`` tool that
+    reads the full item.
+
+    ``sources`` narrows the search to exposure sections (``topics``,
+    ``messages``, ``chats``, ``agents``, ``live``, ``memory``); hits from a
+    section that isn't exposed are never returned. Prefer this over ``search``
+    for questions; ``search`` stays a literal substring match.
+    """
+    if not await _section_enabled("iq"):
+        return {"error": _GATED.format(section="iq")}
+    if not query.strip():
+        return {"error": "query must not be empty"}
+    gates = await _iq_gates(sources)
+    if isinstance(gates, dict):
+        return gates
+    from precursor.backend.services.iq.retrieve import MAX_LIMIT
+    from precursor.backend.services.iq.retrieve import retrieve as run_retrieve
+
+    result = await run_retrieve(query, gates=gates, limit=max(1, min(limit, MAX_LIMIT)))
+    return {
+        "query": result.query,
+        "markdown": result.markdown,
+        "hits": [h.as_dict() for h in result.hits],
+        "count": len(result.hits),
+        "semantic": result.semantic,
+        "pending": result.pending,
+    }
+
+
+@mcp.tool()
+async def ask(question: str, sources: list[str] | None = None) -> dict[str, Any]:
+    """Answer a question from this Precursor workspace, with citations.
+
+    Retrieves the most relevant passages (see ``retrieve``) and has Precursor's
+    configured model write a concise answer grounded only on them, citing each
+    as ``[^n]``. Returns ``answer``, the ``citations`` it used and every
+    ``sources`` passage it was given. Runs one model call per request.
+
+    ``sources`` narrows grounding to exposure sections, like ``retrieve``.
+    """
+    if not await _section_enabled("iq_ask"):
+        return {"error": _GATED.format(section="iq_ask")}
+    if not question.strip():
+        return {"error": "question must not be empty"}
+    gates = await _iq_gates(sources)
+    if isinstance(gates, dict):
+        return gates
+    from precursor.backend.services.iq.ask import ask as run_ask
+    from precursor.backend.services.llm.one_shot import LLMCallFailed
+
+    try:
+        result = await run_ask(question, gates=gates)
+    except LLMCallFailed as exc:
+        return {"error": exc.detail}
+    return {
+        "question": result.question,
+        "answer": result.answer,
+        "model": result.model,
+        "citations": [h.as_dict() for h in result.citations],
+        "sources": [h.as_dict() for h in result.sources],
+    }
 
 
 # --------------------------------------------------------------------------
@@ -1188,6 +1321,50 @@ async def append_note(topic_id: int, text: str) -> dict[str, Any]:
 
 
 # --------------------------------------------------------------------------
+# side chats (write)
+# --------------------------------------------------------------------------
+@mcp.tool()
+async def create_side_chat(
+    topic_id: int, message_id: int | None = None, quote: str | None = None
+) -> dict[str, Any]:
+    """Start a side chat: a chat linked to a topic, for a tangent off it.
+
+    The chat's model sees the topic's title, description and summary on every
+    turn. Pass ``message_id`` (an assistant reply of that topic, from
+    ``list_messages``) to start from that reply: the chat keeps a copy of it.
+    ``quote`` narrows that copy to an excerpt of the reply.
+
+    Nothing is generated: the chat is created empty, ready for the user. The
+    result carries the chat's in-app ``url`` and its ``topic``; report those
+    rather than numeric ids.
+    """
+    if not await _section_enabled("side_chats"):
+        return {"error": _GATED.format(section="side_chats")}
+    # Imported lazily: drags in the FastAPI stack the read tools don't need.
+    from fastapi import HTTPException
+
+    from precursor.backend.services import side_chats
+    from precursor.backend.services.events import publish_topic_changed
+
+    async with SessionLocal() as session:
+        try:
+            chat = await side_chats.create_side_chat(
+                session, topic_id, message_id=message_id, quote=quote
+            )
+        except HTTPException as exc:
+            return {"error": str(exc.detail)}
+        topic = await session.get(Topic, topic_id)
+        assert topic is not None
+        ref = await _topic_ref(session, topic)
+    await publish_topic_changed(topic_id)
+    return {
+        **_chat_dict(chat),
+        "url": f"{app_base_url()}/chats/{quote_url(chat.slug)}",
+        "topic": ref,
+    }
+
+
+# --------------------------------------------------------------------------
 # post_message (write)
 # --------------------------------------------------------------------------
 @mcp.tool()
@@ -1350,7 +1527,7 @@ async def create_schedule(
             title=title,
             slug=await allocate_unique_slug(session, slugify(title) or "scheduled-topic", Topic),
             collection_id=collection_id,
-            role_id=await resolve_collection_default_role_id(session, collection_id),
+            role=await resolve_collection_default_role(session, collection_id),
         )
         session.add(topic)
         await session.flush()
@@ -1529,6 +1706,385 @@ async def cancel_reminder(topic_id: int) -> dict[str, Any]:
     return {"topic_id": topic_id, "deleted": True}
 
 
+# --------------------------------------------------------------------------
+# workspaces (sandboxed to a workspace's on-disk working tree)
+# --------------------------------------------------------------------------
+# Cap how much file text a read hands back to the model.
+_DEFAULT_MAX_BYTES = 100_000
+# Cap how many entries list_workspace_files returns so a huge repo can't blow
+# the context.
+_MAX_LIST_ENTRIES = 2000
+
+
+async def _workspace_gate(section: str) -> dict[str, Any] | None:
+    if not await _section_enabled(section, strict=True):
+        return {"error": _GATED.format(section=section)}
+    return None
+
+
+async def _load_workspace(workspace_id: int) -> Workspace | None:
+    async with SessionLocal() as session:
+        return await session.get(Workspace, workspace_id)
+
+
+@mcp.tool()
+async def list_workspaces() -> dict[str, Any]:
+    """List available workspaces (id, slug, name) you can operate on.
+
+    Call this first to find the ``workspace_id`` for the other workspace tools.
+    """
+    if (gated := await _workspace_gate("workspaces")) is not None:
+        return gated
+    async with SessionLocal() as session:
+        rows = (await session.execute(select(Workspace))).scalars().all()
+    return {
+        "workspaces": [
+            {
+                "id": w.id,
+                "slug": w.slug,
+                "name": w.name,
+                "kind": w.kind,
+                "ready": w.cloned_at is not None,
+            }
+            for w in rows
+        ]
+    }
+
+
+@mcp.tool()
+async def list_workspace_files(workspace_id: int, subdir: str | None = None) -> dict[str, Any]:
+    """List files and folders in a workspace.
+
+    Paths are POSIX-style and relative to the workspace root. ``.git`` is
+    hidden. Optionally restrict to ``subdir``.
+    """
+    if (gated := await _workspace_gate("workspaces")) is not None:
+        return gated
+    ws = await _load_workspace(workspace_id)
+    if ws is None:
+        return {"error": f"Workspace {workspace_id} not found"}
+    root = browse_root(ws)
+    if not root.exists():
+        return {"error": "Workspace is not ready yet"}
+    try:
+        base = workspace_fs.safe_join(root, subdir) if subdir else root
+    except workspace_fs.UnsafePathError as exc:
+        return {"error": str(exc)}
+    nodes = workspace_fs.list_tree(base)
+    return {
+        "root": str(subdir or ""),
+        "entries": [
+            {"path": n.path, "name": n.name, "type": n.type} for n in nodes[:_MAX_LIST_ENTRIES]
+        ],
+        "truncated": len(nodes) > _MAX_LIST_ENTRIES,
+        "count": len(nodes),
+    }
+
+
+@mcp.tool()
+async def read_workspace_file(
+    workspace_id: int, path: str, max_bytes: int = _DEFAULT_MAX_BYTES
+) -> dict[str, Any]:
+    """Read a UTF-8 text file from a workspace.
+
+    Returns ``content`` (truncated past ``max_bytes``). Binary files and paths
+    that escape the workspace are rejected.
+    """
+    if (gated := await _workspace_gate("workspaces")) is not None:
+        return gated
+    ws = await _load_workspace(workspace_id)
+    if ws is None:
+        return {"error": f"Workspace {workspace_id} not found"}
+    if max_bytes <= 0 or max_bytes > 1_000_000:
+        max_bytes = _DEFAULT_MAX_BYTES
+    try:
+        content = workspace_fs.read_text(browse_root(ws), path)
+    except workspace_fs.UnsafePathError as exc:
+        return {"error": str(exc)}
+    except FileNotFoundError:
+        return {"error": f"File not found: {path}"}
+    except IsADirectoryError:
+        return {"error": f"Not a file: {path}"}
+    except UnicodeDecodeError:
+        return {"error": f"File is not UTF-8 text: {path}"}
+    truncated = len(content.encode("utf-8")) > max_bytes
+    if truncated:
+        content = content.encode("utf-8")[:max_bytes].decode("utf-8", "ignore")
+    return with_open_link({"path": path, "content": content, "truncated": truncated}, ws.slug, path)
+
+
+@mcp.tool()
+async def create_workspace(
+    name: str,
+    kind: Literal["local", "git"] = "local",
+    repo_url: str | None = None,
+    branch: str = "main",
+    subdir: str | None = None,
+    slug: str | None = None,
+) -> dict[str, Any]:
+    """Create a workspace: an empty local folder, or a clone of a git repository.
+
+    ``kind="local"`` makes an empty folder Precursor owns. ``kind="git"``
+    clones ``repo_url`` at ``branch`` (``repo_url`` is required) using the
+    connected GitHub account for private repositories. ``subdir`` scopes the
+    file browser to a folder inside the repo. ``slug`` defaults to a slug of
+    ``name`` and is made unique. Returns the new ``workspace_id`` to pass to the
+    other workspace tools, plus an in-app ``url``.
+    """
+    if (gated := await _workspace_gate("workspaces_write")) is not None:
+        return gated
+    if not name.strip():
+        return {"error": "A workspace name is required."}
+    async with SessionLocal() as session:
+        try:
+            ws = await create_workspace_row(
+                session,
+                name=name.strip(),
+                kind=kind,
+                repo_url=repo_url,
+                branch=branch,
+                subdir=subdir,
+                slug=slug,
+            )
+        except WorkspaceError as exc:
+            return {"error": str(exc)}
+        return {
+            "workspace_id": ws.id,
+            "slug": ws.slug,
+            "name": ws.name,
+            "kind": ws.kind,
+            "ready": ws.cloned_at is not None,
+            "url": f"{app_base_url()}/ws/{quote(ws.slug, safe='')}",
+        }
+
+
+@mcp.tool()
+async def create_workspace_file(workspace_id: int, path: str, content: str = "") -> dict[str, Any]:
+    """Create a new file in a workspace. Fails if the path already exists.
+
+    Parent folders are created as needed. Use ``write_workspace_file`` to
+    overwrite an existing file.
+    """
+    if (gated := await _workspace_gate("workspaces_write")) is not None:
+        return gated
+    ws = await _load_workspace(workspace_id)
+    if ws is None:
+        return {"error": f"Workspace {workspace_id} not found"}
+    root = browse_root(ws)
+    if not root.exists():
+        return {"error": "Workspace is not ready yet"}
+    try:
+        workspace_fs.refuse_definitions_for_tools(root, path)
+        workspace_fs.create_file(root, path, content)
+    except workspace_fs.UnsafePathError as exc:
+        return {"error": str(exc)}
+    except FileExistsError:
+        return {"error": f"File already exists: {path}"}
+    return with_open_link({"path": path, "created": True}, ws.slug, path)
+
+
+@mcp.tool()
+async def write_workspace_file(workspace_id: int, path: str, content: str) -> dict[str, Any]:
+    """Create or overwrite a file in a workspace with ``content``.
+
+    Parent folders are created as needed. Use ``create_workspace_file`` to
+    fail when the file already exists.
+    """
+    if (gated := await _workspace_gate("workspaces_write")) is not None:
+        return gated
+    ws = await _load_workspace(workspace_id)
+    if ws is None:
+        return {"error": f"Workspace {workspace_id} not found"}
+    root = browse_root(ws)
+    if not root.exists():
+        return {"error": "Workspace is not ready yet"}
+    try:
+        workspace_fs.refuse_definitions_for_tools(root, path)
+        workspace_fs.write_text(root, path, content)
+    except workspace_fs.UnsafePathError as exc:
+        return {"error": str(exc)}
+    return with_open_link(
+        {"path": path, "written": True, "bytes": len(content.encode("utf-8"))},
+        ws.slug,
+        path,
+    )
+
+
+@mcp.tool()
+async def create_workspace_folder(workspace_id: int, path: str) -> dict[str, Any]:
+    """Create a new folder in a workspace. Fails if the path already exists."""
+    if (gated := await _workspace_gate("workspaces_write")) is not None:
+        return gated
+    ws = await _load_workspace(workspace_id)
+    if ws is None:
+        return {"error": f"Workspace {workspace_id} not found"}
+    root = browse_root(ws)
+    if not root.exists():
+        return {"error": "Workspace is not ready yet"}
+    try:
+        workspace_fs.refuse_definitions_for_tools(root, path)
+        workspace_fs.create_dir(root, path)
+    except workspace_fs.UnsafePathError as exc:
+        return {"error": str(exc)}
+    except FileExistsError:
+        return {"error": f"Path already exists: {path}"}
+    return {"path": path, "created": True}
+
+
+# --------------------------------------------------------------------------
+# basic tools (stateless helpers; read no Precursor data)
+# --------------------------------------------------------------------------
+def _basic(section_call: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+    try:
+        return section_call()
+    except basic_tools.ToolError as exc:
+        return {"error": str(exc)}
+
+
+@mcp.tool()
+async def get_datetime(timezone: str | None = None) -> dict[str, Any]:
+    """Get the current date and time.
+
+    Models can't know "now" on their own. ``timezone`` is an IANA name such as
+    ``Europe/Paris`` or ``America/New_York``; omit it for this machine's local zone.
+    """
+    if not await _section_enabled("tools"):
+        return {"error": _GATED.format(section="tools")}
+    return _basic(
+        lambda: basic_tools.describe_datetime(
+            datetime.now(basic_tools.resolve_zone(timezone)), timezone
+        )
+    )
+
+
+@mcp.tool()
+async def convert_timezone(
+    time: str, to_timezone: str, from_timezone: str | None = None
+) -> dict[str, Any]:
+    """Convert a date-time between time zones.
+
+    ``time`` is ISO 8601 (``2026-03-01T14:30:00`` or with an offset/``Z``). A time with
+    no offset is read in ``from_timezone`` (an IANA name; default: this machine's zone).
+    """
+    if not await _section_enabled("tools"):
+        return {"error": _GATED.format(section="tools")}
+    return _basic(lambda: basic_tools.convert_timezone(time, to_timezone, from_timezone))
+
+
+@mcp.tool()
+async def date_math(
+    start: str,
+    end: str | None = None,
+    years: int = 0,
+    months: int = 0,
+    weeks: int = 0,
+    days: int = 0,
+    hours: int = 0,
+    minutes: int = 0,
+    timezone: str | None = None,
+) -> dict[str, Any]:
+    """Add or subtract time from a date, or measure the gap between two dates.
+
+    With ``end``: returns the difference (seconds, days, a d/h/m/s breakdown and the
+    number of business days). Without it: shifts ``start`` by the given amounts
+    (negative values subtract; month/year shifts clamp to the month's last day).
+    Dates are ISO 8601; ones with no offset are read in ``timezone`` (default: local).
+    """
+    if not await _section_enabled("tools"):
+        return {"error": _GATED.format(section="tools")}
+    return _basic(
+        lambda: basic_tools.date_math(
+            start, end, years, months, weeks, days, hours, minutes, timezone
+        )
+    )
+
+
+@mcp.tool()
+async def calculate(expression: str) -> dict[str, Any]:
+    """Evaluate an arithmetic expression exactly instead of guessing.
+
+    Supports ``+ - * / // % **`` (``^`` too), parentheses, the constants ``pi``/``e``/``tau``
+    and functions like ``sqrt``, ``log``, ``round``, ``min``, ``max``, ``sum``, ``floor``,
+    ``ceil``, ``factorial``, ``sin``/``cos``/``tan``. Nothing else is evaluated.
+    """
+    if not await _section_enabled("tools"):
+        return {"error": _GATED.format(section="tools")}
+    return _basic(lambda: basic_tools.calculate(expression))
+
+
+@mcp.tool()
+async def convert_units(value: float, from_unit: str, to_unit: str) -> dict[str, Any]:
+    """Convert a quantity between units of the same kind.
+
+    Length (mm cm m km in ft yd mi), mass (mg g kg t oz lb), volume (ml l tsp tbsp cup
+    floz pt qt gal), time (ms s min h d wk), data (b kb mb gb tb kib mib gib tib),
+    speed (m/s km/h mph kn) and temperature (c f k).
+    """
+    if not await _section_enabled("tools"):
+        return {"error": _GATED.format(section="tools")}
+    return _basic(lambda: basic_tools.convert_units(value, from_unit, to_unit))
+
+
+@mcp.tool()
+async def generate_uuid(version: int = 4, count: int = 1) -> dict[str, Any]:
+    """Generate UUIDs: version 4 (random) or 7 (time-ordered, sortable). ``count`` is 1-100."""
+    if not await _section_enabled("tools"):
+        return {"error": _GATED.format(section="tools")}
+    return _basic(lambda: basic_tools.generate_uuid(version, count))
+
+
+@mcp.tool()
+async def random_value(
+    kind: str = "token_urlsafe",
+    length: int = 32,
+    minimum: int = 0,
+    maximum: int = 100,
+    count: int = 1,
+) -> dict[str, Any]:
+    """Generate cryptographically secure random values.
+
+    ``kind``: ``token_urlsafe`` or ``token_hex`` (``length`` is in bytes) or ``integer``
+    (inclusive ``minimum``..``maximum``). ``count`` is 1-100.
+    """
+    if not await _section_enabled("tools"):
+        return {"error": _GATED.format(section="tools")}
+    return _basic(lambda: basic_tools.random_value(kind, length, minimum, maximum, count))
+
+
+@mcp.tool()
+async def hash_or_encode(operation: str, text: str) -> dict[str, Any]:
+    """Hash or encode/decode text.
+
+    ``operation``: ``md5``, ``sha1``, ``sha256``, ``sha512``, ``base64_encode``,
+    ``base64_decode``, ``url_encode``, ``url_decode``, ``hex_encode``, ``hex_decode``,
+    ``html_escape`` or ``html_unescape``. Hashes are hex digests of the UTF-8 text.
+    """
+    if not await _section_enabled("tools"):
+        return {"error": _GATED.format(section="tools")}
+    return _basic(lambda: basic_tools.hash_or_encode(operation, text))
+
+
+@mcp.tool()
+async def count_text(text: str) -> dict[str, Any]:
+    """Count characters, words, lines, sentences and paragraphs, with an estimated token count."""
+    if not await _section_enabled("tools"):
+        return {"error": _GATED.format(section="tools")}
+    return basic_tools.count_text(text)
+
+
+@mcp.tool()
+async def get_system_info() -> dict[str, Any]:
+    """Describe the machine Precursor runs on: app version, OS, architecture, Python, locale, time zone.
+
+    Never includes hostnames, usernames, paths or environment variables.
+    """
+    if not await _section_enabled("tools"):
+        return {"error": _GATED.format(section="tools")}
+    from precursor import __version__
+
+    return basic_tools.system_info(__version__)
+
+
 # Loopback hosts the HTTP transport is allowed to bind to. 0.0.0.0 is *not*
 # loopback — an unauthenticated server must never answer on all interfaces.
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
@@ -1544,19 +2100,6 @@ def http_endpoint_url() -> str | None:
     if not is_loopback_host(cfg.host):
         return None
     return f"http://{cfg.host}:{cfg.port}/mcp"
-
-
-def app_base_url() -> str:
-    """Origin of the running SPA, so a tool result can link to what it changed.
-
-    Uses the configured bind, mapping a wildcard to ``localhost`` because
-    ``0.0.0.0`` is not something a browser can open. Best-effort: the value is
-    only ever pasted into a human-readable result.
-    """
-    cfg = get_settings()
-    host = {"0.0.0.0": "localhost", "": "localhost", "::": "localhost"}.get(cfg.host, cfg.host)
-    authority = f"[{host}]:{cfg.port}" if ":" in host else f"{host}:{cfg.port}"
-    return f"http://{authority}"
 
 
 # Concrete MCPServer instance for the stdio entrypoint. The HTTP transport builds

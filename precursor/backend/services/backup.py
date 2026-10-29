@@ -1,4 +1,4 @@
-"""Folder backup of the SQLite database + content-addressed blob store.
+"""Folder backup of the SQLite database, blob store and definitions folder.
 
 The user points Settings → Backup at a plain directory — typically one synced by
 a cloud client such as OneDrive, Dropbox or iCloud Drive — and the app copies a
@@ -11,12 +11,18 @@ contained snapshot the client can safely upload. Layout under ``<backup_dir>``::
 
     blobs/<sha[0:2]>/<sha[2:4]>/<sha256>   # incremental mirror of the blob store
     db/precursor-YYYYMMDD-HHMMSS.db        # dated consistent DB snapshots
+    definitions/definitions-YYYYMMDD-HHMMSS.zip  # dated archives of the definitions
 
 Blobs are content-addressed and immutable, so the mirror only ever *adds* files
 (a repeat run skips everything already there) and is never pruned — keeping
 supersets of every blob a past snapshot might reference. DB snapshots are made
 with SQLite ``VACUUM INTO``, which reads a consistent image even while the app
 is writing, and the newest ``backup_retention`` of them are kept.
+
+The definitions folder (the built-in **Definitions** workspace by default) is
+plain mutable files that live outside the DB, so each run zips it into one dated
+archive — a single file is friendlier to sync clients than thousands of small
+ones — and the same retention applies.
 """
 
 from __future__ import annotations
@@ -25,6 +31,7 @@ import asyncio
 import logging
 import shutil
 import sqlite3
+import zipfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -74,6 +81,7 @@ class BackupResult:
     # Total blob files present in the destination mirror after the run (a
     # superset of ``blobs_copied`` — it counts everything already there too).
     blobs_total: int = 0
+    definitions_archive: str | None = None
 
 
 async def resolve_backup_enabled(session: AsyncSession) -> bool:
@@ -202,11 +210,47 @@ def _prune_snapshots(db_dir: Path, retention: int) -> None:
             logger.warning("Failed to prune old backup snapshot %s", stale, exc_info=True)
 
 
+def _archive_definitions(src: Path, dest: Path) -> int:
+    """Zip the ``src`` folder into ``dest``; returns the number of files stored.
+
+    Written to a ``.tmp`` sibling and renamed so a sync client or a crash never
+    leaves a half-written ``.zip`` that retention would count as a good archive.
+    """
+    tmp = dest.with_name(dest.name + ".tmp")
+    count = 0
+    try:
+        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zf:
+            for path in sorted(src.rglob("*")):
+                if not path.is_file() or path.is_symlink():
+                    continue
+                zf.write(path, path.relative_to(src).as_posix())
+                count += 1
+        tmp.replace(dest)
+    finally:
+        tmp.unlink(missing_ok=True)
+    return count
+
+
+def _prune_definitions(dir_: Path, retention: int) -> None:
+    """Keep the newest ``retention`` definitions archives, delete the rest."""
+    archives = sorted(
+        (p for p in dir_.glob("definitions-*.zip") if p.is_file()),
+        key=lambda p: p.name,
+        reverse=True,
+    )
+    for stale in archives[retention:]:
+        try:
+            stale.unlink()
+        except OSError:  # pragma: no cover - defensive
+            logger.warning("Failed to prune old definitions archive %s", stale, exc_info=True)
+
+
 def _run_backup_sync(
     db_file: Path | None,
     blobs_dir: Path,
     dest_dir: Path,
     retention: int,
+    definitions_dir: Path | None = None,
 ) -> BackupResult:
     """Blocking backup body — executed off the event loop via ``to_thread``."""
     dest_dir.mkdir(parents=True, exist_ok=True)
@@ -223,11 +267,24 @@ def _run_backup_sync(
 
     copied, total = _mirror_blobs(blobs_dir, dest_dir / "blobs")
 
+    definitions_archive: str | None = None
+    definitions_files = 0
+    if definitions_dir is not None and definitions_dir.is_dir():
+        defs_out = dest_dir / "definitions"
+        defs_out.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+        archive = defs_out / f"definitions-{stamp}.zip"
+        definitions_files = _archive_definitions(definitions_dir, archive)
+        _prune_definitions(defs_out, retention)
+        definitions_archive = str(archive)
+
     blobs_summary = f"blobs: {total} mirrored ({copied} new)"
     if db_snapshot is None:
         detail = f"{blobs_summary.capitalize()}. No SQLite DB file to snapshot."
     else:
         detail = f"DB snapshot written; {blobs_summary}."
+    if definitions_archive is not None:
+        detail += f" Definitions archived ({definitions_files} files)."
     return BackupResult(
         ok=True,
         status="ok",
@@ -235,6 +292,7 @@ def _run_backup_sync(
         db_snapshot=db_snapshot,
         blobs_copied=copied,
         blobs_total=total,
+        definitions_archive=definitions_archive,
     )
 
 
@@ -283,7 +341,12 @@ async def run_backup(*, record: bool = True) -> BackupResult:
 
     try:
         result = await asyncio.to_thread(
-            _run_backup_sync, db_file, blobs_dir, dest_dir, cfg.retention
+            _run_backup_sync,
+            db_file,
+            blobs_dir,
+            dest_dir,
+            cfg.retention,
+            Path(settings.definitions_dir),
         )
     except Exception as exc:
         logger.exception("Backup run failed")

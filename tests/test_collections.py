@@ -212,31 +212,29 @@ def test_collection_default_role_create_update_and_validation() -> None:
         role = _make_role(client, "drole-reviewer", "Be strict.")
 
         # Set at creation…
-        col = _make(client, "DRole create", default_role_id=role["id"])
-        assert col["default_role_id"] == role["id"]
+        col = _make(client, "DRole create", default_role=role["name"])
+        assert col["default_role"] == role["name"]
 
         # …clearable via an explicit null…
-        cleared = client.patch(f"/api/collections/{col['id']}", json={"default_role_id": None})
+        cleared = client.patch(f"/api/collections/{col['id']}", json={"default_role": None})
         assert cleared.status_code == 200
-        assert cleared.json()["default_role_id"] is None
+        assert cleared.json()["default_role"] is None
 
         # …and settable via update.
-        updated = client.patch(
-            f"/api/collections/{col['id']}", json={"default_role_id": role["id"]}
-        )
+        updated = client.patch(f"/api/collections/{col['id']}", json={"default_role": role["name"]})
         assert updated.status_code == 200
-        assert updated.json()["default_role_id"] == role["id"]
+        assert updated.json()["default_role"] == role["name"]
 
         # An unknown role id is rejected on both create and update.
         assert (
             client.post(
-                "/api/collections", json={"name": "DRole bad", "default_role_id": 999999}
+                "/api/collections", json={"name": "DRole bad", "default_role": "missing role"}
             ).status_code
             == 400
         )
         assert (
             client.patch(
-                f"/api/collections/{col['id']}", json={"default_role_id": 999999}
+                f"/api/collections/{col['id']}", json={"default_role": "missing role"}
             ).status_code
             == 400
         )
@@ -246,41 +244,41 @@ def test_new_topic_inherits_collection_default_role() -> None:
     app = create_app()
     with TestClient(app) as client:
         role = _make_role(client, "drole-inherit")
-        col = _make(client, "DRole inherit", default_role_id=role["id"])
+        col = _make(client, "DRole inherit", default_role=role["name"])
 
         # A new topic in the collection picks up the default role…
         inherited = client.post(
             "/api/topics", json={"title": "Inherits role", "collection_id": col["id"]}
         ).json()
-        assert inherited["role_id"] == role["id"]
+        assert inherited["role"] == role["name"]
 
         # …a child topic in the same collection does too…
         child = client.post(
             "/api/topics",
             json={"title": "Child inherits role", "parent_id": inherited["id"]},
         ).json()
-        assert child["role_id"] == role["id"]
+        assert child["role"] == role["name"]
 
         # …but an explicit role on create still wins.
         other = _make_role(client, "drole-explicit")
         explicit = client.post(
             "/api/topics",
-            json={"title": "Explicit role", "collection_id": col["id"], "role_id": other["id"]},
+            json={"title": "Explicit role", "collection_id": col["id"], "role": other["name"]},
         ).json()
-        assert explicit["role_id"] == other["id"]
+        assert explicit["role"] == other["name"]
 
 
 def test_deleting_a_role_clears_collection_default() -> None:
     app = create_app()
     with TestClient(app) as client:
         role = _make_role(client, "drole-doomed")
-        col = _make(client, "DRole delete", default_role_id=role["id"])
-        assert col["default_role_id"] == role["id"]
+        col = _make(client, "DRole delete", default_role=role["name"])
+        assert col["default_role"] == role["name"]
 
-        assert client.delete(f"/api/roles/{role['id']}").status_code == 204
+        assert client.delete(f"/api/roles/{role['name']}").status_code == 204
 
         after = client.get(f"/api/collections/{col['id']}").json()
-        assert after["default_role_id"] is None
+        assert after["default_role"] is None
 
 
 def test_creating_a_topic_honours_the_requested_collection() -> None:
@@ -375,6 +373,25 @@ def test_promoting_a_chat_lands_it_in_the_named_collection() -> None:
         other = client.post("/api/chats", json={"title": "Promote me too"}).json()
         fallback = client.post(f"/api/chats/{other['id']}/promote").json()
         assert fallback["collection_id"] == _default_collection(client)["id"]
+
+
+def test_promoting_a_chat_under_a_chosen_parent_topic() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        col = _make(client, "Promote parent col")
+        parent = client.post(
+            "/api/topics", json={"title": "Promote parent", "collection_id": col["id"]}
+        ).json()
+        chat = client.post("/api/chats", json={"title": "Nest me"}).json()
+
+        topic = client.post(f"/api/chats/{chat['id']}/promote?parent_id={parent['id']}").json()
+        assert topic["parent_id"] == parent["id"]
+        assert topic["collection_id"] == col["id"]
+
+        missing = client.post("/api/chats", json={"title": "Orphan"}).json()
+        assert (
+            client.post(f"/api/chats/{missing['id']}/promote?parent_id=999999").status_code == 404
+        )
 
 
 def test_topic_permalink_survives_renames_and_moves() -> None:

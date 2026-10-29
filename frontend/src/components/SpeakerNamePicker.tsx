@@ -14,12 +14,17 @@ export function SpeakerNamePicker({
   color,
   onCommit,
   onCancel,
+  isMe,
+  onToggleMe,
 }: {
   value: string;
   options: string[];
   color?: string;
   onCommit: (name: string) => void;
   onCancel: () => void;
+  /** Offered when suggested answers are on: marks this voice as the user. */
+  isMe?: boolean;
+  onToggleMe?: () => void;
 }) {
   const [query, setQuery] = useState("");
   const ref = useRef<HTMLDivElement>(null);
@@ -105,6 +110,22 @@ export function SpeakerNamePicker({
             </li>
           )}
         </ul>
+        {onToggleMe && (
+          <button
+            type="button"
+            onMouseDown={(e) => {
+              e.preventDefault();
+              if (doneRef.current) return;
+              doneRef.current = true;
+              onToggleMe();
+            }}
+            data-tooltip="Don't suggest answers to what this voice says"
+            className="flex w-full items-center justify-between gap-2 border-t border-border px-3 py-1.5 text-left text-[12px] hover:bg-bg"
+          >
+            <span>This is me</span>
+            {isMe && <Check size={12} className="shrink-0 text-accent" />}
+          </button>
+        )}
       </div>
     </div>
   );

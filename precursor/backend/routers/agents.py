@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -50,6 +50,9 @@ from precursor.backend.schemas.agent import (
     AgentPermissionDecision,
     AgentPermissionGrant,
     AgentProvisionJob,
+    AgentRewindPreview,
+    AgentRewindRequest,
+    AgentRewindResult,
     AgentRunRead,
     AgentRuntimeStatus,
     AgentSendRequest,
@@ -71,11 +74,17 @@ from precursor.backend.schemas.agent_state import (
 )
 from precursor.backend.schemas.workflow import WorkflowSummary
 from precursor.backend.services import agent_state as agent_state_service
+from precursor.backend.services import roles as roles_service
 from precursor.backend.services.agents import fleet, provision, runtime
 from precursor.backend.services.agents.directives import parse_agent_command
 from precursor.backend.services.agents.manager import get_agent_manager
 from precursor.backend.services.agents.mcp_scope import normalize_mcp_scope
+from precursor.backend.services.agents.rewind import RewindError
 from precursor.backend.services.app_settings import resolve_agents_enabled
+from precursor.backend.services.definitions import anchors as definition_anchors
+from precursor.backend.services.definitions import overlay as definition_overlay
+from precursor.backend.services.definitions import trust as definition_trust
+from precursor.backend.services.definitions import writer as definition_writer
 from precursor.backend.services.events import publish_agent_changed, publish_read_changed
 from precursor.backend.services.scheduler import get_scheduler
 
@@ -180,6 +189,14 @@ async def _current_runs(session: AsyncSession, agents: list[AgentSession]) -> di
     return {run.agent_id: run for run in result.scalars().all()}
 
 
+async def _attach_review(
+    session: AsyncSession, agent: AgentSession, read: AgentSessionRead
+) -> None:
+    """Files mode: list the permission changes its file makes that await review."""
+    if read.definition is not None:
+        read.definition.review = await definition_trust.pending_changes(session, agent)
+
+
 def _to_read(
     agent: AgentSession,
     unread: int,
@@ -190,12 +207,15 @@ def _to_read(
     read = AgentSessionRead.model_validate(agent)
     read.unread_count = unread
     read.workflow_count = workflow_count
+    if not agent.inline:
+        read.definition = definition_overlay.source_of(agent)
     if current_run is not None:
         read.current_run = AgentRunRead.model_validate(current_run)
     if activity:
         read.active_tool = activity.get("active_tool")
         read.active_tool_count = activity.get("active_tool_count", 0)
         read.active_narration = activity.get("active_narration")
+        read.active_thinking = activity.get("active_thinking")
         pending = activity.get("pending_permission")
         if pending:
             read.pending_permission = AgentPendingPermission.model_validate(pending)
@@ -523,7 +543,7 @@ async def instantiate_blueprint(
         model=blueprint.model,
         topic_id=payload.topic_id,
         chat_id=payload.chat_id,
-        role_id=blueprint.role_id,
+        role=blueprint.role,
         # Blueprints carry no server scope of their own (no column for it), so a
         # stamped agent starts unscoped and is narrowed after the fact.
         mcp_servers=None,
@@ -576,6 +596,10 @@ async def list_agents(
     chat_id: int | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> list[AgentSessionRead]:
+    # Files mode: an agent file new to this instance joins the roster, and
+    # titles edited in the files reach the searchable column.
+    await definition_anchors.adopt_new_files(session)
+    await definition_anchors.sync_names(session)
     # Inline agents are execution vessels owned by a workflow step, not units the
     # user manages, so they stay out of the roster. They are deliberately still
     # listed by ``/attention`` below: a blocked inline step must remain
@@ -597,7 +621,7 @@ async def list_agents(
     workflows = await _workflow_counts(session, ids)
     activity = get_agent_manager().live_activity(ids)
     runs = await _current_runs(session, agents)
-    return [
+    reads = [
         _to_read(
             a,
             unread.get(a.id, 0),
@@ -607,6 +631,9 @@ async def list_agents(
         )
         for a in agents
     ]
+    for agent, read in zip(agents, reads, strict=True):
+        await _attach_review(session, agent, read)
+    return reads
 
 
 @router.get("/archived", response_model=list[AgentSessionRead])
@@ -629,7 +656,7 @@ async def _spawn_agent(
     model: str | None,
     topic_id: int | None,
     chat_id: int | None,
-    role_id: int | None,
+    role: str | None,
     mcp_servers: str | None,
     autonomy_enabled: bool,
     max_steps: int,
@@ -652,7 +679,7 @@ async def _spawn_agent(
         model=model,
         topic_id=topic_id,
         chat_id=chat_id,
-        role_id=role_id,
+        role=role,
         mcp_servers=normalize_mcp_scope(mcp_servers),
         autonomy_enabled=autonomy_enabled,
         max_steps=max_steps,
@@ -663,6 +690,10 @@ async def _spawn_agent(
         status="pending" if start else "waiting",
     )
     session.add(agent)
+    await session.flush()
+    # Files mode: declared by a new file from the start — written before the
+    # commit, so nothing can start the agent before its file exists.
+    await definition_writer.save_agent(session, agent)
     await session.commit()
     await session.refresh(agent)
 
@@ -695,16 +726,16 @@ async def create_agent(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Agent task is required")
 
     title = (payload.title or task_prompt).strip()[:200] or "Agent task"
-    return await _spawn_agent(
+    agent = await _spawn_agent(
         session,
         title=title,
         task_prompt=task_prompt,
         model=payload.model or (blueprint.model if blueprint else None),
         topic_id=payload.topic_id,
         chat_id=payload.chat_id,
-        role_id=payload.role_id
-        if payload.role_id is not None
-        else (blueprint.role_id if blueprint else None),
+        role=await roles_service.require_role(session, payload.role)
+        if payload.role
+        else (blueprint.role if blueprint else None),
         mcp_servers=payload.mcp_servers,
         autonomy_enabled=payload.autonomy_enabled
         or (blueprint.autonomy_enabled if blueprint else False),
@@ -718,6 +749,7 @@ async def create_agent(
         blueprint_id=payload.blueprint_id,
         start=payload.start,
     )
+    return agent
 
 
 @router.get("/{agent_id}/workflows", response_model=list[WorkflowSummary])
@@ -751,13 +783,15 @@ async def get_agent(
     workflows = await _workflow_counts(session, [agent.id])
     activity = get_agent_manager().live_activity([agent.id])
     runs = await _current_runs(session, [agent])
-    return _to_read(
+    read = _to_read(
         agent,
         unread.get(agent.id, 0),
         activity.get(agent.id),
         workflows.get(agent.id, 0),
         runs.get(agent.id),
     )
+    await _attach_review(session, agent, read)
+    return read
 
 
 @router.get("/{agent_id}/events", response_model=AgentEventPage)
@@ -765,6 +799,7 @@ async def get_agent_events(
     agent_id: str,
     agent_run_id: int | None = None,
     after: int = 0,
+    epoch: str | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> AgentEventPage:
     """The agent's transcript, optionally narrowed to one execution.
@@ -776,8 +811,9 @@ async def get_agent_events(
     ``after`` is the cursor from a previous read: the archived timeline is
     append-only, so a live view re-reading on every ``agent.changed`` signal asks
     only for what it hasn't seen. Omit it (or pass 0) for the whole transcript.
-    See :class:`AgentEventPage` for how the delta, the volatile approval cards
-    and the ``reset`` flag fit together.
+    Send back the ``epoch`` of that read too, so a rewind in between resets the
+    cursor. See :class:`AgentEventPage` for how the delta, the volatile approval
+    cards and the ``reset`` flag fit together.
     """
     agent = await _get_or_404(session, agent_id)
     if agent_run_id is not None:
@@ -785,8 +821,48 @@ async def get_agent_events(
         if run is None or run.agent_id != agent.id:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent run not found")
     return await get_agent_manager().get_events_page(
-        agent.id, agent_run_id=agent_run_id, after=after
+        agent.id, agent_run_id=agent_run_id, after=after, epoch=epoch
     )
+
+
+@router.post("/{agent_id}/rewind", response_model=AgentRewindResult)
+async def rewind_agent(
+    agent_id: str,
+    payload: AgentRewindRequest,
+    session: AsyncSession = Depends(get_session),
+) -> AgentRewindResult:
+    """Drop a prompt of the agent's current session and everything after it.
+
+    Truncates the SDK session's history and Precursor's transcript together;
+    ``mode: conversation-and-files`` also restores the files the dropped turns
+    changed. Irreversible; refused while a turn is in flight and for runs a
+    workflow step drives.
+    """
+    await _require_runtime(session)
+    agent = await _get_or_404(session, agent_id)
+    try:
+        return await get_agent_manager().rewind(agent.id, payload.event_id, payload.mode)
+    except RewindError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+
+
+@router.get("/{agent_id}/rewind/preview", response_model=AgentRewindPreview)
+async def preview_agent_rewind(
+    agent_id: str,
+    event_id: str = Query(min_length=1, max_length=64),
+    session: AsyncSession = Depends(get_session),
+) -> AgentRewindPreview:
+    """Check a rewind to ``event_id`` and list the files it could restore.
+
+    Applies the same checks as the rewind itself, and resumes the agent's SDK
+    session to ask it. Changes nothing.
+    """
+    await _require_runtime(session)
+    agent = await _get_or_404(session, agent_id)
+    try:
+        return await get_agent_manager().preview_rewind(agent.id, event_id)
+    except RewindError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
 
 
 @router.get("/{agent_id}/runs", response_model=list[AgentRunRead])
@@ -965,9 +1041,11 @@ async def update_agent(
     # session's system preamble, baked in once at (re)creation. Tearing the live
     # session down (below) forces the new persona to be injected on the next run.
     role_changed = False
-    if "role_id" in payload.model_fields_set and payload.role_id != agent.role_id:
-        agent.role_id = payload.role_id
-        role_changed = True
+    if "role" in payload.model_fields_set:
+        new_role = await roles_service.require_role(session, payload.role)
+        if new_role != agent.role:
+            agent.role = new_role
+            role_changed = True
 
     # Retuning the step budget is a plain field write — no session rebuild.
     if payload.max_steps is not None:
@@ -1039,6 +1117,9 @@ async def update_agent(
             agent.task_prompt = new_task
             task_changed = True
 
+    # Files mode: the file is the declaration, so the edit goes there — before
+    # the commit, because the refresh below re-reads the agent from its file.
+    await definition_writer.save_agent(session, agent)
     await session.commit()
     await session.refresh(agent)
 
@@ -1117,6 +1198,7 @@ async def delete_agent(agent_id: str, session: AsyncSession = Depends(get_sessio
     await get_agent_manager().teardown_session(aid, forget=True)
     await session.delete(agent)
     await session.commit()
+    definition_writer.remove_file(agent)
     await publish_agent_changed(agent_session_id=aid, topic_id=topic_id, chat_id=chat_id)
 
 

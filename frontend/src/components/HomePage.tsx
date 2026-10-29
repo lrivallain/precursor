@@ -4,9 +4,11 @@ import {
   ArrowRight,
   Bot,
   FolderGit2,
+  ListChecks,
   MessageSquarePlus,
   MessagesSquare,
   Radio,
+  Sparkles,
   Workflow as WorkflowIcon,
 } from "lucide-react";
 import { api } from "../lib/api";
@@ -240,12 +242,29 @@ export function HomePage({
       icon: <WorkflowIcon size={20} />,
     },
     {
+      mode: "steps",
+      title: "Step by step",
+      description:
+        "Split a long ask into a tree of steps, work each one with its own artifact and chat, then consolidate a single answer.",
+      newLabel: "New step plan",
+      openLabel: "Browse step plans",
+      icon: <ListChecks size={20} />,
+    },
+    {
       mode: "workspaces",
       title: "Files",
       description:
         "Browse the workspaces and files backing your sessions.",
       openLabel: "Browse files",
       icon: <FolderGit2 size={20} />,
+    },
+    {
+      mode: "iq",
+      title: "IQ",
+      description:
+        "Ask a question about everything in Precursor and jump to the sources behind the answer.",
+      openLabel: "Ask Precursor IQ",
+      icon: <Sparkles size={20} />,
     },
     // Plugin-contributed sections land after core's own cards, in the order the
     // backend published them.

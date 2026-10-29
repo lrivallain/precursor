@@ -68,6 +68,10 @@ MCP_EXPOSE_SECTIONS: tuple[str, ...] = (
     "agents",
     "live",
     "search",
+    # Precursor IQ: ranked retrieval with grounding + citations. ``iq_ask`` also
+    # runs a model call per request, so it spends the provider's quota.
+    "iq",
+    "iq_ask",
     "skills",
     "memory",
     "memory_write",
@@ -75,8 +79,16 @@ MCP_EXPOSE_SECTIONS: tuple[str, ...] = (
     "workflow_state",
     "notes",
     "post_message",
+    "side_chats",
     "schedules",
     "reminders",
+    # Sandboxed file access to workspace working trees; writes (and creating a
+    # workspace, which can clone a repo) are a separate, riskier toggle.
+    "workspaces",
+    "workspaces_write",
+    # Small stateless helpers (the current date and time, ...). They read no
+    # Precursor data, so this is the one section with nothing to disclose.
+    "tools",
 )
 DEFAULT_MCP_EXPOSE: dict[str, bool] = {s: False for s in MCP_EXPOSE_SECTIONS}
 
@@ -88,6 +100,10 @@ DEFAULT_MCP_HTTP_ENABLED = False
 # so the in-app installer is opt-in even on a loopback bind. Reading which
 # plugins exist is always allowed; only the mutating paths are gated.
 DEFAULT_PLUGIN_INSTALL_ENABLED = False
+# Whether the OpenAI-compatible endpoint (/api/openai/v1) answers. Off by
+# default: it spends the active provider's quota on behalf of whoever holds the
+# key, so the user turns it on deliberately.
+DEFAULT_OPENAI_PROXY_ENABLED = False
 
 # Browser channels the built-in ``playwright`` server can drive (``--browser``).
 # ``default`` is a deliberate sentinel: it omits ``--browser`` entirely so the
@@ -215,6 +231,22 @@ async def resolve_llm_model(session: AsyncSession) -> str:
     if stored and stored in offered:
         return stored
     if stored:
+        from precursor.backend.services.model_fallbacks import (
+            ModelSelection,
+            category_presets,
+            resolve_model_fallbacks,
+        )
+
+        categories = await resolve_model_fallbacks(session, await resolve_llm_provider(session))
+        selection = ModelSelection(
+            model=stored,
+            reasoning_effort=await resolve_llm_reasoning_effort(session),
+            context_tokens=await resolve_llm_max_input_tokens(session),
+        )
+        if category_presets(categories, selection):
+            # Keep the desired pin; the request wrapper chooses its replacement
+            # together with the replacement's own effort and context budget.
+            return stored
         logger.warning(
             "Chat model %r is no longer offered by the provider — falling back to %r",
             stored,
@@ -245,6 +277,11 @@ async def resolve_live_enabled(session: AsyncSession) -> bool:
     return await resolve(session, SettingSpec("live_enabled", _boolean, default=True))
 
 
+async def resolve_mock_provider_enabled(session: AsyncSession) -> bool:
+    """Whether the offline Mock provider is offered and used as a fallback."""
+    return await resolve(session, SettingSpec("mock_provider_enabled", _boolean, default=True))
+
+
 async def resolve_chat_autoname_enabled(session: AsyncSession) -> bool:
     """Whether a placeholder-titled chat is named from its first message.
 
@@ -257,7 +294,7 @@ async def resolve_chat_autoname_enabled(session: AsyncSession) -> bool:
     )
 
 
-async def resolve_chat_autoname_model(session: AsyncSession) -> str:
+async def resolve_chat_autoname_model(session: AsyncSession, *, use_default: bool = True) -> str:
     """Return the model used to name conversations.
 
     Naming is a throwaway one-liner, so it's worth pointing at something cheap
@@ -266,10 +303,10 @@ async def resolve_chat_autoname_model(session: AsyncSession) -> str:
     db_value = await _get_db_value(session, "chat_autoname_model")
     if isinstance(db_value, str) and db_value.strip():
         return db_value.strip()
-    return await resolve_llm_model(session)
+    return await resolve_llm_model(session) if use_default else ""
 
 
-async def resolve_live_fast_model(session: AsyncSession) -> str:
+async def resolve_live_fast_model(session: AsyncSession, *, use_default: bool = True) -> str:
     """Return the model used for live meeting analysis + Q&A.
 
     A dedicated "fast" model keeps live insights snappy without changing the
@@ -278,7 +315,7 @@ async def resolve_live_fast_model(session: AsyncSession) -> str:
     db_value = await _get_db_value(session, "live_fast_model")
     if isinstance(db_value, str) and db_value.strip():
         return db_value.strip()
-    return await resolve_llm_model(session)
+    return await resolve_llm_model(session) if use_default else ""
 
 
 async def resolve_live_reasoning_effort(session: AsyncSession) -> str:
@@ -295,6 +332,27 @@ async def resolve_live_reasoning_effort(session: AsyncSession) -> str:
             default=DEFAULT_LLM_REASONING_EFFORT,
         ),
     )
+
+
+# The summary template and output language last used for a live recap, so the
+# next one (including the draft written when a session ends) starts from them.
+LIVE_SUMMARY_TEMPLATE_KEY = "live_summary_template"
+LIVE_SUMMARY_LANGUAGE_KEY = "live_summary_language"
+DEFAULT_LIVE_SUMMARY_TEMPLATE = "standard"
+
+
+async def resolve_live_summary_template(session: AsyncSession) -> str:
+    return await resolve(
+        session,
+        SettingSpec(
+            LIVE_SUMMARY_TEMPLATE_KEY, _nonempty_str(), default=DEFAULT_LIVE_SUMMARY_TEMPLATE
+        ),
+    )
+
+
+async def resolve_live_summary_language(session: AsyncSession) -> str:
+    """``""`` means the session's own language."""
+    return await resolve(session, SettingSpec(LIVE_SUMMARY_LANGUAGE_KEY, _any_str, default=""))
 
 
 async def resolve_llm_provider(session: AsyncSession) -> str:
@@ -442,11 +500,18 @@ async def azure_stt_ready(session: AsyncSession) -> bool:
 # applied to a single tool result before it is trimmed.
 DEFAULT_LLM_MAX_INPUT_TOKENS = 600_000
 DEFAULT_LLM_MAX_TOOL_RESULT_TOKENS = 20_000
+# Extracted text kept per document attachment (PDF/DOCX/PPTX/text). ~50k tokens:
+# a full research paper fits, a book is cut with an explicit note to the model.
+DEFAULT_LLM_MAX_ATTACHMENT_CHARS = 200_000
+# Large tool results older than this many user turns reach the model as a short
+# preview (see ``context_budget.elide_stale_tool_results``). 0 disables it.
+DEFAULT_LLM_TOOL_RESULT_KEEP_TURNS = 5
 
 # Wall-clock ceiling for one scheduled/automated run.
 DEFAULT_SCHEDULED_RUN_TIMEOUT_SECONDS = 600
 
-# Retention window (in days) for full TOOL-result content. 0 disables pruning.
+# Retention window (in days) for full TOOL-result content and model thinking
+# (``messages.reasoning``). 0 disables pruning.
 DEFAULT_TOOL_RESULT_RETENTION_DAYS = 0
 
 # Retention window (in days) for Live meeting transcript segments, measured from
@@ -463,6 +528,8 @@ DEFAULT_AGENT_EVENT_MAX_PER_SESSION = 2000
 # Clamp bounds.
 _MIN_INPUT_TOKENS, _MAX_INPUT_TOKENS = 1_000, 5_000_000
 _MIN_TOOL_RESULT_TOKENS, _MAX_TOOL_RESULT_TOKENS = 100, 2_000_000
+_MIN_ATTACHMENT_CHARS, MAX_ATTACHMENT_CHARS = 1_000, 2_000_000
+_MIN_KEEP_TURNS, _MAX_KEEP_TURNS = 0, 1_000
 _MIN_RUN_TIMEOUT, _MAX_RUN_TIMEOUT = 10, 24 * 3600
 _MIN_CMD_TIMEOUT, _MAX_CMD_TIMEOUT = 1, 3600
 _MIN_CMD_OUTPUT, _MAX_CMD_OUTPUT = 1_000, 50_000_000
@@ -495,6 +562,28 @@ async def resolve_llm_max_tool_result_tokens(session: AsyncSession) -> int:
             "llm_max_tool_result_tokens",
             _clamped_int(_MIN_TOOL_RESULT_TOKENS, _MAX_TOOL_RESULT_TOKENS),
             default=DEFAULT_LLM_MAX_TOOL_RESULT_TOKENS,
+        ),
+    )
+
+
+async def resolve_llm_tool_result_keep_turns(session: AsyncSession) -> int:
+    return await resolve(
+        session,
+        SettingSpec(
+            "llm_tool_result_keep_turns",
+            _clamped_int(_MIN_KEEP_TURNS, _MAX_KEEP_TURNS),
+            default=DEFAULT_LLM_TOOL_RESULT_KEEP_TURNS,
+        ),
+    )
+
+
+async def resolve_llm_max_attachment_chars(session: AsyncSession) -> int:
+    return await resolve(
+        session,
+        SettingSpec(
+            "llm_max_attachment_chars",
+            _clamped_int(_MIN_ATTACHMENT_CHARS, MAX_ATTACHMENT_CHARS),
+            default=DEFAULT_LLM_MAX_ATTACHMENT_CHARS,
         ),
     )
 
@@ -626,6 +715,8 @@ async def resolve_system_settings(session: AsyncSession) -> dict[str, Any]:
     return {
         "llm_max_input_tokens": await resolve_llm_max_input_tokens(session),
         "llm_max_tool_result_tokens": await resolve_llm_max_tool_result_tokens(session),
+        "llm_tool_result_keep_turns": await resolve_llm_tool_result_keep_turns(session),
+        "llm_max_attachment_chars": await resolve_llm_max_attachment_chars(session),
         "scheduled_run_timeout_seconds": await resolve_scheduled_run_timeout_seconds(session),
         "tool_result_retention_days": await resolve_tool_result_retention_days(session),
         "live_transcript_retention_days": await resolve_live_transcript_retention_days(session),
@@ -676,6 +767,55 @@ async def resolve_plugin_install_enabled(session: AsyncSession) -> bool:
         session,
         SettingSpec("plugin_install_enabled", _boolean, default=DEFAULT_PLUGIN_INSTALL_ENABLED),
     )
+
+
+async def resolve_openai_proxy_enabled(session: AsyncSession) -> bool:
+    """Whether the OpenAI-compatible endpoint answers requests."""
+    return await resolve(
+        session,
+        SettingSpec("openai_proxy_enabled", _boolean, default=DEFAULT_OPENAI_PROXY_ENABLED),
+    )
+
+
+async def resolve_openai_proxy_key(session: AsyncSession) -> str:
+    """The OpenAI-compatible endpoint's API key, or ``""`` before one is minted."""
+    return await resolve(session, SettingSpec("openai_proxy_key", _nonempty_str(), default=""))
+
+
+# Precursor IQ embeddings are opt-in: every indexed chunk is sent to the chosen
+# provider's embeddings endpoint, which spends quota. Retrieval stays full-text
+# only until the user turns them on.
+DEFAULT_IQ_EMBEDDINGS_ENABLED = False
+DEFAULT_IQ_EMBEDDING_MODEL = "text-embedding-3-small"
+
+
+async def resolve_iq_embeddings_enabled(session: AsyncSession) -> bool:
+    return await resolve(
+        session,
+        SettingSpec("iq_embeddings_enabled", _boolean, default=DEFAULT_IQ_EMBEDDINGS_ENABLED),
+    )
+
+
+async def resolve_iq_embedding_model(session: AsyncSession) -> str:
+    return await resolve(
+        session,
+        SettingSpec("iq_embedding_model", _nonempty_str(), default=DEFAULT_IQ_EMBEDDING_MODEL),
+    )
+
+
+async def resolve_iq_embedding_provider(session: AsyncSession) -> str:
+    """Provider that vectorises IQ passages; ``""`` follows the global default."""
+    return await resolve(session, SettingSpec("iq_embedding_provider", _any_str, default=""))
+
+
+async def resolve_iq_ask_model(session: AsyncSession) -> str:
+    """Model that writes IQ answers; ``""`` falls back to the chat model."""
+    return await resolve(session, SettingSpec("iq_ask_model", _any_str, default=""))
+
+
+async def resolve_iq_ask_provider(session: AsyncSession) -> str:
+    """Provider serving ``iq_ask_model``; ``""`` follows the global default."""
+    return await resolve(session, SettingSpec("iq_ask_provider", _any_str, default=""))
 
 
 async def resolve_mcp_enabled(session: AsyncSession) -> dict[str, bool]:
@@ -765,6 +905,17 @@ async def resolve_agents_context_tier(session: AsyncSession) -> str:
     )
 
 
+async def resolve_agents_file_change_tracking(session: AsyncSession) -> bool:
+    """Whether new agent sessions capture file changes so a rewind can restore them.
+
+    On by default. The SDK snapshots each file an agent edits, and only a session
+    tracked from its first turn can put its files back (issue #401).
+    """
+    return await resolve(
+        session, SettingSpec("agents_file_change_tracking", _boolean, default=True)
+    )
+
+
 AGENTS_APPROVAL_POLICIES = ("manual", "balanced", "autonomous")
 # ``manual`` asks for everything, ``balanced`` auto-approves read-only actions,
 # ``autonomous`` approves all.
@@ -777,6 +928,52 @@ DEFAULT_AGENTS_MODEL = "auto"
 DEFAULT_AGENTS_SYSTEM_PROMPT = ""
 # Seconds a running session may stall before the watchdog interrupts it.
 DEFAULT_AGENTS_WATCHDOG_TIMEOUT_SECONDS = 600
+
+
+CONVERSATION_APPROVAL_POLICIES = ("manual", "balanced", "autonomous")
+# Autonomous keeps chats and topics behaving as they did before approvals
+# existed; a conversation (or this default) opts in to prompting.
+DEFAULT_CONVERSATION_APPROVAL_POLICY = "autonomous"
+
+
+async def resolve_topic_approval_policy(session: AsyncSession) -> str:
+    """Default approval policy for topic tool calls (DB override on the default)."""
+    return await resolve(
+        session,
+        SettingSpec(
+            "topic_approval_policy",
+            _str_in(CONVERSATION_APPROVAL_POLICIES),
+            default=DEFAULT_CONVERSATION_APPROVAL_POLICY,
+        ),
+    )
+
+
+DEFAULT_SCHEDULED_APPROVAL_TIMEOUT_MINUTES = 60
+MAX_SCHEDULED_APPROVAL_TIMEOUT_MINUTES = 60 * 24 * 14
+
+
+async def resolve_scheduled_approval_timeout(session: AsyncSession) -> int:
+    """Minutes an unattended run waits on an approval before auto-denying it (0 = forever)."""
+    return await resolve(
+        session,
+        SettingSpec(
+            "scheduled_approval_timeout_minutes",
+            _clamped_int(0, MAX_SCHEDULED_APPROVAL_TIMEOUT_MINUTES, require=lambda v: v >= 0),
+            default=DEFAULT_SCHEDULED_APPROVAL_TIMEOUT_MINUTES,
+        ),
+    )
+
+
+async def resolve_chat_approval_policy(session: AsyncSession) -> str:
+    """Default approval policy for chat tool calls (DB override on the default)."""
+    return await resolve(
+        session,
+        SettingSpec(
+            "chat_approval_policy",
+            _str_in(CONVERSATION_APPROVAL_POLICIES),
+            default=DEFAULT_CONVERSATION_APPROVAL_POLICY,
+        ),
+    )
 
 
 async def resolve_agents_approval_policy(session: AsyncSession) -> str:

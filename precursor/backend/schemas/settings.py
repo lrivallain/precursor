@@ -6,6 +6,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from precursor.backend.schemas.model_fallback import ModelCategories, ModelCategoryId, ModelPreset
+
 Theme = Literal["light", "dark", "system"]
 # Reading font applied app-wide, incl. dyslexia/low-vision-friendly options —
 # see frontend/src/lib/font.ts for the matching CSS class per id.
@@ -19,11 +21,13 @@ class SettingsPayload(BaseModel):
     theme: Theme | None = None
     font_family: FontFamily | None = None
     llm_model: str | None = None
+    llm_model_category: ModelCategoryId | None = None
     # Reasoning effort hint for reasoning-capable models: "" (auto/off — the
     # param is omitted), "low", "medium", or "high".
     llm_reasoning_effort: str | None = None
     # Active LLM provider id (see services/llm/registry.py).
     llm_provider: str | None = None
+    model_fallbacks: ModelCategories | None = None
     # Per-provider config maps, e.g. {"azure_foundry": {"endpoint": ..., "key": ...}}.
     # Merged into the stored config; secret fields are accepted here but never
     # echoed back. An empty-string value clears that field.
@@ -36,6 +40,8 @@ class SettingsPayload(BaseModel):
     # When true, the SPA shows a browser notification on turn completion while
     # the window is unfocused (requires the user to grant browser permission).
     notifications_enabled: bool | None = None
+    # When true, the SPA plays a short sound when a reply you asked for finishes.
+    completion_sound_enabled: bool | None = None
     # Max tool-call iterations per user turn before the stream aborts.
     max_tool_rounds: int | None = None
     # Map of MCP server name -> enabled.    mcp_enabled: dict[str, bool] | None = None
@@ -58,12 +64,25 @@ class SettingsPayload(BaseModel):
     # Auto-naming a placeholder-titled chat from its first message, and the
     # model that does it ("" falls back to the chat model).
     chat_autoname_enabled: bool | None = None
+    mock_provider_enabled: bool | None = None
     chat_autoname_model: str | None = None
     # Map of Precursor capability section -> exposed over the built-in MCP server.
     mcp_expose: dict[str, bool] | None = None
     # Serve the built-in 'precursor' MCP server over HTTP (localhost) too.
     mcp_http_enabled: bool | None = None
     plugin_install_enabled: bool | None = None
+    # Serve the OpenAI-compatible endpoint (/api/openai/v1). Turning it on mints
+    # the API key if there isn't one yet; the key itself isn't writable here.
+    openai_proxy_enabled: bool | None = None
+    # Precursor IQ: vectorise indexed passages (spends quota) with the embeddings
+    # model/deployment of a provider ("" = the global default provider), and the
+    # model that writes cited answers ("" = the chat model) on its own provider
+    # ("" = the global default provider).
+    iq_embeddings_enabled: bool | None = None
+    iq_embedding_provider: str | None = None
+    iq_embedding_model: str | None = None
+    iq_ask_provider: str | None = None
+    iq_ask_model: str | None = None
     # Entra tenant GUID for the Agent 365 MCP servers (the workiq-* family).
     workiq_tenant_id: str | None = None
     # Browser channel the built-in 'playwright' server drives (--browser).
@@ -73,9 +92,15 @@ class SettingsPayload(BaseModel):
     # Prompt budgeting.
     llm_max_input_tokens: int | None = None
     llm_max_tool_result_tokens: int | None = None
+    # Large tool results older than this many user turns reach the model as a
+    # short preview (0 = always send them in full).
+    llm_tool_result_keep_turns: int | None = None
+    # Extracted-text cap per document attachment, in characters.
+    llm_max_attachment_chars: int | None = None
     # Scheduler (only the live-applicable timeout is editable).
     scheduled_run_timeout_seconds: int | None = None
-    # Tool-result retention window in days (0 = keep forever / disabled).
+    # Tool-result retention window in days (0 = keep forever / disabled). Also
+    # clears the model's thinking on older assistant turns.
     tool_result_retention_days: int | None = None
     # Live transcript retention window in days (0 = keep forever). Deletes only
     # transcript segments of ended sessions; insights/notes/summary are kept.
@@ -96,9 +121,14 @@ class SettingsPayload(BaseModel):
     # Agents mode (Copilot SDK). Opt-in; download/runtime gated by availability.
     agents_enabled: bool | None = None
     agents_default_model: str | None = None
+    agents_model_category: ModelCategoryId | None = None
     agents_reasoning_effort: str | None = None
     agents_context_tier: str | None = None
+    agents_file_change_tracking: bool | None = None
     agents_approval_policy: str | None = None
+    topic_approval_policy: str | None = None
+    chat_approval_policy: str | None = None
+    scheduled_approval_timeout_minutes: int | None = None
     agents_system_prompt: str | None = None
     agents_watchdog_timeout_seconds: int | None = None
     # Workflows: seed values for a new workflow and its steps.
@@ -119,12 +149,15 @@ class SettingsRead(BaseModel):
     # "" until resolved against the provider catalogue — no id is pinned here
     # because a literal is only correct until the provider retires it.
     llm_model: str = ""
+    llm_model_category: ModelCategoryId | None = None
+    llm_category_preset: ModelPreset | None = None
     # "" => auto/off (no reasoning_effort sent); otherwise low|medium|high.
     llm_reasoning_effort: str = ""
     github_repo: str = ""
     issue_context_ttl_minutes: int = 60
     show_chat_stats: bool = True
     notifications_enabled: bool = False
+    completion_sound_enabled: bool = False
     max_tool_rounds: int = 15
     mcp_enabled: dict[str, bool] = Field(default_factory=dict)
     mcp_servers: dict[str, dict[str, Any]] = Field(default_factory=dict)
@@ -137,6 +170,7 @@ class SettingsRead(BaseModel):
     # Active LLM provider id + per-provider public config (secrets redacted) and
     # a per-provider secret-presence map.
     llm_provider: str = "github_copilot"
+    model_fallbacks: ModelCategories = Field(default_factory=ModelCategories)
     llm_providers: dict[str, dict[str, str]] = Field(default_factory=dict)
     llm_providers_present: dict[str, dict[str, bool]] = Field(default_factory=dict)
     # Azure AI Speech: configured endpoint + language (never echoes the key) and
@@ -152,6 +186,7 @@ class SettingsRead(BaseModel):
     # Auto-naming a placeholder-titled chat from its first message. Empty model
     # resolves to the default chat model.
     chat_autoname_enabled: bool = True
+    mock_provider_enabled: bool = True
     chat_autoname_model: str = ""
     # Which Precursor capability sections the built-in MCP server exposes.
     mcp_expose: dict[str, bool] = Field(default_factory=dict)
@@ -162,6 +197,22 @@ class SettingsRead(BaseModel):
     mcp_http_url: str | None = None
     # True when the app is bound to a loopback host (HTTP transport is allowed).
     mcp_http_loopback_ok: bool = True
+    # OpenAI-compatible endpoint: the switch, the base URL clients are pointed at,
+    # and its API key. The key is returned in clear on purpose — Precursor runs
+    # on a trusted host and the user must be able to paste it into more clients
+    # later. "" until the endpoint is first enabled.
+    openai_proxy_enabled: bool = False
+    openai_proxy_url: str = ""
+    openai_proxy_key: str = ""
+    # Whether the active provider can back the endpoint, and why not.
+    openai_proxy_available: bool = False
+    openai_proxy_unavailable_reason: str | None = None
+    # Precursor IQ (see SettingsPayload).
+    iq_embeddings_enabled: bool = False
+    iq_embedding_provider: str = ""
+    iq_embedding_model: str = "text-embedding-3-small"
+    iq_ask_provider: str = ""
+    iq_ask_model: str = ""
     # Effective Entra tenant GUID used by the Agent 365 MCP servers ("" when unset).
     workiq_tenant_id: str = ""
     # True when the tenant above came from a signed-in token rather than config.
@@ -172,6 +223,8 @@ class SettingsRead(BaseModel):
     # --- System settings (effective: env default with DB override applied) ---
     llm_max_input_tokens: int = 600_000
     llm_max_tool_result_tokens: int = 20_000
+    llm_tool_result_keep_turns: int = 5
+    llm_max_attachment_chars: int = 200_000
     scheduled_run_timeout_seconds: int = 600
     tool_result_retention_days: int = 0
     live_transcript_retention_days: int = 7
@@ -200,12 +253,20 @@ class SettingsRead(BaseModel):
     # "auto" lets the agent runtime pick a current model, matching
     # DEFAULT_AGENTS_MODEL — a pinned id would fail once the SDK rotates it out.
     agents_default_model: str = "auto"
+    agents_model_category: ModelCategoryId | None = None
     # Reasoning effort + context tier applied to new agent sessions. "" effort
     # and "default" tier leave the SDK defaults unchanged.
     agents_reasoning_effort: str = ""
     agents_context_tier: str = "default"
+    # Capture file changes in new agent sessions so a rewind can restore them.
+    agents_file_change_tracking: bool = True
     # Default approval policy for agent actions: manual | balanced | autonomous.
     agents_approval_policy: str = "balanced"
+    # Default approval policy for topic / chat tool calls: manual | balanced | autonomous.
+    topic_approval_policy: str = "autonomous"
+    chat_approval_policy: str = "autonomous"
+    # Minutes a scheduled run waits on an approval before it is auto-denied; 0 waits forever.
+    scheduled_approval_timeout_minutes: int = 60
     # Extra system-message preamble appended to every agent session.
     agents_system_prompt: str = ""
     # Minutes... seconds, actually: how long a running session may sit with no

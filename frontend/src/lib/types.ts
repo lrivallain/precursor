@@ -9,7 +9,16 @@ export interface AppVersion {
 
 export type TopicKind = "standard";
 
+export interface ConversationLLMSelection {
+  provider: string;
+  model: string;
+  category: ModelCategory | null;
+  reasoning_effort: "" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+  context_tokens: number;
+}
+
 export interface Topic {
+  llm_selection: ConversationLLMSelection | null;
   id: number;
   slug: string;
   // Immutable UUID permalink (`/t/<public_id>`). Unlike the readable URL it
@@ -23,7 +32,7 @@ export interface Topic {
   pinned: boolean;
   kind: TopicKind;
   archived_at: string | null;
-  role_id: number | null;
+  role: string | null;
   // Collection the topic belongs to. Membership cascades down the tree, so a
   // subtree is never split across collections.
   collection_id: number | null;
@@ -31,6 +40,10 @@ export interface Topic {
   updated_at: string;
   // Recurrence summary when the topic runs on a schedule (null otherwise).
   schedule: ScheduleSummary | null;
+  /** Quoted reply the conversation started from (a promoted side chat's). */
+  seed_content?: string | null;
+  /** Null inherits the global default (`topic_approval_policy` / `chat_approval_policy`). */
+  approval_policy?: ConversationApprovalPolicy | null;
 }
 
 // One "when to run" clause of a schedule (mirrors backend RecurrenceRule). A
@@ -55,6 +68,8 @@ export interface ScheduleSummary {
   timezone: string;
   rules: RecurrenceRule[];
   clear_context: boolean;
+  /** Minutes an unanswered tool approval waits before it is auto-denied. Null inherits the global setting; 0 never expires. */
+  approval_timeout_minutes: number | null;
   next_run_at: string | null;
   last_run_at: string | null;
   status: string;
@@ -80,6 +95,7 @@ export interface TopicScheduleCreate {
   timezone?: string;
   rules?: RecurrenceRule[];
   clear_context?: boolean;
+  approval_timeout_minutes?: number | null;
   enabled?: boolean;
 }
 
@@ -91,17 +107,21 @@ export interface ScheduleUpdate {
   timezone?: string;
   rules?: RecurrenceRule[];
   clear_context?: boolean;
+  approval_timeout_minutes?: number | null;
   enabled?: boolean;
 }
 
 export interface TopicNode extends Topic {
   children: TopicNode[];
   unread_count: number;
+  /** Tool calls waiting for the user's approval. */
+  pending_approvals?: number;
 }
 
 // A flat conversation session (no tree hierarchy, no GitHub link). Mirrors the
 // backend ChatRead schema.
 export interface Chat {
+  llm_selection: ConversationLLMSelection | null;
   id: number;
   slug: string;
   title: string;
@@ -111,19 +131,53 @@ export interface Chat {
   archived_at: string | null;
   last_read_at: string | null;
   unread_count: number;
-  role_id: number | null;
+  role: string | null;
   created_at: string;
   updated_at: string;
+  /** Side chat: the topic it was started from (null once that topic is deleted). */
+  parent_topic_id?: number | null;
+  parent_topic_title?: string | null;
+  /** The reply it was started from, while that reply still exists. */
+  parent_message_id?: number | null;
+  /** Frozen copy of that reply; survives its rewind or deletion. */
+  seed_content?: string | null;
+  approval_policy?: ConversationApprovalPolicy | null;
+  pending_approvals?: number;
+}
+
+// A side chat as listed in its parent topic's right panel. Mirrors the
+// backend SideChatItem schema.
+export interface SideChatItem {
+  id: number;
+  slug: string;
+  title: string;
+  parent_message_id: number | null;
+  from_reply: boolean;
+  unread_count: number;
+  pending_approvals?: number;
+  message_count: number;
+  last_message_at: string | null;
+  created_at: string;
+  reminder: { remind_at: string; status: string } | null;
+}
+
+// A side chat's outcome, drafted for its parent topic. Mirrors TopicNoteDraft.
+export interface TopicNoteDraft {
+  text: string;
+  topic_id: number;
+  topic_title: string;
 }
 
 export interface ChatCreate {
+  llm_selection?: ConversationLLMSelection | null;
   title: string;
   description?: string | null;
   description_as_system_prompt?: boolean;
   pinned?: boolean;
   slug?: string | null;
   /** Assistant Role to assign at creation. Null/omitted = the default role. */
-  role_id?: number | null;
+  role?: string | null;
+  approval_policy?: ConversationApprovalPolicy | null;
   /**
    * Declares `title` a placeholder the client picked rather than something the
    * user typed, letting the server replace it with one derived from the first
@@ -133,12 +187,14 @@ export interface ChatCreate {
 }
 
 export interface ChatUpdate {
+  llm_selection?: ConversationLLMSelection | null;
   title?: string;
   description?: string | null;
   description_as_system_prompt?: boolean;
   pinned?: boolean;
   slug?: string | null;
-  role_id?: number | null;
+  role?: string | null;
+  approval_policy?: ConversationApprovalPolicy | null;
 }
 
 // One-shot date/time reminder for a topic or chat. Datetimes are ISO-8601 UTC.
@@ -224,7 +280,10 @@ export interface AgentRun {
   /** The server allowlist this run executes under (see `AgentSession`). */
   mcp_servers: string | null;
   approval_policy: AgentApprovalPolicy | null;
-  role_id: number | null;
+  role: string | null;
+  /** Files mode: the definition file this run was declared by, and its SHA-256. */
+  definition_path?: string | null;
+  definition_hash?: string | null;
   started_at: string | null;
   finished_at: string | null;
   last_activity_at: string | null;
@@ -275,7 +334,7 @@ export interface AgentSession {
   chat_id: number | null;
   // Assistant Role appended to the agent's system preamble. Null resolves to
   // the default role (no persona).
-  role_id: number | null;
+  role: string | null;
   /** True when the agent is a workflow step's private execution vessel. */
   inline: boolean;
   /** What this agent may draw on (all default on). */
@@ -309,6 +368,9 @@ export interface AgentSession {
   // One-line plain-language hint of what the agent is doing right now, distilled
   // from its own in-flight commentary (null when idle / not live in-process).
   active_narration: string | null;
+  // Tail of the thinking the model is streaming right now (null when it isn't
+  // thinking); cards preview its latest step.
+  active_thinking: string | null;
   // Oldest unresolved permission request blocking the agent (null when not
   // waiting). Deep-links the out-of-band "agent is waiting" signal.
   pending_permission: AgentPendingPermission | null;
@@ -317,6 +379,8 @@ export interface AgentSession {
   // above mirror it so existing surfaces keep working; this is the authoritative
   // record and the handle for per-run artifacts, events and spend.
   current_run: AgentRun | null;
+  /** Files mode only: which file declares this agent (null in database mode). */
+  definition?: DefinitionSource | null;
   // External webhook triggers registered on this agent.
   triggers: AgentTrigger[];
   // Published blackboard outputs, newest first.
@@ -434,7 +498,7 @@ export interface AgentSessionCreate {
   model?: string | null;
   topic_id?: number | null;
   chat_id?: number | null;
-  role_id?: number | null;
+  role?: string | null;
   autonomy_enabled?: boolean;
   max_steps?: number;
   approval_policy?: AgentApprovalPolicy | null;
@@ -460,22 +524,82 @@ export interface AgentEvent {
   // Which execution produced this event, so a shared agent's concurrent runs can
   // be read one at a time instead of interleaved.
   agent_run_id: number | null;
+  // The SDK id of a user prompt: what a rewind truncates from. Absent on other
+  // events and on prompts archived before rewind existed.
+  event_id?: string | null;
 }
 
 // One incremental read of an agent's transcript (mirrors AgentEventPage).
 // The archived timeline is append-only, so a live view sends back the previous
 // `cursor` as `after` and receives only what it hasn't seen.
+// The model's thinking for the round in flight, streamed but not yet archived.
+// Mirrors backend AgentLiveThinking.
+export interface AgentLiveThinking {
+  text: string;
+  // Still thinking: nothing of the answer or a tool call has streamed since.
+  active: boolean;
+}
+
 export interface AgentEventPage {
   // The delta after the requested cursor — or the whole transcript when `reset`.
   events: AgentEvent[];
   // Unresolved approval cards. Never archived and they vanish once answered, so
   // they sit outside the cursor and replace the previous tail on every read.
   pending: AgentEvent[];
+  // The thinking being streamed right now. Volatile like `pending`: replaced on
+  // every read, and gone once the round's complete reasoning event lands.
+  thinking?: AgentLiveThinking | null;
   // Send this back as `after` on the next read.
   cursor: number;
-  // The cursor no longer addresses this transcript (cleared, pruned, or taken
-  // against another run): replace what you hold instead of appending to it.
+  // The cursor no longer addresses this transcript (cleared, rewound, pruned, or
+  // taken against another run): replace what you hold instead of appending to it.
   reset: boolean;
+  // Names the archive the cursor counts into; send it back with `after`.
+  epoch?: string;
+  /**
+   * Runs whose prompts a rewind can cut: the current run and earlier runs of the
+   * same SDK session. Empty while a workflow step drives the current run.
+   */
+  rewindable_run_ids?: number[];
+}
+
+export type AgentRewindMode = "conversation" | "conversation-and-files";
+
+/** Mirrors `AgentRewindSkippedFile` in `schemas/agent.py`. */
+export interface AgentRewindSkippedFile {
+  path: string;
+  /** `user-modified` (changed since the agent edited it) or `skipped-capture`. */
+  reason: string;
+}
+
+/** Mirrors `AgentRewindResult` in `schemas/agent.py`. */
+export interface AgentRewindResult {
+  events_removed: number;
+  sdk_events_removed: number | null;
+  outcome?: string;
+  restored_files?: string[];
+  skipped_files?: AgentRewindSkippedFile[];
+}
+
+/** Mirrors `AgentRewindFile` in `schemas/agent.py`. */
+export interface AgentRewindFile {
+  path: string;
+  /** created | modified | deleted */
+  change_type: string;
+  lines_added: number;
+  lines_removed: number;
+}
+
+/** Mirrors `AgentRewindPreview` in `schemas/agent.py`. */
+export interface AgentRewindPreview {
+  event_id: string;
+  /** The SDK session captured file changes from its first turn. */
+  file_tracking: boolean;
+  /** Authoritative for offering file restore; see `unavailable_reason` when false. */
+  files_available: boolean;
+  unavailable_reason: string | null;
+  file_count: number;
+  files: AgentRewindFile[];
 }
 
 export type AgentPermissionDecisionValue = "approve-once" | "approve-always" | "deny";
@@ -545,7 +669,7 @@ export interface AgentBlueprint {
   description: string | null;
   task_prompt: string;
   model: string | null;
-  role_id: number | null;
+  role: string | null;
   approval_policy: AgentApprovalPolicy | null;
   autonomy_enabled: boolean;
   max_steps: number;
@@ -562,7 +686,7 @@ export interface AgentBlueprintCreate {
   description?: string | null;
   task_prompt?: string;
   model?: string | null;
-  role_id?: number | null;
+  role?: string | null;
   approval_policy?: AgentApprovalPolicy | null;
   autonomy_enabled?: boolean;
   max_steps?: number;
@@ -586,7 +710,7 @@ export interface AgentBlueprintUpdate {
   description?: string | null;
   task_prompt?: string;
   model?: string | null;
-  role_id?: number | null;
+  role?: string | null;
   approval_policy?: AgentApprovalPolicy | null;
   autonomy_enabled?: boolean;
   max_steps?: number;
@@ -669,6 +793,8 @@ export interface WorkflowAgentSummary {
   progress_label: string | null;
   result_summary: string | null;
   active_narration: string | null;
+  /** Tail of the thinking the step's agent is streaming right now. */
+  active_thinking: string | null;
   /** What the agent asked when it parked itself (`status === "blocked"`). */
   blocked_question: string | null;
   /**
@@ -784,6 +910,9 @@ export interface WorkflowRun {
   /** Cumulative token spend across every attempt in this run. */
   total_input_tokens: number;
   total_output_tokens: number;
+  /** Files mode: the workflow file this run executed, and its SHA-256 then. */
+  definition_path?: string | null;
+  definition_hash?: string | null;
   step_runs: WorkflowRunStep[];
 }
 
@@ -828,7 +957,7 @@ export interface Workflow {
   /** Seconds a step may run before the watchdog stops it (null = disabled). */
   step_timeout_seconds: number | null;
   /** Assistant Role applied to every step's agent while the workflow runs. */
-  role_id: number | null;
+  role: string | null;
   /**
    * Tool-approval policy applied to every step's agent while it runs; null
    * leaves each agent's own setting alone. The lever that makes an unattended
@@ -855,6 +984,8 @@ export interface Workflow {
   steps: WorkflowStep[];
   /** Advancement of the newest run; null until the workflow has ever run. */
   run_progress: WorkflowRunProgress | null;
+  /** Files mode only: which file declares this workflow (null in database mode). */
+  definition?: DefinitionSource | null;
 }
 
 // One step in a create/replace payload. Either reference an existing agent by
@@ -891,7 +1022,7 @@ export interface WorkflowCreate {
   clear_artifacts?: boolean;
   max_loops?: number;
   step_timeout_seconds?: number | null;
-  role_id?: number | null;
+  role?: string | null;
   approval_policy?: AgentApprovalPolicy | null;
   steps?: WorkflowStepInput[];
 }
@@ -906,7 +1037,7 @@ export interface WorkflowUpdate {
   /** Seconds before the stall watchdog fires; 0 disables it. */
   step_timeout_seconds?: number | null;
   /** Assistant Role for the whole workflow; 0 clears it. */
-  role_id?: number | null;
+  role?: string | null;
   /** Tool-approval policy for every step; null means inherit each agent's own. */
   approval_policy?: AgentApprovalPolicy | null;
   /** When provided, replaces the entire ordered step list. Omit to leave untouched. */
@@ -980,6 +1111,230 @@ export interface TransferImportResult {
   warnings: TransferWarning[];
 }
 
+// --- Definition files (work in progress) ------------------------------------
+// Agents and workflows declared in *.agent.yaml / *.workflow.yaml files, with
+// only execution data left in the database. Mirrors schemas/definitions_api.py;
+// see docs/definitions.md. They declare agents and workflows only in files mode.
+
+export type DefinitionKind = "agent" | "workflow";
+/** What the migration wizard lists: roles are files too. */
+export type MigrationKind = DefinitionKind | "role";
+/** What a file in the definitions folder can declare: summary templates have no row. */
+export type DefinitionFileKind = DefinitionKind | "summary" | "role";
+
+/**
+ * Where an agent's or workflow's declaration comes from, in files mode:
+ * `file` = declared by `path`; `invalid` = `path` has errors, so it can't run;
+ * `none` = no file carries its id, so it still runs from the database.
+ */
+export interface DefinitionSource {
+  state: "file" | "invalid" | "none";
+  path: string | null;
+  message: string | null;
+  /** Permissions the file grants beyond what was accepted; blocks runs until accepted. */
+  review?: string[];
+  /** SHA-256 of the file as reported, so Accept applies to exactly this version. */
+  content_hash?: string | null;
+}
+
+export interface DefinitionIssue {
+  severity: "error" | "warning";
+  /** Relative to the definitions folder; null for folder-wide findings. */
+  path: string | null;
+  /** Where in the file, e.g. `steps[brief].context.from`. */
+  location: string | null;
+  message: string;
+  /**
+   * Where that is in the text: 1-based, end exclusive, UTF-16 columns (as in
+   * Monaco). Only set by `/file-issues`; null when unknown.
+   */
+  line?: number | null;
+  column?: number | null;
+  end_line?: number | null;
+  end_column?: number | null;
+}
+
+export interface DefinitionFileSummary {
+  path: string;
+  kind: DefinitionFileKind;
+  id: string | null;
+  name: string | null;
+  valid: boolean;
+  content_hash: string;
+  /** Whether a database row carries this id; null when checked without a database. */
+  linked: boolean | null;
+}
+
+export interface DefinitionsDatabaseLinks {
+  linked_agents: number;
+  linked_workflows: number;
+  unlinked_agents: { id: number; public_id: string; title: string; archived: boolean }[];
+  unlinked_workflows: { id: number; name: string; archived: boolean }[];
+}
+
+export interface DefinitionsCheckReport {
+  root: string;
+  exists: boolean;
+  ok: boolean;
+  error_count: number;
+  warning_count: number;
+  files: DefinitionFileSummary[];
+  issues: DefinitionIssue[];
+  database: DefinitionsDatabaseLinks | null;
+}
+
+export interface ExportedDefinition {
+  kind: DefinitionKind;
+  path: string;
+  id: string;
+  name: string;
+  source_id: number;
+}
+
+/** What the check says about one file opened in the Files section. */
+export interface DefinitionFileReport {
+  /** False when the file isn't a definition file inside the definitions folder. */
+  in_definitions: boolean;
+  path: string | null;
+  kind: DefinitionFileKind | null;
+  valid: boolean | null;
+  issues: DefinitionIssue[];
+}
+
+// --- Migration (database → files, and back) ---------------------------------
+
+/** Cheap summary for the Agents and Workflows homes: anything left to migrate? */
+export interface DefinitionsStatus {
+  stage: "database" | "files" | "finalized";
+  forced: boolean;
+  /** Active agents / workflows still declared by the database. */
+  agents: number;
+  workflows: number;
+}
+
+export interface DefinitionsWorkspaceRef {
+  id: number;
+  slug: string;
+  name: string;
+}
+
+export type MigrationAction = "create" | "regenerate" | "unchanged" | "new_from_disk";
+
+export interface MigrationItem {
+  kind: MigrationKind;
+  id: number | null;
+  name: string;
+  path: string | null;
+  action: MigrationAction;
+  reason: string | null;
+}
+
+export interface MigrationRecord {
+  at: string;
+  snapshot: string | null;
+  created: number;
+  regenerated: number;
+  unchanged: number;
+  added_from_disk: number;
+  roles?: number;
+}
+
+export interface FinalizedRecord {
+  at: string;
+  snapshot: string | null;
+  agents: number;
+  step_prompts: number;
+  workflows: number;
+  steps: number;
+  roles?: number;
+}
+
+export interface CleanupPreview {
+  ready: boolean;
+  blockers: string[];
+  warnings: string[];
+  agents: number;
+  step_prompts: number;
+  workflows: number;
+  steps: number;
+  /** Roles whose prompt the cleanup blanks in the database (the files hold them). */
+  roles?: number;
+  /** Agents and workflows without a file yet; the cleanup writes them first. */
+  missing_files: string[];
+}
+
+export interface MigrationPreview {
+  /** database: not migrated · files: migrated, can switch back · finalized: done, no way back. */
+  stage: "database" | "files" | "finalized";
+  migrated: MigrationRecord | null;
+  finalized: FinalizedRecord | null;
+  cleanup: CleanupPreview | null;
+  source: "database" | "files";
+  /** PRECURSOR_DEFINITIONS_SOURCE=files forces files mode. */
+  forced: boolean;
+  folder: string;
+  workspace: DefinitionsWorkspaceRef | null;
+  /** A definition file in the folder, for an "Open in Files" link. */
+  sample_path: string | null;
+  items: MigrationItem[];
+  /** Roles that get a file (database stage) or already have one. */
+  roles?: number;
+  issues: DefinitionIssue[];
+  blockers: string[];
+  ready: boolean;
+  needs_confirmation: boolean;
+}
+
+export interface MigrationResult {
+  ok: boolean;
+  source: "database" | "files";
+  snapshot: string | null;
+  created: number;
+  regenerated: number;
+  unchanged: number;
+  added_from_disk: number;
+  roles?: number;
+  issues: DefinitionIssue[];
+  mismatches: string[];
+}
+
+/** The actual content behind one migration preview line. */
+export interface MigrationItemDetail {
+  kind: MigrationKind;
+  id: number;
+  name: string;
+  action: "create" | "regenerate" | "unchanged";
+  path: string | null;
+  /** The file as the migration would write it. */
+  proposed: string;
+  /** The file on disk now; null when there is none yet. */
+  current: string | null;
+}
+
+export interface FinalizeResult {
+  ok: boolean;
+  finalized: FinalizedRecord | null;
+  written: number;
+  issues: DefinitionIssue[];
+}
+
+export interface RevertResult {
+  ok: boolean;
+  source: "database" | "files";
+  snapshot: string | null;
+  agents: number;
+  workflows: number;
+  roles?: number;
+  skipped: string[];
+}
+
+export interface DefinitionsExportResult {
+  root: string;
+  written: ExportedDefinition[];
+  skipped: ExportedDefinition[];
+  issues: DefinitionIssue[];
+}
+
 export interface Attachment {
   id: number;
   topic_id?: number | null;
@@ -997,6 +1352,14 @@ export interface Message {
   chat_id?: number | null;
   role: MessageRole;
   content: string;
+  /** Edited assistant replies: the model's answer before the edit (null when untouched). */
+  original_content?: string | null;
+  /** When the reply was last edited (null when untouched). */
+  edited_at?: string | null;
+  /** Special-row marker; "compaction" = a context-compaction summary (system row). */
+  kind?: string | null;
+  /** Assistant turns: the model's thinking for this round, shown collapsed. */
+  reasoning?: string | null;
   tool_calls: string | null;
   agent_session_id?: number | null;
   /** The linked agent's public (UUID) id — used for deep links / the /agent command. */
@@ -1007,6 +1370,7 @@ export interface Message {
   model?: string | null;
   /** Wall-clock time in ms the assistant turn took to generate. */
   elapsed_ms?: number | null;
+  provider?: string | null;
   created_at: string;
   attachments?: Attachment[];
   /** Follow-up reply chips the assistant offered on this turn. */
@@ -1023,11 +1387,56 @@ export interface Message {
  * What a user-stopped turn leaves behind (`POST …/messages/stopped`), mirroring
  * `schemas/message.py`: the reply text received so far, and the ids of the
  * latest tool round's calls that never returned (recorded as stopped). At least
- * one of the two must be present.
+ * one of the two must be present. `reasoning` is the thinking streamed for that
+ * reply, stored with it.
  */
+/**
+ * Estimated history the next turn sends to the model, plus the system prompt
+ * and tool definitions it carries. `tokens` counts the history alone. Mirrors
+ * `ContextEstimateRead` in `schemas/message.py`.
+ */
+export interface ContextEstimate {
+  tokens: number;
+  by_role: Record<string, number>;
+  /** Tokens saved by stripping inline binaries and eliding stale tool results. */
+  saved_by_hygiene: number;
+  messages: number;
+  compacted: boolean;
+  compaction_id: number | null;
+  /** Rows the latest compaction marker hides from the model. */
+  compacted_messages: number;
+  system_tokens: number;
+  /** Tool definitions of Precursor's own MCP server. */
+  system_tools_tokens: number;
+  /** Tool definitions of every other enabled MCP server. */
+  mcp_tools_tokens: number;
+}
+
 export interface StoppedTurn {
   content?: string;
   tool_call_ids?: string[];
+  reasoning?: string;
+}
+
+/**
+ * One turn of the transcript timeline: a user prompt and every row up to the
+ * next one. Mirrors `TurnIndexRead` in `schemas/message.py`.
+ */
+export interface TurnIndexItem {
+  message_id: number;
+  last_message_id: number;
+  created_at: string;
+  /** Excerpt (≤ 200 chars) of the prompt. */
+  prompt: string;
+  /** Excerpt of the turn's first assistant text; empty while unanswered. */
+  reply: string;
+  has_compaction: boolean;
+  agent_session_id: number | null;
+}
+
+/** Mirrors `RewindResult` in `schemas/message.py`. */
+export interface RewindResult {
+  deleted: number;
 }
 
 /**
@@ -1096,16 +1505,123 @@ export interface NoteDraftAttachment {
 //  - "autonomous": auto-approve everything
 export type AgentApprovalPolicy = "manual" | "balanced" | "autonomous";
 
+/** Per-conversation tool approval policy (mirrors backend `ApprovalPolicy`). */
+export type ConversationApprovalPolicy = AgentApprovalPolicy;
+
+/** A tool call (or the model's own intent) waiting on, or settled by, the user. */
+export interface ToolApproval {
+  id: number;
+  topic_id: number | null;
+  chat_id: number | null;
+  assistant_message_id: number | null;
+  tool_call_id: string;
+  tool_name: string;
+  server: string;
+  raw_tool: string;
+  arguments: string;
+  kind: "tool" | "intent";
+  reason: string | null;
+  status: "pending" | "approved" | "denied" | "cancelled";
+  scope: "once" | "conversation" | "global";
+  feedback: string | null;
+  /** Decided and its result already recorded in the transcript. */
+  executed: boolean;
+  created_at: string | null;
+  decided_at: string | null;
+  /** UTC deadline after which an unattended run's parked call is auto-denied. */
+  expires_at: string | null;
+}
+
+export interface ToolApprovalDecision {
+  approve: boolean;
+  /** `conversation` / `global` also save an allow rule for this tool. */
+  scope?: "once" | "conversation" | "global";
+  /** Narrows the saved rule to calls whose arguments match. */
+  arg_match?: ArgClause[];
+  feedback?: string | null;
+}
+
+/** One condition on a tool call's arguments; all clauses of a rule must hold. */
+export interface ArgClause {
+  arg: string;
+  op: "equals" | "glob" | "under";
+  value: string;
+}
+
+export type ApprovalRuleEffect = "allow" | "ask";
+export type ApprovalRuleScope = "global" | "topic" | "chat";
+
+/** A standing allow / ask answer in front of a conversation's approval policy. */
+export interface ApprovalRule {
+  id: number;
+  effect: ApprovalRuleEffect;
+  server: string;
+  tool: string;
+  arg_match: ArgClause[];
+  scope: ApprovalRuleScope;
+  topic_id: number | null;
+  chat_id: number | null;
+  enabled: boolean;
+  note: string | null;
+  hit_count: number;
+  last_used_at: string | null;
+  created_from_approval_id: number | null;
+  created_at: string | null;
+}
+
+export interface ApprovalRuleCreate {
+  effect: ApprovalRuleEffect;
+  server?: string;
+  tool?: string;
+  arg_match?: ArgClause[];
+  scope?: ApprovalRuleScope;
+  topic_id?: number | null;
+  chat_id?: number | null;
+  note?: string | null;
+}
+
+export type ApprovalRuleUpdate = Partial<
+  Pick<ApprovalRule, "effect" | "server" | "tool" | "arg_match" | "enabled" | "note">
+>;
+
+export interface ApprovalDecisionResult {
+  approval: ToolApproval;
+  /** Approvals still waiting; resume the turn once this hits 0. */
+  pending: number;
+}
+
+export interface ModelPreset {
+  // An LLM provider id, or "agents" for the Copilot SDK runtime.
+  provider: string;
+  model: string;
+  reasoning_effort: "" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+  context_tokens: number;
+  context_tier: "default" | "long_context";
+}
+
+export type ModelCategory = string;
+export interface ModelCategoryDef {
+  id: ModelCategory;
+  label: string;
+  presets: ModelPreset[];
+}
+export interface ModelCategories {
+  categories: ModelCategoryDef[];
+}
+
 export interface Settings {
   theme: "light" | "dark" | "system";
   font_family: "system" | "opendyslexic" | "atkinson-hyperlegible" | "lexend";
   llm_model: string;
+  llm_model_category: ModelCategory | null;
+  llm_category_preset: ModelPreset | null;
   // "" => auto/off; otherwise "low" | "medium" | "high".
   llm_reasoning_effort: string;
   github_repo: string;
   issue_context_ttl_minutes: number;
   show_chat_stats: boolean;
   notifications_enabled: boolean;
+  completion_sound_enabled: boolean;
   max_tool_rounds: number;
   mcp_enabled: Record<string, boolean>;
   mcp_servers: Record<string, Record<string, unknown>>;
@@ -1115,6 +1631,7 @@ export interface Settings {
   // Active LLM provider id + per-provider public config (secrets redacted) and
   // a per-provider secret-presence map.
   llm_provider: string;
+  model_fallbacks: ModelCategories;
   llm_providers: Record<string, Record<string, string>>;
   llm_providers_present: Record<string, Record<string, boolean>>;
   // Azure AI Speech: configured endpoint + language + readiness (key never echoed).
@@ -1129,6 +1646,7 @@ export interface Settings {
   // Auto-naming a placeholder-titled chat from its first message. Empty model
   // resolves to the default chat model.
   chat_autoname_enabled: boolean;
+  mock_provider_enabled: boolean;
   chat_autoname_model: string;
   // Which Precursor capability sections the built-in MCP server exposes.
   mcp_expose: Record<string, boolean>;
@@ -1137,6 +1655,22 @@ export interface Settings {
   plugin_install_enabled: boolean;
   mcp_http_url: string | null;
   mcp_http_loopback_ok: boolean;
+  // OpenAI-compatible endpoint: the switch, the base URL clients are pointed
+  // at and its API key (returned in clear on purpose; "" until first enabled).
+  openai_proxy_enabled: boolean;
+  openai_proxy_url: string;
+  openai_proxy_key: string;
+  // Whether the active provider can back the endpoint, and why not.
+  openai_proxy_available: boolean;
+  openai_proxy_unavailable_reason: string | null;
+  // Precursor IQ: opt-in embeddings (spend provider quota), the embeddings
+  // model/deployment, and the model writing cited answers ("" = chat model).
+  iq_embeddings_enabled: boolean;
+  iq_embedding_model: string;
+  iq_ask_model: string;
+  // Provider serving each ("" = the default provider from Settings → Model).
+  iq_embedding_provider: string;
+  iq_ask_provider: string;
   // Tenant GUID used by the Agent 365 servers (the workiq-* family).
   workiq_tenant_id: string;
   // True when the tenant above was read off a stored token rather than typed.
@@ -1147,6 +1681,8 @@ export interface Settings {
   // System settings (effective: env default with DB override applied).
   llm_max_input_tokens: number;
   llm_max_tool_result_tokens: number;
+  llm_tool_result_keep_turns: number;
+  llm_max_attachment_chars: number;
   scheduled_run_timeout_seconds: number;
   tool_result_retention_days: number;
   live_transcript_retention_days: number;
@@ -1172,9 +1708,17 @@ export interface Settings {
   agents_runtime_started: boolean;
   agents_unavailable_reason: string | null;
   agents_default_model: string;
+  agents_model_category: ModelCategory | null;
   agents_reasoning_effort: string;
   agents_context_tier: string;
+  /** New agent sessions capture file changes so a rewind can restore them. */
+  agents_file_change_tracking: boolean;
   agents_approval_policy: AgentApprovalPolicy;
+  /** Default tool approval policy for topics and chats without their own. */
+  topic_approval_policy: ConversationApprovalPolicy;
+  chat_approval_policy: ConversationApprovalPolicy;
+  /** Default minutes before an approval parked by a scheduled run is auto-denied; 0 never. */
+  scheduled_approval_timeout_minutes: number;
   agents_system_prompt: string;
   agents_watchdog_timeout_seconds: number;
   // Workflow defaults: what a new step may draw on, and the stall watchdog a
@@ -1197,17 +1741,20 @@ export interface SettingsUpdate {
   theme?: Settings["theme"];
   font_family?: Settings["font_family"];
   llm_model?: string;
+  llm_model_category?: ModelCategory | null;
   llm_reasoning_effort?: string;
   github_repo?: string;
   issue_context_ttl_minutes?: number;
   show_chat_stats?: boolean;
   notifications_enabled?: boolean;
+  completion_sound_enabled?: boolean;
   max_tool_rounds?: number;
   mcp_enabled?: Record<string, boolean>;
   mcp_servers?: Record<string, Record<string, unknown>>;
   api_keys?: Record<string, string>;
   issue_associations_enabled?: boolean;
   llm_provider?: string;
+  model_fallbacks?: ModelCategories;
   llm_providers?: Record<string, Record<string, string>>;
   azure_speech_endpoint?: string;
   azure_speech_language?: string;
@@ -1215,14 +1762,23 @@ export interface SettingsUpdate {
   live_fast_model?: string;
   live_reasoning_effort?: string;
   chat_autoname_enabled?: boolean;
+  mock_provider_enabled?: boolean;
   chat_autoname_model?: string;
   mcp_expose?: Record<string, boolean>;
   mcp_http_enabled?: boolean;
   plugin_install_enabled?: boolean;
+  openai_proxy_enabled?: boolean;
+  iq_embeddings_enabled?: boolean;
+  iq_embedding_model?: string;
+  iq_ask_model?: string;
+  iq_embedding_provider?: string;
+  iq_ask_provider?: string;
   workiq_tenant_id?: string;
   playwright_browser?: string;
   llm_max_input_tokens?: number;
   llm_max_tool_result_tokens?: number;
+  llm_tool_result_keep_turns?: number;
+  llm_max_attachment_chars?: number;
   scheduled_run_timeout_seconds?: number;
   tool_result_retention_days?: number;
   live_transcript_retention_days?: number;
@@ -1238,9 +1794,14 @@ export interface SettingsUpdate {
   cmd_runner_cpus?: string;
   agents_enabled?: boolean;
   agents_default_model?: string;
+  agents_model_category?: ModelCategory | null;
   agents_reasoning_effort?: string;
   agents_context_tier?: string;
+  agents_file_change_tracking?: boolean;
   agents_approval_policy?: AgentApprovalPolicy;
+  topic_approval_policy?: ConversationApprovalPolicy;
+  chat_approval_policy?: ConversationApprovalPolicy;
+  scheduled_approval_timeout_minutes?: number;
   agents_system_prompt?: string;
   agents_watchdog_timeout_seconds?: number;
   workflows_default_use_mcp?: boolean;
@@ -1263,6 +1824,8 @@ export interface BackupRunResult {
   blobs_copied: number;
   // Total blob files present in the destination mirror after the run.
   blobs_total: number;
+  // Dated zip of the definitions folder written this run, if it exists.
+  definitions_archive: string | null;
 }
 
 export interface IssueLabel {
@@ -1388,6 +1951,12 @@ export interface LLMModel {
   /** Reasoning-effort values this model accepts, ascending. Empty when the
    *  model isn't reasoning-capable (the composer hides the effort picker). */
   supported_reasoning_efforts?: string[];
+  /** Largest reply the model can produce; null when not advertised. */
+  max_output_tokens?: number | null;
+  /** Whether the model accepts image input. */
+  vision?: boolean;
+  /** Actual catalogue source; may be "mock" if provider config is unusable. */
+  catalog_provider?: string | null;
 }
 
 export interface LLMProviderField {
@@ -1405,6 +1974,8 @@ export interface LLMProviderSpec {
   fields: LLMProviderField[];
   uses_github_token: boolean;
   discovers_models: boolean;
+  /** Whether the OpenAI-compatible endpoint can relay to this provider. */
+  openai_proxy: boolean;
   /** Non-empty => upstream is gone; the text explains what to use instead. */
 }
 
@@ -1637,6 +2208,8 @@ export interface GitHubIdentity {
 export interface Me {
   github: GitHubIdentity | null;
   github_token_source: "env" | "gh-cli" | "settings" | "none";
+  // X-Forwarded-User from an authenticating reverse proxy (display only).
+  proxy_user: string | null;
 }
 
 // Copilot "AI credits" (premium interactions) allowance for the connected
@@ -1681,12 +2254,13 @@ export interface SkillUpdate {
 // Assistant Role — a persistent persona (system prompt) attached to a
 // discussion. Mirrors the backend RoleRead schema.
 export interface Role {
-  id: number;
+  // A role is identified by its name: there is no id, and conversations store the name.
   name: string;
   system_prompt: string;
   is_default: boolean;
-  created_at: string;
-  updated_at: string;
+  description?: string | null;
+  // The role file, relative to the definitions folder; null for a role held in the database.
+  path?: string | null;
 }
 
 export interface RoleCreate {
@@ -1695,6 +2269,7 @@ export interface RoleCreate {
 }
 
 export interface RoleUpdate {
+  // Renaming isn't supported: a different name is refused.
   name?: string;
   system_prompt?: string;
 }
@@ -1711,7 +2286,7 @@ export interface Collection {
   accent: CollectionAccent;
   icon: string | null;
   // Default Assistant Role for new topics here; null = built-in default role.
-  default_role_id: number | null;
+  default_role: string | null;
   is_default: boolean;
   topic_count: number;
   created_at: string;
@@ -1734,7 +2309,7 @@ export interface CollectionCreate {
   github_repo?: string | null;
   accent?: CollectionAccent;
   icon?: string | null;
-  default_role_id?: number | null;
+  default_role?: string | null;
 }
 
 export interface CollectionUpdate {
@@ -1743,7 +2318,7 @@ export interface CollectionUpdate {
   github_repo?: string | null;
   accent?: CollectionAccent;
   icon?: string | null;
-  default_role_id?: number | null;
+  default_role?: string | null;
 }
 
 export interface Memory {
@@ -1776,7 +2351,8 @@ export interface Workspace {
   subdir: string | null;
   cloned_at: string | null;
   last_synced_at: string | null;
-  role_id: number | null;
+  /** Holds the definition files (the built-in "Definitions" workspace). */
+  hosts_definitions?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -1788,10 +2364,6 @@ export interface WorkspaceCreate {
   branch?: string;
   subdir?: string | null;
   slug?: string | null;
-}
-
-export interface WorkspaceUpdate {
-  role_id?: number | null;
 }
 
 export interface WorkspaceFileNode {
@@ -1806,15 +2378,31 @@ export interface WorkspaceFileContent {
 }
 
 export interface GitFileStatus {
+  /** Relative to the repository root. */
   path: string;
+  /** Two-letter porcelain code, e.g. " M", "??", "A ", "UU". */
   code: string;
+  /** A rename's previous path. */
+  orig_path?: string | null;
+  /** Unmerged: git stopped on a conflict in this file. */
+  conflicted?: boolean;
+  /** Relative to the workspace's subdir, as the file tree lists it; null outside it. */
+  browse_path?: string | null;
 }
 
 export interface GitStatus {
+  /** The checked-out branch; "HEAD" when detached. */
   branch: string;
+  /** The commit checked out; null before the first commit. */
+  head?: string | null;
+  detached?: boolean;
+  /** e.g. "origin/main"; null while the branch isn't published. */
+  upstream?: string | null;
   ahead: number | null;
   behind: number | null;
   dirty: boolean;
+  /** A merge stopped on conflicts. */
+  merging?: boolean;
   files: GitFileStatus[];
 }
 
@@ -1830,6 +2418,84 @@ export interface FileDiff {
   path: string;
   diff: string;
   binary: boolean;
+}
+
+/** A conflicted file's three versions (null where that side has none). */
+export interface GitConflict {
+  path: string;
+  kind:
+    | "both_modified"
+    | "both_added"
+    | "deleted_by_us"
+    | "deleted_by_them"
+    | "added_by_us"
+    | "added_by_them"
+    | "both_deleted";
+  base: string | null;
+  ours: string | null;
+  theirs: string | null;
+  has_base: boolean;
+  has_ours: boolean;
+  has_theirs: boolean;
+  binary: boolean;
+  too_large: boolean;
+}
+
+export interface GitBranch {
+  name: string;
+  /** Its upstream on origin; null while unpublished. */
+  upstream: string | null;
+}
+
+export interface GitBranches {
+  /** The checked-out branch; null on a detached HEAD. */
+  current: string | null;
+  local: GitBranch[];
+  /** Branch names on origin (local or not). */
+  remote: string[];
+  /** Why the remote's branches couldn't be listed. */
+  remote_error: string | null;
+}
+
+export interface GitCommit {
+  sha: string;
+  short_sha: string;
+  author: string;
+  /** Author date, ISO 8601. */
+  date: string;
+  subject: string;
+  /** More than one: a merge. */
+  parents: string[];
+}
+
+export interface GitLog {
+  commits: GitCommit[];
+  has_more: boolean;
+}
+
+export interface GitCommitFile {
+  /** A, M, D, R (renamed), C (copied), T (type changed). */
+  status: string;
+  path: string;
+  orig_path: string | null;
+}
+
+export interface GitCommitDetail extends GitCommit {
+  /** The message after its subject line. */
+  body: string;
+  /** What `files` are compared with: the first parent; null for a root commit. */
+  parent: string | null;
+  files: GitCommitFile[];
+}
+
+/** Both sides of one file's diff; null where the file doesn't exist. */
+export interface FileVersions {
+  path: string;
+  original: string | null;
+  modified: string | null;
+  binary: boolean;
+  /** Over 2 MB: no content is sent. */
+  too_large: boolean;
 }
 
 export interface LocalPath {
@@ -1932,9 +2598,39 @@ export interface CompactResult {
   error: string | null;
 }
 
-export interface WorkspaceChatMessage {
-  role: "user" | "assistant";
-  content: string;
+/** A workspace file attached to a topic or chat. */
+export interface ConversationArtifact {
+  id: number;
+  workspace_id: number;
+  workspace_slug: string;
+  workspace_name: string;
+  path: string;
+  /** How it got attached: the assistant wrote it, the user attached it, or a discussion was opened on it. */
+  source: "assistant" | "manual" | "opened";
+  /** False once the file was renamed or deleted outside the app. */
+  exists: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+/** A topic or chat attaching files of one workspace ("continue discussion"). */
+export interface WorkspaceDiscussion {
+  kind: "chat" | "topic";
+  id: number;
+  title: string;
+  slug: string;
+  /** Topics only: the permalink id used in the workspace URL. */
+  public_id: string | null;
+  updated_at: string;
+  paths: string[];
+  /** One of the paths is the file the list was asked about. */
+  has_file: boolean;
+}
+
+/** Where a turn is held from: the workspace (and file) being viewed. */
+export interface WorkspaceTurnContext {
+  workspace_id: number;
+  path?: string | null;
 }
 
 // ---- Live meeting assistant --------------------------------------------
@@ -1955,7 +2651,6 @@ export interface AgendaEvent {
   is_online: boolean;
   // Teams join URL — used to locate the meeting transcript for summaries.
   join_url?: string | null;
-  body: string | null;
   body_preview: string | null;
 }
 
@@ -1980,6 +2675,68 @@ export interface MeetingTranscriptListResult {
   available: boolean;
   parts: MeetingTranscriptPart[];
   detail: string | null;
+}
+
+/** How to write a recap; an omitted field falls back to the one last used. */
+export interface MeetingSummaryOptions {
+  /** A summary template's id. */
+  template?: string;
+  /** A language tag (`fr`); `""` writes in the session's own language. */
+  language?: string;
+}
+
+export interface MeetingSummaryResult {
+  summary: string;
+  model: string;
+  /** The template and language it was written with (`""` = the session's). */
+  template: string;
+  language: string;
+}
+
+export interface MeetingTranscriptSummaryResult extends MeetingSummaryResult {
+  transcript_ids: string[];
+}
+
+export interface SummaryTemplate {
+  id: string;
+  name: string;
+  description: string | null;
+  source: "builtin" | "file";
+  /** Relative to the definitions folder, for a template read from a file. */
+  path: string | null;
+  /** A file that replaces the built-in template of the same id. */
+  overrides_builtin: boolean;
+}
+
+export interface SummaryLanguage {
+  code: string;
+  name: string;
+}
+
+export interface SummaryTemplateCatalog {
+  templates: SummaryTemplate[];
+  /** Template files left out because of errors (or ids used twice). */
+  problems: DefinitionIssue[];
+  languages: SummaryLanguage[];
+  /** What the last recap was written with: the picker starts there. */
+  last_template: string;
+  last_language: string;
+  /** The definitions folder, and the workspace showing it in Files (if any). */
+  folder: string;
+  workspace: DefinitionsWorkspaceRef | null;
+}
+
+export interface SummaryTemplateFileResult {
+  /** The template the file declares: a new id for a duplicate. */
+  id: string;
+  /** Relative to the definitions folder. */
+  path: string;
+  /** False when the template already had its file. */
+  created: boolean;
+  folder: string;
+  workspace: DefinitionsWorkspaceRef | null;
+  /** The same file, relative to the workspace's Files root. */
+  workspace_path: string | null;
 }
 
 export interface ExternalMeeting {
@@ -2012,18 +2769,20 @@ export interface MeetingSession {
   topic_id: number | null;
   // Assistant Role grounding the live assistant (insights/tips, Q&A, chat).
   // Null resolves to the default role (no persona).
-  role_id: number | null;
+  role: string | null;
   // Chat spawned for the "Ask assistant" tab (created on first ask), or null.
   chat_id: number | null;
   // Map of raw diarization label (e.g. "Guest-2") -> chosen display name.
   speaker_names: Record<string, string>;
+  /** Speaker labels the user marked as themselves (never asked a suggestion for). */
+  me_labels: string[];
   // Attendee display names used in the summary (editable).
   attendees: string[];
   // Free-form notes pinned to the grounding context (e.g. saved Q&A answers).
   context_notes: string[];
   // Live Markdown notes the user takes during the meeting.
   notes: string;
-  // Enabled optional Live features (insights, notes, assistant, proactive, translation).
+  // Enabled optional Live features (insights, notes, assistant, answers, translation).
   features: string[];
   // A linked M365 calendar meeting (subject/times/attendees), or null.
   external_meeting: ExternalMeeting | null;
@@ -2056,7 +2815,7 @@ export interface MeetingSessionUpdate {
   title?: string | null;
   language?: string | null;
   topic_id?: number | null;
-  role_id?: number | null;
+  role?: string | null;
   status?: MeetingStatus;
   notes?: string | null;
   summary?: string | null;
@@ -2132,6 +2891,71 @@ export interface SearchResponse {
   results: SearchResult[];
 }
 
+// Precursor IQ — mirrors precursor/backend/schemas/iq.py.
+export type IQSection = SearchSection | "memory";
+
+export type IQField = SearchField | "brief" | "attachment" | "memory";
+
+export interface IQHit {
+  // Citation number: the answer cites this hit as [^id].
+  id: number;
+  section: IQSection;
+  field: IQField;
+  source_kind: string;
+  entity_id: number;
+  ref: string | null;
+  // Topics only: root-first slug path.
+  path: string | null;
+  title: string;
+  snippet: string;
+  excerpt: string;
+  role: string | null;
+  is_title: boolean;
+  score: number;
+  updated_at: string | null;
+  url: string | null;
+}
+
+export interface IQRetrieveResponse {
+  query: string;
+  hits: IQHit[];
+  markdown: string;
+  lexical_backend: string;
+  semantic: boolean;
+  pending: number;
+}
+
+export interface IQAskResponse {
+  question: string;
+  answer: string;
+  model: string | null;
+  citations: IQHit[];
+  sources: IQHit[];
+}
+
+export interface IQStatus {
+  enabled: boolean;
+  chunks: number;
+  pending: number;
+  sections: Record<string, number>;
+  lexical_backend: string;
+  embeddings_enabled: boolean;
+  embeddings_available: boolean;
+  embedding_model: string;
+  embedding_provider: string;
+  embedded: number;
+  reconciled_at: string | null;
+}
+
+export interface IQEmbeddingTestResponse {
+  ok: boolean;
+  provider: string;
+  model: string;
+  dimensions: number | null;
+  latency_ms: number | null;
+  detail: string | null;
+}
+
 // ── Refine with AI ──────────────────────────────────────────────────────────
 // Mirrors precursor/backend/schemas/refine.py
 
@@ -2146,4 +2970,119 @@ export interface RefineRequest {
 export interface RefineResponse {
   text: string;
   model: string;
+}
+
+// ── Step by step ────────────────────────────────────────────────────────────
+// Mirrors precursor/backend/schemas/step_plan.py
+
+export type StepPlanStatus = "drafting" | "active" | "consolidating" | "done" | "cancelled";
+
+export type StepStatus =
+  | "proposed"
+  | "open"
+  | "in_progress"
+  | "to_validate"
+  | "validated"
+  | "cancelled";
+
+/** Statuses a user can set directly (a `proposed` step is accepted or dismissed). */
+export type SettableStepStatus = Exclude<StepStatus, "proposed">;
+
+export interface Step {
+  id: number;
+  plan_id: number;
+  parent_step_id: number | null;
+  position: number;
+  title: string;
+  instruction: string;
+  status: StepStatus;
+  /** Roll-up for groups (derived from their children); equals `status` for leaves. */
+  effective_status: StepStatus;
+  artifact: string;
+  artifact_version: number;
+  created_by: "user" | "model";
+  chat_id: number | null;
+  chat_slug: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StepPlan {
+  id: number;
+  title: string;
+  source_text: string;
+  status: StepPlanStatus;
+  source_topic_id: number | null;
+  source_topic_title: string | null;
+  role: string | null;
+  llm_selection: ConversationLLMSelection | null;
+  output_instructions: string | null;
+  final_output: string | null;
+  final_stale: boolean;
+  ready_to_consolidate: boolean;
+  consolidation_chat_id: number | null;
+  consolidation_chat_slug: string | null;
+  steps: Step[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StepPlanItem {
+  id: number;
+  title: string;
+  status: StepPlanStatus;
+  source_topic_id: number | null;
+  source_topic_title: string | null;
+  step_count: number;
+  validated_count: number;
+  final_stale: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StepPlanCreate {
+  title?: string | null;
+  topic_id?: number | null;
+  message_id?: number | null;
+  source_text?: string | null;
+  role?: string | null;
+  /** Ask the model for the initial step list (slow). Defaults to true server-side. */
+  propose?: boolean;
+  llm_selection?: ConversationLLMSelection | null;
+}
+
+export interface StepPlanUpdate {
+  title?: string;
+  source_text?: string;
+  role?: string | null;
+  output_instructions?: string | null;
+  llm_selection?: ConversationLLMSelection | null;
+}
+
+export interface StepCreate {
+  title: string;
+  instruction?: string;
+  parent_step_id?: number | null;
+  position?: number | null;
+}
+
+export interface StepUpdate {
+  title?: string;
+  instruction?: string;
+}
+
+export interface StepMove {
+  parent_step_id: number | null;
+  position: number;
+}
+
+export interface StepArtifactVersion {
+  version: number;
+  content: string;
+  author: "user" | "model";
+  created_at: string;
+}
+
+export interface StepPlanReview {
+  text: string;
 }

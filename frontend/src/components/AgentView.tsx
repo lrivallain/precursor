@@ -30,6 +30,7 @@ import {
   Loader2,
   Package,
   PauseCircle,
+  Pencil,
   PlayCircle,
   Plus,
   Radar,
@@ -77,6 +78,12 @@ import { APPROVAL_POLICIES } from "./AgentsSettings";
 import { AgentsRuntimeCard } from "./AgentsRuntimeCard";
 import { AgentUsageSection } from "./AgentUsage";
 import { PermissionBody } from "./AgentPermissionBody";
+import { ReasoningDisclosure } from "./ReasoningDisclosure";
+import { RewindBar } from "./RewindBar";
+import { TimelineRail } from "./TimelineRail";
+import { RewindCutLine } from "./ConversationTranscript";
+import { TURN_ANCHOR_ATTR, useTimelineView } from "../lib/useTurnTimeline";
+import { useAgentRewind, type AgentTurn } from "../lib/useAgentRewind";
 import {
   AgentPaneTabs,
   AgentResultView,
@@ -98,6 +105,7 @@ import type {
   AgentApprovalPolicy,
   AgentArtifact,
   AgentEvent,
+  AgentLiveThinking,
   AgentPermissionDecisionValue,
   AgentRun,
   AgentSession,
@@ -128,7 +136,7 @@ interface AgentViewProps {
   /** Topic to preselect in the new-agent form (e.g. opened from a topic). */
   draftTopicId?: number | null;
   /** Persist a role change for the open agent (null = default). */
-  onSetRole?: (roleId: number | null) => Promise<void>;
+  onSetRole?: (roleName: string | null) => Promise<void>;
 }
 
 // One step in the workflow timeline.
@@ -181,7 +189,9 @@ function AgentInsightsPanel({
   artifacts,
   artifactLabel,
   onOpenArtifact,
+  compact,
 }: {
+  compact?: { busy: boolean; disabled: boolean; disabledReason?: string; run: () => void };
   showPrefs: ShowPrefs;
   toggleShow: (k: keyof ShowPrefs) => void;
   events: AgentEvent[];
@@ -238,7 +248,7 @@ function AgentInsightsPanel({
         </button>
       </div>
       <div className="flex flex-col gap-4 overflow-y-auto p-3">
-        <AgentUsageSection events={events} model={model} />
+        <AgentUsageSection events={events} model={model} compact={compact} />
         <div className="border-t border-border" />
         <AgentRunsSection agent={agent} runs={runs} selected={runFilter} onSelect={onRunFilterChange} />
         <div className="border-t border-border" />
@@ -891,6 +901,7 @@ function ArtifactViewer({
 function MessageNode({
   event,
   category,
+  reasoning,
   isLastAnswer,
   autonomy,
   user,
@@ -900,9 +911,15 @@ function MessageNode({
   onReply,
   suggestionsDisabled,
   renderArtifact,
+  highlighted = false,
+  onRewindHere,
+  onEditResend,
+  revealActions = false,
 }: {
   event: AgentEvent;
   category: "user" | "system" | "assistant" | "reasoning" | "error";
+  /** The round's thinking, shown collapsed above the message. */
+  reasoning?: string | null;
   isLastAnswer: boolean;
   // Whether the parent agent is autonomy-enabled — gates directive parsing so a
   // normal agent that happens to type "PROGRESS:" isn't rewritten.
@@ -921,6 +938,13 @@ function MessageNode({
    * trace) it folds inline, so the deliverable is never lost with the prose.
    */
   renderArtifact?: (artifact: AgentArtifactDirective, index: number) => ReactNode;
+  /** The prompt of the turn the timeline rail marks as current. */
+  highlighted?: boolean;
+  /** Prompt toolbar rewind actions (see useAgentRewind). */
+  onRewindHere?: () => void;
+  onEditResend?: () => void;
+  /** Show the prompt toolbar without hovering (the turn being read back). */
+  revealActions?: boolean;
 }) {
   const style = CATEGORY_STYLE[category];
   const box = isLastAnswer
@@ -975,7 +999,8 @@ function MessageNode({
     }
   };
   // A heartbeat-only message (`PROGRESS:` and nothing else) is drawn as its
-  // milestone on the spine; an empty bubble above it would only add noise.
+  // milestone on the spine; an empty bubble above it would only add noise. The
+  // thinking that led to it still has something to say.
   if (
     isAssistant &&
     autonomy &&
@@ -983,12 +1008,19 @@ function MessageNode({
     !directives?.needInput &&
     (directives?.artifacts.length ?? 0) === 0
   ) {
-    return null;
+    return reasoning ? <ThinkingNode reasoning={reasoning} /> : null;
   }
   return (
     <div
       className={`group/node relative w-full max-w-xl rounded-lg border p-2.5 transition hover:border-accent hover:ring-2 hover:ring-accent/40 ${box}`}
     >
+      {highlighted && (
+        // Ties the prompt to the timeline rail's blue (current) dash.
+        <span
+          aria-hidden
+          className="pointer-events-none absolute -right-2.5 top-1.5 bottom-1.5 w-[3px] rounded-full bg-accent"
+        />
+      )}
       <div className="flex items-center gap-2">
         {isUser && user?.avatarUrl ? (
           <img
@@ -1017,6 +1049,7 @@ function MessageNode({
           </span>
         ) : null}
       </div>
+      {reasoning && <ReasoningDisclosure reasoning={reasoning} className="mt-1.5" />}
       {event.text &&
         (isSystem ? (
           <div className="mt-1">
@@ -1095,6 +1128,36 @@ function MessageNode({
           </button>
         </div>
       )}
+      {isUser && (onRewindHere || onEditResend) && (
+        <div
+          className={`absolute -bottom-3 left-2 z-10 flex items-center gap-1 rounded-full border border-border bg-surface px-1 py-0.5 shadow-sm transition-opacity group-hover/node:opacity-100 ${
+            revealActions ? "opacity-100" : "opacity-0"
+          }`}
+        >
+          {onRewindHere && (
+            <button
+              type="button"
+              onClick={onRewindHere}
+              className="rounded-full p-1 text-muted hover:text-amber-500"
+              aria-label="Rewind here"
+              data-tooltip={"Rewind here\nKeep this turn and drop the later ones"}
+            >
+              <History size={12} />
+            </button>
+          )}
+          {onEditResend && (
+            <button
+              type="button"
+              onClick={onEditResend}
+              className="rounded-full p-1 text-muted hover:text-accent"
+              aria-label="Edit and resend"
+              data-tooltip={"Edit & resend\nDrop this turn and the later ones, and edit this prompt"}
+            >
+              <Pencil size={12} />
+            </button>
+          )}
+        </div>
+      )}
       {suggestions.length > 0 && onPickSuggestion && (
         <SuggestedReplies
           items={suggestions}
@@ -1111,6 +1174,16 @@ function MessageNode({
           hoverGroup="node"
         />
       </div>
+    </div>
+  );
+}
+
+// Thinking with no message of its own to sit on: a round that went straight to
+// a tool call, or the thinking the model is streaming right now.
+function ThinkingNode({ reasoning, live = false }: { reasoning: string; live?: boolean }) {
+  return (
+    <div className={`w-full max-w-xl rounded-lg border px-2.5 py-1.5 ${CATEGORY_STYLE.reasoning.box}`}>
+      <ReasoningDisclosure reasoning={reasoning} live={live} />
     </div>
   );
 }
@@ -1330,7 +1403,13 @@ function readShowPrefs(): ShowPrefs {
 // A row in the rendered workflow: a centered message node, a grouped tool box,
 // or a side hook bubble.
 type WorkflowRow =
-  | { type: "node"; ev: AgentEvent; cat: "user" | "system" | "assistant" | "reasoning" | "error" }
+  | {
+      type: "node";
+      ev: AgentEvent;
+      cat: "user" | "system" | "assistant" | "reasoning" | "error";
+      /** An assistant message's thinking, which the SDK sends right after it. */
+      reasoning?: string;
+    }
   | { type: "tool"; step: ToolStep }
   | { type: "hook"; ev: AgentEvent };
 
@@ -1352,6 +1431,9 @@ function buildRows(events: AgentEvent[]): WorkflowRow[] {
   // refers to. The archived `PermissionRequestedData` carries no request id, so
   // this positional link is the only way to know a call stopped at a gate.
   let openTool: ToolStep | null = null;
+  // The message a following reasoning event belongs to. The SDK sends a round's
+  // complete thinking right after that round's message, before its tool calls.
+  let thinkingAnchor: NodeRow | null = null;
 
   const pick = (data: Record<string, unknown> | null, ...keys: string[]): string | undefined => {
     if (!data) return undefined;
@@ -1366,6 +1448,8 @@ function buildRows(events: AgentEvent[]): WorkflowRow[] {
     const kind = ev.kind.toLowerCase();
     const cat = classify(ev);
     if (cat === "skip") continue;
+    // A new round's thinking never belongs to the previous round's message.
+    if (kind === "turn_start") thinkingAnchor = null;
     // Permission echoes carry no actionable content of their own, but a
     // *request* marks the call before it as gated — the difference between a
     // tool that ran and one that only ever asked.
@@ -1377,6 +1461,7 @@ function buildRows(events: AgentEvent[]): WorkflowRow[] {
 
     const isToolish = cat === "tool" || cat === "permission";
     if (isToolish) {
+      thinkingAnchor = null;
       const groupKey = ev.request_id ?? `tool-${rows.length}`;
       let step = ev.request_id ? toolIndex.get(groupKey) : undefined;
       // A tool is "done" when its completion event arrives — independent of
@@ -1419,28 +1504,26 @@ function buildRows(events: AgentEvent[]): WorkflowRow[] {
     if (cat === "hook") {
       rows.push({ type: "hook", ev });
     } else if (cat === "assistant" && (!ev.text || !ev.text.trim())) {
-      // Streaming emits an empty AssistantMessageStartData marker per message;
-      // drop the contentless frames so they don't render as blank "Assistant"
-      // steps. The real answer arrives as AssistantMessageData (with text).
+      // Archives from before streaming frames stopped being kept hold message
+      // markers and tool-call-only messages with no text: nothing to render.
+      // Its round's thinking has no message to sit on, so it stands alone.
+      thinkingAnchor = null;
       continue;
     } else if (cat === "reasoning") {
-      // Streamed reasoning deltas carry no standalone text (the SDK sends the
-      // full block separately as AssistantReasoningData); drop the empty ones so
-      // streaming mode doesn't fill the timeline with blank "thinking" steps.
+      // A model with encrypted reasoning reports it with no text at all.
       if (!ev.text || !ev.text.trim()) continue;
-      // The SDK emits reasoning right AFTER the assistant message of a turn;
-      // surface it just before so each turn reads think → speak and a trailing
-      // reasoning never dangles below the final answer.
-      let at = rows.length;
-      while (at > 0 && rows[at - 1].type === "hook") at--;
-      const anchor = at > 0 ? rows[at - 1] : undefined;
-      if (anchor && anchor.type === "node" && anchor.cat === "assistant") {
-        rows.splice(at - 1, 0, { type: "node", ev, cat });
+      // Shown on the message it belongs to, collapsed above it — think, then
+      // speak — like a chat reply's thinking.
+      if (thinkingAnchor && !thinkingAnchor.reasoning) {
+        thinkingAnchor.reasoning = ev.text;
       } else {
         rows.push({ type: "node", ev, cat });
       }
+      thinkingAnchor = null;
     } else {
-      rows.push({ type: "node", ev, cat });
+      const row: NodeRow = { type: "node", ev, cat };
+      rows.push(row);
+      thinkingAnchor = cat === "assistant" ? row : null;
     }
   }
   // Fallback: tools whose start never arrived (truly broken turn) still render,
@@ -1544,7 +1627,17 @@ interface CockpitTimeline {
   exchangeStart: Map<number, number>;
   /** Key of the newest answer, the only one that offers suggested replies. */
   latestAnswerKey: string | null;
+  /**
+   * One timeline-rail turn per human prompt. `event_id` is the prompt's raw SDK
+   * id here; the cockpit clears it on turns outside the current SDK session.
+   */
+  turns: (AgentTurn & { agent_run_id: number | null })[];
 }
+
+const excerpt = (text: string | null | undefined, max = 200): string => {
+  const flat = (text ?? "").replace(/\s+/g, " ").trim();
+  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
+};
 
 function workStats(
   prompt: NodeRow,
@@ -1555,7 +1648,10 @@ function workStats(
   for (const { row } of work) {
     if (row.type === "tool") stats.tools += 1;
     else if (row.type === "node" && row.cat === "reasoning") stats.thoughts += 1;
-    else if (row.type === "node" && row.cat === "assistant") stats.messages += 1;
+    else if (row.type === "node" && row.cat === "assistant") {
+      stats.messages += 1;
+      if (row.reasoning) stats.thoughts += 1;
+    }
     else if (row.type === "node" && row.cat === "error") stats.errors += 1;
   }
   const start = Date.parse(prompt.ev.at ?? "");
@@ -1649,6 +1745,27 @@ function buildCockpitTimeline(
     return true;
   };
 
+  const turns: CockpitTimeline["turns"] = [];
+  for (const ex of exchanges) {
+    if (!ex.prompt) continue;
+    const ev = ex.prompt.ev;
+    turns.push({
+      message_id: ex.index,
+      last_message_id: ex.index,
+      created_at: ev.at ?? "",
+      prompt: excerpt(ev.text),
+      reply:
+        ex.answer?.type === "node" ? excerpt(stripAgentDirectives(stripSuggestionBlock(ex.answer.ev.text ?? ""))) : "",
+      has_compaction: ex.items.some(
+        (it) => it.row.type === "hook" && it.row.ev.kind === "compaction",
+      ),
+      agent_session_id: null,
+      event_id: ev.event_id ?? null,
+      text: ev.text ?? "",
+      agent_run_id: ev.agent_run_id,
+    });
+  }
+
   const entries: TimelineEntry[] = [];
   const anchors: ExchangeAnchor[] = [];
   let latestAnswerKey: string | null = null;
@@ -1715,7 +1832,7 @@ function buildCockpitTimeline(
     segments.push({ entry: e, hooks: pendingHooks });
     pendingHooks = [];
   }
-  return { segments, trailingHooks: pendingHooks, anchors, exchangeStart, latestAnswerKey };
+  return { segments, trailingHooks: pendingHooks, anchors, exchangeStart, latestAnswerKey, turns };
 }
 
 // How many timeline segments are mounted at once; older ones are kept
@@ -1809,10 +1926,13 @@ export function AgentActivity({
                 seg.row.cat === "user" &&
                 isAutonomyNudge(seg.row.ev.text) ? (
                 <ContinueMarker at={seg.row.ev.at} />
+              ) : seg.row.type === "node" && seg.row.cat === "reasoning" ? (
+                <ThinkingNode reasoning={seg.row.ev.text ?? ""} />
               ) : seg.row.type === "node" ? (
                 <MessageNode
                   event={seg.row.ev}
                   category={seg.row.cat}
+                  reasoning={seg.row.reasoning}
                   isLastAnswer={false}
                   autonomy={autonomy}
                   model={modelByEvent.get(seg.row.ev) ?? model}
@@ -1869,7 +1989,7 @@ export function AgentView({
   const [task, setTask] = useState("");
   const [newTopicId, setNewTopicId] = useState<number | null>(null);
   // Assistant Role the new agent is created with. Null = the default role.
-  const [newRoleId, setNewRoleId] = useState<number | null>(null);
+  const [newRole, setNewRole] = useState<string | null>(null);
   const [roleOpen, setRoleOpen] = useState(false);
   // Autonomy opt-in for the next started agent: when on, it runs a goal loop
   // toward the objective and pauses only by exception (default off).
@@ -2057,6 +2177,13 @@ export function AgentView({
   // them without wanting to be re-subscribed when they move.
   const archivedRef = useRef<AgentEvent[]>([]);
   const cursorRef = useRef(0);
+  // The archive the cursor counts into; a rewind changes it (see AgentEventPage).
+  const epochRef = useRef<string | null>(null);
+  // The round's thinking as it streams. Like parked approvals it sits outside
+  // the cursor, and each read replaces it.
+  const [liveThinking, setLiveThinking] = useState<AgentLiveThinking | null>(null);
+  // Runs whose prompts can be rewound (the current SDK session's); see AgentEventPage.
+  const [rewindableRunIds, setRewindableRunIds] = useState<readonly number[]>([]);
 
   const loadEvents = useCallback(
     async (
@@ -2065,7 +2192,12 @@ export function AgentView({
       { fresh = false }: { fresh?: boolean } = {},
     ): Promise<void> => {
       try {
-        const page = await api.agents.getEvents(id, agentRunId, fresh ? 0 : cursorRef.current);
+        const page = await api.agents.getEvents(
+          id,
+          agentRunId,
+          fresh ? 0 : cursorRef.current,
+          epochRef.current,
+        );
         // `reset` means our cursor no longer addresses this transcript (cleared,
         // pruned, or taken against another run) and the payload is a whole
         // replacement. Otherwise append — and keep the same array identity when
@@ -2078,13 +2210,25 @@ export function AgentView({
               : archivedRef.current;
         archivedRef.current = archived;
         cursorRef.current = page.cursor;
+        epochRef.current = page.epoch ?? null;
         // Parked approval cards live outside the cursor and are replaced whole,
         // so they're re-appended on every read rather than accumulated.
         setEvents(page.pending.length > 0 ? [...archived, ...page.pending] : archived);
+        const thinking = page.thinking ?? null;
+        setLiveThinking((prev) =>
+          prev?.text === thinking?.text && prev?.active === thinking?.active ? prev : thinking,
+        );
+        const rewindable = page.rewindable_run_ids ?? [];
+        setRewindableRunIds((prev) =>
+          prev.length === rewindable.length && prev.every((v, i) => v === rewindable[i]) ? prev : rewindable,
+        );
       } catch {
         archivedRef.current = [];
         cursorRef.current = 0;
+        epochRef.current = null;
         setEvents([]);
+        setLiveThinking(null);
+        setRewindableRunIds([]);
       }
     },
     [],
@@ -2150,6 +2294,7 @@ export function AgentView({
       archivedRef.current = [];
       cursorRef.current = 0;
       setEvents([]);
+      setLiveThinking(null);
       return;
     }
     // A different agent or run filter is a different sequence, so a carried-over
@@ -2443,6 +2588,81 @@ export function AgentView({
     }
   }, []);
 
+  // The timeline rail and rewind. Turns come from the transcript itself (one
+  // per human prompt); only the current SDK session's prompts can be rewound:
+  // the current run's, and an earlier run's that continued the same session.
+  const agentTurns = useMemo<AgentTurn[]>(
+    () =>
+      timeline.turns.map((t) => ({
+        ...t,
+        event_id:
+          t.event_id && t.agent_run_id != null && rewindableRunIds.includes(t.agent_run_id) ? t.event_id : null,
+      })),
+    [timeline.turns, rewindableRunIds],
+  );
+  // With every run on screen, the rail sets each run's turns apart and names it.
+  const turnGroup = useMemo(() => {
+    const ids = new Set(agentTurns.map((t) => t.agent_run_id ?? null));
+    if (ids.size < 2) return undefined;
+    const byId = new Map(runs.map((r) => [r.id, r]));
+    return (index: number) => {
+      const id = agentTurns[index]?.agent_run_id ?? null;
+      if (id == null) return { key: "none", label: "Before runs were recorded" };
+      const run = byId.get(id);
+      const label = run
+        ? `Run #${id} · ${RUN_TRIGGER_LABEL[run.trigger]}${run.workflow_run_id ? ` · workflow run #${run.workflow_run_id}` : ""}`
+        : `Run #${id}`;
+      return { key: id, label: rewindableRunIds.includes(id) ? `${label} · current session` : label };
+    };
+  }, [agentTurns, runs, rewindableRunIds]);
+  // Bring an exchange's prompt into the render window before jumping to it.
+  const ensureTurnMounted = useCallback(
+    async (exchange: number) => {
+      const at = timeline.exchangeStart.get(exchange);
+      if (at == null) return false;
+      if (at < windowStartRef.current) {
+        pinnedRef.current = false;
+        setWindowStart(at);
+      }
+      return true;
+    },
+    [timeline.exchangeStart],
+  );
+  const turnTimeline = useTimelineView({
+    // The scroll container mounts only once an agent is selected and loaded;
+    // the listener must re-attach when it does.
+    resetKey: `${agentId ?? ""}:${runFilter ?? "all"}:${pane}:${hasSelected}:${loading}`,
+    turns: agentTurns,
+    scrollRef,
+    content: timeline,
+    ensureLoaded: ensureTurnMounted,
+  });
+  const rewind = useAgentRewind({
+    resetKey: `${agentId ?? ""}:${runFilter ?? "all"}`,
+    turns: agentTurns,
+    streaming: turnActive,
+    rewind: (eventId, mode) => api.agents.rewind(agentId as number, eventId, mode),
+    previewRewind: (eventId) => api.agents.previewRewind(agentId as number, eventId),
+    setDraft: setFollowUp,
+    onSettled: () => {
+      if (agentId != null) void loadEvents(agentId, runFilter, { fresh: true });
+      onReload();
+    },
+    onError: setError,
+  });
+  const turnIndexByExchange = useMemo(
+    () => new Map(agentTurns.map((t, i) => [t.message_id, i])),
+    [agentTurns],
+  );
+  const promptRewindActions = (exchange: number) => {
+    const index = turnIndexByExchange.get(exchange);
+    if (index === undefined || turnActive || rewind.busy) return {};
+    const turns = turnTimeline.turns;
+    const offer = (mode: "rewind" | "edit") =>
+      rewind.canRewind?.(index, mode) ? () => rewind.start(turns, index, mode) : undefined;
+    return { onRewindHere: offer("rewind"), onEditResend: offer("edit") };
+  };
+
   async function startTask(): Promise<void> {
     if (busy || !task.trim()) return;
     const message = task.trim();
@@ -2452,7 +2672,7 @@ export function AgentView({
       const created = await api.agents.create({
         task: message,
         topic_id: newTopicId,
-        role_id: newRoleId,
+        role: newRole,
         autonomy_enabled: newAutonomy,
         max_steps: newMaxSteps,
         approval_policy: newApprovalPolicy || null,
@@ -2465,7 +2685,7 @@ export function AgentView({
       if (newStart) setPending({ agentId: created.id, text: message });
       setTask("");
       setNewTopicId(null);
-      setNewRoleId(null);
+      setNewRole(null);
       setNewStart(true);
       onReload();
       onSelect(created.id);
@@ -2477,7 +2697,7 @@ export function AgentView({
   }
 
   async function sendFollowUp(explicit?: string): Promise<void> {
-    if (!selected || busy) return;
+    if (!selected || busy || rewind.busy) return;
     const message = (explicit ?? followUp).trim();
     if (!message) return;
     // /clear erases the whole transcript on the backend — confirm first, mirroring
@@ -2509,6 +2729,9 @@ export function AgentView({
     }
     try {
       await api.agents.send(selected.id, message);
+      // A slash command runs server-side and never lands as a user turn, so its
+      // echo would otherwise linger; the command has finished by now.
+      if (message.startsWith("/")) setPending(null);
       onReload();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -2787,8 +3010,8 @@ export function AgentView({
             <>
               <ComposerModelControls variant="agents" />
               <RoleSelector
-                value={newRoleId}
-                onChange={setNewRoleId}
+                value={newRole}
+                onChange={setNewRole}
                 open={roleOpen}
                 onOpenChange={setRoleOpen}
                 disabled={!available || busy}
@@ -2929,14 +3152,15 @@ export function AgentView({
             />
           </div>
         ) : (
-        /* Scrollable workflow region. */
+        /* Scrollable workflow region, with the turn timeline rail beside it. */
+        <div className="relative flex min-h-0 flex-1 flex-col">
         <div
           ref={scrollRef}
           onScroll={onScroll}
           role={latestVersion ? "tabpanel" : undefined}
           id={latestVersion ? "agent-panel-activity" : undefined}
           aria-labelledby={latestVersion ? "agent-pane-activity" : undefined}
-          className="flex-1 overflow-y-auto px-5 py-3"
+          className="flex-1 overflow-y-auto py-3 pl-5 pr-12"
         >
           <div ref={innerRef}>
         {error && <p className="mb-2 text-[11px] text-red-500">{error}</p>}
@@ -2998,7 +3222,7 @@ export function AgentView({
         {(() => {
           const { segments, trailingHooks, latestAnswerKey } = timeline;
 
-          if (segments.length === 0 && trailingHooks.length === 0)
+          if (segments.length === 0 && trailingHooks.length === 0 && !liveThinking)
             return showPending ? (
               <div className="flex flex-col items-center">
                 <div className="flex w-full justify-end">
@@ -3014,6 +3238,8 @@ export function AgentView({
           // the rows themselves, so appended steps never shift on-screen
           // history; scrolling up lowers it to reveal older boxes.
           const hiddenCount = Math.min(windowStart, segments.length);
+          // A previewed rewind dims the exchanges it would drop.
+          const rewindFrom = rewind.preview?.fromId ?? null;
           const shownSegments = hiddenCount > 0 ? segments.slice(hiddenCount) : segments;
 
           return (
@@ -3032,16 +3258,20 @@ export function AgentView({
                   ) : (
                     <StepConnector hooks={seg.hooks} />
                   );
+                const doomed = rewindFrom != null && entry.exchange >= rewindFrom;
+                const dim = `flex w-full flex-col items-center${
+                  doomed ? " opacity-35 grayscale transition-opacity" : ""
+                }`;
                 if (entry.kind === "fold") {
                   return (
-                    <Fragment key={entry.key}>
+                    <div key={entry.key} className={dim}>
                       {connector}
                       <WorkFold
                         stats={entry.stats}
                         open={entry.open}
                         onToggle={() => toggleFold(entry.exchange)}
                       />
-                    </Fragment>
+                    </div>
                   );
                 }
                 const { row } = entry;
@@ -3055,12 +3285,23 @@ export function AgentView({
                     : row.type === "node" && row.cat === "assistant"
                       ? "justify-start"
                       : "justify-center";
+                const opensTurn = entry.role === "prompt";
+                const current =
+                  opensTurn &&
+                  turnTimeline.currentMessageId != null &&
+                  entry.exchange === turnTimeline.currentMessageId;
                 return (
-                <Fragment key={entry.key}>
+                <div key={entry.key} className={dim}>
+                  {opensTurn && entry.exchange === rewindFrom && (
+                    <div className="mt-2 w-full max-w-xl">
+                      <RewindCutLine />
+                    </div>
+                  )}
                   {connector}
                   <div
                     className={`flex w-full scroll-mt-3 ${align}`}
-                    data-exchange={entry.role === "prompt" ? entry.exchange : undefined}
+                    data-exchange={opensTurn ? entry.exchange : undefined}
+                    {...(opensTurn ? { [TURN_ANCHOR_ATTR]: entry.exchange } : {})}
                   >
                     {row.type === "tool" ? (
                       <ToolBox
@@ -3070,10 +3311,13 @@ export function AgentView({
                       />
                     ) : nudge ? (
                       <ContinueMarker at={row.ev.at} />
+                    ) : row.type === "node" && row.cat === "reasoning" ? (
+                      <ThinkingNode reasoning={row.ev.text ?? ""} />
                     ) : row.type === "node" ? (
                       <MessageNode
                         event={row.ev}
                         category={row.cat}
+                        reasoning={showPrefs.thinking ? row.reasoning : null}
                         isLastAnswer={entry.role === "answer"}
                         autonomy={selected.autonomy_enabled}
                         user={userPersona}
@@ -3089,6 +3333,11 @@ export function AgentView({
                         onReply={focusComposer}
                         suggestionsDisabled={!runtimeReady || turnActive}
                         renderArtifact={renderPublished(row.ev.at)}
+                        highlighted={current}
+                        revealActions={
+                          current && !turnTimeline.view.atLatest && !rewind.preview
+                        }
+                        {...(opensTurn ? promptRewindActions(entry.exchange) : {})}
                       />
                     ) : null}
                   </div>
@@ -3106,10 +3355,24 @@ export function AgentView({
                         <MissionMilestone progress={d.progress} at={row.ev.at} />
                       );
                     })()}
-                </Fragment>
+                </div>
                 );
               })}
-              {trailingHooks.length > 0 && <HookGutter hooks={trailingHooks} />}
+              {trailingHooks.length > 0 && (
+                <div
+                  className={`flex w-full flex-col items-center${
+                    rewindFrom != null ? " opacity-35 grayscale" : ""
+                  }`}
+                >
+                  <HookGutter hooks={trailingHooks} />
+                </div>
+              )}
+              {liveThinking && showPrefs.thinking && (
+                <>
+                  <StepConnector hooks={[]} />
+                  <ThinkingNode reasoning={liveThinking.text} live={liveThinking.active} />
+                </>
+              )}
               {showPending && (
                 <>
                   <StepConnector hooks={[]} />
@@ -3123,6 +3386,8 @@ export function AgentView({
         })()}
           </div>
       </div>
+        <TimelineRail timeline={turnTimeline} rewind={rewind} streaming={turnActive} group={turnGroup} />
+      </div>
         )}
 
       {/* Follow-up: always visible. While a turn is in flight the input is
@@ -3134,14 +3399,22 @@ export function AgentView({
         // but don't flash a Stop control until there's actually a turn to stop.
         const sending = busy && pending != null;
         return (
-          <div ref={composerWrapRef} className="shrink-0 border-t border-border px-5 py-3 pb-safe">
+          <div ref={composerWrapRef} className="shrink-0 space-y-2 border-t border-border px-5 py-3 pb-safe">
+            {pane === "activity" && (
+              <RewindBar
+                timeline={turnTimeline}
+                rewind={rewind}
+                streaming={turnActive}
+                scrollRef={scrollRef}
+              />
+            )}
             <Composer
               value={followUp}
               onChange={setFollowUp}
               onSend={() => void sendFollowUp()}
               onStop={() => void stopAgent()}
               streaming={turnActive}
-              disabled={!runtimeReady || turnActive || sending}
+              disabled={!runtimeReady || turnActive || sending || Boolean(rewind.busy)}
               suggestions={followUpSuggestions}
               userHistory={userHistory}
               speech={speech}
@@ -3161,8 +3434,8 @@ export function AgentView({
                 <>
                   <ComposerModelControls variant="agents" />
                   <RoleSelector
-                    value={selected.role_id ?? null}
-                    onChange={(roleId) => void onSetRole?.(roleId)}
+                    value={selected.role ?? null}
+                    onChange={(roleName) => void onSetRole?.(roleName)}
                     open={roleOpen}
                     onOpenChange={setRoleOpen}
                   />
@@ -3185,6 +3458,12 @@ export function AgentView({
         artifacts={artifacts}
         artifactLabel={artifactLabel}
         onOpenArtifact={openArtifact}
+        compact={{
+          busy: busy && pending?.text.startsWith("/compact") === true,
+          disabled: busy || selected.status === "running" || selected.status === "needs_approval",
+          disabledReason: "The agent is busy",
+          run: () => void sendFollowUp("/compact"),
+        }}
       />
       {viewing && (
         <ArtifactViewer agent={selected} artifact={viewing} onClose={() => setViewing(null)} />

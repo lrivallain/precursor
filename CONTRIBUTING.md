@@ -84,7 +84,7 @@ make check
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy precursor
-uv run pytest
+uv run pytest -n auto --dist loadgroup   # parallel, as in CI; drop -n to debug serially
 
 npm --prefix frontend run typecheck
 npm --prefix frontend run build
@@ -105,6 +105,16 @@ NODE_PATH=.demo/node_modules node scripts/test_section_navigation.js
 This covers Agents/Workflows overviews, item selection, history, deep links,
 search, shared progress, empty/error states and the mobile drawer. It requires
 the anonymous demo on port 8899; it does not execute agents or pipelines.
+
+For conversation provider selection, use the same anonymous demo:
+
+```bash
+NODE_PATH=.demo/node_modules node scripts/test_conversation_providers.js
+```
+
+The browser suite mocks catalogue/credential metadata and never provisions the
+SDK, sends inference or writes real settings. It covers per-conversation
+provider selection and the unified model picker.
 
 The suite is hermetic: the root `conftest.py` points the app at a throwaway
 database, skills and data directory, and keeps the LLM provider on the offline

@@ -4,15 +4,17 @@ from __future__ import annotations
 
 import asyncio
 import re
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from typing import Any
 
-from openai import APIStatusError, AsyncOpenAI
+from openai import APIStatusError, AsyncOpenAI, BadRequestError
 
 from precursor.backend.services.llm.base import (
     ChatMessage,
+    EmbeddingResult,
     LLMError,
     ProviderEvent,
+    ReasoningDeltaEvent,
     TextDeltaEvent,
     ToolCallRequest,
     ToolCallsEvent,
@@ -20,6 +22,21 @@ from precursor.backend.services.llm.base import (
     TurnDoneEvent,
     UsageEvent,
 )
+
+# Chat-completions has no standard field for the model's thinking, so each
+# backend picks its own: Copilot streams ``reasoning_text``, DeepSeek-style
+# servers (Azure AI Foundry, vLLM) ``reasoning_content``, OpenRouter and Ollama
+# ``reasoning``. Only the first present one is read, in case a server mirrors it.
+REASONING_DELTA_FIELDS = ("reasoning_text", "reasoning_content", "reasoning")
+
+
+def reasoning_delta_text(delta: Any) -> str:
+    """The thinking text carried by one streamed chat-completions delta."""
+    for name in REASONING_DELTA_FIELDS:
+        value = getattr(delta, name, None)
+        if isinstance(value, str) and value:
+            return value
+    return ""
 
 
 class UnsupportedEndpointError(LLMError):
@@ -171,6 +188,7 @@ async def stream_openai_tools(
     messages: Sequence[ChatMessage],
     tools: Sequence[ToolDef],
     reasoning_effort: str | None = None,
+    request_options: Mapping[str, Any] | None = None,
 ) -> AsyncIterator[ProviderEvent]:
     """Run a tool-aware streamed completion against an OpenAI-compatible API.
 
@@ -180,6 +198,9 @@ async def stream_openai_tools(
     turn completes.
     """
     kwargs: dict[str, Any] = {
+        # Already in this API's vocabulary; applied first so the fields this
+        # helper owns (model, messages, streaming) can't be overridden.
+        **(request_options or {}),
         "model": model,
         "messages": to_openai_messages(messages),
         "stream": True,
@@ -216,6 +237,10 @@ async def stream_openai_tools(
         if delta is None:
             continue
 
+        reasoning = reasoning_delta_text(delta)
+        if reasoning:
+            yield ReasoningDeltaEvent(content=reasoning)
+
         if delta.content:
             yield TextDeltaEvent(content=delta.content)
 
@@ -247,3 +272,30 @@ async def stream_openai_tools(
     if usage is not None:
         yield usage
     yield TurnDoneEvent(finish_reason=finish_reason)
+
+
+async def embed_openai(
+    client: AsyncOpenAI,
+    texts: Sequence[str],
+    *,
+    model: str,
+    dimensions: int | None = None,
+) -> EmbeddingResult:
+    """Call ``/embeddings`` for ``texts``; retry without ``dimensions`` if refused.
+
+    Older models (``text-embedding-ada-002``) reject the parameter and only
+    serve their native width, which is still usable — just larger.
+    """
+    kwargs: dict[str, Any] = {"model": model, "input": list(texts)}
+    if dimensions:
+        kwargs["dimensions"] = dimensions
+    try:
+        resp = await client.embeddings.create(**kwargs)
+    except BadRequestError:
+        if "dimensions" not in kwargs:
+            raise
+        kwargs.pop("dimensions")
+        resp = await client.embeddings.create(**kwargs)
+    ordered = sorted(resp.data, key=lambda d: d.index)
+    tokens = getattr(resp.usage, "prompt_tokens", 0) if resp.usage is not None else 0
+    return EmbeddingResult(vectors=[list(d.embedding) for d in ordered], prompt_tokens=tokens or 0)

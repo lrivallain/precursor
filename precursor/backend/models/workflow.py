@@ -150,9 +150,7 @@ class Workflow(Base, TimestampMixin, RecurrenceMixin):
     # Assistant Role applied to every step's agent for the duration of a run, so
     # a pipeline speaks with one voice without stamping the persona onto each
     # (shared, reusable) agent row. Null leaves each agent's own role alone.
-    role_id: Mapped[int | None] = mapped_column(
-        ForeignKey("roles.id", ondelete="SET NULL"), nullable=True, index=True
-    )
+    role: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
 
     # Tool-approval policy applied to every step's agent while the workflow runs
     # ("manual" / "balanced" / "autonomous"). Null leaves each agent's own
@@ -202,6 +200,11 @@ class Workflow(Base, TimestampMixin, RecurrenceMixin):
 
     # Non-null once archived (hidden from the active gallery, kept for history).
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Files mode only: the permissions (approval policy, steps and their tools)
+    # a human last accepted for this workflow's file, as JSON. A file that
+    # widens them is held for review. Null = never recorded.
+    accepted_permissions: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Ordered steps. Eager (selectin) so the API serialises the pipeline in one
     # go; ordered by position so the sequence renders left-to-right.
@@ -344,6 +347,12 @@ class WorkflowStep(Base, TimestampMixin):
     # Optional per-step display label overriding the agent's title in the strip.
     name: Mapped[str | None] = mapped_column(String(200), nullable=True)
 
+    # Files mode only (docs/definitions.md): the file step this row anchors, as
+    # ``<workflow file id>/<step key>``. The row then keeps what a run needs
+    # (position, agent, per-run counters); the step's declaration comes from
+    # the file.
+    definition_ref: Mapped[str | None] = mapped_column(String(200), nullable=True)
+
     workflow: Mapped[Workflow] = relationship(
         "Workflow", back_populates="steps", foreign_keys=[workflow_id]
     )
@@ -401,6 +410,13 @@ class WorkflowRun(Base, TimestampMixin):
     # means "no brief" — the pipeline runs on its steps' own objectives alone.
     # Injected into every step's kickoff preamble so the whole run shares intent.
     input: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Files mode only: the workflow file this run executed, and its SHA-256 when
+    # the run started.
+    definition_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    definition_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # ...and its text: the run executes this version throughout (and after a
+    # restart), whatever happens to the file meanwhile.
+    definition_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Cumulative token spend across every step attempt in this run, rolled up as
     # each step finalizes. Turns "did it work?" into "was it worth it?" — and

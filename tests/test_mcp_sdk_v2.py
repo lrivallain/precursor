@@ -26,13 +26,15 @@ from importlib.metadata import version
 from typing import Any
 
 import httpx
+import httpx2
 import pytest
 import uvicorn
 from mcp.server.mcpserver import MCPServer
 from mcp.types import INTERNAL_ERROR, INVALID_PARAMS, INVALID_REQUEST, CallToolResult
 
 from precursor.backend.config import get_settings
-from precursor.backend.db import init_db
+from precursor.backend.db import SessionLocal, init_db
+from precursor.backend.models import AppSetting
 from precursor.backend.services.mcp.client import (
     BUILTIN_CATALOG,
     MCPClientManager,
@@ -60,7 +62,7 @@ def test_the_in_tree_stdio_servers_are_all_covered() -> None:
     # Derived from the catalogue so a new built-in is covered without editing
     # this file; this just proves the derivation found them.
     assert "precursor.backend.services.mcp.precursor_server" in _IN_TREE_SERVER_MODULES
-    assert len(_IN_TREE_SERVER_MODULES) >= 5
+    assert len(_IN_TREE_SERVER_MODULES) >= 4
 
 
 @pytest.mark.parametrize("module_name", _IN_TREE_SERVER_MODULES)
@@ -76,10 +78,31 @@ def test_builtin_stdio_server_module_builds_an_mcp_server(module_name: str) -> N
 # --------------------------------------------------------------------------
 
 
+async def _expose_topics(value: str | None = None) -> None:
+    """``tools/list`` only advertises exposed sections, so opt ``topics`` in."""
+    async with SessionLocal() as session:
+        value = value or json.dumps({"topics": True})
+        row = await session.get(AppSetting, "mcp_expose")
+        if row is None:
+            session.add(AppSetting(key="mcp_expose", value=value))
+        else:
+            row.value = value
+        await session.commit()
+
+
+@pytest.fixture(autouse=True)
+async def _restore_mcp_expose() -> AsyncIterator[None]:
+    """Don't leave ``topics`` exposed in the shared DB for other files."""
+    yield
+    await init_db()
+    await _expose_topics("{}")
+
+
 async def test_stdio_builtin_lists_calls_recycles_and_closes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     await init_db()
+    await _expose_topics()
     manager = MCPClientManager()
     entry = manager.get("precursor")
     assert entry is not None and entry.transport == "stdio"
@@ -173,6 +196,7 @@ async def test_streamable_http_lists_calls_and_reconnects(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     await init_db()
+    await _expose_topics()
     async with _serve_app(monkeypatch) as (origin, _app):
         await _set_http_enabled(origin, True)
         manager = MCPClientManager()
@@ -328,3 +352,128 @@ def test_http_status_error_is_still_an_mcp_error() -> None:
     assert isinstance(tagged, MCPError)
     assert tagged.code == INTERNAL_ERROR
     assert str(tagged) == "Server returned an error response (HTTP 502)"
+
+
+@contextlib.asynccontextmanager
+async def _serve_sse_tool_result(text: str) -> AsyncIterator[str]:
+    """Serve a minimal streamable-HTTP endpoint answering requests over SSE.
+
+    ``tools/call`` returns ``text`` as one content block, so the whole result
+    rides in a single SSE event — the shape WorkIQ uses for large fetches.
+    """
+
+    async def app(scope: dict[str, Any], receive: Any, send: Any) -> None:
+        if scope["type"] != "http":
+            return
+        body = b""
+        while True:
+            event = await receive()
+            body += event.get("body", b"")
+            if not event.get("more_body"):
+                break
+        if scope["method"] != "POST":
+            await send({"type": "http.response.start", "status": 405, "headers": []})
+            await send({"type": "http.response.body", "body": b""})
+            return
+        message = json.loads(body or b"{}")
+        if "id" not in message:
+            await send({"type": "http.response.start", "status": 202, "headers": []})
+            await send({"type": "http.response.body", "body": b""})
+            return
+        if message["method"] == "initialize":
+            result: dict[str, Any] = {
+                "protocolVersion": message["params"]["protocolVersion"],
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "big", "version": "1"},
+            }
+        elif message["method"] == "tools/list":
+            result = {"tools": [{"name": "big", "inputSchema": {"type": "object"}}]}
+        else:
+            result = {"content": [{"type": "text", "text": text}], "isError": False}
+        payload = json.dumps({"jsonrpc": "2.0", "id": message["id"], "result": result})
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [(b"content-type", b"text/event-stream")],
+            }
+        )
+        await send(
+            {"type": "http.response.body", "body": f"event: message\ndata: {payload}\n\n".encode()}
+        )
+
+    port = _free_port()
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
+    task = asyncio.create_task(server.serve())
+    try:
+        while not server.started:
+            if task.done():
+                task.result()
+            await asyncio.sleep(0.05)
+        yield f"http://127.0.0.1:{port}/mcp"
+    finally:
+        server.should_exit = True
+        await asyncio.wait_for(task, timeout=15)
+
+
+async def test_a_tool_result_larger_than_httpx2s_sse_cap_is_received() -> None:
+    """httpx2 caps an SSE event at 1 MiB; a bigger tool result must still land
+    instead of failing as "SSE stream ended without a response"."""
+    text = "x" * (3 * 1024 * 1024)
+    async with _serve_sse_tool_result(text) as url, streamable_http_session(url) as session:
+        await session.initialize()
+        result = await session.call_tool("big", {})
+
+    assert result.content[0].text == text  # type: ignore[union-attr]
+
+
+def test_streamable_http_sse_cap_is_raised() -> None:
+    """Guard: an SDK bump that neither takes ``max_sse_event_size`` nor exposes
+    the rebinding targets fails here, not silently in production at 1 MiB."""
+    import mcp.client.streamable_http as sdk
+
+    from precursor.backend.services.mcp import transport
+
+    assert transport.MCP_SSE_MAX_EVENT_BYTES > 1024 * 1024
+    if transport.SDK_HAS_SSE_EVENT_SIZE:
+        # mcp 2.3+: the SDK owns the cap, so its internals stay untouched.
+        assert sdk.EventSource is httpx2.EventSource
+        assert not getattr(sdk, "_precursor_sse_cap", False)
+    else:
+        assert sdk.EventSource is transport._event_source
+        assert sdk.sse_within_origin.__module__ == transport.__name__
+
+
+def test_patched_event_source_accepts_the_sdks_own_cap() -> None:
+    """mcp 2.3 calls ``EventSource(response, max_event_size=...)``; the 2.2
+    replacement must take that call shape and keep Precursor's cap (#399)."""
+    from precursor.backend.services.mcp import transport
+
+    response = httpx2.Response(200)
+    source = transport._event_source(response, max_event_size=1024)
+    assert isinstance(source, httpx2.EventSource)
+    assert source._max_event_size == transport.MCP_SSE_MAX_EVENT_BYTES
+
+
+async def test_session_passes_the_cap_to_the_sdk_when_it_takes_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from precursor.backend.services.mcp import transport
+
+    seen: dict[str, Any] = {}
+
+    @contextlib.asynccontextmanager
+    async def fake_client(url: str, **kwargs: Any) -> AsyncIterator[Any]:
+        seen.update(kwargs)
+        raise RuntimeError("stop")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(transport, "streamable_http_client", fake_client)
+    with pytest.raises(RuntimeError, match="stop"):
+        async with streamable_http_session("http://127.0.0.1:1/mcp"):
+            pass
+
+    if transport.SDK_HAS_SSE_EVENT_SIZE:
+        assert seen["max_sse_event_size"] == transport.MCP_SSE_MAX_EVENT_BYTES
+    else:
+        assert "max_sse_event_size" not in seen

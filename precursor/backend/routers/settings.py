@@ -6,7 +6,7 @@ import json
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +14,7 @@ from precursor.backend.config import get_settings
 from precursor.backend.db import get_session
 from precursor.backend.models import AppSetting
 from precursor.backend.schemas import SettingsPayload, SettingsRead
+from precursor.backend.schemas.model_fallback import ModelCategories, normalize_stored_categories
 from precursor.backend.services.agents.manager import get_agent_manager
 from precursor.backend.services.agents.runtime import agents_available
 from precursor.backend.services.app_settings import (
@@ -30,29 +31,58 @@ from precursor.backend.services.app_settings import (
     resolve_agents_context_tier,
     resolve_agents_default_model,
     resolve_agents_enabled,
+    resolve_agents_file_change_tracking,
     resolve_agents_reasoning_effort,
     resolve_agents_system_prompt,
     resolve_agents_watchdog_timeout,
     resolve_azure_speech_endpoint,
     resolve_azure_speech_language,
+    resolve_chat_approval_policy,
+    resolve_iq_ask_model,
+    resolve_iq_ask_provider,
+    resolve_iq_embedding_model,
+    resolve_iq_embedding_provider,
+    resolve_iq_embeddings_enabled,
     resolve_llm_model,
     resolve_llm_provider,
     resolve_mcp_expose,
     resolve_mcp_http_enabled,
+    resolve_openai_proxy_enabled,
+    resolve_openai_proxy_key,
     resolve_plugin_install_enabled,
+    resolve_scheduled_approval_timeout,
     resolve_system_settings,
+    resolve_topic_approval_policy,
     resolve_workflows_default_capabilities,
     resolve_workflows_default_step_timeout,
     resolve_workiq_tenant_id,
 )
 from precursor.backend.services.backup import resolve_backup_status, run_backup
 from precursor.backend.services.cmd_runner import docker_available
-from precursor.backend.services.github_auth import github_token_source, invalidate_gh_cli_token
+from precursor.backend.services.github_auth import (
+    github_token_source,
+    invalidate_gh_cli_token,
+    resolve_github_token,
+)
+from precursor.backend.services.llm.registry import PROVIDERS
 from precursor.backend.services.mcp.precursor_server import (
     http_endpoint_url,
     is_loopback_host,
 )
 from precursor.backend.services.model_catalog import invalidate_model_catalog
+from precursor.backend.services.model_fallbacks import (
+    preview_llm_category_preset,
+    resolve_model_category,
+    resolve_model_fallbacks,
+    scoped_categories,
+    selected_category_presets,
+)
+from precursor.backend.services.openai_proxy import (
+    ensure_proxy_key,
+    proxy_availability,
+    proxy_base_url,
+    rotate_proxy_key,
+)
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -97,6 +127,7 @@ def _as_read(
         # Resolved, not raw: nothing is stored on a fresh install and a stored
         # id may have been retired, so this is what a turn would actually use.
         llm_model=llm_model,
+        model_fallbacks=normalize_stored_categories(data.get("model_fallbacks")),
         llm_reasoning_effort=data.get("llm_reasoning_effort", DEFAULT_LLM_REASONING_EFFORT),
         github_repo=data.get("github_repo", DEFAULT_GITHUB_REPO),
         issue_context_ttl_minutes=data.get(
@@ -104,6 +135,7 @@ def _as_read(
         ),
         show_chat_stats=bool(data.get("show_chat_stats", True)),
         notifications_enabled=bool(data.get("notifications_enabled", False)),
+        completion_sound_enabled=bool(data.get("completion_sound_enabled", False)),
         max_tool_rounds=_clamp_max_tool_rounds(
             data.get("max_tool_rounds", DEFAULT_MAX_TOOL_ROUNDS)
         ),
@@ -119,6 +151,7 @@ def _as_read(
         chat_autoname_enabled=bool(
             data.get("chat_autoname_enabled", DEFAULT_CHAT_AUTONAME_ENABLED)
         ),
+        mock_provider_enabled=bool(data.get("mock_provider_enabled", True)),
         chat_autoname_model=str(data.get("chat_autoname_model", "") or ""),
         docker_available=docker_ok,
         **system,
@@ -144,6 +177,27 @@ async def _mcp_http_block(session: AsyncSession) -> dict[str, Any]:
     }
 
 
+async def _openai_proxy_block(session: AsyncSession) -> dict[str, Any]:
+    availability = await proxy_availability(session)
+    return {
+        "openai_proxy_enabled": await resolve_openai_proxy_enabled(session),
+        "openai_proxy_url": proxy_base_url(),
+        "openai_proxy_key": await resolve_openai_proxy_key(session),
+        "openai_proxy_available": availability.available,
+        "openai_proxy_unavailable_reason": availability.reason,
+    }
+
+
+async def _iq_block(session: AsyncSession) -> dict[str, Any]:
+    return {
+        "iq_embeddings_enabled": await resolve_iq_embeddings_enabled(session),
+        "iq_embedding_provider": await resolve_iq_embedding_provider(session),
+        "iq_embedding_model": await resolve_iq_embedding_model(session),
+        "iq_ask_provider": await resolve_iq_ask_provider(session),
+        "iq_ask_model": await resolve_iq_ask_model(session),
+    }
+
+
 async def _stt_block(session: AsyncSession) -> dict[str, Any]:
     return {
         "azure_speech_endpoint": await resolve_azure_speech_endpoint(session),
@@ -157,6 +211,8 @@ async def _llm_block(session: AsyncSession, data: dict[str, Any]) -> dict[str, A
     return {
         "github_token_source": await github_token_source(session),
         "llm_provider": await resolve_llm_provider(session),
+        "llm_model_category": await resolve_model_category(session),
+        "llm_category_preset": await preview_llm_category_preset(session),
         "llm_providers": public,
         "llm_providers_present": present,
     }
@@ -175,9 +231,14 @@ async def _agents_block(session: AsyncSession) -> dict[str, Any]:
         "agents_runtime_started": get_agent_manager().ready,
         "agents_unavailable_reason": None if ok else detail,
         "agents_default_model": await resolve_agents_default_model(session),
+        "agents_model_category": await resolve_model_category(session, agents=True),
         "agents_reasoning_effort": await resolve_agents_reasoning_effort(session),
         "agents_context_tier": await resolve_agents_context_tier(session),
+        "agents_file_change_tracking": await resolve_agents_file_change_tracking(session),
         "agents_approval_policy": await resolve_agents_approval_policy(session),
+        "topic_approval_policy": await resolve_topic_approval_policy(session),
+        "chat_approval_policy": await resolve_chat_approval_policy(session),
+        "scheduled_approval_timeout_minutes": await resolve_scheduled_approval_timeout(session),
         "agents_system_prompt": await resolve_agents_system_prompt(session),
         "agents_watchdog_timeout_seconds": await resolve_agents_watchdog_timeout(session),
         **{
@@ -196,7 +257,9 @@ async def read_settings(session: AsyncSession = Depends(get_session)) -> Setting
     system = await resolve_system_settings(session)
     system["mcp_expose"] = await resolve_mcp_expose(session)
     system.update(await _mcp_http_block(session))
+    system.update(await _openai_proxy_block(session))
     system.update(await _stt_block(session))
+    system.update(await _iq_block(session))
     system.update(await _llm_block(session, data))
     system.update(await _agents_block(session))
     system.update(await resolve_backup_status(session))
@@ -209,6 +272,37 @@ async def update_settings(
     session: AsyncSession = Depends(get_session),
 ) -> SettingsRead:
     data = payload.model_dump(exclude_unset=True)
+
+    for model_key, category_key in (
+        ("llm_model", "llm_model_category"),
+        ("agents_default_model", "agents_model_category"),
+    ):
+        if model_key in data and category_key not in data:
+            data[category_key] = None
+    for category_key, scope in (("llm_model_category", "llm"), ("agents_model_category", "agents")):
+        if "model_fallbacks" in data:
+            categories = scoped_categories(
+                ModelCategories.model_validate(data["model_fallbacks"]), scope
+            )
+        else:
+            categories = await resolve_model_fallbacks(session, scope)
+        selected = data.get(category_key)
+        if selected is not None and not selected_category_presets(categories, selected):
+            raise HTTPException(
+                status_code=422,
+                detail=f"No presets are configured for the {selected!r} category.",
+            )
+        # Deleting or emptying a category must not leave a dangling selection.
+        if selected is None and category_key not in data and "model_fallbacks" in data:
+            saved_category = await resolve_model_category(session, agents=scope == "agents")
+            if saved_category is not None and not selected_category_presets(
+                categories, saved_category
+            ):
+                data[category_key] = None
+
+    for provider_key in ("iq_embedding_provider", "iq_ask_provider"):
+        if data.get(provider_key) and data[provider_key] not in PROVIDERS:
+            raise HTTPException(status_code=422, detail=f"Unknown LLM provider for {provider_key}.")
 
     # Merge api_keys instead of replacing — clients may PATCH a single key.
     if "api_keys" in data:
@@ -248,6 +342,9 @@ async def update_settings(
 
     for key, value in data.items():
         await _upsert(session, key, value)
+    # First switch-on mints the key, so the endpoint is usable straight away.
+    if data.get("openai_proxy_enabled"):
+        await ensure_proxy_key(session)
     await session.commit()
 
     # Reconcile the agents runtime live so toggling the setting doesn't require a
@@ -268,7 +365,13 @@ async def update_settings(
     # sessions so they apply on the next message instead of only new sessions.
     if any(
         k in data
-        for k in ("agents_default_model", "agents_reasoning_effort", "agents_context_tier")
+        for k in (
+            "agents_default_model",
+            "agents_reasoning_effort",
+            "agents_context_tier",
+            "agents_model_category",
+            "model_fallbacks",
+        )
     ):
         try:
             await get_agent_manager().apply_session_overrides()
@@ -286,6 +389,17 @@ async def update_settings(
         except Exception:
             logger.exception("Backup nudge failed after settings update")
 
+    # Start vectorising right away rather than on the next indexer tick.
+    if data.get("iq_embeddings_enabled") or any(
+        k in data for k in ("iq_embedding_model", "iq_embedding_provider")
+    ):
+        from precursor.backend.services.iq.ticker import get_iq_ticker
+
+        try:
+            await get_iq_ticker().nudge()
+        except Exception:
+            logger.exception("Precursor IQ nudge failed after settings update")
+
     # Re-point the Agent 365 servers when the tenant changes, so a fresh tenant
     # takes effect without a restart (and clearing it disables them cleanly).
     if "workiq_tenant_id" in data:
@@ -295,6 +409,23 @@ async def update_settings(
             await configure_agent365_servers()
         except Exception:
             logger.exception("Agent 365 reconfigure failed after settings update")
+
+    # The precursor server advertises only the exposed sections, so its cached
+    # tool list is stale now: restart its session and re-list so the count in
+    # Settings (and the tools a chat offers the model) follow the toggles.
+    if "mcp_expose" in data:
+        from precursor.backend.routers.mcp import _load_enabled
+        from precursor.backend.services.mcp.client import get_mcp_client_manager
+
+        try:
+            mcp_manager = get_mcp_client_manager()
+            await mcp_manager.retire_worker("precursor")
+            if (await _load_enabled(session)).get("precursor", False):
+                await mcp_manager.probe(
+                    "precursor", github_token=await resolve_github_token(session)
+                )
+        except Exception:
+            logger.exception("Precursor MCP tool refresh failed after settings update")
 
     # Re-point the built-in Playwright server at the chosen browser channel so it
     # takes effect without a restart (retiring the warm worker, if any).
@@ -310,11 +441,26 @@ async def update_settings(
     system = await resolve_system_settings(session)
     system["mcp_expose"] = await resolve_mcp_expose(session)
     system.update(await _mcp_http_block(session))
+    system.update(await _openai_proxy_block(session))
     system.update(await _stt_block(session))
+    system.update(await _iq_block(session))
     system.update(await _llm_block(session, refreshed))
     system.update(await _agents_block(session))
     system.update(await resolve_backup_status(session))
     return _as_read(refreshed, system, docker_available()[0], await resolve_llm_model(session))
+
+
+@router.post("/openai-proxy/key")
+async def regenerate_openai_proxy_key(
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, str]:
+    """Replace the OpenAI-compatible endpoint's API key.
+
+    Clients holding the previous key are refused from the next request on.
+    """
+    key = await rotate_proxy_key(session)
+    await session.commit()
+    return {"key": key}
 
 
 @router.post("/backup/run")
@@ -332,4 +478,5 @@ async def run_backup_now() -> dict[str, Any]:
         "db_snapshot": result.db_snapshot,
         "blobs_copied": result.blobs_copied,
         "blobs_total": result.blobs_total,
+        "definitions_archive": result.definitions_archive,
     }

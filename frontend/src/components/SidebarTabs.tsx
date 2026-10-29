@@ -47,6 +47,8 @@ export function SidebarTabs<Id extends string, Group extends string>({
                 <button
                   key={id}
                   type="button"
+                  aria-label={label}
+                  data-tooltip={label}
                   onClick={() => onSelect(id)}
                   className={`w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left border-l-2 ${
                     isActive

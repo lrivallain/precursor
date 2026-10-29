@@ -69,6 +69,7 @@ export function ConversationNotes({
           uploadingAttachments={pendingNotes.uploadingAttachments}
           attachmentsError={pendingNotes.attachmentsError}
           rephrasedText={pendingNotes.rephrasedText}
+          appendRequest={pendingNotes.appendRequest}
           onRephrase={notes.rephraseNotes}
           onSaveDraft={notes.saveNotesDraft}
           onAction={notes.runNotesAction}

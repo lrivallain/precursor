@@ -1227,6 +1227,100 @@ def test_agenda_parser_unwraps_workiq_envelope() -> None:
     assert _events_from({"results": [{"data": {}, "statusCode": 400, "error": "denied"}]}) == []
 
 
+def _fake_agenda_workiq(monkeypatch, respond):  # type: ignore[no-untyped-def]
+    """Point ``meeting_agenda`` at a fake WorkIQ whose ``fetch`` calls ``respond(path)``."""
+    from mcp.types import CallToolResult
+
+    import precursor.backend.services.meeting_agenda as agenda
+
+    class _Tool:
+        name = "fetch"
+        server = "workiq"
+
+    class _Bundle:
+        def __init__(self) -> None:
+            self.workers = {"workiq": object()}
+            self.tools = [_Tool()]
+            self.unavailable: list[tuple[str, str]] = []
+            self.ephemeral = False
+            self.paths: list[str] = []
+
+        async def call_tool(self, server: str, name: str, args: dict) -> object:  # type: ignore[type-arg]
+            path = args["entityUrls"][0]
+            self.paths.append(path)
+            return CallToolResult(content=[], structured_content=respond(path))
+
+    bundle = _Bundle()
+
+    class _Manager:
+        async def acquire(self, names, **kwargs):  # type: ignore[no-untyped-def]
+            return bundle
+
+    monkeypatch.setattr(agenda, "get_mcp_client_manager", lambda: _Manager())
+    return bundle
+
+
+def test_agenda_list_omits_full_body(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    import asyncio
+
+    from precursor.backend.services.meeting_agenda import fetch_agenda
+
+    event = {"id": "e1", "subject": "Sync", "bodyPreview": "Hello", "body": {"content": "<p/>"}}
+    bundle = _fake_agenda_workiq(
+        monkeypatch, lambda _p: {"results": [{"data": {"value": [event]}, "statusCode": 200}]}
+    )
+    available, events, detail = asyncio.run(
+        fetch_agenda("2026-09-22T22:00:00.000Z", "2026-09-30T22:00:00.000Z")
+    )
+    assert (available, detail) == (True, None)
+    # A week of HTML bodies overflows one MCP response: select the preview only.
+    select = bundle.paths[0].split("$select=")[1].split("&")[0].split(",")
+    assert "bodyPreview" in select and "body" not in select
+    assert events[0]["body_preview"] == "Hello"
+    assert "body" not in events[0]
+
+
+def test_fetch_event_body_unwraps_single_event(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    import asyncio
+
+    from precursor.backend.services.meeting_agenda import fetch_event_body
+
+    bundle = _fake_agenda_workiq(
+        monkeypatch,
+        lambda _p: {
+            "results": [
+                {"data": {"id": "a/b=", "body": {"content": "<p>x</p>"}}, "statusCode": 200}
+            ]
+        },
+    )
+    assert asyncio.run(fetch_event_body("a/b=")) == "<p>x</p>"
+    assert bundle.paths == ["/me/events/a%2Fb%3D?$select=body"]
+
+
+def test_link_meeting_fetches_missing_body(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    import precursor.backend.routers.live as live_router
+
+    calls: list[str] = []
+
+    async def _fake_body(event_id: str) -> str | None:
+        calls.append(event_id)
+        return "<p>Agenda</p>" if event_id == "ok" else None
+
+    monkeypatch.setattr(live_router, "fetch_event_body", _fake_body)
+    app = create_app()
+    with TestClient(app) as client:
+        sid = client.post("/api/live", json={"title": "Body"}).json()["id"]
+        r = client.post(f"/api/live/{sid}/meeting", json={"id": "ok", "subject": "S"})
+        assert r.json()["external_meeting"]["body"] == "<p>Agenda</p>"
+        # A failed fetch still links the meeting, just without a body.
+        r = client.post(f"/api/live/{sid}/meeting", json={"id": "gone", "subject": "S"})
+        assert r.status_code == 200
+        assert r.json()["external_meeting"]["body"] is None
+        # A body the client already has isn't re-fetched.
+        client.post(f"/api/live/{sid}/meeting", json={"id": "x", "subject": "S", "body": "<b/>"})
+    assert calls == ["ok", "gone"]
+
+
 def test_ensure_chat_creates_and_reuses() -> None:
     app = create_app()
     with TestClient(app) as client:
@@ -1286,7 +1380,7 @@ def test_translate(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     async def _prov(_session, **_kwargs):  # type: ignore[no-untyped-def]
         return _TextProvider()
 
-    async def _model(_session):  # type: ignore[no-untyped-def]
+    async def _model(_session, *, use_default=True):  # type: ignore[no-untyped-def]
         return "fake"
 
     async def _effort(_session):  # type: ignore[no-untyped-def]
@@ -1335,3 +1429,196 @@ def test_parse_insights_help_and_suggestion() -> None:
     assert _parse_insights('```json\n{"insights": []}\n```') == ([], False, "")
     # Non-JSON → empty.
     assert _parse_insights("nothing here") == ([], False, "")
+
+
+def test_live_analysis_prompt_requests_scannable_suggestions() -> None:
+    from precursor.backend.services.meeting_analysis import _SYSTEM_PROMPT
+
+    assert "start with one direct recommendation or answer" in _SYSTEM_PROMPT
+    assert "up to 3 short Markdown bullets" in _SYSTEM_PROMPT
+    assert "avoid numbered run-on paragraphs" in _SYSTEM_PROMPT
+
+
+def test_mark_speaker_me_roundtrip() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        sid = client.post("/api/live", json={"title": "Me"}).json()["id"]
+        assert client.get(f"/api/live/{sid}").json()["me_labels"] == []
+        r = client.post(f"/api/live/{sid}/speakers/me", json={"label": "1:Guest-1"})
+        assert r.status_code == 200
+        assert r.json()["me_labels"] == ["1:Guest-1"]
+        # Idempotent, and several labels may be the user (one per run).
+        client.post(f"/api/live/{sid}/speakers/me", json={"label": "1:Guest-1"})
+        r = client.post(f"/api/live/{sid}/speakers/me", json={"label": "2:Guest-1"})
+        assert r.json()["me_labels"] == ["1:Guest-1", "2:Guest-1"]
+        r = client.post(f"/api/live/{sid}/speakers/me", json={"label": "1:Guest-1", "me": False})
+        assert r.json()["me_labels"] == ["2:Guest-1"]
+
+
+class _SuggestProvider:
+    name = "fake"
+
+    def __init__(self, chunks: list[str]) -> None:
+        self.chunks = chunks
+
+    async def stream_chat_with_tools(self, **_kwargs):  # type: ignore[no-untyped-def]
+        from precursor.backend.services.llm.base import TextDeltaEvent, UsageEvent
+
+        for chunk in self.chunks:
+            yield TextDeltaEvent(content=chunk)
+        yield UsageEvent(prompt_tokens=3, completion_tokens=2, total_tokens=5)
+
+
+def _suggest(client: TestClient, sid: int, question: str = "What is our SLA?") -> str:
+    with client.stream(
+        "POST",
+        f"/api/live/{sid}/suggest",
+        json={"question": question, "speaker_label": "1:Guest-2"},
+    ) as resp:
+        assert resp.status_code == 200
+        return "".join(resp.iter_text())
+
+
+def test_suggest_requires_answers_feature() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        sid = client.post("/api/live", json={"title": "Off"}).json()["id"]
+        r = client.post(f"/api/live/{sid}/suggest", json={"question": "Why?"})
+        assert r.status_code == 409
+
+
+def test_suggest_streams_and_persists_unattended_turn(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from precursor.backend.services import live_suggest
+
+    async def _prov(_session, **_kwargs):  # type: ignore[no-untyped-def]
+        return _SuggestProvider(["Our SLA is ", "99.9 percent."])
+
+    monkeypatch.setattr(live_suggest, "get_llm_provider", _prov)
+
+    app = create_app()
+    with TestClient(app) as client:
+        sid = client.post("/api/live", json={"title": "Sug"}).json()["id"]
+        client.patch(f"/api/live/{sid}", json={"features": ["answers"]})
+        client.post(f"/api/live/{sid}/segments", json={"text": "What is our SLA?"})
+        body = _suggest(client, sid)
+        assert "event: token" in body
+        assert "event: done" in body
+        assert "event: none" not in body
+
+        chat_id = client.get(f"/api/live/{sid}").json()["chat_id"]
+        assert chat_id is not None
+        msgs = client.get(f"/api/chats/{chat_id}/messages").json()
+        assert [(m["role"], m["kind"]) for m in msgs] == [
+            ("user", "live_question"),
+            ("assistant", "live_suggestion"),
+        ]
+        assert msgs[0]["content"] == "[Guest-2] What is our SLA?"
+        assert msgs[1]["content"] == "Our SLA is 99.9 percent."
+
+
+@pytest.mark.parametrize("chunks", [["[[NONE]]"], ["[[NO", "NE]]"], ["  [[NONE]]"]])
+def test_suggest_none_marker_suppresses_turn(monkeypatch, chunks) -> None:  # type: ignore[no-untyped-def]
+    from precursor.backend.services import live_suggest
+
+    async def _prov(_session, **_kwargs):  # type: ignore[no-untyped-def]
+        return _SuggestProvider(chunks)
+
+    monkeypatch.setattr(live_suggest, "get_llm_provider", _prov)
+
+    app = create_app()
+    with TestClient(app) as client:
+        sid = client.post("/api/live", json={"title": "None"}).json()["id"]
+        client.patch(f"/api/live/{sid}", json={"features": ["answers"]})
+        body = _suggest(client, sid, "Is it Friday yet?")
+        assert "event: none" in body
+        assert "event: token" not in body
+        assert "event: done" not in body
+
+        chat_id = client.get(f"/api/live/{sid}").json()["chat_id"]
+        assert client.get(f"/api/chats/{chat_id}/messages").json() == []
+
+
+def _make_role(client: TestClient, name: str, prompt: str) -> str:
+    r = client.post("/api/roles", json={"name": name, "system_prompt": prompt})
+    assert r.status_code == 201, r.text
+    return r.json()["name"]
+
+
+def test_live_session_inherits_role_from_topic() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        reviewer = _make_role(client, "live-inherit-reviewer", "Be strict.")
+        other = _make_role(client, "live-inherit-other", "Be kind.")
+        tid = client.post("/api/topics", json={"title": "Roled", "role": reviewer}).json()["id"]
+        plain = client.post("/api/topics", json={"title": "Plain"}).json()["id"]
+
+        # Created with a topic: starts with the topic's role.
+        sid = client.post("/api/live", json={"topic_id": tid}).json()["id"]
+        assert client.get(f"/api/live/{sid}").json()["role"] == reviewer
+
+        # Attaching another topic overwrites it (null topic role = default).
+        patched = client.patch(f"/api/live/{sid}", json={"topic_id": plain})
+        assert patched.json()["role"] is None
+
+        # An explicit role in the same request wins over the topic's.
+        patched = client.patch(f"/api/live/{sid}", json={"topic_id": tid, "role": other})
+        assert patched.json()["role"] == other
+
+        # Re-sending the same topic is not an attach: the manual role stays.
+        patched = client.patch(f"/api/live/{sid}", json={"topic_id": tid})
+        assert patched.json()["role"] == other
+
+        # Detaching leaves the role alone.
+        patched = client.patch(f"/api/live/{sid}", json={"topic_id": None})
+        assert patched.json()["role"] == other
+
+        # Attaching from scratch takes the topic's role again.
+        patched = client.patch(f"/api/live/{sid}", json={"topic_id": tid})
+        assert patched.json()["role"] == reviewer
+
+
+def test_live_chat_follows_session_role() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        role = _make_role(client, "live-chat-role", "Be terse.")
+        sid = client.post("/api/live", json={"title": "Chat role"}).json()["id"]
+        client.patch(f"/api/live/{sid}", json={"role": role})
+        chat_id = client.post(f"/api/live/{sid}/chat").json()["id"]
+        assert client.get(f"/api/chats/{chat_id}").json()["role"] == role
+
+        other = _make_role(client, "live-chat-role-2", "Be verbose.")
+        client.patch(f"/api/live/{sid}", json={"role": other})
+        assert client.get(f"/api/chats/{chat_id}").json()["role"] == other
+
+
+def test_live_recap_and_topic_brief_use_session_role(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from precursor.backend.services.llm.base import TextDeltaEvent, UsageEvent
+
+    systems: list[str] = []
+
+    class _Provider:
+        name = "fake"
+
+        async def stream_chat_with_tools(self, **kwargs):  # type: ignore[no-untyped-def]
+            systems.append(kwargs["messages"][0].content)
+            yield TextDeltaEvent(content="ok")
+            yield UsageEvent(prompt_tokens=1, completion_tokens=1, total_tokens=2)
+
+    async def _prov(_session, **_kwargs):  # type: ignore[no-untyped-def]
+        return _Provider()
+
+    monkeypatch.setattr(one_shot, "get_llm_provider", _prov)
+
+    app = create_app()
+    with TestClient(app) as client:
+        role = _make_role(client, "live-recap-role", "Answer like a pirate.")
+        tid = client.post("/api/topics", json={"title": "Brief", "role": role}).json()["id"]
+        client.post(f"/api/topics/{tid}/messages", json={"content": "hello"})
+        sid = client.post("/api/live", json={"topic_id": tid}).json()["id"]
+        client.post(f"/api/live/{sid}/segments", json={"text": "We shipped"})
+
+        assert client.post(f"/api/live/{sid}/summary").status_code == 200
+        assert client.post(f"/api/live/{sid}/topic-summary").status_code == 200
+
+    assert systems
+    assert all("Answer like a pirate." in s for s in systems)

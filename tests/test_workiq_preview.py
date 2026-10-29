@@ -19,6 +19,10 @@ from mcp.client.auth import AuthorizationCodeResult
 from precursor.backend.main import create_app
 from precursor.backend.services.mcp.workiq_preview import WORKIQ_PREVIEW_URL
 
+# Several tests bind the real, fixed OAuth loopback port (12798), so under
+# ``pytest -n`` they must share one worker (``--dist loadgroup``) or they race.
+pytestmark = pytest.mark.xdist_group("workiq-loopback-port")
+
 
 def _workiq(servers: list[dict]) -> dict:
     return next(s for s in servers if s["name"] == "workiq")

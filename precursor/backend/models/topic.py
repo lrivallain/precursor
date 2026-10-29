@@ -12,9 +12,12 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from precursor.backend.models.base import Base, TimestampMixin
 
 if TYPE_CHECKING:
+    from precursor.backend.models.approval_rule import ApprovalRule
+    from precursor.backend.models.conversation_artifact import ConversationArtifact
     from precursor.backend.models.message import Message
     from precursor.backend.models.note_draft import NoteDraft
     from precursor.backend.models.reminder import Reminder
+    from precursor.backend.models.tool_approval import ToolApproval
     from precursor.backend.models.topic_schedule import TopicSchedule
     from precursor.backend.models.topic_summary import TopicSummary
 
@@ -48,6 +51,7 @@ class Topic(Base, TimestampMixin):
         default=lambda: str(uuid.uuid4()),
     )
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    llm_selection: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Tree layout — self-referential parent/child relationship. We do NOT
     # cascade deletes: when a parent is removed, the API layer reparents
@@ -72,11 +76,12 @@ class Topic(Base, TimestampMixin):
     github_issue_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # Assistant Role assigned to this topic. Null resolves to the default role
-    # (no persona injected). SET NULL on delete so removing a role reverts every
-    # topic that used it back to the default.
-    role_id: Mapped[int | None] = mapped_column(
-        ForeignKey("roles.id", ondelete="SET NULL"), nullable=True, index=True
-    )
+    # (no persona injected). Stored by name; removing a role clears it here.
+    role: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+
+    # Tool-approval policy (manual / balanced / autonomous). Null inherits the
+    # global ``topic_approval_policy`` setting.
+    approval_policy: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
     # Collection this topic belongs to — the lens the sidebar filters by.
     # Membership cascades down the tree, so a subtree is never split across
@@ -98,6 +103,11 @@ class Topic(Base, TimestampMixin):
     # in the tree.
     pinned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
 
+    # Frozen copy of the reply this topic's conversation started from, kept when
+    # a side chat started from a reply is promoted (see routers/chats.py), so
+    # the topic doesn't lose the grounding the chat had.
+    seed_content: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     # When non-null, the topic is archived: hidden from the main tree but kept
     # intact (issue link, parent_id, messages…) so it can be restored later.
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -107,6 +117,18 @@ class Topic(Base, TimestampMixin):
         back_populates="topic",
         cascade="all, delete-orphan",
         order_by="Message.created_at",
+    )
+    # SQLite doesn't enforce the FK cascade, so the ORM carries it.
+    approvals: Mapped[list[ToolApproval]] = relationship(
+        "ToolApproval", cascade="all, delete-orphan", foreign_keys="ToolApproval.topic_id"
+    )
+    approval_rules: Mapped[list[ApprovalRule]] = relationship(
+        "ApprovalRule", cascade="all, delete-orphan", foreign_keys="ApprovalRule.topic_id"
+    )
+    artifacts: Mapped[list[ConversationArtifact]] = relationship(
+        "ConversationArtifact",
+        cascade="all, delete-orphan",
+        foreign_keys="ConversationArtifact.topic_id",
     )
 
     # Recurrence config + run state when the topic runs on a schedule. One-to-

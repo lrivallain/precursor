@@ -17,9 +17,8 @@
  *  - `topic`: the topic chat composer (ChatPanel)
  *  - `chat`:  the flat chat-session composer (ChatSessionPanel)
  *  - `agent`: the agent-session composer (AgentView), intercepted by the backend
- *  - `workspace`: the workspace assistant composer (WorkspaceChat)
  */
-export type CommandSurface = "topic" | "chat" | "agent" | "workspace";
+export type CommandSurface = "topic" | "chat" | "agent";
 
 export interface SlashCommand {
   name: string;
@@ -104,6 +103,32 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     surfaces: ["topic"],
   },
   {
+    name: "side-chat",
+    label: "/side-chat",
+    description:
+      "Start a chat linked to this topic, to explore a tangent without adding it to the topic. The chat knows the topic's title, description and summary. Text after the command is sent as its first message.",
+    argumentHint: "first message (optional)",
+    kind: "builtin",
+    surfaces: ["topic"],
+  },
+  {
+    name: "steps",
+    label: "/steps",
+    description:
+      "Split the latest ask in this topic into a tree of steps (the model proposes the first ones), then work each step with its own artifact and chat and consolidate a final answer. Opens the new plan in Step by step.",
+    kind: "builtin",
+    surfaces: ["topic"],
+  },
+  {
+    name: "send-to-topic",
+    label: "/send-to-topic",
+    description:
+      "Side chats only: have the model sum up this chat, review the note, then file it into the topic the chat was started from. Text after the command says what the note should focus on.",
+    argumentHint: "focus (optional)",
+    kind: "builtin",
+    surfaces: ["chat"],
+  },
+  {
     name: "pin",
     label: "/pin",
     description: "Pin this conversation to the top of the sidebar.",
@@ -150,13 +175,22 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     surfaces: ["topic", "chat", "agent"],
   },
   {
+    name: "compact",
+    label: "/compact",
+    description:
+      "Summarise the conversation so far to free up the model's context window. Older messages stay visible; the model sees the summary instead. Optionally say what the summary should focus on.",
+    argumentHint: "focus (optional)",
+    kind: "builtin",
+    surfaces: ["topic", "chat", "agent"],
+  },
+  {
     name: "role",
     label: "/role",
     description:
       "Set the assistant role (persona) for this conversation. Pass a role name to switch directly, or run it bare to open the role picker in the toolbar below.",
     argumentHint: "role name (optional)",
     kind: "builtin",
-    surfaces: ["topic", "chat", "workspace", "agent"],
+    surfaces: ["topic", "chat", "agent"],
   },
   {
     name: "collection",

@@ -9,7 +9,7 @@ labels, and surfaces live insights, Q&A, and an editable summary you can attach
 to a [topic](/features/topics). Audio is transcribed in the browser via **Azure
 Speech** and **never stored** — only the transcript and derived insights are kept.
 
-<Screenshot src="/screenshots/live.png" alt="A live session with a speaker-labeled transcript on the left and live insights on the right" caption="A live session — speaker-labeled transcript alongside live insights (action items, decisions, open questions)." />
+<Screenshot src="/screenshots/live.png" alt="A live session with a speaker-labeled transcript on the left and grouped live insights plus a structured suggestion on the right" caption="Live insights beside the transcript: a concise recommendation, grouped follow-ups, decisions, questions and risks." />
 
 ## Prerequisites
 
@@ -63,11 +63,26 @@ produced in the session's language.
 The Live view is a **tabbed, splittable panel** — Transcript · Live Insights ·
 Summary · Context. Use the **Split** toggle to view two sections side by side.
 
+::: tip Assistant role
+The **Role** picker in the session header sets the persona for **every AI
+feature of the session** — insights, suggested answers, Ask assistant, the
+recap and the topic context brief. Attaching a [topic](/features/topics) copies
+that topic's role into the session (replacing the current one); pick another
+role afterwards to override it. Detaching a topic leaves the role as it is.
+:::
+
 - **Live Insights** — while recording, the assistant re-derives a snapshot of
   **action items, decisions, open questions, suggestions, and risks** from the
-  rolling transcript.
+  rolling transcript. Each analysis **replaces** the previous snapshot, and a
+  proactive suggestion shows in a highlighted card that a newer one replaces —
+  nothing stacks up while the meeting runs. Insight categories are separated
+  into scan-friendly groups, and suggestions lead with a concise recommendation
+  followed by short bullets when alternatives or next steps help.
 - **Ask assistant** — ask free-form questions; answers stream from the transcript
   plus the attached topic.
+- **Suggested answers** — turn on **Suggested answers** in the feature picker and
+  the assistant drafts a reply as soon as someone else asks a question, so you
+  have something to say to a hard one. See [Suggested answers](#suggested-answers).
 - **Speaker labels** — click a label in the transcript to rename it
   (`Guest-2` → `Thomas`); the name applies to every past and future phrase from
   that voice.
@@ -75,7 +90,9 @@ Summary · Context. Use the **Split** toggle to view two sections side by side.
   handy for correcting a misheard word before it feeds the insights and summary.
 - **Summary** — an editable markdown recap, including an **Attendees** list
   (seeded from renamed speakers and any linked meeting's invitees), which you can
-  **post into the linked topic** as a message. Suggested attendees sit in a
+  **post into the linked topic** as a message. One **Generate** button opens a
+  small form to pick the [source, template and language](#generating-the-summary)
+  it's written from. Suggested attendees sit in a
   compact, scrollable strip, so a large invite list never crowds out the recap.
   Your edits **autosave** as you
   type (and when you end the session or leave it), so a hand-tuned recap survives
@@ -86,20 +103,106 @@ Summary · Context. Use the **Split** toggle to view two sections side by side.
   agenda spans the last few days through today, so you can attach — or record
   from — a meeting that already happened.
 
+### Suggested answers
+
+An opt-in feature (**Suggested answers** in the feature picker, per session; it
+also starts the Assistant chat). While you record, each finished phrase is
+checked in the browser for a question — a trailing `?`, or an English/French
+interrogative opener — and consecutive phrases from one speaker are joined first,
+so a question split across phrases is read whole. Within about a second a card
+appears above the transcript and **streams** a short, first-person answer you can
+say aloud, with the question quoted above it. **Copy** it, **Dig deeper** in the
+Assistant chat, or dismiss it.
+
+- **It is fast on purpose.** One streaming call on the [fast model](#settings),
+  with only a short transcript tail, the latest insights, pinned notes, the
+  attached topic and the role persona. No tools, no separate "is this a
+  question?" call: the model answers `[[NONE]]` when the phrase doesn't need
+  you, and the card never shows.
+- **Your own voice is ignored.** Click a speaker label and choose **This is me**
+  (per recording run, since diarization labels restart on a resume). Phrases from
+  a *me* label never trigger a suggestion, and your speaking cancels one that is
+  pending or streaming.
+- **It's saved as an unattended turn.** A finished suggestion lands in the
+  session's Assistant chat as a *Question heard* line followed by the answer, so
+  you can ask follow-ups with the full context. The Assistant tab shows a count
+  of new ones; a cancelled or skipped suggestion leaves nothing behind.
+- **Guard rails.** A question is only asked once, at most one runs at a time
+  (a newer question replaces it), and there is a short cooldown and a per-minute
+  cap so a chatty meeting can't flood the model.
+
+### Generating the summary
+
+The Summary tab has a single **Generate** button (**Regenerate** once there's
+a recap). It opens a small form right under it:
+
+<Screenshot src="/screenshots/live-summary-templates.png" alt="The Generate panel under the Summary tab's button: a Recording / Teams transcript source choice, the list of summary templates including a custom one marked as a file, and the language picker" caption="One button: pick the source, the template — built in, or one of your own definition files — and the language." />
+
+- **Source** — the **Recording** (what Precursor transcribed) or the linked
+  meeting's **Teams transcript** (see [below](#summarize-from-the-teams-transcript-no-local-record)).
+  An option you can't use yet is greyed out, and hovering it says why. It
+  defaults to the recording when there is one.
+- **Template** — the shape of the recap. Precursor ships with:
+
+  | Template | What you get |
+  | --- | --- |
+  | **Meeting recap** (default) | Summary, attendees, decisions, action items, open questions and risks. |
+  | **Executive brief** | A short, outcome-first brief for someone who wasn't in the room. |
+  | **Action items** | Just the follow-ups — a table of tasks, owners and due dates. |
+  | **Detailed minutes** | Topic-by-topic minutes of the discussion, in the order it happened. |
+  | **Follow-up email** | A ready-to-send recap email for the attendees. |
+
+- **Language** — **Meeting language** (the session's own, the default) or any
+  other: record in French, send the recap in English.
+
+The template and language are **remembered**: the next recap — including the
+draft written when a session ends, and the next session — starts from what you
+picked last. Regenerating replaces the current recap (the form says so).
+
+#### Your own templates
+
+Templates are [definition files](/features/definitions#summary-templates):
+`*.summary.yaml` files in the **Definitions** workspace (under `summaries/`),
+next to agent and workflow files. Next to the template list in the form:
+
+- **Edit** opens the selected template's file in [Files](/features/workspaces).
+  For a built-in, it first saves a copy there under the same id — the copy
+  replaces the built-in until you delete it.
+- **New from this one** saves a copy under a new id, selects it and opens it:
+  rename it, rewrite its `prompt` (sections, tone, length), save. It's in the
+  list the next time you open the form.
+
+The editor completes and checks the file as you type. A template file with
+errors is left out of the list — the form says which file and why — and never
+breaks a recap: the built-in of that id stays available.
+
+```yaml
+# summaries/customer-call.summary.yaml
+kind: summary
+id: customer-call
+name: Customer call notes
+description: What the customer needs, what each side committed to, and what's next.
+prompt: |
+  You are an account manager writing up a call with a customer. …
+  ## Needs & pain points — bullet list, in the customer's own terms.
+  ## Commitments — two bullet lists, **Us** and **Customer**, with owners.
+  ## Next steps — bullet list.
+```
+
 ### Summarize from the Teams transcript (no local record)
 
 If you'd rather not capture audio locally, link the Teams meeting from your
-agenda in the **Context** tab, then open **Summary → Generate from Teams
-transcript**. Precursor reads the meeting's published transcript through WorkIQ
+agenda in the **Context** tab, then open **Summary → Generate** and pick the
+**Teams transcript** source. Precursor reads the meeting's published transcript through WorkIQ
 (Microsoft Graph) and summarizes it with **your** model — so you get Precursor's
 structured recap (decisions, action items, open questions, risks) instead of
 Teams' own summary.
 
-The button appears **only** when the WorkIQ MCP server is enabled **and** a Teams
-meeting is linked. It's best-effort and fail-closed: the transcript is only
-available to the meeting **organizer**, requires the delegated
+The source can be picked **only** when the WorkIQ MCP server is enabled **and**
+a Teams meeting is linked. It's best-effort and fail-closed: the transcript is
+only available to the meeting **organizer**, requires the delegated
 `OnlineMeetingTranscript.Read.All` permission, and is published by Teams a few
-minutes **after** the meeting ends. When any of those isn't met, the button
+minutes **after** the meeting ends. When any of those isn't met, generating
 reports why and leaves your summary untouched.
 
 #### When the meeting has several transcription sessions

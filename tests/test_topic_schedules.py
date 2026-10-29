@@ -7,9 +7,11 @@ row; there is no special topic kind. These cover the nested HTTP surface under
 
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 from precursor.backend.main import create_app
+from precursor.backend.services.scheduler import Scheduler
 
 
 def _make_topic(client: TestClient, title: str = "Inbox") -> int:
@@ -69,7 +71,14 @@ def test_topic_schedule_crud() -> None:
         assert client.get(f"/api/topics/{topic_id}").status_code == 200
 
 
-def test_topic_schedule_run_now_posts_notice() -> None:
+def test_topic_schedule_run_now_posts_notice(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Only the route is under test. The real run would start at once and be
+    # cancelled mid-write when the client exits, leaving the shared scratch DB
+    # locked for whichever test comes next.
+    async def _no_run(_self: Scheduler, _topic_id: int) -> None:
+        return None
+
+    monkeypatch.setattr(Scheduler, "_run_one", _no_run)
     app = create_app()
     with TestClient(app) as client:
         topic_id = _make_topic(client)
@@ -83,3 +92,41 @@ def test_topic_schedule_run_now_posts_notice() -> None:
         # A "Run now accepted" system message lands in the topic.
         msgs = client.get(f"/api/topics/{topic_id}/messages").json()
         assert any("Run now accepted" in m["content"] for m in msgs)
+
+
+def test_schedule_approval_timeout_round_trips_and_null_inherits() -> None:
+    with TestClient(create_app()) as client:
+        topic_id = _make_topic(client, "Timeouts")
+        url = f"/api/topics/{topic_id}/schedule"
+        created = client.post(
+            url, json={"prompt": "go", "interval_seconds": 300, "approval_timeout_minutes": 15}
+        )
+        assert created.json()["approval_timeout_minutes"] == 15
+
+        assert (
+            client.patch(url, json={"approval_timeout_minutes": 0}).json()[
+                "approval_timeout_minutes"
+            ]
+            == 0
+        )
+        # Untouched when the key is absent, reset to the global default on an explicit null.
+        assert client.patch(url, json={"prompt": "again"}).json()["approval_timeout_minutes"] == 0
+        assert (
+            client.patch(url, json={"approval_timeout_minutes": None}).json()[
+                "approval_timeout_minutes"
+            ]
+            is None
+        )
+        assert client.patch(url, json={"approval_timeout_minutes": -1}).status_code == 422
+
+
+def test_scheduled_approval_timeout_setting_round_trips() -> None:
+    with TestClient(create_app()) as client:
+        assert client.get("/api/settings").json()["scheduled_approval_timeout_minutes"] == 60
+        try:
+            saved = client.put("/api/settings", json={"scheduled_approval_timeout_minutes": 0})
+            assert saved.json()["scheduled_approval_timeout_minutes"] == 0
+            capped = client.put("/api/settings", json={"scheduled_approval_timeout_minutes": 10**9})
+            assert capped.json()["scheduled_approval_timeout_minutes"] == 14 * 24 * 60
+        finally:
+            client.put("/api/settings", json={"scheduled_approval_timeout_minutes": 60})

@@ -18,13 +18,7 @@ export function WorkspacesHeader({ controller }: { controller: WorkspacesControl
 }
 
 // The main pane's workspaces branch.
-export function WorkspacesMain({
-  controller,
-  onSetRole,
-}: {
-  controller: WorkspacesController;
-  onSetRole: (roleId: number | null) => Promise<void>;
-}) {
+export function WorkspacesMain({ controller }: { controller: WorkspacesController }) {
   const {
     workspaces,
     activeWorkspace,
@@ -41,13 +35,14 @@ export function WorkspacesMain({
       workspace={activeWorkspace}
       initialPath={workspaceInitialPath}
       onPathChange={(p) => navigateWorkspace(activeWorkspace.slug, p)}
+      discussion={controller.wsRoute.discussion}
+      onDiscussionChange={(d, p) => navigateWorkspace(activeWorkspace.slug, p, d)}
       onDeleted={async () => {
         const list = await loadWorkspaces();
         const next = list[0] ?? null;
         setActiveWorkspaceId(next?.id ?? null);
         navigateWorkspace(next?.slug ?? null, null);
       }}
-      onSetRole={onSetRole}
     />
   ) : (
     <EmptyHero label="No workspaces yet." />

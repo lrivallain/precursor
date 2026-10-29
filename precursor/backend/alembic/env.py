@@ -39,6 +39,18 @@ config.set_main_option("sqlalchemy.url", get_settings().database_url)
 
 target_metadata = Base.metadata
 
+# Full-text objects created by raw DDL in the IQ migration (an FTS5 virtual table
+# and its shadow tables on SQLite, a generated tsvector + GIN index on Postgres).
+# They aren't mapped, so without this autogenerate would propose dropping them.
+_UNMAPPED_IQ_OBJECTS = ("iq_chunks_fts", "text_tsv", "ix_iq_chunks_tsv")
+
+
+def include_object(
+    obj: object, name: str | None, type_: str, reflected: bool, compare_to: object
+) -> bool:
+    unmapped = reflected and compare_to is None and (name or "").startswith(_UNMAPPED_IQ_OBJECTS)
+    return not unmapped
+
 
 def run_migrations_offline() -> None:
     context.configure(
@@ -46,13 +58,18 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        include_object=include_object,
     )
     with context.begin_transaction():
         context.run_migrations()
 
 
 def do_run_migrations(connection: Connection) -> None:
-    context.configure(connection=connection, target_metadata=target_metadata)
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        include_object=include_object,
+    )
     with context.begin_transaction():
         context.run_migrations()
 

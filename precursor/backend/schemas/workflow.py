@@ -13,6 +13,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from precursor.backend.schemas.agent import AgentApprovalPolicy, AgentPendingPermission
+from precursor.backend.schemas.definitions_api import DefinitionSource
 from precursor.backend.schemas.schedule import (
     RuleListRead,
     RuleListWrite,
@@ -61,6 +62,7 @@ class WorkflowAgentSummary(BaseModel):
     progress_label: str | None = None
     result_summary: str | None = None
     active_narration: str | None = None
+    active_thinking: str | None = None
     # The question the agent raised when it parked itself (``status ==
     # "blocked"``). Carried so the board can show what it is stuck on and let the
     # operator answer it when resuming, instead of re-driving the step blind.
@@ -185,6 +187,9 @@ class WorkflowRunRead(BaseModel):
     # Cumulative token spend across every attempt in this run.
     total_input_tokens: int = 0
     total_output_tokens: int = 0
+    # Files mode: the workflow file this run executed, and its SHA-256 then.
+    definition_path: str | None = None
+    definition_hash: str | None = None
     step_runs: list[WorkflowRunStepRead] = []
 
 
@@ -245,7 +250,7 @@ class WorkflowRead(BaseModel):
     # no watchdog).
     step_timeout_seconds: int | None = None
     # Assistant Role applied to every step's agent while the workflow runs.
-    role_id: int | None = None
+    role: str | None = None
     # Tool-approval policy applied to every step's agent while it runs; null
     # leaves each agent's own setting alone.
     approval_policy: AgentApprovalPolicy | None = None
@@ -272,6 +277,8 @@ class WorkflowRead(BaseModel):
     steps: list[WorkflowStepRead] = []
     # Advancement of the newest run; null until the workflow has ever run.
     run_progress: WorkflowRunProgress | None = None
+    # Files mode only: which file declares this workflow (null in database mode).
+    definition: DefinitionSource | None = None
 
 
 # --- Requests --------------------------------------------------------------
@@ -328,7 +335,7 @@ class WorkflowCreate(BaseModel):
     clear_artifacts: bool = True
     max_loops: int = Field(default=3, ge=1, le=25)
     step_timeout_seconds: int | None = Field(default=None, ge=30, le=86400)
-    role_id: int | None = None
+    role: str | None = None
     approval_policy: AgentApprovalPolicy | None = None
     steps: list[WorkflowStepInput] = []
 
@@ -342,8 +349,8 @@ class WorkflowUpdate(BaseModel):
     max_loops: int | None = Field(default=None, ge=1, le=25)
     # ``0`` disables the watchdog (mapped to null); omit to leave unchanged.
     step_timeout_seconds: int | None = Field(default=None, ge=0, le=86400)
-    # ``0`` clears the role (mapped to null); omit to leave unchanged.
-    role_id: int | None = Field(default=None, ge=0)
+    # An empty name clears the role; omit to leave unchanged.
+    role: str | None = Field(default=None, max_length=64)
     # ``None`` is meaningful here (inherit each agent's own policy), so the
     # router keys off ``model_fields_set`` to tell it from "field omitted".
     approval_policy: AgentApprovalPolicy | None = None

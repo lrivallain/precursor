@@ -18,10 +18,11 @@ of working:
 | --- | --- |
 | 🧵 [**Topics**](/features/topics) | Long-lived, tree-organized threads, each optionally linked to a GitHub issue used as live context. |
 | 💬 [**Chats**](/features/chats) | Quick, throwaway conversations for fast answers. |
-| 🎙️ [**Live sessions**](/features/live-sessions) | Record & transcribe a meeting with live insights, Q&A, and a summary. |
+| 🎙️ [**Live sessions**](/features/live-sessions) | Record & transcribe a meeting with live insights, Q&A, and a summary written from the template and in the language you pick. |
 | 🤖 [**Agents**](/features/agents-mode) | Autonomous Copilot SDK agents for long-running tasks, monitored from a control-tower dashboard (opt-in). |
 | 🔗 [**Workflows**](/features/workflows) | Chain those agents into a reusable pipeline the coordinator runs unattended, with gates and approval checkpoints (opt-in). |
-| 🗂️ [**Workspaces & files**](/features/workspaces) | Git clones / local dirs the assistant can browse and edit. Shown as **Files** in the sidebar. |
+| 🗂️ [**Workspaces & files**](/features/workspaces) | Git clones / local dirs the assistant can browse and edit, with a chat or topic you can open beside any file. Shown as **Files** in the sidebar. |
+| ✨ [**IQ**](/features/iq) | Ask a question about everything in Precursor and get a cited answer whose sources open the real items. |
 | 📋 [**Kanban**](/features/kanban) | A board over the GitHub issues linked to your topics. Ships as a [plugin](/features/plugins) — routes, tools and UI in one package. |
 
 **Rearrange them to taste.** Drag any section in the sidebar — whether you use
@@ -59,10 +60,22 @@ These work across the sections above:
   reminders.
 - [**MCP (both ways)**](/features/mcp) — Precursor is an MCP server *and* an MCP
   client, with built-in tool servers and support for your own.
+- [**Precursor IQ**](/features/iq): ranked, cited retrieval over your own
+  content. Ask questions in the **IQ** section or in ⌘K (Tab), jump to the
+  sources behind each answer, and serve `retrieve` / `ask` to MCP hosts,
+  WorkIQ-style.
+- [**OpenAI-compatible endpoint**](/features/openai-endpoint) — let VS Code or
+  any OpenAI client use the active provider's models through Precursor.
 - [**Command runner**](/features/command-runner) — execute bash / python / node
   inside a throwaway Docker jail or your local machine.
 - [**Attachments**](/features/attachments) — images as vision input; PDF / DOCX /
   PPTX and text/code files text-extracted; content-addressed on disk, deduped.
+- [**Context compression**](/features/context-compression): inline images
+  and older tool results are trimmed automatically, and `/compact` summarises a
+  long conversation so it can keep going.
+- [**Timeline & rewind**](/features/rewind) — jump between a conversation's
+  turns from a timeline rail, and rewind to an earlier turn (or edit and resend
+  its prompt) with a preview and an undo.
 - [**Import & export**](/features/transfer) — share an agent or a workflow as a
   plain YAML file, and choose what happens to anything that already exists on
   import.

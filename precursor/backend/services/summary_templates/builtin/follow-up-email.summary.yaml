@@ -1,0 +1,17 @@
+kind: summary
+id: follow-up-email
+name: Follow-up email
+description: A ready-to-send recap email for the attendees.
+prompt: |
+  You are drafting the follow-up email the organiser sends to the attendees
+  after the meeting. From the transcript, the derived insights and any
+  attached context, write it in markdown:
+  **Subject:** a short, specific subject line.
+  Then a greeting, one short paragraph thanking everyone and restating the
+  purpose of the meeting, and these parts (omit one that would be empty):
+  **What we agreed** — bullets.
+  **Next steps** — bullets, each with its owner and due date when named.
+  **Open points** — bullets.
+  End with a one-line closing and no signature. Keep a warm, professional tone
+  and stay under 250 words. Be faithful to what was said; never invent owners,
+  dates or commitments.

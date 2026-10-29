@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import enum
+from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import CheckConstraint, Enum, ForeignKey, Integer, Text
+from sqlalchemy import CheckConstraint, DateTime, Enum, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from precursor.backend.models.base import Base, TimestampMixin
@@ -22,6 +23,10 @@ class MessageRole(str, enum.Enum):  # noqa: UP042 - StrEnum would change str() s
     ASSISTANT = "assistant"
     SYSTEM = "system"
     TOOL = "tool"
+
+
+# ``Message.kind`` for a context-compaction summary row (see services/compaction.py).
+MESSAGE_KIND_COMPACTION = "compaction"
 
 
 class Message(Base, TimestampMixin):
@@ -46,6 +51,17 @@ class Message(Base, TimestampMixin):
     )
     content: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
+    # Set on the first user edit of an assistant reply: the answer as the model
+    # produced it, so the edit can be undone. ``content`` holds the edited text,
+    # which is what the model sees on later turns. Cleared on restore.
+    original_content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # For assistant turns: the model's thinking for this round, as the provider
+    # streamed it (usually a summary). Display-only — history sent back to the
+    # model never includes it. NULL when the model didn't surface any.
+    reasoning: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     # Set when this message was posted into the container by an Agents-mode
     # session (the prompt + answer of an agent exchange). Lets the UI render an
     # "agent exchange" badge with a deep link back to /agents/{id}. SET NULL on
@@ -53,6 +69,11 @@ class Message(Base, TimestampMixin):
     agent_session_id: Mapped[int | None] = mapped_column(
         ForeignKey("agent_sessions.id", ondelete="SET NULL"), index=True, nullable=True
     )
+
+    # Marks a special row. ``"compaction"``: a SYSTEM row whose content summarises
+    # everything before it; the model sees that summary instead of the older
+    # rows, which stay in the transcript (deleting the marker undoes it).
+    kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     # Optional serialized tool-call payload (JSON string) for assistant turns.
     tool_calls: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -72,6 +93,8 @@ class Message(Base, TimestampMixin):
     # The LLM model id that produced this assistant turn (NULL for user/tool/
     # system turns and for assistant turns persisted before this was tracked).
     model: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The provider id that served it (a cross-provider preset can differ per turn).
+    provider: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Wall-clock time in milliseconds the provider took to produce this
     # assistant turn, end to end including any tool rounds (NULL when not an
@@ -79,7 +102,10 @@ class Message(Base, TimestampMixin):
     elapsed_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     topic: Mapped[Topic | None] = relationship("Topic", back_populates="messages")
-    chat: Mapped[Chat | None] = relationship("Chat", back_populates="messages")
+    # Explicit: Chat.parent_message_id is a second FK path between the tables.
+    chat: Mapped[Chat | None] = relationship(
+        "Chat", back_populates="messages", foreign_keys=[chat_id]
+    )
     # Read-only link to the agent that posted this exchange, eager-loaded so the
     # UI can surface the agent's public (UUID) id for deep links / the /agent
     # command without an extra round-trip. We only ever write the FK column.

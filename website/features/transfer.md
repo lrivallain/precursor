@@ -131,3 +131,6 @@ Steps address agents **by index within the file**, because database ids are
 install-local — which also keeps the document readable and editable by hand.
 `format` is refused when it's newer than the running version, rather than
 silently dropping fields it doesn't understand.
+
+To keep *every* agent and workflow as files — the source of truth rather than a
+copy — see [Definition files](/features/definitions) (work in progress).

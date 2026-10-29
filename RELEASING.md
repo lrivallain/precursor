@@ -191,8 +191,13 @@ Two consequences worth knowing:
 - **Dev versions aren't ordered** — two branches can share a base version — so
   the nightly channel compares the **commit**, not the version number. Stable
   compares versions normally.
-- The release is **deleted and recreated** each run (`--cleanup-tag`) so the tag
-  follows `main` and no stale wheel is left for a client to resolve.
+- The release is **deleted and recreated** each run so no stale wheel is left
+  for a client to resolve, but the tag is **moved**, never deleted. GitHub turns
+  the releases of a deleted tag into drafts asynchronously, which could catch
+  the release just published. A final step checks that `version.json` and its
+  wheel download anonymously and name this build. If publishing left a draft,
+  the step publishes it; otherwise it fails the run rather than leaving every
+  nightly install a 404 behind a green run.
 
 The rolling channel remains independent from scheduled stable releases; the
 nightly tag is never promoted or used as a release candidate. Neither pipeline

@@ -61,14 +61,22 @@ offline.
 - Multi-turn chat with **SSE streaming** and markdown rendering
 - Powered by **GitHub Copilot** (OpenAI-compatible) with a mock provider for
   offline development
+- **Providers side by side**: configure GitHub Copilot and Azure AI Foundry
+  together, then choose provider/model presets per chat or topic, independently
+  of the global default. Provider pickers show saved configuration status.
 - **MCP both ways**: Precursor exposes its conversations as an MCP server *and*
   attaches external MCP tool servers per topic
+- **OpenAI-compatible endpoint** (opt-in): point VS Code or any OpenAI client at
+  Precursor to use the active provider's models, behind a generated API key
 - **Agents mode** (opt-in): hand long-running tasks to an autonomous Copilot
   SDK agent attached to a topic/chat, followed in a workflow-style tab. Nothing
   to install — the native runtime it drives is one click in **Settings → Agents**
 - **Workflows** (opt-in): chain agents into a reusable, named pipeline that a
   coordinator runs unattended — with quality gates, human approval checkpoints,
   and schedule/webhook triggers
+- **Step by step**: split a long ask (a customer email, a brief) into a tree of
+  steps, work and validate each in its own chat, then consolidate one answer
+  back into the topic
 - Single uvicorn process in production — FastAPI serves the API and mounts the
   built React SPA
 - **Runs in the background**: one-command install, a login item, a menu-bar icon
@@ -158,7 +166,9 @@ Specific things to keep local:
 - The built-in **MCP-over-HTTP** transport is off by default and only binds to
   loopback — leave it that way unless you front it with auth.
 - Secrets (the GitHub token, LLM provider keys) live in the local DB (set via
-  Settings) and are never echoed by the API. Don't commit `.env`.
+  Settings) and are never echoed by the API. Don't commit `.env`. The one
+  exception is the opt-in OpenAI-compatible endpoint's own key, shown in
+  Settings so you can paste it into clients.
 
 See [SECURITY.md](SECURITY.md) for vulnerability reporting.
 
@@ -186,6 +196,7 @@ In-repo references:
 
 - [Architecture](docs/architecture.md)
 - [Plugin system](docs/plugins.md)
+- [Definition files](docs/definitions.md) — agents & workflows (work in progress) and live summary templates
 - [Contributing](CONTRIBUTING.md)
 - [Releasing](RELEASING.md)
 - [Changelog](CHANGELOG.md)

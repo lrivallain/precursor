@@ -22,6 +22,7 @@ from sqlalchemy import text
 
 from precursor.backend.services.agent_event_recap import recap_archived_events
 from precursor.backend.services.agent_event_retention import prune_agent_events
+from precursor.backend.services.empty_agent_events import prune_empty_agent_events
 from precursor.backend.services.live_transcript_retention import prune_expired_live_transcripts
 from precursor.backend.services.sweep_result import SweepResult
 from precursor.backend.services.tool_result_retention import prune_expired_tool_results
@@ -69,11 +70,23 @@ TARGETS: tuple[CleanupTarget, ...] = (
         run=recap_archived_events,
     ),
     CleanupTarget(
-        key="tool_results",
-        label="Tool results",
+        key="empty_events",
+        label="Empty agent events",
         description=(
-            "Replaces the body of old tool results with a short placeholder. "
-            "The conversation structure is preserved."
+            "Deletes archived streaming fragments and empty messages that older "
+            "versions stored. Timelines show nothing for them, so no step is lost."
+        ),
+        setting="—",
+        table="agent_events",
+        run=prune_empty_agent_events,
+    ),
+    CleanupTarget(
+        key="tool_results",
+        label="Tool results & thinking",
+        description=(
+            "Replaces the body of old tool results with a short placeholder and "
+            "drops the model's thinking on old replies. The conversation "
+            "structure is preserved."
         ),
         setting="tool_result_retention_days",
         table="messages",

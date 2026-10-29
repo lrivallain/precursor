@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   AlertTriangle,
   ArrowUpRight,
@@ -9,23 +9,33 @@ import {
   ChevronRight,
   Code2,
   Copy,
+  History,
+  Mail,
+  MessageSquarePlus,
   Paperclip,
+  Pencil,
+  PenLine,
   RotateCcw,
   StopCircle,
   Timer,
   Trash2,
 } from "lucide-react";
 import { api } from "../lib/api";
+import { copyFormatted } from "../lib/emailHtml";
 import { matchBuiltinCommand } from "../lib/commands";
 import { useSkills } from "../lib/skillsStore";
 import { errorNoticeBody, isErrorNotice } from "../lib/systemNotice";
 import type { Attachment, MessageRole, Skill } from "../lib/types";
 import { Markdown } from "./Markdown";
-import { MessageMeta } from "./MessageMeta";
+import { MessageMeta, formatTimestamp } from "./MessageMeta";
+import { ReasoningDisclosure } from "./ReasoningDisclosure";
 
 interface Props {
   role: MessageRole;
   content: string;
+  // For assistant turns: the model's thinking, shown in a collapsed area above
+  // the reply (streaming in while the turn is pending).
+  reasoning?: string | null;
   pending?: boolean;
   attachments?: Attachment[];
   onDelete?: () => void;
@@ -42,6 +52,7 @@ interface Props {
   createdAt?: string;
   // For assistant turns: the LLM model id that produced the answer.
   model?: string | null;
+  provider?: string | null;
   // For assistant turns: wall-clock generation time in milliseconds.
   elapsedMs?: number | null;
   // For SYSTEM turns: force the failure styling even without an `Error: `
@@ -50,6 +61,25 @@ interface Props {
   // For USER turns: set when the turn this prompt started ended in an error —
   // renders a Retry control that replays this exact prompt.
   onRetry?: () => void;
+  /** The prompt of the turn the timeline marks as current. */
+  highlighted?: boolean;
+  /** Prompt actions: preview a rewind keeping this turn ("here") or re-editing it. */
+  onRewindHere?: () => void;
+  onEditResend?: () => void;
+  /** Keep the action toolbar visible without hovering (the selected prompt). */
+  revealActions?: boolean;
+  /** Assistant replies in a topic: start a side chat seeded with this reply. */
+  onStartSideChat?: () => void;
+  /** Rendered under the bubble's meta row (e.g. links to side chats). */
+  footer?: ReactNode;
+  /** Marks the content as a reply selection actions can act on (see SelectionActions). */
+  quotableId?: number;
+  /** Assistant replies: edit this reply in place. */
+  onEditReply?: () => void;
+  /** Replaces the rendered content while the reply is being edited. */
+  editor?: ReactNode;
+  /** Set when the user edited this reply: the model's original, restorable. */
+  edited?: { at?: string | null; original: string; onRestore?: () => void };
 }
 
 const roleLabel: Record<MessageRole, string> = {
@@ -74,7 +104,7 @@ function matchSkillInvocation(
   return { skill, argument: (m[2] ?? "").trim() };
 }
 
-export function MessageBubble({ role, content, pending, attachments, onDelete, onStop, collapsible, agentSessionId, createdAt, model, elapsedMs, isError, onRetry }: Props) {
+export function MessageBubble({ role, content, reasoning, pending, attachments, onDelete, onStop, collapsible, agentSessionId, createdAt, model, provider, elapsedMs, isError, onRetry, highlighted, onRewindHere, onEditResend, revealActions, onStartSideChat, footer, quotableId, onEditReply, editor, edited }: Props) {
   const isUser = role === "user";
   const skills = useSkills();
   const skillInvocation =
@@ -82,19 +112,26 @@ export function MessageBubble({ role, content, pending, attachments, onDelete, o
   const builtinCommand =
     isUser && !pending && !skillInvocation ? matchBuiltinCommand(content) : null;
   const showThinking = pending && !content;
+  const thinking = role === "assistant" ? reasoning?.trim() ?? "" : "";
   const imageAttachments = (attachments ?? []).filter((a) => a.mime.startsWith("image/"));
   const fileAttachments = (attachments ?? []).filter((a) => !a.mime.startsWith("image/"));
   const [hover, setHover] = useState(false);
   const [expanded, setExpanded] = useState(false);
-  const [copied, setCopied] = useState<null | "text" | "md">(null);
+  const [copied, setCopied] = useState<null | "text" | "md" | "html">(null);
+  const [showOriginal, setShowOriginal] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
   // Live elapsed time while this turn is in flight — runs through the whole
   // pending phase so it counts up during "Thinking…" and keeps ticking as the
   // answer streams in, then is replaced by the persisted elapsed_ms.
   const liveElapsed = useStopwatch(Boolean(pending));
 
-  // Copy the rendered text (markdown stripped) or the raw markdown source.
-  // Output (assistant) bubbles expose both alongside delete.
+  // Copy the rendered text (markdown stripped), the raw markdown source, or
+  // (replies only) email-safe HTML. Output (assistant) bubbles expose these
+  // alongside delete.
+  const flashCopied = (kind: "text" | "md" | "html") => {
+    setCopied(kind);
+    window.setTimeout(() => setCopied(null), 1200);
+  };
   const copyTo = async (kind: "text" | "md") => {
     const value =
       kind === "md"
@@ -102,14 +139,18 @@ export function MessageBubble({ role, content, pending, attachments, onDelete, o
         : (contentRef.current?.textContent ?? content).trim();
     try {
       await navigator.clipboard.writeText(value);
-      setCopied(kind);
-      window.setTimeout(() => setCopied(null), 1200);
+      flashCopied(kind);
     } catch {
       // Clipboard may be unavailable (e.g. insecure context); fail silently.
     }
   };
+  const copyHtml = async () => {
+    if (contentRef.current && (await copyFormatted(contentRef.current, content))) {
+      flashCopied("html");
+    }
+  };
   const showActions =
-    !pending && !!content && (role === "assistant" || isUser || onDelete);
+    !pending && !editor && !!content && (role === "assistant" || isUser || onDelete);
 
   // SYSTEM rows are out-of-band notices. An *acknowledgement* (e.g. "Run now
   // accepted") reads as a compact green confirmation; a *failure* (a provider
@@ -229,10 +270,17 @@ export function MessageBubble({ role, content, pending, attachments, onDelete, o
           onRetry ? "border-red-500/40" : "border-border"
         } ${isUser ? "bg-accent/10" : "bg-surface"} max-w-full`}
       >
+        {highlighted && (
+          // Ties the prompt to the timeline rail's blue (current) dash.
+          <span
+            aria-hidden
+            className="pointer-events-none absolute -right-2.5 top-1.5 bottom-1.5 w-[3px] rounded-full bg-accent"
+          />
+        )}
         {showActions && (
           <div
             style={{
-              opacity: hover ? 1 : 0,
+              opacity: hover || revealActions ? 1 : 0,
               transition: "opacity 120ms ease-out",
             }}
             className={`absolute -bottom-3 ${
@@ -254,6 +302,21 @@ export function MessageBubble({ role, content, pending, attachments, onDelete, o
                     <Copy size={12} />
                   )}
                 </button>
+                {role === "assistant" && (
+                  <button
+                    type="button"
+                    onClick={() => void copyHtml()}
+                    className="p-1 rounded-full text-muted hover:text-accent"
+                    aria-label="Copy formatted"
+                    data-tooltip={"Copy formatted\nKeeps its layout when pasted into an email or a document"}
+                  >
+                    {copied === "html" ? (
+                      <Check size={12} className="text-emerald-500" />
+                    ) : (
+                      <Mail size={12} />
+                    )}
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => copyTo("md")}
@@ -269,6 +332,50 @@ export function MessageBubble({ role, content, pending, attachments, onDelete, o
                 </button>
               </>
             )}
+            {onStartSideChat && (
+              <button
+                type="button"
+                onClick={onStartSideChat}
+                className="p-1 rounded-full text-muted hover:text-accent"
+                aria-label="Start a chat from this reply"
+                data-tooltip={"Start a chat from this reply\nDiscuss it on the side, without adding to this topic"}
+              >
+                <MessageSquarePlus size={12} />
+              </button>
+            )}
+            {onEditReply && (
+              <button
+                type="button"
+                onClick={onEditReply}
+                className="p-1 rounded-full text-muted hover:text-accent"
+                aria-label="Edit reply"
+                data-tooltip={"Edit reply\nLater turns use your version; the original stays restorable"}
+              >
+                <PenLine size={12} />
+              </button>
+            )}
+            {onRewindHere && (
+              <button
+                type="button"
+                onClick={onRewindHere}
+                className="p-1 rounded-full text-muted hover:text-amber-500"
+                aria-label="Rewind here"
+                data-tooltip={"Rewind here\nKeep this turn and drop the later ones"}
+              >
+                <History size={12} />
+              </button>
+            )}
+            {onEditResend && (
+              <button
+                type="button"
+                onClick={onEditResend}
+                className="p-1 rounded-full text-muted hover:text-accent"
+                aria-label="Edit and resend"
+                data-tooltip={"Edit & resend\nDrop this turn and the later ones, and edit this prompt"}
+              >
+                <Pencil size={12} />
+              </button>
+            )}
             {onDelete && (
               <button
                 type="button"
@@ -282,10 +389,20 @@ export function MessageBubble({ role, content, pending, attachments, onDelete, o
             )}
           </div>
         )}
+        {thinking && (
+          // Rendered ahead of both branches below so it keeps its open state
+          // when the reply starts streaming in after the thinking.
+          <ReasoningDisclosure
+            reasoning={thinking}
+            live={showThinking}
+            className={showThinking ? "mb-1" : "mb-1.5"}
+          />
+        )}
         {showThinking ? (
           <div className="flex items-center gap-2 text-sm text-muted">
             <ThinkingDots />
-            <span className="italic">Thinking…</span>
+            {/* The disclosure above already says so once the model thinks aloud. */}
+            {!thinking && <span className="italic">Thinking…</span>}
             <Chronometer ms={liveElapsed} />
             {onStop && (
               <button
@@ -310,6 +427,8 @@ export function MessageBubble({ role, content, pending, attachments, onDelete, o
             name={builtinCommand.name}
             argument={builtinCommand.argument}
           />
+        ) : editor ? (
+          editor
         ) : (
           <>
             {imageAttachments.length > 0 && (
@@ -351,8 +470,8 @@ export function MessageBubble({ role, content, pending, attachments, onDelete, o
                 ))}
               </div>
             )}
-            <div ref={contentRef}>
-              <Markdown className="text-sm leading-relaxed">
+            <div ref={contentRef} data-reply-id={quotableId}>
+              <Markdown className="text-sm leading-relaxed" sourceAnnotated={quotableId != null}>
                 {content || "\u200B"}
               </Markdown>
             </div>
@@ -383,13 +502,82 @@ export function MessageBubble({ role, content, pending, attachments, onDelete, o
         )}
       </div>
       {!pending && (role === "user" || role === "assistant") && (
-        <MessageMeta
-          createdAt={createdAt}
-          model={role === "assistant" ? model : null}
-          elapsedMs={role === "assistant" ? elapsedMs : null}
-          align={isUser ? "end" : "start"}
+        <div className="flex items-center gap-1.5">
+          <MessageMeta
+            createdAt={createdAt}
+            model={role === "assistant" ? model : null}
+            provider={role === "assistant" ? provider : null}
+            elapsedMs={role === "assistant" ? elapsedMs : null}
+            align={isUser ? "end" : "start"}
+          />
+          {edited && (
+            <button
+              type="button"
+              onClick={() => setShowOriginal((v) => !v)}
+              aria-expanded={showOriginal}
+              className="inline-flex items-center gap-1 rounded-full border border-border px-1.5 py-0.5 text-[10px] font-medium text-muted hover:border-accent hover:text-accent"
+              data-tooltip={`Edited${edited.at ? ` ${formatTimestamp(edited.at)}` : ""}\n${showOriginal ? "Hide" : "Show"} the original reply`}
+            >
+              <PenLine size={10} />
+              Edited
+            </button>
+          )}
+        </div>
+      )}
+      {edited && showOriginal && (
+        <OriginalReply
+          original={edited.original}
+          onRestore={edited.onRestore}
+          onHide={() => setShowOriginal(false)}
         />
       )}
+      {footer}
+    </div>
+  );
+}
+
+/** The model's answer before the user edited it, with a way back to it. */
+function OriginalReply({
+  original,
+  onRestore,
+  onHide,
+}: {
+  original: string;
+  onRestore?: () => void;
+  onHide: () => void;
+}) {
+  return (
+    <div className="max-w-full rounded-lg border border-dashed border-amber-500/50 bg-amber-500/10 px-3 py-2">
+      <div className="mb-1.5 flex items-center gap-2 text-[11px] text-amber-800 dark:text-amber-300">
+        <PenLine size={11} className="shrink-0" />
+        <span className="font-semibold uppercase tracking-wide">Original reply</span>
+        <span className="text-amber-800/80 dark:text-amber-300/80">
+          before your edit, no longer sent to the model
+        </span>
+        <span className="ml-auto flex items-center gap-1">
+          {onRestore && (
+            <button
+              type="button"
+              onClick={onRestore}
+              className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-bg hover:text-accent"
+              data-tooltip="Put this version back and drop your edit"
+            >
+              <RotateCcw size={11} />
+              Restore
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onHide}
+            className="rounded px-1.5 py-0.5 hover:bg-bg hover:text-text"
+          >
+            Hide
+          </button>
+        </span>
+      </div>
+      <div className="text-text/70">
+        <Markdown className="text-sm leading-relaxed">{original}</Markdown>
+      </div>
     </div>
   );
 }

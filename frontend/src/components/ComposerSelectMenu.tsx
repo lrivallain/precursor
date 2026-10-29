@@ -1,15 +1,21 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Check, ChevronDown, Search } from "lucide-react";
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { createPortal } from "react-dom";
+import { Check, ChevronDown, Plus, Search } from "lucide-react";
+import { useComposerCompact } from "../lib/composerCompact";
 
 export interface MenuOption {
   value: string;
   label: string;
+  disabled?: boolean;
   /** Optional muted second line (e.g. a role's system prompt). */
   description?: string;
+  /** Additional filter text when the option's value is an opaque action id. */
+  searchText?: string;
 }
 
 export interface MenuGroup {
   label?: string;
+  parentLabel?: string;
   options: MenuOption[];
 }
 
@@ -23,12 +29,19 @@ export function ComposerSelectMenu({
   tooltip,
   triggerLabel,
   icon,
+  compactIcon,
   value,
   groups,
   emptyHint,
   menuMinWidthClass = "min-w-[11rem]",
   disabled,
   filterPlaceholder,
+  fullWidth = false,
+  portal: portalProp = false,
+  onCustomValue,
+  customOptions,
+  footerAction,
+  scrollToSelected = true,
   open: controlledOpen,
   onOpenChange,
   onOpen,
@@ -39,6 +52,9 @@ export function ComposerSelectMenu({
   triggerLabel: string;
   /** Optional leading glyph, for pickers whose label alone is ambiguous. */
   icon?: ReactNode;
+  /** Glyph standing in for the label when the composer is too narrow for text
+   *  pills; falls back to `icon`, and to the label when neither exists. */
+  compactIcon?: ReactNode;
   value: string;
   groups: MenuGroup[];
   emptyHint?: string;
@@ -47,23 +63,70 @@ export function ComposerSelectMenu({
   // Passing a placeholder opts the menu into type-to-filter; short menus
   // (reasoning effort, context size) leave it off and stay a plain list.
   filterPlaceholder?: string;
+  fullWidth?: boolean;
+  /** Escape clipping in scrollable panels; composer menus stay inline. */
+  portal?: boolean;
+  /** Opt-in manual ids for catalogues that omit a deployment/retired model. */
+  onCustomValue?: (value: string) => void;
+  /** Manual choices whose destination must be explicit (e.g. a provider). */
+  customOptions?: (value: string) => MenuOption[];
+  footerAction?: { label: string; onSelect: () => void };
+  scrollToSelected?: boolean;
   /** Optional controlled open state, so a slash command can pop the menu. */
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   onOpen?: () => void;
   onSelect: (value: string) => void;
 }) {
+  const composerCompact = useComposerCompact();
+  const glyphOnly = composerCompact && !fullWidth && Boolean(compactIcon ?? icon);
+  // A narrow panel can't hold an inline menu anchored mid-toolbar: it would
+  // run past the edge, so the popup escapes to the viewport and is clamped.
+  const portal = portalProp || glyphOnly;
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
   const open = controlledOpen ?? uncontrolledOpen;
   const [query, setQuery] = useState("");
   const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const optionsRef = useRef<HTMLDivElement>(null);
   const selectedRef = useRef<HTMLButtonElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const [menuPosition, setMenuPosition] = useState<CSSProperties | null>(null);
+  const positioned = !portal || menuPosition !== null;
 
   const setOpen = (next: boolean): void => {
     setUncontrolledOpen(next);
     onOpenChange?.(next);
   };
+
+  useLayoutEffect(() => {
+    if (!open || !portal) {
+      setMenuPosition(null);
+      return;
+    }
+    const position = (): void => {
+      const anchor = triggerRef.current?.getBoundingClientRect();
+      if (!anchor) return;
+      const width = Math.min(320, Math.max(anchor.width, 288), window.innerWidth - 16);
+      const above = anchor.top - 16;
+      const below = window.innerHeight - anchor.bottom - 16;
+      const upwards = above >= 200 || above >= below;
+      setMenuPosition({
+        width,
+        left: Math.max(8, Math.min(anchor.left, window.innerWidth - width - 8)),
+        maxHeight: Math.min(360, Math.max(80, upwards ? above : below)),
+        ...(upwards ? { bottom: window.innerHeight - anchor.top + 8 } : { top: anchor.bottom + 8 }),
+      });
+    };
+    position();
+    window.addEventListener("resize", position);
+    window.addEventListener("scroll", position, true);
+    return () => {
+      window.removeEventListener("resize", position);
+      window.removeEventListener("scroll", position, true);
+    };
+  }, [open, portal]);
 
   useEffect(() => {
     if (!open) {
@@ -75,21 +138,24 @@ export function ComposerSelectMenu({
       onOpenChange?.(false);
     }
     function onDocPointerDown(e: PointerEvent): void {
-      if (!rootRef.current?.contains(e.target as Node | null)) close();
+      const target = e.target as Node | null;
+      if (!rootRef.current?.contains(target) && !menuRef.current?.contains(target)) close();
     }
     function onKeyDown(e: KeyboardEvent): void {
       if (e.key === "Escape") close();
     }
     document.addEventListener("pointerdown", onDocPointerDown);
     document.addEventListener("keydown", onKeyDown);
-    searchRef.current?.focus();
+    if (searchRef.current) searchRef.current.focus();
+    else if (portal) (selectedRef.current ?? menuRef.current?.querySelector<HTMLButtonElement>('[role="option"]'))?.focus();
     // Bring the active row into view when the menu opens.
-    selectedRef.current?.scrollIntoView({ block: "nearest" });
+    if (scrollToSelected) selectedRef.current?.scrollIntoView({ block: "nearest" });
+    else if (optionsRef.current) optionsRef.current.scrollTop = 0;
     return () => {
       document.removeEventListener("pointerdown", onDocPointerDown);
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, [open, onOpenChange]);
+  }, [open, onOpenChange, positioned, portal, scrollToSelected]);
 
   // A matching group label keeps its whole group, so typing a vendor name
   // ("microsoft") lists every model it publishes.
@@ -98,56 +164,61 @@ export function ComposerSelectMenu({
     ? groups
         .map((g) => ({
           ...g,
-          options: g.label?.toLowerCase().includes(q)
+          options: g.label?.toLowerCase().includes(q) || g.parentLabel?.toLowerCase().includes(q)
             ? g.options
             : g.options.filter(
                 (o) =>
-                  o.label.toLowerCase().includes(q) || o.value.toLowerCase().includes(q),
+                  o.label.toLowerCase().includes(q) || o.value.toLowerCase().includes(q) || o.searchText?.toLowerCase().includes(q),
               ),
         }))
         .filter((g) => g.options.length > 0)
     : groups;
   const hasOptions = visibleGroups.some((g) => g.options.length > 0);
+  const customValue = query.trim();
+  const canUseCustomValue = Boolean(
+    onCustomValue && customValue && !groups.some((g) => g.options.some((o) => o.value === customValue)),
+  );
+  const manualOptions = customValue ? customOptions?.(customValue) ?? [] : [];
 
   function selectFirstMatch(): void {
-    const first = visibleGroups.flatMap((g) => g.options)[0];
-    if (!first) return;
-    onSelect(first.value);
+    const first = visibleGroups.flatMap((g) => g.options).find((option) => !option.disabled);
+    if (first) onSelect(first.value);
+    else if (manualOptions.length === 1) onSelect(manualOptions[0].value);
+    else if (canUseCustomValue) onCustomValue?.(customValue);
+    else return;
     setOpen(false);
+    if (portal) triggerRef.current?.focus();
   }
 
-  return (
-    // A flex wrapper, so the trigger is a flex item rather than an inline box
-    // on a text baseline: an inline-flex box takes its baseline from its first
-    // child, so a leading glyph would otherwise sit the pill a fraction of a
-    // pixel higher than its icon-less neighbours.
-    <div ref={rootRef} className="relative flex">
-      <button
-        type="button"
-        aria-label={ariaLabel}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        data-tooltip={tooltip}
-        disabled={disabled}
-        onClick={() => {
-          const next = !open;
-          setOpen(next);
-          if (next) onOpen?.();
-        }}
-        className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-muted hover:text-text hover:bg-bg outline-none disabled:opacity-50 disabled:cursor-not-allowed"
-      >
-        {icon}
-        <span className="max-w-[13rem] truncate">{triggerLabel}</span>
-        <ChevronDown size={13} className="shrink-0 opacity-70" />
-      </button>
-      {open && (
+  const menu = open && positioned ? (
         <div
+          ref={menuRef}
           role="listbox"
           aria-label={ariaLabel}
-          className={`absolute bottom-full left-0 z-30 mb-2 max-w-[20rem] rounded-xl border border-border bg-surface p-1 shadow-xl ${menuMinWidthClass}`}
+          style={portal ? menuPosition ?? undefined : undefined}
+          onKeyDown={portal ? (event) => {
+            if (event.key === "Escape") {
+              event.stopPropagation();
+              setOpen(false);
+              triggerRef.current?.focus();
+            } else if (event.key === "Tab") {
+              event.stopPropagation();
+              const controls = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('input,button:not([disabled])'));
+              const first = controls[0];
+              const last = controls[controls.length - 1];
+              if (event.shiftKey && document.activeElement === first) {
+                event.preventDefault();
+                last?.focus();
+              } else if (!event.shiftKey && document.activeElement === last) {
+                event.preventDefault();
+                first?.focus();
+              }
+            }
+          } : undefined}
+          className={`${portal ? "fixed z-[60] flex flex-col" : "absolute bottom-full left-0 z-30 mb-2"} max-w-[20rem] rounded-xl border border-border bg-surface p-1 shadow-xl ${menuMinWidthClass}`}
         >
           {filterPlaceholder && (
-            <div className="flex items-center gap-1.5 border-b border-border px-2 pb-1.5 pt-1">
+            <div className="flex shrink-0 items-center gap-1.5 border-b border-border px-2 pb-1.5 pt-1">
               <Search size={13} className="shrink-0 text-muted" />
               <input
                 ref={searchRef}
@@ -160,7 +231,7 @@ export function ComposerSelectMenu({
                   if (e.key === "Enter") {
                     e.preventDefault();
                     selectFirstMatch();
-                  } else if (e.key !== "Escape") {
+                  } else if (e.key !== "Escape" && !(portal && e.key === "Tab")) {
                     // Keep typing away from the composer's global hotkeys.
                     e.stopPropagation();
                   }
@@ -169,16 +240,21 @@ export function ComposerSelectMenu({
               />
             </div>
           )}
-          <div className="max-h-72 overflow-y-auto">
-            {!hasOptions && (
+          <div ref={optionsRef} className="max-h-72 min-h-0 overflow-y-auto">
+            {!hasOptions && !canUseCustomValue && manualOptions.length === 0 && (
               <div className="px-2 py-1.5 text-xs text-muted">
                 {q ? "No match" : (emptyHint ?? "No options")}
               </div>
             )}
             {visibleGroups.map((group, gi) => (
-              <div key={group.label ?? gi}>
+              <div key={`${group.parentLabel ?? ""}:${group.label ?? gi}`} role={group.label || group.parentLabel ? "group" : undefined} aria-label={group.label ? `${group.parentLabel ? `${group.parentLabel} - ` : ""}${group.label}` : group.parentLabel}>
+                {group.parentLabel && group.options.length > 0 && visibleGroups[gi - 1]?.parentLabel !== group.parentLabel && (
+                  <div className="px-2 pb-1 pt-1.5 text-[10px] font-medium uppercase tracking-wide text-muted" data-menu-parent={group.parentLabel}>
+                    {group.parentLabel}
+                  </div>
+                )}
                 {group.label && group.options.length > 0 && (
-                  <div className="px-2 pb-1 pt-1.5 text-[10px] font-medium uppercase tracking-wide text-muted">
+                  <div className={group.parentLabel ? "px-3 pb-1 pt-1 text-[11px] font-medium text-text" : "px-2 pb-1 pt-1.5 text-[10px] font-medium uppercase tracking-wide text-muted"} data-menu-category={group.parentLabel ? group.label : undefined}>
                     {group.label}
                   </div>
                 )}
@@ -191,11 +267,14 @@ export function ComposerSelectMenu({
                       type="button"
                       role="option"
                       aria-selected={selected}
+                      disabled={opt.disabled}
+                      data-tooltip={opt.disabled ? opt.description : undefined}
                       onClick={() => {
                         onSelect(opt.value);
                         setOpen(false);
+                        if (portal) triggerRef.current?.focus();
                       }}
-                      className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-border/50 ${
+                      className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-border/50 disabled:cursor-default disabled:opacity-60 ${
                         selected ? "text-text" : "text-text/90"
                       }`}
                     >
@@ -215,9 +294,88 @@ export function ComposerSelectMenu({
                 })}
               </div>
             ))}
+            {manualOptions.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    role="option"
+                    aria-selected={false}
+                    onClick={() => {
+                      onSelect(option.value);
+                      setOpen(false);
+                      if (portal) triggerRef.current?.focus();
+                    }}
+                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-border/50"
+                  >
+                    <Plus size={14} className="shrink-0 text-accent" aria-hidden="true" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate">{option.label}</span>
+                      {option.description && <span className="block truncate text-[11px] text-muted">{option.description}</span>}
+                    </span>
+                  </button>
+            ))}
+            {canUseCustomValue && (
+              <button
+                type="button"
+                role="option"
+                aria-selected={false}
+                onClick={() => {
+                  onCustomValue?.(customValue);
+                  setOpen(false);
+                  if (portal) triggerRef.current?.focus();
+                }}
+                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-border/50"
+              >
+                <Plus size={14} className="shrink-0 text-accent" aria-hidden="true" />
+                <span className="min-w-0 truncate">Use model id "{customValue}"</span>
+              </button>
+            )}
           </div>
+          {footerAction && (
+            <button type="button" onClick={() => {
+              setOpen(false);
+              footerAction.onSelect();
+            }} className="mt-1 w-full shrink-0 rounded-md border-t border-border px-2 py-2 text-left text-xs text-accent hover:bg-border/50">
+              {footerAction.label}
+            </button>
+          )}
         </div>
-      )}
+  ) : null;
+
+  return (
+    // A flex wrapper, so the trigger is a flex item rather than an inline box
+    // on a text baseline: an inline-flex box takes its baseline from its first
+    // child, so a leading glyph would otherwise sit the pill a fraction of a
+    // pixel higher than its icon-less neighbours.
+    <div ref={rootRef} className={`relative flex min-w-0 ${fullWidth ? "w-full" : ""}`}>
+      <button
+        ref={triggerRef}
+        type="button"
+        aria-label={glyphOnly ? `${ariaLabel}: ${triggerLabel}` : ariaLabel}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        data-tooltip={glyphOnly ? `${triggerLabel}\n${tooltip}` : tooltip}
+        disabled={disabled}
+        onClick={() => {
+          const next = !open;
+          setOpen(next);
+          if (next) onOpen?.();
+        }}
+        className={`inline-flex items-center gap-1 rounded-lg ${glyphOnly ? "px-1.5" : "px-2"} py-1 text-xs hover:text-text hover:bg-bg outline-none disabled:opacity-50 disabled:cursor-not-allowed ${
+          fullWidth ? "w-full min-w-0 border border-border bg-bg text-text focus-visible:ring-2 focus-visible:ring-accent" : "text-muted"
+        }`}
+      >
+        {glyphOnly ? (
+          (compactIcon ?? icon)
+        ) : (
+          <>
+            {icon}
+            <span className={`truncate ${fullWidth ? "min-w-0 flex-1 text-left" : "max-w-[13rem]"}`}>{triggerLabel}</span>
+            <ChevronDown size={13} className="shrink-0 opacity-70" />
+          </>
+        )}
+      </button>
+      {portal && menu ? createPortal(menu, document.body) : menu}
     </div>
   );
 }

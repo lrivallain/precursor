@@ -83,7 +83,7 @@ export function MermaidBlock({ code }: MermaidBlockProps) {
   const showDiagram = !showSource && svg && !error;
 
   return (
-    <div className="my-2 overflow-hidden rounded-md border border-border bg-surface">
+    <div className="my-2 overflow-hidden rounded-md border border-border bg-surface" data-copy-source={code}>
       <div className="flex items-center justify-between gap-2 border-b border-border px-2 py-1 text-xs text-muted">
         <span className="font-mono">Mermaid</span>
         <div className="flex items-center gap-1">

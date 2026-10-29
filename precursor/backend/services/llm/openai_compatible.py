@@ -10,18 +10,20 @@ endpoint when available; callers fall back to manual model entry when it isn't.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from typing import Any
 
 import httpx
 from openai import AsyncOpenAI
 
 from precursor.backend.services.llm._openai_compat import (
+    embed_openai,
     stream_openai_tools,
     to_openai_messages,
 )
 from precursor.backend.services.llm.base import (
     ChatMessage,
+    EmbeddingResult,
     LLMModel,
     ProviderEvent,
     ToolDef,
@@ -81,6 +83,7 @@ class OpenAICompatibleProvider:
         messages: Sequence[ChatMessage],
         tools: Sequence[ToolDef],
         reasoning_effort: str | None = None,
+        request_options: Mapping[str, Any] | None = None,
     ) -> AsyncIterator[ProviderEvent]:
         async for event in stream_openai_tools(
             client=self._client,
@@ -88,8 +91,14 @@ class OpenAICompatibleProvider:
             messages=messages,
             tools=tools,
             reasoning_effort=reasoning_effort,
+            request_options=request_options,
         ):
             yield event
+
+    async def embed(
+        self, texts: Sequence[str], *, model: str, dimensions: int | None = None
+    ) -> EmbeddingResult:
+        return await embed_openai(self._client, texts, model=model, dimensions=dimensions)
 
     async def list_models(self) -> list[LLMModel]:
         headers = {"Accept": "application/json"}

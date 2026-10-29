@@ -51,6 +51,10 @@ client MCP 2's transports and OAuth take), `python-multipart`, `pypdf`, `pyyaml`
   (`src/lib/sse.ts`) because it POSTs a JSON body (not `EventSource`).
 - Function components with **named exports**; TS types in `src/lib/types.ts`
   mirror the Pydantic schemas.
+- The Files section edits with **Monaco** (`monaco-editor`, the VS Code editor
+  core) and **monaco-yaml**. Both are loaded on demand as their own chunk,
+  with their workers, so the rest of the app never downloads them. Only JSON
+  and YAML get a language service; other languages are highlighted only.
 
 ## Build, versioning & packaging
 

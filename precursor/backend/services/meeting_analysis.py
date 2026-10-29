@@ -37,6 +37,15 @@ def role_persona_instruction(role_prompt: str) -> str:
     return f"Active assistant role — adopt this persona for every reply:\n{role_prompt.strip()}"
 
 
+async def session_persona(session: AsyncSession, role: str | None) -> str:
+    """The persona directive for a live session's role, or "" for the default.
+
+    Every AI task of the session (insights, suggestions, Ask chat, recap, topic
+    brief) goes through this so the role applies uniformly.
+    """
+    return role_persona_instruction(await resolve_role_prompt(session, role))
+
+
 # Characters of transcript / topic context fed to the model. Kept modest so the
 # analysis stays fast; the snapshot is re-derived each run so older context that
 # has fallen out of the window is still reflected in prior insights.
@@ -71,6 +80,15 @@ _LANG_NAMES = {
 }
 
 
+def known_languages() -> list[tuple[str, str]]:
+    """``(code, name)`` for every language a prompt can name, by name."""
+    return sorted(_LANG_NAMES.items(), key=lambda item: item[1])
+
+
+def is_known_language(tag: str) -> bool:
+    return tag.split("-")[0].lower() in _LANG_NAMES
+
+
 def language_name(tag: str | None) -> str | None:
     """Map a BCP-47 tag (e.g. ``fr-FR``) to a language name, or None when unset."""
     if not tag:
@@ -98,8 +116,13 @@ _SYSTEM_PROMPT = (
     "If nothing substantive has been said yet, return an empty insights list.\n\n"
     "For help/suggestion: ONLY set help=true when there is a clear, current open "
     "question or problem you can materially help with — give a specific, brief "
-    "answer or next step in 'suggestion'. Most of the time nothing is needed: set "
-    "help=false with an empty suggestion. Do not repeat the insights as a suggestion."
+    "answer or next step in 'suggestion'. Make it easy to scan during a live "
+    "discussion: start with one direct recommendation or answer in a short sentence. "
+    "When useful, follow with up to 3 short Markdown bullets for options or next "
+    "steps, using bold labels sparingly. Keep it to about 3 short lines; avoid "
+    "numbered run-on paragraphs, long caveats, and repeating the insights. Most of "
+    "the time nothing is needed: set help=false with an empty suggestion. Do not "
+    "repeat the insights as a suggestion."
 )
 
 
@@ -200,7 +223,7 @@ async def live_chat_grounding(session: AsyncSession, chat_id: int) -> str:
         "meeting context below; it updates as the meeting progresses. Prefer it "
         "over prior assumptions for anything time-sensitive."
     ]
-    persona = role_persona_instruction(await resolve_role_prompt(session, ms.role_id))
+    persona = await session_persona(session, ms.role)
     if persona:
         parts.append(persona)
     if segments:
@@ -427,7 +450,7 @@ async def analyze_session(
     lang = language_name(ms.language)
     if lang:
         system += f"\n\nWrite every insight's content and the suggestion in {lang}."
-    persona = role_persona_instruction(await resolve_role_prompt(session, ms.role_id))
+    persona = await session_persona(session, ms.role)
     if persona:
         system += f"\n\n{persona}"
 
@@ -441,16 +464,17 @@ async def analyze_session(
     if notes_ctx:
         user_parts.append(f"\nPinned context notes:\n{notes_ctx}")
 
-    model = await resolve_live_fast_model(session)
+    model = await resolve_live_fast_model(session, use_default=False)
     effort = await resolve_live_reasoning_effort(session)
     try:
         result = await complete_once(
             session,
+            use_conversation_selection=False,
             system=system,
             user="\n".join(user_parts),
             usage_source="/live-analysis",
             topic_id=ms.topic_id,
-            model=model,
+            model=model or None,
             reasoning_effort=effort,
         )
     except Exception as exc:
@@ -528,11 +552,12 @@ async def translate_transcript(
     )
     result = await complete_once(
         session,
+        use_conversation_selection=False,
         system=system,
         user=source,
         usage_source="/live-translate",
         topic_id=ms.topic_id,
-        model=await resolve_live_fast_model(session),
+        model=await resolve_live_fast_model(session, use_default=False) or None,
         reasoning_effort=await resolve_live_reasoning_effort(session),
     )
     translated, model = result.text, result.model
@@ -568,11 +593,12 @@ async def translate_lines(
     numbered = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(clean))
     completion = await complete_once(
         session,
+        use_conversation_selection=False,
         system=system,
         user=numbered,
         usage_source="/live-translate",
         topic_id=ms.topic_id,
-        model=await resolve_live_fast_model(session),
+        model=await resolve_live_fast_model(session, use_default=False) or None,
         reasoning_effort=await resolve_live_reasoning_effort(session),
     )
     out, model = completion.text, completion.model

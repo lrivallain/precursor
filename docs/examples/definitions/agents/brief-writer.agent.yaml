@@ -1,0 +1,12 @@
+# yaml-language-server: $schema=../../../schemas/agent.schema.json
+kind: agent
+id: 3b1f9c4e-6a0d-4d8e-9a57-0c2f1b7e5d21
+title: Brief writer
+prompt: |
+  Turn the material you are given into a one-page brief: three headline
+  points, then the detail, then open questions. Plain language, no jargon.
+autonomy:
+  enabled: true
+  max_steps: 6
+capabilities:
+  mcp: false

@@ -28,13 +28,9 @@ class RolesStore {
     return this.roles;
   }
 
-  byId(id: number | null | undefined): Role | undefined {
-    if (id == null) return undefined;
-    return this.roles.find((r) => r.id === id);
-  }
-
-  /** Case-insensitive name lookup, used by `/role <name>`. */
-  byName(name: string): Role | undefined {
+  /** Case-insensitive name lookup: a role is referenced by its name. */
+  byName(name: string | null | undefined): Role | undefined {
+    if (!name) return undefined;
     const q = name.trim().toLowerCase();
     return this.roles.find((r) => r.name.toLowerCase() === q);
   }

@@ -47,6 +47,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import contextvars
+import inspect
 import json
 import logging
 import os
@@ -69,7 +70,13 @@ from precursor.backend.models import (
     MessageRole,
     Topic,
 )
-from precursor.backend.schemas.agent import AgentEvent, AgentEventPage
+from precursor.backend.schemas.agent import (
+    AgentEvent,
+    AgentEventPage,
+    AgentRewindMode,
+    AgentRewindPreview,
+    AgentRewindResult,
+)
 from precursor.backend.services.agents import (
     commands,
     fleet,
@@ -80,6 +87,7 @@ from precursor.backend.services.agents import (
     timeline,
     usage,
 )
+from precursor.backend.services.agents import rewind as rewind_mod
 from precursor.backend.services.agents.artifacts import ArtifactStore, clear_artifacts
 from precursor.backend.services.agents.directives import (
     _CONTINUE_NUDGE,
@@ -89,8 +97,9 @@ from precursor.backend.services.agents.directives import (
     parse_agent_directives,
     strip_control_directives,
 )
-from precursor.backend.services.agents.event_normalizer import normalize_event
+from precursor.backend.services.agents.event_normalizer import is_content_free, normalize_event
 from precursor.backend.services.agents.live_session import _Caps, _LiveSession
+from precursor.backend.services.agents.live_stream import StreamUpdate
 from precursor.backend.services.agents.mcp_config import (
     _OAUTH_FALLBACK_TTL,
     _OAUTH_REFRESH_MARGIN,
@@ -111,15 +120,19 @@ from precursor.backend.services.app_settings import (
     resolve_agents_context_tier,
     resolve_agents_default_model,
     resolve_agents_enabled,
+    resolve_agents_file_change_tracking,
     resolve_agents_reasoning_effort,
     resolve_agents_watchdog_timeout,
 )
+from precursor.backend.services.definitions import overlay as definition_overlay
+from precursor.backend.services.definitions import trust as definition_trust
 from precursor.backend.services.events import (
     publish_agent_changed,
     publish_message_changed,
     publish_message_changed_chat,
     set_current_client_id,
 )
+from precursor.backend.services.model_fallbacks import is_model_rejection, resolve_model_category
 from precursor.backend.services.suggestions import split_suggestions
 
 # The pure helpers and the live-session record moved to their own modules;
@@ -200,6 +213,27 @@ _WATCHDOG_INTERVAL_SECONDS = 60.0
 # the CLI exhausts its heap and dies. A released session resumes from its on-disk
 # state (``copilot_session_id``) on its next turn.
 _IDLE_SESSION_TTL_SECONDS = 15 * 60
+# A manual /compact is one summarising model call over the whole history.
+_COMPACT_TIMEOUT_SECONDS = 300.0
+
+# Streaming frames aren't archived, but a long stretch of them is still the run
+# being alive: stamp its activity this often so the watchdog (whose timeout
+# floors at 30 s) never takes a model thinking at length for a stall.
+_STREAM_ACTIVITY_INTERVAL_SECONDS = 10.0
+
+# How often streamed thinking/answer text is announced to open views. The
+# frontend coalesces refreshes anyway; this keeps a fast stream from costing a
+# bus message per token.
+_STREAM_PUBLISH_INTERVAL_SECONDS = 0.25
+
+
+def _accepts_kwarg(func: Any, name: str) -> bool:
+    """Whether ``func`` takes keyword ``name`` (an older SDK may not)."""
+    try:
+        params = inspect.signature(func).parameters
+    except (TypeError, ValueError):
+        return False
+    return name in params or any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
 
 
 def _runtime_env() -> dict[str, str]:
@@ -248,6 +282,11 @@ class AgentManager:
         # Agents whose DB archive has been hydrated into ``_events`` this process.
         self._loaded: set[int] = set()
         self._events_lock = asyncio.Lock()
+        # Per-agent count of archive truncations (rewinds, clears), and a nonce
+        # for this process, together naming the archive a reader's cursor counts
+        # into (see ``Timeline.epoch``).
+        self._transcript_epochs: dict[int, int] = {}
+        self._epoch_nonce = os.urandom(4).hex()
         # Per-agent locks serialising event handling so SDK events are processed
         # in arrival order — otherwise an idle handler can race ahead of the
         # assistant-message handler and post a stale answer back to the topic.
@@ -635,9 +674,11 @@ class AgentManager:
                 use_memory=agent.use_memory,
                 mcp_servers=agent.mcp_servers,
                 approval_policy=agent.approval_policy,
-                role_id=agent.role_id,
+                role=agent.role,
                 started_at=datetime.now(UTC),
             )
+            if (source := definition_overlay.provenance(agent)) is not None:
+                run.definition_path, run.definition_hash = source
             session.add(run)
             await session.flush()
             agent.current_run_id = run.id
@@ -796,16 +837,23 @@ class AgentManager:
             default_model = await resolve_agents_default_model(s)
             effort = await resolve_agents_reasoning_effort(s)
             tier = await resolve_agents_context_tier(s)
+            track_files = await resolve_agents_file_change_tracking(s)
+            category = await resolve_model_category(s, agents=True)
+        category = category if not (run.model or agent.model) else None
         model = run.model or default_model
-        model = await self._sanitize_model(agent.id, model)
-        if model:
-            kwargs["model"] = model
-        if effort:
-            kwargs["reasoning_effort"] = effort
-        if tier and tier != "default":
-            kwargs["context_tier"] = tier
+        requested_model = (model, effort or None, tier or "default")
+        model_choices = await self._model_selection.choices(
+            agent.id, model, effort, tier, category=category
+        )
         if run.copilot_session_id:
             kwargs["session_id"] = run.copilot_session_id
+        # Lets a rewind put back the files the dropped turns changed. Only a
+        # session tracked from its first turn can, so a resumed untracked one
+        # stays conversation-only (the SDK reports that).
+        if track_files and _accepts_kwarg(
+            self._client.create_session, "enable_file_change_tracking"
+        ):
+            kwargs["enable_file_change_tracking"] = True
         # An agent with MCP switched off gets no tool servers at all — not even
         # the first-party one. Whole catalogues of tool schemas are a large,
         # fixed context cost, so a step that only has to transform text pays
@@ -841,13 +889,35 @@ class AgentManager:
             # but also gets the operator's custom guidance and any topic binding.
             kwargs["system_message"] = {"mode": "append", "content": preamble}
 
-        sdk_session = await self._client.create_session(**kwargs)
+        attempted_models: set[tuple[str, str | None, str]] = set()
+        for choice in model_choices:
+            model, selected_effort, tier = choice
+            attempted_models.add(choice)
+            kwargs.pop("reasoning_effort", None)
+            kwargs.pop("context_tier", None)
+            if model:
+                kwargs["model"] = model
+            if selected_effort:
+                kwargs["reasoning_effort"] = selected_effort
+            if tier != "default":
+                kwargs["context_tier"] = tier
+            try:
+                sdk_session = await self._client.create_session(**kwargs)
+                break
+            except Exception as exc:
+                if not is_model_rejection(exc) or choice == model_choices[-1]:
+                    raise
+                logger.warning("agent %s: model configuration rejected: %s", agent.id, exc)
         live = _LiveSession(
             sdk_session=sdk_session,
             oauth_expires_at=oauth_expires_at,
             mcp_fingerprint=mcp_fingerprint,
             mcp_auth_skipped=await self._auth_skipped_stamps(auth_required),
-            model_signature=(model, effort or None, tier or "default") if model else None,
+            model_signature=choice if model else None,
+            requested_model_signature=requested_model,
+            requested_model_category=category,
+            model_candidates=model_choices,
+            model_attempts=attempted_models,
         )
         self._live[run.id] = live
         # Synchronous index so ``live_activity`` (no ``await`` available) can find
@@ -858,6 +928,8 @@ class AgentManager:
         # order; the async work (DB + bus) is queued to run in that same order.
         agent_id, run_id = agent.id, run.id
         sdk_session.on(lambda event: self._dispatch_sdk_event(agent_id, run_id, event))
+        if choice != requested_model:
+            await self._model_selection.announce(run.id, choice, category=category)
 
         # The resume handle is *not* readable off ``CopilotSession`` — it exposes
         # no ``id``/``session_id`` attribute — so it is captured from the
@@ -946,6 +1018,16 @@ class AgentManager:
             agent = await self._load(agent_id)
             if agent is None:
                 return
+            # Files mode: a broken definition file must not quietly run the stale
+            # database copy of the agent instead.
+            if (problem := definition_overlay.definition_error(agent)) is not None:
+                raise RuntimeError(f"Can't start '{agent.title}': {problem}")
+            # ...nor start with permissions its file widened and nobody accepted.
+            if definition_overlay.files_mode():
+                async with SessionLocal() as review_session:
+                    changes = await definition_trust.pending_changes(review_session, agent)
+                if changes:
+                    raise RuntimeError(definition_trust.review_message(agent.title, changes))
             # A fresh objective run starts from a clean blackboard: drop any
             # artifacts *this run* published so the new turn's deliverables
             # replace them rather than piling up beside stale ones. Scoped to the
@@ -989,7 +1071,7 @@ class AgentManager:
             sent = agent.task_prompt
             if extra_context:
                 sent = f"{extra_context}\n\n---\n\n{agent.task_prompt}"
-            await live.sdk_session.send(sent)
+            await self._model_selection.send(run.id, live, sent)
         except Exception as exc:
             if run is not None:
                 await self._fail_turn(run.id, exc)
@@ -1046,7 +1128,7 @@ class AgentManager:
                 chat_id=agent.chat_id,
                 agent_run_id=run.id,
             )
-            await live.sdk_session.send(text)
+            await self._model_selection.send(run.id, live, text)
         except Exception as exc:
             if run is not None:
                 await self._fail_turn(run.id, exc)
@@ -1080,7 +1162,7 @@ class AgentManager:
                 chat_id=agent.chat_id,
                 agent_run_id=run.id,
             )
-            await live.sdk_session.send(prompt)
+            await self._model_selection.send(run.id, live, prompt)
         except Exception as exc:
             await self._fail_turn(run.id, exc)
 
@@ -1111,13 +1193,14 @@ class AgentManager:
     def live_activity(self, agent_ids: list[int]) -> dict[int, dict[str, Any]]:
         """Snapshot each agent's in-flight work for the dashboard cockpit.
 
-        Reads the in-memory event cache (no DB, no ``await``) to derive, per
-        agent: the currently running tool, how many tool calls are running in
-        parallel (the "sub-agent fan-out" cluster), a plain-language **narration**
-        line distilled from the agent's own commentary this turn, and the oldest
-        unresolved permission request. Everything resets at turn boundaries so a
-        dropped completion event can't leave a tool "running" across turns.
-        Agents not live in-process report an empty snapshot.
+        Reads the in-memory event cache and the live stream (no DB, no
+        ``await``) to derive, per agent: the currently running tool, how many
+        tool calls are running in parallel (the "sub-agent fan-out" cluster), a
+        plain-language **narration** line distilled from the agent's own
+        commentary this turn, the **thinking** it is streaming right now, and the
+        oldest unresolved permission request. Everything resets at turn
+        boundaries so a dropped completion event can't leave a tool "running"
+        across turns. Agents not live in-process report an empty snapshot.
         """
         out: dict[int, dict[str, Any]] = {}
         for aid in agent_ids:
@@ -1126,29 +1209,15 @@ class AgentManager:
             # Rolling live-narration state, reset at every turn boundary so a
             # resting agent shows nothing and each turn narrates itself.
             narration_msg: str | None = None  # last completed assistant message
-            delta_buf: list[str] = []  # deltas since that message (newer text)
-            delta_len = 0
             for ev in self._events.get(aid, ()):
                 if ev.kind in ("turn_start", "turn_end", "idle", "aborted"):
                     running.clear()
                     order.clear()
                     narration_msg = None
-                    delta_buf = []
-                    delta_len = 0
                     continue
                 if ev.kind == "assistant_message":
                     if ev.text:
                         narration_msg = ev.text
-                    delta_buf = []
-                    delta_len = 0
-                    continue
-                if ev.kind == "assistant_delta":
-                    # Accumulate just enough of the streaming message to recover
-                    # its first line; stop once we clearly have it so a long
-                    # answer can't make this scan quadratic across polls.
-                    if ev.text and delta_len < 400:
-                        delta_buf.append(ev.text)
-                        delta_len += len(ev.text)
                     continue
                 rid = ev.request_id
                 if not rid:
@@ -1161,12 +1230,13 @@ class AgentManager:
                     running.pop(rid, None)
                     if rid in order:
                         order.remove(rid)
-            # In-flight deltas are newer than the last completed message, so
-            # prefer them; fall back to the last full message otherwise.
-            raw_narration = "".join(delta_buf) if delta_buf else narration_msg
-            narration = _clean_narration(raw_narration) if raw_narration else None
             run_id = self._agent_runs.get(aid)
             live = self._live.get(run_id) if run_id is not None else None
+            stream = live.stream if live is not None else None
+            # The answer being streamed is newer than the last completed message,
+            # so prefer it; fall back to the last full message otherwise.
+            raw_narration = stream.message if stream and stream.message else narration_msg
+            narration = _clean_narration(raw_narration) if raw_narration else None
             pending: dict[str, Any] | None = None
             if live is not None and live.pending_info:
                 info = next(iter(live.pending_info.values()))
@@ -1181,6 +1251,7 @@ class AgentManager:
                 "active_tool": running.get(order[-1]) if order else None,
                 "active_tool_count": len(order),
                 "active_narration": narration,
+                "active_thinking": stream.thinking if stream is not None else None,
                 "pending_permission": pending,
             }
         return out
@@ -1196,11 +1267,16 @@ class AgentManager:
         return await self._transcript.get_events(agent_id, agent_run_id=agent_run_id)
 
     async def get_events_page(
-        self, agent_id: int, *, agent_run_id: int | None = None, after: int = 0
+        self,
+        agent_id: int,
+        *,
+        agent_run_id: int | None = None,
+        after: int = 0,
+        epoch: str | None = None,
     ) -> AgentEventPage:
         """The transcript from ``after`` onward, for an incremental live reader."""
         return await self._transcript.get_events_page(
-            agent_id, agent_run_id=agent_run_id, after=after
+            agent_id, agent_run_id=agent_run_id, after=after, epoch=epoch
         )
 
     async def _teardown_run(self, run_id: int, *, forget: bool = False) -> None:
@@ -1226,6 +1302,7 @@ class AgentManager:
         self._loaded.discard(agent_id)
         self._event_locks.pop(agent_id, None)
         self._auth_announced.pop(agent_id, None)
+        self._transcript.bump_epoch(agent_id)
         # SQLite doesn't enforce ON DELETE CASCADE unless the foreign_keys
         # pragma is on, so clear the archive explicitly (the codebase manages
         # such cleanups in the app layer — see roles/topics delete).
@@ -1268,6 +1345,7 @@ class AgentManager:
             self._event_locks.pop(agent_id, None)
             self._auth_announced.pop(agent_id, None)
             self._agent_runs.pop(agent_id, None)
+            self._transcript.bump_epoch(agent_id)
             async with SessionLocal() as session:
                 await session.execute(
                     delete(AgentEventRecord).where(AgentEventRecord.agent_session_id == agent_id)
@@ -1326,6 +1404,51 @@ class AgentManager:
                 error=None,
             )
         await self._publish(agent_id, agent_run_id=run.id if run else None)
+
+    async def compact(self, agent_id: int, instructions: str = "") -> None:
+        """Summarise the agent's conversation to free context (``/compact``).
+
+        Delegates to the SDK's own history compaction: older turns are replaced
+        by a summary inside the SDK session, which emits
+        ``session.compaction_start``/``_complete`` events the timeline records.
+        Only an idle agent can be compacted — the SDK would otherwise rewrite a
+        history a turn is still appending to. Raises :class:`ValueError` with a
+        user-facing reason.
+        """
+        agent = await self._load(agent_id)
+        if agent is None:
+            raise ValueError("Agent not found.")
+        run = await self._resolve_run(agent_id)
+        if run is None or (not run.copilot_session_id and run.id not in self._live):
+            raise ValueError("Nothing to compact yet: this agent has no conversation.")
+        if run.status in ("running", "needs_approval"):
+            raise ValueError("The agent is busy. Wait for it to finish, or stop it, first.")
+        from copilot.generated.rpc import SessionHistoryCompactRequest, Trigger
+
+        live = await self._ensure_live(agent, run)
+        result = await live.sdk_session.rpc.history.compact(
+            SessionHistoryCompactRequest(
+                custom_instructions=instructions.strip() or None, trigger=Trigger.MANUAL
+            ),
+            timeout=_COMPACT_TIMEOUT_SECONDS,
+        )
+        if not result.success:
+            raise ValueError("Compaction failed; the conversation was left as it was.")
+        await self._publish(agent_id, agent_run_id=run.id)
+
+    async def rewind(
+        self, agent_id: int, event_id: str, mode: AgentRewindMode = "conversation"
+    ) -> AgentRewindResult:
+        """Drop a prompt of the current session and everything after it.
+
+        See :mod:`.rewind`. Raises :class:`~.rewind.RewindError` with a
+        user-facing reason and its HTTP status.
+        """
+        return await rewind_mod.rewind(self, agent_id, event_id, mode)
+
+    async def preview_rewind(self, agent_id: int, event_id: str) -> AgentRewindPreview:
+        """What rewinding to ``event_id`` would restore on disk (see :mod:`.rewind`)."""
+        return await rewind_mod.preview(self, agent_id, event_id)
 
     async def rerun_task(
         self, agent_id: int, *, extra: str | None = None, trigger: str = "manual"
@@ -1469,6 +1592,22 @@ class AgentManager:
         with an empty or stale step output while the real answer arrived a
         moment later.
         """
+        live = self._live.get(run_id)
+        name = type(getattr(event, "data", event)).__name__
+        if live is not None and (
+            name
+            in {
+                "AssistantMessageData",
+                "AssistantMessageDeltaData",
+                "AssistantReasoningData",
+                "AssistantReasoningDeltaData",
+                "AssistantUsageData",
+            }
+            or ("Tool" in name and name != "SessionToolsUpdatedData")
+        ):
+            # Mark at receipt, before an awaited send can fail while this event
+            # is still queued. Recovery must never replay already emitted work.
+            live.model_output_started = True
         queue = self._event_queues.setdefault(agent_id, deque())
         queue.append((run_id, event))
         if agent_id not in self._event_drainers:
@@ -1513,9 +1652,10 @@ class AgentManager:
             return
         run, agent = loaded
         agent_id = agent.id
-        # Archive every event so the timeline persists across session teardown
-        # (e.g. on topic link) and process restart, where the SDK would otherwise
-        # drop it (``get_events`` only replays ``SessionStartData`` on resume).
+        # Archive every event with content so the timeline persists across
+        # session teardown (e.g. on topic link) and process restart, where the SDK
+        # would otherwise drop it (``get_events`` only replays ``SessionStartData``
+        # on resume). Streaming frames only feed the live stream.
         await self._transcript.ensure_loaded(agent_id)
         # The status *before* this event is handled, read up front rather than
         # around the final patch below: handlers reached from here (``_on_idle``,
@@ -1528,8 +1668,35 @@ class AgentManager:
         normalised.at = datetime.now(UTC)
         # Stamp the producing run so the timeline can be split per execution.
         normalised.agent_run_id = run_id
-        self._events.setdefault(agent_id, []).append(normalised)
-        await timeline.archive_event(agent_id, normalised, agent_run_id=run_id)
+        live = self._live.get(run_id)
+        if live is not None:
+            if normalised.kind == "turn_start":
+                live.model_recovering = False
+            if (
+                normalised.kind
+                in {
+                    "assistant_delta",
+                    "reasoning_delta",
+                    "assistant_message",
+                    "reasoning",
+                    "tool_call",
+                    "tool_result",
+                    "usage",
+                }
+                or ("Tool" in normalised.kind and normalised.kind != "SessionToolsUpdatedData")
+                or "Permission" in normalised.kind
+            ):
+                live.model_output_started = True
+                live.model_recovering = False
+        update = live.stream.observe(normalised) if live is not None else None
+        if update is not None and update.flush is not None:
+            await self._record(agent_id, update.flush)
+        if is_content_free(normalised.kind, normalised.text):
+            # A streaming frame, or a message/reasoning with nothing in it. The
+            # live stream above has taken what it needs; the archive gets none.
+            await self._on_stream_frame(agent_id, run_id, live, update)
+            return
+        await self._record(agent_id, normalised)
 
         # A workiq tool that errors after the session was built with valid creds
         # usually means the OAuth token lapsed mid-turn. Surface the same sign-in
@@ -1571,6 +1738,8 @@ class AgentManager:
         elif name == "AssistantUsageData":
             await self._record_usage(run_id, data)
         elif name in ("SessionIdleData", "SystemNotificationAgentIdle"):
+            if live is not None and live.model_recovering:
+                return
             fresh = await self._run(run_id)
             # Don't let a trailing idle event mask a turn that just errored, was
             # paused/cancelled, or already reached a terminal/blocked resting
@@ -1591,6 +1760,28 @@ class AgentManager:
             patch["status"] = "cancelled"
             patch["finished_at"] = datetime.now(UTC)
         elif name in ("ErrorData", "SessionErrorData"):
+            message = str(getattr(data, "message", name))
+            rejection = f"{message} {getattr(data, 'error_code', '')}"
+            if live is not None and live.model_retry_scheduled and is_model_rejection(rejection):
+                # SDKs can report the same refused attempt through both error
+                # event names. A queued recovery already owns that attempt.
+                return
+            if (
+                live is not None
+                and not live.model_output_started
+                and not live.model_retry_scheduled
+                and live.dispatched_prompt
+                and is_model_rejection(rejection)
+                and any(c not in live.model_attempts for c in live.model_candidates)
+            ):
+                live.model_recovering = True
+                live.model_retry_scheduled = True
+                self.enqueue(
+                    self._model_selection.recover(
+                        run_id, live, rejection, turn_id=live.model_turn_id
+                    )
+                )
+                return
             patch["status"] = "failed"
             patch["error"] = str(getattr(data, "message", name))[:2000]
             patch["finished_at"] = datetime.now(UTC)
@@ -1626,6 +1817,36 @@ class AgentManager:
         ):
             self.enqueue(self._advance_workflows(run_id))
 
+    async def _record(self, agent_id: int, event: AgentEvent) -> None:
+        """Append an event to the agent's timeline, in memory and in the archive."""
+        self._events.setdefault(agent_id, []).append(event)
+        await timeline.archive_event(agent_id, event, agent_run_id=event.agent_run_id)
+
+    async def _on_stream_frame(
+        self,
+        agent_id: int,
+        run_id: int,
+        live: _LiveSession | None,
+        update: StreamUpdate | None,
+    ) -> None:
+        """Keep a run that is only streaming alive, and tell open views, cheaply."""
+        if live is None or update is None:
+            return
+        stream = live.stream
+        now = time.monotonic()
+        if now - stream.touched >= _STREAM_ACTIVITY_INTERVAL_SECONDS:
+            stream.touched = now
+            await self._patch_run(run_id, last_activity_at=datetime.now(UTC))
+        # A change held back by the throttle goes out with a later frame; byte
+        # counters interleave with every token, so it never waits for long.
+        stream.dirty = stream.dirty or update.changed
+        # Recovered thinking was just archived: the timeline has a new node.
+        due = now - stream.published >= _STREAM_PUBLISH_INTERVAL_SECONDS
+        if stream.dirty and (due or update.flush is not None):
+            stream.published = now
+            stream.dirty = False
+            await publish_agent_changed(agent_session_id=agent_id, agent_run_id=run_id)
+
     async def _record_usage(self, run_id: int, data: Any) -> None:
         await self._usage.record(run_id, data)
 
@@ -1650,15 +1871,24 @@ class AgentManager:
         Progress (``PROGRESS: n | label``) is applied whenever present and resets
         the stall counter on a fresh value. Mutates ``patch`` in place.
 
+        A **workflow step** that isn't autonomous still reports progress and
+        publishes artifacts: its kickoff tells it to, and the next steps read the
+        blackboard. Only the terminal directives stay autonomy-only, so such a
+        step rests at ``idle`` for the coordinator however it signs off.
+
         Step count and progress are read from ``run``: each execution pursues the
         objective on its own budget, so a sibling run can't spend this one's steps.
         """
         live = self._live.get(run.id)
+        speaks_protocol = agent.autonomy_enabled or run.workflow_run_id is not None
         directives = (
             parse_agent_directives(live.pending_answer)
-            if live is not None and agent.autonomy_enabled
+            if live is not None and speaks_protocol
             else {}
         )
+        if not agent.autonomy_enabled:
+            directives.pop("complete", None)
+            directives.pop("blocked", None)
         if live is not None:
             live.directive = directives or None
 
@@ -1720,6 +1950,19 @@ class AgentManager:
 
         # 3) Autonomous continuation — keep pursuing the objective if allowed.
         if agent.autonomy_enabled:
+            # Files mode: autonomy, its step budget and the token budget are read
+            # live from the file, so a widening that nobody accepted stops here.
+            if definition_overlay.files_mode():
+                async with SessionLocal() as review_session:
+                    changes = await definition_trust.pending_changes(review_session, agent)
+                if changes:
+                    patch["status"] = "blocked"
+                    patch["blocked_question"] = definition_trust.review_message(
+                        agent.title, changes
+                    )
+                    patch["active_prompt"] = None
+                    await self._notify_back(agent, run)
+                    return
             if live is not None and live.stall_count >= _STALL_LIMIT:
                 patch["status"] = "blocked"
                 patch["blocked_question"] = (
@@ -1754,6 +1997,10 @@ class AgentManager:
         patch["status"] = "idle"
         patch["active_prompt"] = None
         await self._notify_back(agent, run)
+        # Idle is not sticky, so a trailing idle (a background sub-agent settling)
+        # re-enters here: consume the answer so its artifacts publish only once.
+        if live is not None:
+            live.pending_answer = None
 
     async def _advance_goal_loop(self, run_id: int) -> None:
         """Take the next autonomous step toward the objective.
@@ -1781,7 +2028,7 @@ class AgentManager:
             # Reset the per-turn answer buffer so the next directive parse reads
             # only the upcoming step's message.
             live.pending_answer = None
-            await live.sdk_session.send(_CONTINUE_NUDGE)
+            await self._model_selection.send(run_id, live, _CONTINUE_NUDGE)
         except Exception as exc:
             if agent_id is not None:
                 await self._fail_turn(run_id, exc)

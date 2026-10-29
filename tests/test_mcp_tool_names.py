@@ -28,7 +28,7 @@ def _tool(server: str, name: str) -> MCPToolDef:
     ("server", "name"),
     [
         ("github", "list_issues"),
-        ("workspace-fs", "read_file"),
+        ("precursor", "read_workspace_file"),
         ("alpha", "nested__tool"),
         ("alpha", "a" * 57),
     ],

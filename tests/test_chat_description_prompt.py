@@ -140,7 +140,7 @@ def test_role_and_system_prompt_description_are_deterministic() -> None:
                 "description_as_system_prompt": True,
             },
         ).json()
-        client.patch(f"/api/chats/{chat['id']}", json={"role_id": role["id"]})
+        client.patch(f"/api/chats/{chat['id']}", json={"role": role["name"]})
 
         # Role persona lives in the system context; the description is enforced
         # per user turn — a stable, non-overlapping split.

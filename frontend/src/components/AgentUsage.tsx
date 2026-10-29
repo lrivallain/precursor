@@ -2,6 +2,8 @@ import { useMemo } from "react";
 import type { ReactNode } from "react";
 import { BarChart3 } from "lucide-react";
 import type { AgentEvent } from "../lib/types";
+import { CompactContextButton } from "./CompactContext";
+import { ContextBreakdown } from "./ContextBreakdown";
 
 // Per-agent token usage distilled from the workflow timeline. `usage` events
 // (one per metered LLM round) carry input/output tokens; `context_usage` events
@@ -15,6 +17,9 @@ export interface AgentUsage {
   rounds: number;
   contextUsed: number | null;
   contextLimit: number | null;
+  /** The SDK's split of the window; null until it reports one. */
+  contextSystem: number | null;
+  contextTools: number | null;
 }
 
 function numField(data: Record<string, unknown> | null, key: string): number {
@@ -30,6 +35,8 @@ export function computeAgentUsage(events: AgentEvent[]): AgentUsage {
   let rounds = 0;
   let contextUsed: number | null = null;
   let contextLimit: number | null = null;
+  let contextSystem: number | null = null;
+  let contextTools: number | null = null;
   for (const ev of events) {
     const kind = ev.kind.toLowerCase();
     if (kind === "usage") {
@@ -47,10 +54,31 @@ export function computeAgentUsage(events: AgentEvent[]): AgentUsage {
       if (limit > 0) {
         contextUsed = numField(ev.data, "current_tokens");
         contextLimit = limit;
+        const sys = ev.data?.system_tokens;
+        const tools = ev.data?.tool_definitions_tokens;
+        contextSystem = typeof sys === "number" ? sys : null;
+        contextTools = typeof tools === "number" ? tools : null;
       }
+    } else if (kind === "compaction" && ev.data?.success !== false) {
+      // The window shrinks the moment a compaction lands, before the next
+      // context_usage report.
+      const post = ev.data?.post_compaction_tokens;
+      if (typeof post === "number" && Number.isFinite(post)) contextUsed = post;
+      const limit = numField(ev.data, "token_limit");
+      if (limit > 0) contextLimit = limit;
     }
   }
-  return { lastInput, lastOutput, totalInput, totalOutput, rounds, contextUsed, contextLimit };
+  return {
+    lastInput,
+    lastOutput,
+    totalInput,
+    totalOutput,
+    rounds,
+    contextUsed,
+    contextLimit,
+    contextSystem,
+    contextTools,
+  };
 }
 
 /** Memoized token-usage summary derived from an agent's event stream. */
@@ -60,13 +88,6 @@ export function useAgentUsage(events: AgentEvent[]): AgentUsage {
 
 function formatTokens(n: number): string {
   return n.toLocaleString();
-}
-
-function compactTokens(n: number): string {
-  if (n < 1000) return String(n);
-  if (n < 10_000) return (n / 1000).toFixed(1) + "k";
-  if (n < 1_000_000) return Math.round(n / 1000) + "k";
-  return (n / 1_000_000).toFixed(1) + "M";
 }
 
 function UsageStat({
@@ -95,55 +116,21 @@ function UsageGroup({ title, children }: { title: string; children: ReactNode })
   );
 }
 
-// Context-window occupancy bar — green/amber/rose as it fills, like the
-// topic/chat conversation stats.
-function ContextWindowBar({
-  used,
-  limit,
-  model,
-}: {
-  used: number;
-  limit: number;
-  model: string | null;
-}) {
-  const pct = Math.min(100, Math.max(0, (used / limit) * 100));
-  const tone = pct >= 85 ? "bg-rose-500" : pct >= 60 ? "bg-amber-500" : "bg-emerald-500";
-  return (
-    <div>
-      <div className="mb-1 text-[10px] uppercase tracking-wide text-muted">Context window</div>
-      <div
-        className="h-2 w-full overflow-hidden rounded bg-border"
-        role="progressbar"
-        aria-valuemin={0}
-        aria-valuemax={limit}
-        aria-valuenow={used}
-        aria-label={`Context window used: ${used} of ${limit} tokens`}
-      >
-        <div className={`h-full ${tone} transition-all`} style={{ width: `${pct}%` }} />
-      </div>
-      <div className="mt-1 flex justify-between text-[11px] tabular-nums text-muted">
-        <span>
-          {compactTokens(used)} / {compactTokens(limit)}
-        </span>
-        <span>{pct.toFixed(pct < 10 ? 1 : 0)}%</span>
-      </div>
-      {model && (
-        <div className="mt-0.5 truncate text-[10px] text-muted" title={model}>
-          {model}
-        </div>
-      )}
-    </div>
-  );
-}
-
 export function AgentUsageSection({
   events,
   model,
+  compact,
 }: {
   events: AgentEvent[];
   model: string | null;
+  /** The /compact control; omitted where the agent can't be compacted. */
+  compact?: { busy: boolean; disabled: boolean; disabledReason?: string; run: () => void };
 }) {
   const usage = useAgentUsage(events);
+  const pct =
+    usage.contextLimit !== null && usage.contextUsed !== null && usage.contextLimit > 0
+      ? (usage.contextUsed / usage.contextLimit) * 100
+      : null;
   const hasUsage = usage.rounds > 0 || usage.contextLimit !== null;
   return (
     <div className="space-y-3 text-sm">
@@ -156,10 +143,21 @@ export function AgentUsageSection({
       ) : (
         <>
           {usage.contextLimit !== null && usage.contextUsed !== null && (
-            <ContextWindowBar
+            <ContextBreakdown
               used={usage.contextUsed}
               limit={usage.contextLimit}
+              system={usage.contextSystem}
+              systemTools={usage.contextTools}
               model={model}
+            />
+          )}
+          {compact && (
+            <CompactContextButton
+              pct={pct}
+              busy={compact.busy}
+              disabled={compact.disabled}
+              disabledReason={compact.disabledReason}
+              onCompact={compact.run}
             />
           )}
           <UsageGroup title="Last turn">

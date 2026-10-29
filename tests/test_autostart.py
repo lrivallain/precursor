@@ -130,6 +130,84 @@ def test_systemd_unit_is_well_formed(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     assert f"WorkingDirectory={supervisor.working_dir()}" in text
 
 
+@pytest.mark.parametrize("writer", ["_write_systemd", "_write_launchd"])
+def test_a_unit_never_names_a_working_directory_that_is_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, writer: str
+) -> None:
+    """A first install on a free port has written nothing to the data dir yet.
+
+    systemd then refused to start the unit (status=200/CHDIR) before Precursor
+    ever ran, so the log the installer pointed at didn't exist either.
+    """
+    monkeypatch.setattr(config, "is_source_checkout", lambda: False)
+    monkeypatch.setattr(autostart.shutil, "which", lambda name: f"/opt/bin/{name}")
+    cwd = supervisor.working_dir()
+    assert not cwd.exists()
+
+    getattr(autostart, writer)(autostart.APP, tmp_path / "units" / "unit")
+    assert cwd.is_dir()
+
+
+@pytest.mark.parametrize(
+    ("kind", "env", "expected"),
+    [
+        ("systemd", {}, False),
+        ("systemd", {"DISPLAY": ":0"}, True),
+        ("systemd", {"WAYLAND_DISPLAY": "wayland-0"}, True),
+        ("launchd", {}, True),
+        ("registry", {}, True),
+    ],
+)
+def test_the_tray_needs_a_desktop_to_appear_on(
+    monkeypatch: pytest.MonkeyPatch, kind: str, env: dict[str, str], expected: bool
+) -> None:
+    from precursor.backend import tray
+
+    monkeypatch.setattr(autostart, "_kind", lambda: kind)
+    monkeypatch.setattr(tray, "gui_available", lambda: True)
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    assert autostart.graphical_session() is expected
+    assert autostart.tray_supported() is expected
+
+
+@pytest.mark.parametrize(
+    ("returncode", "stdout", "expected"),
+    [(0, "yes\n", True), (0, "no\n", False), (1, "", None), (0, "garbage", None)],
+)
+def test_lingering_reads_loginctl(
+    monkeypatch: pytest.MonkeyPatch, returncode: int, stdout: str, expected: bool | None
+) -> None:
+    monkeypatch.setattr(autostart, "_kind", lambda: "systemd")
+    monkeypatch.setattr(autostart.os, "getuid", lambda: 1000, raising=False)
+    monkeypatch.setattr(
+        autostart.subprocess,
+        "run",
+        lambda argv, **_kw: subprocess.CompletedProcess(argv, returncode, stdout, ""),
+    )
+    assert autostart.lingering() is expected
+
+
+def test_lingering_is_unknown_without_loginctl(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _missing(*_args: object, **_kwargs: object) -> None:
+        raise FileNotFoundError("loginctl")
+
+    monkeypatch.setattr(autostart, "_kind", lambda: "systemd")
+    monkeypatch.setattr(autostart.os, "getuid", lambda: 1000, raising=False)
+    monkeypatch.setattr(autostart.subprocess, "run", _missing)
+    assert autostart.lingering() is None
+
+
+def test_lingering_does_not_apply_outside_systemd(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(autostart, "_kind", lambda: "launchd")
+    monkeypatch.setattr(
+        autostart.subprocess, "run", lambda *_a, **_kw: pytest.fail("asked loginctl")
+    )
+    assert autostart.lingering() is None
+
+
 def test_info_reports_not_installed_for_a_missing_unit(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -451,6 +529,7 @@ def test_install_starts_what_a_run_entry_only_starts_at_login(
 
     monkeypatch.setattr(autostart, "install", _registry_entry)
     monkeypatch.setattr(autostart, "tray_supported", lambda: True)
+    monkeypatch.setattr(autostart, "lingering", lambda: None)
     launched: list[str] = []
     monkeypatch.setattr(autostart, "launch", lambda unit: launched.append(unit.key))
     monkeypatch.setattr(
@@ -470,6 +549,42 @@ def test_install_starts_what_a_run_entry_only_starts_at_login(
     assert service_cli.main(["install"]) == 0
     assert launched == ["tray"]
     assert started == [True]
+
+
+def test_a_headless_install_skips_the_tray_and_points_at_lingering(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Installed over SSH onto a server: no icon to show, no session to outlive."""
+    from precursor.backend import service_cli, tray
+
+    installed: list[str] = []
+
+    def _install(unit: autostart.Unit) -> autostart.AutostartInfo:
+        installed.append(unit.key)
+        return autostart.AutostartInfo(
+            unit=unit.key, supported=True, installed=True, kind="systemd", path="/u"
+        )
+
+    monkeypatch.setattr(autostart, "install", _install)
+    monkeypatch.setattr(autostart, "_kind", lambda: "systemd")
+    monkeypatch.setattr(autostart, "lingering", lambda: False)
+    monkeypatch.setattr(tray, "gui_available", lambda: True)
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    monkeypatch.setattr(
+        supervisor, "reserve_port", lambda **_kw: supervisor.PortReservation(port=8000)
+    )
+    monkeypatch.setattr(supervisor, "status", lambda: supervisor.Status(running=False, state=None))
+    monkeypatch.setattr(
+        supervisor, "start", lambda **_kw: supervisor.Status(running=False, state=None)
+    )
+    monkeypatch.setattr(service_cli.time, "sleep", lambda _s: None)
+
+    assert service_cli.main(["install"]) == 0
+    out = capsys.readouterr().out
+    assert installed == ["app"]
+    assert "no graphical session" in out
+    assert "loginctl enable-linger" in out
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows Run entries")

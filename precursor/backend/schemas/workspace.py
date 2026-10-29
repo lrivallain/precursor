@@ -31,14 +31,11 @@ class WorkspaceRead(BaseModel):
     subdir: str | None = None
     cloned_at: datetime | None = None
     last_synced_at: datetime | None = None
-    role_id: int | None = None
+    # Holds the agent and workflow definition files (the built-in "Agents &
+    # workflows" workspace, or the one PRECURSOR_DEFINITIONS_WORKSPACE names).
+    hosts_definitions: bool = False
     created_at: datetime
     updated_at: datetime
-
-
-class WorkspaceUpdate(BaseModel):
-    # Currently only the assigned Assistant Role is mutable post-creation.
-    role_id: int | None = None
 
 
 class FileNode(BaseModel):
@@ -87,25 +84,130 @@ class FileDiff(BaseModel):
     binary: bool = False
 
 
+class FileVersions(BaseModel):
+    """Both sides of one file's diff (``null`` where the file doesn't exist)."""
+
+    path: str
+    original: str | None = None
+    modified: str | None = None
+    binary: bool = False
+    # Either side is over the size limit: no content is sent.
+    too_large: bool = False
+
+
 class LocalPath(BaseModel):
     # Absolute filesystem path of the workspace's working copy on the server.
     path: str
 
 
 class GitFileStatus(BaseModel):
+    # Relative to the repository root.
     path: str
-    # Two-letter porcelain code, e.g. " M", "??", "A ".
+    # Two-letter porcelain code, e.g. " M", "??", "A ", "UU".
     code: str
+    # A rename's previous path.
+    orig_path: str | None = None
+    # Unmerged: git stopped on a conflict in this file.
+    conflicted: bool = False
+    # Relative to the workspace's subdir, as the file browser lists it; null
+    # when the file is outside the subdir. Equal to ``path`` without a subdir.
+    browse_path: str | None = None
 
 
 class GitStatus(BaseModel):
+    # The checked-out branch; "HEAD" when detached.
     branch: str
+    # The commit checked out; None before the first commit.
+    head: str | None = None
+    detached: bool = False
+    # The branch it tracks on origin, e.g. "origin/main"; None while it isn't
+    # published (tracking a local branch doesn't count).
+    upstream: str | None = None
     # Commits ahead/behind the upstream branch (None when no upstream).
     ahead: int | None = None
     behind: int | None = None
     # True when there are uncommitted changes in the working tree.
     dirty: bool = False
+    # A merge is in progress (stopped on conflicts).
+    merging: bool = False
     files: list[GitFileStatus] = Field(default_factory=list)
+
+
+class GitCommit(BaseModel):
+    sha: str
+    short_sha: str
+    author: str
+    # Author date, ISO 8601 with the author's offset.
+    date: str
+    subject: str
+    # More than one: a merge.
+    parents: list[str] = Field(default_factory=list)
+
+
+class GitLog(BaseModel):
+    commits: list[GitCommit] = Field(default_factory=list)
+    # Another page follows (ask with ``skip`` = commits seen so far).
+    has_more: bool = False
+
+
+class GitCommitFile(BaseModel):
+    # A (added), M, D, R (renamed), C (copied), T (type changed).
+    status: str
+    path: str
+    orig_path: str | None = None
+
+
+class GitCommitDetail(GitCommit):
+    # The message after its subject line.
+    body: str = ""
+    # What ``files`` are compared with: the first parent (for a merge too);
+    # null for a root commit, whose files are all added.
+    parent: str | None = None
+    files: list[GitCommitFile] = Field(default_factory=list)
+
+
+class GitBranch(BaseModel):
+    name: str
+    # Its upstream on origin (published); None while unpublished.
+    upstream: str | None = None
+
+
+class GitBranches(BaseModel):
+    # The checked-out branch; None on a detached HEAD.
+    current: str | None = None
+    local: list[GitBranch] = Field(default_factory=list)
+    # Branch names on origin (whether or not they exist locally).
+    remote: list[str] = Field(default_factory=list)
+    # Why the remote's branches couldn't be listed (offline, auth…).
+    remote_error: str | None = None
+
+
+class BranchRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+
+
+class GitConflict(BaseModel):
+    """A conflicted file's three versions (null when that side has none)."""
+
+    path: str
+    # both_modified, both_added, deleted_by_us, deleted_by_them, added_by_us,
+    # added_by_them, both_deleted.
+    kind: str
+    base: str | None = None
+    ours: str | None = None
+    theirs: str | None = None
+    # Whether each side exists at all (the text is null when binary too).
+    has_base: bool = False
+    has_ours: bool = False
+    has_theirs: bool = False
+    binary: bool = False
+    too_large: bool = False
+
+
+class ResolveRequest(BaseModel):
+    path: str
+    # Keep one side's version (or its deletion); without it, the file as edited.
+    side: Literal["ours", "theirs"] | None = None
 
 
 class GitActionResult(BaseModel):
@@ -117,21 +219,3 @@ class GitActionResult(BaseModel):
     needs_manual_merge: bool = False
     local_path: str | None = None
     status: GitStatus | None = None
-
-
-class WorkspaceChatMessage(BaseModel):
-    role: Literal["user", "assistant"]
-    content: str
-
-
-class WorkspaceChatRequest(BaseModel):
-    # Latest user turn.
-    content: str = Field(min_length=1)
-    # Prior turns kept client-side (workspace chat is ephemeral, not stored).
-    history: list[WorkspaceChatMessage] = Field(default_factory=list)
-    # File the user is authoring; its content is injected as context.
-    path: str | None = None
-    model: str | None = None
-    # When set (skill invocation), the LLM receives this as the last user turn
-    # instead of `content`; the UI still shows the literal `content`.
-    prompt_override: str | None = None

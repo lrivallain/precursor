@@ -50,10 +50,8 @@ class MeetingSession(Base, TimestampMixin):
 
     # Assistant Role that grounds the live assistant (insights/tips, Q&A and the
     # Ask-assistant chat). Null resolves to the default role (no persona
-    # injected). SET NULL on delete reverts to default.
-    role_id: Mapped[int | None] = mapped_column(
-        ForeignKey("roles.id", ondelete="SET NULL"), nullable=True, index=True
-    )
+    # injected). Stored by name; an unknown name falls back to it.
+    role: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
 
     # Chat spawned for the "Ask assistant" tab, created on the first question and
     # grounded on the live context. Logically references chats.id; kept as a
@@ -89,6 +87,23 @@ class MeetingSession(Base, TimestampMixin):
         if not isinstance(data, dict):
             return {}
         return {str(k): str(v) for k, v in data.items()}
+
+    # JSON-encoded list[str] of raw diarization labels (run-scoped, like the keys
+    # of ``speaker_names``) the user marked as themselves, so suggested answers
+    # only react to questions asked by someone else.
+    me_labels_json: Mapped[str] = mapped_column(
+        Text, nullable=False, default="[]", server_default="[]"
+    )
+
+    @property
+    def me_labels(self) -> list[str]:
+        try:
+            data = json.loads(self.me_labels_json or "[]")
+        except (json.JSONDecodeError, TypeError):
+            return []
+        if not isinstance(data, list):
+            return []
+        return [str(x) for x in data]
 
     # JSON-encoded list[str] of attendee display names for the summary. Seeded
     # from speakers confirmed in the transcript (i.e. renamed to a real name);

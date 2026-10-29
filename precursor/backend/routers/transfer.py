@@ -15,16 +15,18 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.db import get_session
-from precursor.backend.models import AgentSession
+from precursor.backend.models import AgentSession, Workflow
 from precursor.backend.schemas.transfer import (
     TransferDocument,
     TransferImportRequest,
     TransferImportResult,
     TransferParseRequest,
     TransferPreview,
+    TransferWarning,
 )
 from precursor.backend.services.agents import transfer as transfer_svc
 from precursor.backend.services.app_settings import resolve_agents_enabled
+from precursor.backend.services.definitions import writer as definition_writer
 from precursor.backend.services.events import publish_agent_changed, publish_workflow_changed
 
 router = APIRouter(prefix="/api/transfer", tags=["transfer"])
@@ -98,6 +100,41 @@ async def apply_import(
     await _require_enabled(session)
     doc = transfer_svc.parse_document(payload.content)
     result = await transfer_svc.import_document(session, doc, payload.resolutions)
+    # Files mode: what was imported must reach the files, which declare it — a
+    # replaced agent would otherwise keep its old file and look unchanged.
+    touched = [*result.created_agent_ids, *result.replaced_agent_ids]
+    if result.agent_id is not None:
+        touched.append(result.agent_id)
+    wrote = False
+    rows: list[AgentSession | Workflow] = []
+    for agent_id in dict.fromkeys(touched):
+        if (agent := await session.get(AgentSession, agent_id)) is not None:
+            rows.append(agent)
+    if (
+        result.workflow_id is not None
+        and (workflow := await session.get(Workflow, result.workflow_id)) is not None
+    ):
+        rows.append(workflow)
+    for row in rows:
+        try:
+            if isinstance(row, Workflow):
+                path = await definition_writer.save_workflow(session, row)
+            else:
+                path = await definition_writer.save_agent(session, row)
+            wrote = bool(path) or wrote
+        except HTTPException as exc:
+            # The import itself went through; say which file it couldn't touch
+            # (one with errors, or with changes waiting for review).
+            name = row.name if isinstance(row, Workflow) else row.title
+            result.warnings.append(
+                TransferWarning(
+                    code="definition_not_written",
+                    message=f"'{name}' was imported but its definition file wasn't updated: "
+                    f"{exc.detail}",
+                )
+            )
+    if wrote:
+        await session.commit()
     if result.workflow_id is not None:
         await publish_workflow_changed(result.workflow_id)
     for agent_id in (

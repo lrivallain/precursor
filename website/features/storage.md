@@ -21,7 +21,7 @@ The usual suspects, and what bounds each:
 | Feature | Table | Bounded by |
 | --- | --- | --- |
 | [Agents](/features/agents-mode) timelines | `agent_events` | `agent_event_retention_days` + `agent_event_max_per_session` |
-| Tool results in [chats](/features/chats) and [topics](/features/topics) | `messages` | `tool_result_retention_days` |
+| Tool results and model [thinking](/features/topics#watching-the-model-think) in [chats](/features/chats) and [topics](/features/topics) | `messages` | `tool_result_retention_days` |
 | [Live](/features/live-sessions) transcripts | `meeting_segments` | `live_transcript_retention_days` |
 | [Attachments](/features/attachments) | *(on disk, not in the DB)* | content-addressed blobs + orphan GC |
 
@@ -35,7 +35,9 @@ Each one is deliberately **conservative about meaning and aggressive about
 bytes**:
 
 - **Tool results** — the row and its `tool_call_id` metadata stay, only the body
-  is replaced with a short placeholder. The conversation never loses a turn.
+  is replaced with a short placeholder. The conversation never loses a turn. The
+  same window drops the model's thinking on older replies; the reply itself
+  stays, it just loses its collapsed **Thinking** area.
 - **Live transcripts** — only raw segments of *ended* sessions are deleted.
   Summary, insights and notes survive, so a cleaned session still shows its
   recap. An active recording is never touched.
@@ -91,10 +93,23 @@ timeline node, tool name and status is preserved — only long captured blobs ar
 shortened, and each trimmed value is marked so it can't be mistaken for the
 original. It's idempotent, so running it twice is harmless.
 
+### Empty agent events
+
+Older versions archived every streaming fragment of an agent's reply and
+thinking as its own row, along with byte counters, message markers and empty
+messages. On a busy install that was nearly nine rows in ten, and they counted
+against `agent_event_max_per_session`, so the cap dropped real history to keep
+them. Agents now stream those fragments to the live view only, and archive just
+the complete message, thinking and tool events.
+
+**Empty agent events** deletes the leftover rows. Timelines never showed them,
+so no step is lost. Preview it, run it once, then **Compact**. It's idempotent,
+and a running agent is safe to clean.
+
 ## Backups are separate
 
-The [backup](/reference/configuration#backup) job copies the database and blobs
-into a plain folder on its own schedule and keeps its own snapshot retention.
+The [backup](/reference/configuration#backup) job copies the database, blobs and
+definitions into a plain folder on its own schedule and keeps its own snapshot retention.
 Cleaning up doesn't touch existing snapshots — but a snapshot taken *before* a
 cleanup still holds the old data, which is exactly what you want if you ever need
 to go back.

@@ -5,26 +5,38 @@ import { CommandDraftCard, type CommandDraftPayload } from "./CommandDraftCard";
 import { ConversationNotes, NotesConfirmModal } from "./ConversationNotes";
 import { TranscriptMessage, TranscriptTail, UndoDeleteToasts } from "./ConversationTranscript";
 import { Composer } from "./Composer";
+import { ComposerApprovalControl } from "./ComposerApprovalControl";
 import { ComposerModelControls } from "./ComposerModelControls";
 import { ChatStatsPanel } from "./ChatStatsPanel";
-import { api } from "../lib/api";
+import { useSideChats } from "./SideChatsSection";
+import { TopicSeedCard } from "./SideChatSeedCard";
+import { SelectionActions } from "./SelectionActions";
+import { api, apiErrorMessage } from "../lib/api";
 import { GITHUB_SLASH_COMMANDS } from "../lib/commands";
 import { detachedDraftStore } from "../lib/detachedDraftStore";
 import { useSettings } from "../lib/settingsStore";
+import { archiveTopic, hasPendingJump, startSideChat, takePendingJump } from "../lib/sideChats";
+import { startStepPlanFromTopic } from "../lib/stepPlans";
+import { useConfirm } from "./ConfirmDialog";
+import { convKey, streamStore } from "../lib/streamStore";
 import { useResizableWidth } from "../lib/useResizableWidth";
 import { useResizableHeight } from "../lib/useResizableHeight";
 import { useComposerInput } from "../lib/useComposerInput";
 import { useConversation } from "../lib/useConversation";
 import { ResizeHandle } from "./ResizeHandle";
+import { RewindBar } from "./RewindBar";
+import { TimelineRail } from "./TimelineRail";
 import { ReminderModal } from "./ReminderModal";
 import { ReminderBanner } from "./ReminderBanner";
 import { useTopicSummary } from "../lib/useTopicSummary";
 import { subscribeTopicSummaryToggle } from "../lib/summaryOpen";
-import { TopicSummaryPanel } from "./TopicSummaryPanel";
+import { TopicSummaryPanel, hasTopicSummaryBar } from "./TopicSummaryPanel";
 import type {
   AgentSession,
   Message,
+  SideChatItem,
   Topic,
+  WorkspaceTurnContext,
 } from "../lib/types";
 import { RoleSelector } from "./RoleSelector";
 
@@ -38,7 +50,9 @@ interface ChatPanelProps {
   /** Refresh the sidebar Reminders section after a set / cancel / done. */
   onRemindersChanged?: () => void;
   /** Persist a role change for this topic (null = default). */
-  onSetRole?: (roleId: number | null) => Promise<void>;
+  onSetRole?: (roleName: string | null) => Promise<void>;
+  /** Shown from the workspace panel: turns carry the open file, and the stats rail is left out. */
+  workspaceContext?: WorkspaceTurnContext | null;
 }
 
 type PendingKind = "gh-update" | "gh-create" | "gh-close";
@@ -105,12 +119,13 @@ function cardConfirmHint(kind: PendingKind): string | undefined {
   return undefined;
 }
 
-export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, onRemindersChanged, onSetRole }: ChatPanelProps) {
+export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, onRemindersChanged, onSetRole, workspaceContext }: ChatPanelProps) {
   const [composerFocusToken, setComposerFocusToken] = useState(0);
   const [pendingCommand, setPendingCommand] = useState<PendingCommand | null>(null);
 
+  const confirmAction = useConfirm();
   const settings = useSettings();
-  const showStats = settings?.show_chat_stats ?? true;
+  const showStats = (settings?.show_chat_stats ?? true) && !workspaceContext;
   const issueAssociationsEnabled = settings?.issue_associations_enabled ?? true;
   const agentsEnabled = settings?.agents_enabled ?? false;
   const excludedCommands = useMemo<ReadonlySet<string>>(() => {
@@ -127,6 +142,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
     onUpdated: onTopicUpdated,
     onRemindersChanged,
     onSetRole,
+    workspaceContext,
     onPostComment: async (text, attachmentIds) => {
       const res = await api.github.postUpdate(topic.id, text, attachmentIds);
       return [
@@ -136,6 +152,66 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
     },
   });
   const { streamKey, setPersisted, systemNote, visibleMessages, streaming, reminders } = conv;
+
+  const sideChatItems = useSideChats(topic.id);
+  // Side chats grouped by the reply they were started from, linked under it.
+  const sideChatsByReply = useMemo(() => {
+    const map = new Map<number, SideChatItem[]>();
+    for (const item of sideChatItems) {
+      if (item.parent_message_id == null) continue;
+      const list = map.get(item.parent_message_id) ?? [];
+      list.push(item);
+      map.set(item.parent_message_id, list);
+    }
+    // Oldest first, so a reply's chats read in the order they were started.
+    for (const list of map.values()) list.reverse();
+    return map;
+  }, [sideChatItems]);
+  const [startingSideChat, setStartingSideChat] = useState(false);
+
+  // Start a side chat on the whole topic or on one reply, then leave for it.
+  // A first message, when given, is sent as the chat opens.
+  async function runSideChat(
+    messageId: number | null,
+    firstMessage = "",
+    quote: string | null = null,
+  ): Promise<void> {
+    if (startingSideChat) return;
+    setStartingSideChat(true);
+    try {
+      const chat = await startSideChat(topic.id, messageId, quote);
+      const text = firstMessage.trim();
+      if (text) void streamStore.start(convKey("chat", chat.id), text);
+    } catch (err) {
+      systemNote(`Couldn't start the side chat: ${(err as Error).message}`);
+    } finally {
+      setStartingSideChat(false);
+    }
+  }
+
+  // Split the topic's latest ask into a step plan. The model call is slow, so a
+  // note says so; a model failure still leaves an (empty) plan in Step by step.
+  async function runSteps(): Promise<void> {
+    systemNote("Splitting the latest ask into steps… this can take a moment.");
+    try {
+      await startStepPlanFromTopic(topic.id);
+    } catch (err) {
+      systemNote(`Couldn't split the ask into steps: ${apiErrorMessage(err)}`);
+    }
+  }
+
+  // Arrived from a side chat's "Open in topic": scroll to its source reply's
+  // turn once the turn index knows it.
+  const { turns: timelineTurns, jumpTo } = conv.timeline;
+  useEffect(() => {
+    if (!hasPendingJump(topic.id) || timelineTurns.length === 0) return;
+    const messageId = takePendingJump(topic.id);
+    if (messageId == null) return;
+    const index = timelineTurns.findIndex(
+      (t) => t.message_id <= messageId && messageId <= t.last_message_id,
+    );
+    if (index >= 0) void jumpTo(index);
+  }, [topic.id, timelineTurns, jumpTo]);
 
   const summary = useTopicSummary(topic.id);
   const toggleSummary = summary.toggleVisible;
@@ -176,6 +252,14 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
     }
     if (name === "new") {
       await runNew(argument);
+      return;
+    }
+    if (name === "side-chat") {
+      await runSideChat(null, argument);
+      return;
+    }
+    if (name === "steps") {
+      await runSteps();
       return;
     }
     if (name === "pin" || name === "unpin") {
@@ -382,7 +466,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
 
   async function runArchive(): Promise<void> {
     try {
-      await api.topics.archive(topic.id);
+      await archiveTopic(topic.id, confirmAction);
       onArchived?.();
     } catch (err) {
       systemNote(`Archive failed: ${(err as Error).message}`);
@@ -527,21 +611,35 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
             onDone={() => void reminders.runReminderClear(true)}
           />
         )}
-        <TopicSummaryPanel
-          key={topic.id}
-          topicId={topic.id}
-          summary={summary.summary}
-          busy={summary.busy}
-          error={summary.error}
-          refreshNotice={summary.refreshNotice}
-          onSave={summary.save}
-          onResolve={summary.resolve}
-          onRemove={summary.remove}
-          onRefresh={() => void summary.refresh()}
-          onToggleVisible={() => void summary.toggleVisible()}
-          onDismissError={summary.clearError}
+        {hasTopicSummaryBar(summary.summary, summary.error) && (
+          <TopicSummaryPanel
+            key={topic.id}
+            topicId={topic.id}
+            summary={summary.summary}
+            busy={summary.busy}
+            error={summary.error}
+            refreshNotice={summary.refreshNotice}
+            onSave={summary.save}
+            onResolve={summary.resolve}
+            onRemove={summary.remove}
+            onRefresh={() => void summary.refresh()}
+            onToggleVisible={() => void summary.toggleVisible()}
+            onDismissError={summary.clearError}
+          />
+        )}
+        <div className="relative flex min-h-0 flex-1">
+        <SelectionActions
+          scrollRef={conv.scrollRef}
+          sourceOf={(id) => conv.messages.find((m) => m.id === id)?.content}
+          onSideChat={
+            streaming || startingSideChat
+              ? undefined
+              : (messageId, quote) => void runSideChat(messageId, "", quote)
+          }
+          onEdit={streaming ? undefined : conv.replyEdit.start}
+          onNote={(markdown) => void conv.notes.appendToPad(markdown)}
         />
-        <div ref={conv.scrollRef} onScroll={conv.onScroll} className="flex-1 overflow-y-auto p-4 min-w-0">
+        <div ref={conv.scrollRef} onScroll={conv.onScroll} className="flex-1 overflow-y-auto p-4 pr-12 min-w-0">
           <div
             className="relative mx-auto space-y-3"
             style={{ maxWidth: chatWidth }}
@@ -552,6 +650,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
               Loading earlier messages…
             </div>
           )}
+          {!conv.hasOlder && <TopicSeedCard topic={topic} />}
           {visibleMessages.length === 0 && !streaming && (
             <div className="text-sm text-muted text-center pt-8">
               Send a message to start the conversation.
@@ -560,6 +659,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
           {(() => {
             // In a scheduled topic the user turn is the repeated automation
             // prompt — collapse it so generated content gets the room.
+            const rewindFrom = conv.rewind.preview?.fromId ?? null;
             const renderMessage = (m: (typeof visibleMessages)[number], grouped: boolean) => (
               <TranscriptMessage
                 key={m.id}
@@ -568,8 +668,23 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
                 retryable={m.id === conv.retryableId}
                 onRetry={conv.retryTurn}
                 onDelete={conv.deletion.requestDeleteMessage}
+                compacted={
+                  conv.compaction.markerId !== null && m.id > 0 && m.id < conv.compaction.markerId
+                }
+                doomed={rewindFrom !== null && m.id > 0 && m.id >= rewindFrom}
+                cutAbove={m.id === rewindFrom}
+                current={m.id === conv.timeline.currentMessageId}
+                rewindActions={conv.rewindActions(m)}
+                revealActions={
+                  m.id === conv.timeline.currentMessageId &&
+                  !conv.timeline.view.atLatest &&
+                  !conv.rewind.preview
+                }
                 collapsible={m.role === "user" && topic.schedule != null}
                 hideAgentBadge={grouped}
+                onStartSideChat={streaming ? undefined : (msg) => void runSideChat(msg.id)}
+                sideChats={sideChatsByReply.get(m.id)}
+                replyEdit={conv.replyEdit}
               />
             );
 
@@ -625,14 +740,25 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
             visibleMessages={visibleMessages}
             streaming={streaming}
             pendingContent={conv.pendingContent}
+            pendingReasoning={conv.pendingReasoning}
             onPickSuggestion={conv.sendSuggestion}
             onStop={conv.stop}
+            approvals={conv.approvals.approvals}
+            onDecideApproval={conv.approvals.decide}
           />
         </div>
+      </div>
+        <TimelineRail timeline={conv.timeline} rewind={conv.rewind} streaming={streaming} />
       </div>
 
       <div className="border-t border-border p-3 pb-safe">
         <div className="mx-auto space-y-2" style={{ maxWidth: chatWidth }}>
+          <RewindBar
+            timeline={conv.timeline}
+            rewind={conv.rewind}
+            streaming={streaming}
+            scrollRef={conv.scrollRef}
+          />
           <UndoDeleteToasts deletion={conv.deletion} />
           <ConversationNotes
             notes={conv.notes}
@@ -701,10 +827,11 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
             focusToken={composerFocusToken}
             toolbarStart={
               <>
-                <ComposerModelControls />
+                <ComposerModelControls conversation={{ kind: "topic", id: topic.id, selection: topic.llm_selection, onUpdated: onTopicUpdated }} />
+                <ComposerApprovalControl kind="topic" id={topic.id} policy={topic.approval_policy} onUpdated={onTopicUpdated} />
                 <RoleSelector
-                  value={topic.role_id ?? null}
-                  onChange={(roleId) => void onSetRole?.(roleId)}
+                  value={topic.role ?? null}
+                  onChange={(roleName) => void onSetRole?.(roleName)}
                   open={conv.roleOpen}
                   onOpenChange={conv.setRoleOpen}
                 />
@@ -715,7 +842,29 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
         </div>
       </div>
       </div>
-      {showStats && <ChatStatsPanel streamKey={streamKey} messages={conv.messages} />}
+      {showStats && (
+        <ChatStatsPanel
+          streamKey={streamKey}
+          messages={conv.messages}
+          kind="topic"
+          containerId={topic.id}
+          discussion={{ kind: "topic", ref: topic.public_id }}
+          selection={topic.llm_selection}
+          streaming={streaming}
+          compaction={conv.compaction}
+          reminder={{
+            reminder: reminders.reminder,
+            busy: reminders.reminderBusy,
+            onEdit: () => reminders.setReminderModal({ note: "" }),
+            onDone: () => void reminders.runReminderClear(true),
+          }}
+          sideChats={{
+            items: sideChatItems,
+            starting: startingSideChat,
+            onStart: () => void runSideChat(null),
+          }}
+        />
+      )}
       {reminders.reminderModal && (
         <ReminderModal
           container="topic"

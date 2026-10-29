@@ -13,46 +13,68 @@ the result to an SSE generator that outlives the request-scoped session, and the
 generator persists through fresh sessions of its own.
 
 The transcript endpoints both containers expose (list, clear, delete one, save a
-stopped reply) live here too, keyed on :data:`ContainerKind`, so the topic and
+stopped reply, edit a reply, the turn index and rewind) live here too, keyed on :data:`ContainerKind`, so the topic and
 chat routers stay one-liners over the same behaviour.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
-from collections.abc import AsyncIterator, Collection
-from dataclasses import dataclass
+from collections.abc import AsyncIterator, Callable, Collection
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import HTTPException, status
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute, selectinload
 
-from precursor.backend.models import Attachment, Message, MessageRole
+from precursor.backend.db import SessionLocal
+from precursor.backend.models import MESSAGE_KIND_COMPACTION, Attachment, Message, MessageRole
+from precursor.backend.models.tool_approval import APPROVAL_APPROVED, APPROVAL_KIND_INTENT
 from precursor.backend.schemas import ChatRequest
+from precursor.backend.services import approvals as approval_service
+from precursor.backend.services import side_chats
 from precursor.backend.services.app_settings import (
+    resolve_llm_max_attachment_chars,
     resolve_llm_max_input_tokens,
     resolve_llm_max_tool_result_tokens,
     resolve_llm_model,
     resolve_llm_reasoning_effort,
+    resolve_llm_tool_result_keep_turns,
     resolve_max_tool_rounds,
 )
+from precursor.backend.services.attachment_extraction import warm_attachment_text_cache
+from precursor.backend.services.context_budget import elide_stale_tool_results
+from precursor.backend.services.events import is_streaming, publish_approval_changed
 from precursor.backend.services.github_auth import resolve_github_token
 from precursor.backend.services.llm import get_llm_provider
-from precursor.backend.services.llm.base import ChatMessage, LLMProvider
+from precursor.backend.services.llm.base import ChatMessage, LLMProvider, ToolCallRequest
+from precursor.backend.services.mcp.client import AUTH_PAUSE_TIMEOUT_SECONDS, get_mcp_client_manager
 from precursor.backend.services.message_paging import list_message_window
+from precursor.backend.services.model_fallbacks import (
+    resolve_model_category,
+    resolve_model_fallbacks,
+    selected_category_presets,
+)
 from precursor.backend.services.note_drafts import consume_note_draft_attachments_to_message
 from precursor.backend.services.turn_engine import (
     ContainerKind,
+    ToolAuthRequired,
+    ToolResultTurn,
     container_message_kwargs,
+    execute_tool_call,
     hydrate_history,
     lifecycle_stream,
     load_enabled_mcp_servers,
+    persist_tool_result,
     prepare_retry_turn,
     publish_container_changed,
     run_message_stream,
 )
+from precursor.backend.services.workspaces import WORKSPACE_READ_TOOLS, WORKSPACE_WRITE_TOOLS
 
 
 def _message_fk(kind: ContainerKind) -> InstrumentedAttribute[int | None]:
@@ -78,6 +100,10 @@ class TurnSettings:
     provider: LLMProvider
     github_token: str
     enabled_servers: list[str]
+    # Approval policy for chats and topics; ``None`` runs every call (workspace chat).
+    gate: approval_service.ApprovalGate | None = None
+    # An unattended run keeps only Precursor's workspace tools (see ``run_topic_turn``).
+    restrict_precursor: bool = False
 
 
 async def resolve_turn_settings(
@@ -85,21 +111,77 @@ async def resolve_turn_settings(
     *,
     model_override: str | None = None,
     exclude_servers: Collection[str] = (),
+    topic_id: int | None = None,
+    chat_id: int | None = None,
 ) -> TurnSettings:
     """Resolve every setting a turn needs from the app settings.
 
     ``model_override`` is the composer's per-turn model pick; the saved model is
     only looked up when it is absent. ``exclude_servers`` removes MCP servers
-    from the enabled set for this turn only.
+    from the enabled set for this turn only. A conversation (``topic_id`` or
+    ``chat_id``) also gets its approval gate.
     """
+    settings = await _resolve_base_settings(
+        session,
+        model_override=model_override,
+        exclude_servers=exclude_servers,
+        topic_id=topic_id,
+        chat_id=chat_id,
+    )
+    if topic_id is not None:
+        gate = await approval_service.build_gate(session, "topic", topic_id)
+    elif chat_id is not None:
+        gate = await approval_service.build_gate(session, "chat", chat_id)
+    else:
+        return settings
+    return replace(settings, gate=gate)
+
+
+async def _resolve_base_settings(
+    session: AsyncSession,
+    *,
+    model_override: str | None,
+    exclude_servers: Collection[str],
+    topic_id: int | None,
+    chat_id: int | None,
+) -> TurnSettings:
     enabled = [s for s in await load_enabled_mcp_servers(session) if s not in exclude_servers]
+    from precursor.backend.services.conversation_llm import resolve_selection, saved_selection
+
+    selection = await saved_selection(session, topic_id=topic_id, chat_id=chat_id)
+    if selection is not None:
+        resolved = await resolve_selection(session, selection, model_override=model_override)
+        return TurnSettings(
+            model=resolved.model,
+            reasoning_effort=resolved.reasoning_effort,
+            max_tool_rounds=await resolve_max_tool_rounds(session),
+            max_input_tokens=resolved.context_tokens,
+            max_tool_result_tokens=await resolve_llm_max_tool_result_tokens(session),
+            provider=resolved.provider,
+            github_token=await resolve_github_token(session),
+            enabled_servers=enabled,
+        )
+    category = await resolve_model_category(session) if not model_override else None
+    provider = (
+        await get_llm_provider(session, model_category=category)
+        if category is not None
+        else await get_llm_provider(session)
+    )
+    max_input_tokens = await resolve_llm_max_input_tokens(session)
+    if category is not None:
+        categories = await resolve_model_fallbacks(session)
+        presets = selected_category_presets(categories, category)
+        if presets:
+            # Retain enough history for any candidate; the wrapper applies the
+            # chosen preset's own budget on each invocation.
+            max_input_tokens = max(preset.context_tokens for preset in presets)
     return TurnSettings(
         model=model_override or await resolve_llm_model(session),
         reasoning_effort=await resolve_llm_reasoning_effort(session),
         max_tool_rounds=await resolve_max_tool_rounds(session),
-        max_input_tokens=await resolve_llm_max_input_tokens(session),
+        max_input_tokens=max_input_tokens,
         max_tool_result_tokens=await resolve_llm_max_tool_result_tokens(session),
-        provider=await get_llm_provider(session),
+        provider=provider,
         github_token=await resolve_github_token(session),
         enabled_servers=enabled,
     )
@@ -138,6 +220,10 @@ async def persist_user_turn(
         )
         return user_msg, list(user_msg.attachments)
 
+    # Moving on from a parked turn settles its open approvals first, so their
+    # "not run" tool rows land before the new prompt and the history stays valid.
+    if await approval_service.abandon_open(session, kind, container_id):
+        await publish_approval_changed(**container_message_kwargs(kind, container_id))
     user_msg = await persist_user_message(session, kind, container_id, payload.content)
 
     # Only adopt rows that belong to this container and are still unbound, so a
@@ -201,6 +287,40 @@ def user_echo(
 # -- History ---------------------------------------------------------------
 
 
+async def load_container_rows(
+    session: AsyncSession, kind: ContainerKind, container_id: int
+) -> list[Message]:
+    """Every transcript row of a container, oldest first, attachments loaded."""
+    result = await session.execute(
+        select(Message)
+        .where(_message_fk(kind) == container_id)
+        .options(selectinload(Message.attachments))
+        .order_by(Message.created_at)
+    )
+    return list(result.scalars().all())
+
+
+async def load_model_history(
+    session: AsyncSession,
+    kind: ContainerKind,
+    container_id: int,
+    *,
+    prompt_override: str | None = None,
+) -> list[ChatMessage]:
+    """The container's transcript hydrated for the model, before any elision."""
+    rows = await load_container_rows(session, kind, container_id)
+    # Parsing a large PDF is slow and blocking: fill the on-disk text cache in a
+    # worker thread so hydration below only reads cached text.
+    docs = [(att.sha256, att.mime) for m in rows for att in m.attachments]
+    if docs:
+        await asyncio.to_thread(warm_attachment_text_cache, docs)
+    return hydrate_history(
+        rows,
+        attachment_max_chars=await resolve_llm_max_attachment_chars(session),
+        prompt_override=prompt_override,
+    )
+
+
 async def snapshot_history(
     session: AsyncSession,
     kind: ContainerKind,
@@ -213,24 +333,14 @@ async def snapshot_history(
     ``prompt_override`` is a skill invocation's expanded prompt: the persisted
     user turn stays the literal slash command (so the transcript renders
     ``/to-en bravo``), but the model sees the expansion for this turn only.
+
+    History starts at the latest compaction marker, and large tool results from
+    older turns are shortened (``llm_tool_result_keep_turns``).
     """
-    result = await session.execute(
-        select(Message)
-        .where(_message_fk(kind) == container_id)
-        .options(selectinload(Message.attachments))
-        .order_by(Message.created_at)
+    history = await load_model_history(session, kind, container_id, prompt_override=prompt_override)
+    return elide_stale_tool_results(
+        history, keep_turns=await resolve_llm_tool_result_keep_turns(session)
     )
-    history = hydrate_history(list(result.scalars().all()))
-    if prompt_override:
-        for idx in range(len(history) - 1, -1, -1):
-            if history[idx].role == "user":
-                history[idx] = ChatMessage(
-                    role="user",
-                    content=prompt_override,
-                    image_urls=history[idx].image_urls,
-                )
-                break
-    return history
 
 
 # -- Streaming -------------------------------------------------------------
@@ -242,11 +352,25 @@ def stream_turn(
     *,
     system_prompt: str,
     history: list[ChatMessage],
-    echo: dict[str, Any],
+    echo: dict[str, Any] | None,
     settings: TurnSettings,
 ) -> AsyncIterator[dict[str, str]]:
     """The SSE event stream for a prepared turn, framed by stream.started/ended."""
-    inner = run_message_stream(
+    return lifecycle_stream(
+        kind, container_id, _turn_events(kind, container_id, system_prompt, history, echo, settings)
+    )
+
+
+def _turn_events(
+    kind: ContainerKind,
+    container_id: int,
+    system_prompt: str,
+    history: list[ChatMessage],
+    echo: dict[str, Any] | None,
+    settings: TurnSettings,
+    auth_wait_timeout: float = AUTH_PAUSE_TIMEOUT_SECONDS,
+) -> AsyncIterator[dict[str, str]]:
+    return run_message_stream(
         kind=kind,
         container_id=container_id,
         system_prompt=system_prompt,
@@ -260,8 +384,134 @@ def stream_turn(
         provider=settings.provider,
         github_token=settings.github_token,
         enabled_servers=settings.enabled_servers,
+        auth_wait_timeout=auth_wait_timeout,
+        gate=settings.gate,
+        restrict_precursor=settings.restrict_precursor,
     )
-    return lifecycle_stream(kind, container_id, inner)
+
+
+# -- Approvals: park and resume --------------------------------------------
+
+
+class ResumeConflict(Exception):
+    """The conversation can't resume now (still waiting, or already running)."""
+
+
+async def check_resumable(
+    session: AsyncSession, kind: ContainerKind, container_id: int
+) -> list[Any]:
+    """The decided approvals a resume will run, or a conflict explaining why not."""
+    if is_streaming(kind, container_id):
+        raise ResumeConflict("This conversation is already running")
+    decided, waiting = await approval_service.decided_unexecuted(session, kind, container_id)
+    if waiting:
+        raise ResumeConflict(f"{waiting} approval(s) still need an answer")
+    if not decided:
+        raise ResumeConflict("Nothing to resume")
+    return decided
+
+
+async def _settle_approvals(
+    kind: ContainerKind,
+    container_id: int,
+    decided: list[Any],
+    settings: TurnSettings,
+    auth_wait_timeout: float = AUTH_PAUSE_TIMEOUT_SECONDS,
+) -> AsyncIterator[dict[str, str]]:
+    """Write the tool result of every decided approval, running approved tools."""
+    manager = get_mcp_client_manager()
+    async with manager.acquired(
+        settings.enabled_servers, github_token=settings.github_token, advertise_cached=True
+    ) as active:
+        if settings.restrict_precursor:
+            active.restrict_server_tools("precursor", WORKSPACE_READ_TOOLS | WORKSPACE_WRITE_TOOLS)
+        for row in decided:
+            call = ToolCallRequest(id=row.tool_call_id, name=row.tool_name, arguments=row.arguments)
+            if row.kind == APPROVAL_KIND_INTENT:
+                outcome = ToolResultTurn(
+                    call,
+                    approval_service.intent_result(row),
+                    row.status != APPROVAL_APPROVED,
+                    None,
+                )
+            elif row.status != APPROVAL_APPROVED:
+                outcome = ToolResultTurn(call, approval_service.denied_tool_result(row), True, None)
+            else:
+                executed: ToolResultTurn | None = None
+                async for step in execute_tool_call(active, call, auth_wait_timeout):
+                    if isinstance(step, ToolAuthRequired):
+                        yield {
+                            "event": "mcp_auth_required",
+                            "data": json.dumps(
+                                {"server": step.server, "message": step.message, "tool": step.tool}
+                            ),
+                        }
+                    else:
+                        executed = step
+                assert executed is not None
+                outcome = executed
+            message_id = await persist_tool_result(kind, container_id, outcome)
+            await approval_service.mark_executed(row.id)
+            yield {
+                "event": "tool_result",
+                "data": json.dumps(
+                    {
+                        "message_id": message_id,
+                        "tool_call_id": call.id,
+                        "name": call.name,
+                        "arguments": call.arguments,
+                        "content": outcome.result_text,
+                        "is_error": outcome.is_error,
+                        "link": outcome.link,
+                    }
+                ),
+            }
+
+
+def resume_turn(
+    kind: ContainerKind,
+    container_id: int,
+    *,
+    system_prompt: str,
+    decided: list[Any],
+    settings: TurnSettings,
+    finish_history: Callable[[list[ChatMessage]], list[ChatMessage]] | None = None,
+    auth_wait_timeout: float = AUTH_PAUSE_TIMEOUT_SECONDS,
+) -> AsyncIterator[dict[str, str]]:
+    """Continue a parked turn: run the decided calls, then let the model go on.
+
+    The history is read only after the tool rows exist, so the parked assistant
+    turn hydrates intact. ``finish_history`` lets a chat re-apply its system
+    instruction to the fresh snapshot. ``auth_wait_timeout`` bounds a pause for
+    an interactive sign-in (``0`` for an unattended resume).
+    """
+
+    async def events() -> AsyncIterator[dict[str, str]]:
+        async for evt in _settle_approvals(
+            kind, container_id, decided, settings, auth_wait_timeout
+        ):
+            yield evt
+        await publish_approval_changed(**container_message_kwargs(kind, container_id))
+        async with SessionLocal() as s:
+            history = await snapshot_history(s, kind, container_id)
+        if finish_history is not None:
+            history = finish_history(history)
+        # A continued turn can park again, so the gate is rebuilt: "always allow"
+        # answers given a moment ago apply to the very next call.
+        async with SessionLocal() as s:
+            gate = await approval_service.build_gate(s, kind, container_id)
+        async for evt in _turn_events(
+            kind,
+            container_id,
+            system_prompt,
+            history,
+            None,
+            replace(settings, gate=gate),
+            auth_wait_timeout,
+        ):
+            yield evt
+
+    return lifecycle_stream(kind, container_id, events())
 
 
 # -- Transcript upkeep -----------------------------------------------------
@@ -285,9 +535,15 @@ async def clear_container_messages(
     session: AsyncSession, kind: ContainerKind, container_id: int
 ) -> None:
     """Wipe a container's transcript. The container itself is kept."""
+    if kind == "topic":
+        await side_chats.detach_messages(
+            session, select(Message.id).where(Message.topic_id == container_id)
+        )
+    await approval_service.delete_for_container(session, kind, container_id)
     await session.execute(delete(Message).where(_message_fk(kind) == container_id))
     await session.commit()
     await publish_container_changed(kind, container_id)
+    await publish_approval_changed(**container_message_kwargs(kind, container_id))
 
 
 async def delete_container_message(
@@ -298,9 +554,169 @@ async def delete_container_message(
     owner = None if msg is None else (msg.topic_id if kind == "topic" else msg.chat_id)
     if msg is None or owner != container_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Message not found")
+    if kind == "topic":
+        await side_chats.detach_messages(session, select(Message.id).where(Message.id == msg.id))
+    await approval_service.delete_for_messages(session, [msg.id])
     await session.delete(msg)
     await session.commit()
     await publish_container_changed(kind, container_id)
+
+
+async def edit_container_message(
+    session: AsyncSession, kind: ContainerKind, container_id: int, message_id: int, content: str
+) -> Message:
+    """Replace an assistant reply's text with the user's edit.
+
+    The first edit keeps the model's answer in ``original_content``; later
+    edits leave it alone. Saving text equal to that original is a restore and
+    drops the snapshot. Later turns read ``content``, so they see the edit.
+    """
+    msg = await session.get(Message, message_id)
+    owner = None if msg is None else (msg.topic_id if kind == "topic" else msg.chat_id)
+    if msg is None or owner != container_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Message not found")
+    if msg.role != MessageRole.ASSISTANT or msg.kind is not None:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, "Only assistant replies can be edited"
+        )
+    if not content.strip():
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "A reply can't be empty")
+    if content == msg.content:
+        return msg
+    if msg.original_content is None:
+        msg.original_content = msg.content
+    msg.content = content
+    if content == msg.original_content:
+        msg.original_content = None
+        msg.edited_at = None
+    else:
+        msg.edited_at = datetime.now(UTC)
+    await session.commit()
+    await session.refresh(msg, ["attachments", "agent_session"])
+    await publish_container_changed(kind, container_id)
+    return msg
+
+
+# Characters kept from a turn's prompt / first reply for the timeline preview.
+TURN_EXCERPT_CHARS = 200
+
+
+@dataclass(frozen=True, slots=True)
+class TurnIndexEntry:
+    """One turn of a transcript: a user prompt and everything up to the next one."""
+
+    message_id: int
+    last_message_id: int
+    created_at: datetime
+    prompt: str
+    reply: str
+    has_compaction: bool
+    agent_session_id: int | None
+
+
+async def list_container_turns(
+    session: AsyncSession, kind: ContainerKind, container_id: int
+) -> list[TurnIndexEntry]:
+    """The turn index behind the transcript timeline, oldest first.
+
+    The transcript is loaded in windows, so the timeline can't derive turns from
+    what the client holds. Only short excerpts are read: tool results can be
+    huge and the rail never shows them.
+    """
+    rows = (
+        await session.execute(
+            select(
+                Message.id,
+                Message.role,
+                Message.kind,
+                Message.created_at,
+                Message.agent_session_id,
+                func.substr(Message.content, 1, TURN_EXCERPT_CHARS),
+            )
+            .where(_message_fk(kind) == container_id)
+            .order_by(Message.id)
+        )
+    ).all()
+    turns: list[TurnIndexEntry] = []
+    for mid, role, msg_kind, created_at, agent_id, excerpt in rows:
+        text = (excerpt or "").strip()
+        if role == MessageRole.USER and msg_kind is None:
+            turns.append(
+                TurnIndexEntry(
+                    message_id=mid,
+                    last_message_id=mid,
+                    created_at=created_at,
+                    prompt=text,
+                    reply="",
+                    has_compaction=False,
+                    agent_session_id=agent_id,
+                )
+            )
+            continue
+        if not turns:
+            # Rows ahead of the first prompt (e.g. a posted note) belong to no turn.
+            continue
+        cur = turns[-1]
+        turns[-1] = TurnIndexEntry(
+            message_id=cur.message_id,
+            last_message_id=mid,
+            created_at=cur.created_at,
+            prompt=cur.prompt,
+            reply=cur.reply or (text if role == MessageRole.ASSISTANT else ""),
+            has_compaction=cur.has_compaction or msg_kind == MESSAGE_KIND_COMPACTION,
+            agent_session_id=cur.agent_session_id,
+        )
+    return turns
+
+
+async def rewind_container(
+    session: AsyncSession,
+    kind: ContainerKind,
+    container_id: int,
+    from_message_id: int,
+    through_message_id: int | None = None,
+) -> int:
+    """Drop the turn starting at ``from_message_id`` and every later message.
+
+    The cut must land on a user prompt so no turn is left half-answered (an
+    assistant tool call without its results). ``through_message_id`` bounds it
+    to the rows the user saw when confirming, so anything that landed during the
+    undo grace (a posted note, a scheduled run) survives. Returns the number of
+    messages deleted. Raises 409 while a reply is generating: the stream would
+    persist its answer under a prompt that no longer exists.
+    """
+    if is_streaming(kind, container_id):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "A reply is still being generated; wait for it to finish."
+        )
+    fk = _message_fk(kind)
+    anchor = await session.get(Message, from_message_id)
+    owner = None if anchor is None else (anchor.topic_id if kind == "topic" else anchor.chat_id)
+    if anchor is None or owner != container_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Message not found")
+    if anchor.role != MessageRole.USER or anchor.kind is not None:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, "A rewind must start at a user prompt."
+        )
+    if through_message_id is not None and through_message_id < from_message_id:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, "through_message_id precedes from_message_id."
+        )
+    in_cut = [fk == container_id, Message.id >= from_message_id]
+    if through_message_id is not None:
+        in_cut.append(Message.id <= through_message_id)
+    # SQLite doesn't enforce the attachments' ON DELETE CASCADE.
+    await session.execute(
+        delete(Attachment).where(Attachment.message_id.in_(select(Message.id).where(*in_cut)))
+    )
+    if kind == "topic":
+        await side_chats.detach_messages(session, select(Message.id).where(*in_cut))
+    await approval_service.delete_for_messages(session, select(Message.id).where(*in_cut))
+    result = await session.execute(delete(Message).where(*in_cut))
+    await session.commit()
+    await publish_container_changed(kind, container_id)
+    await publish_approval_changed(**container_message_kwargs(kind, container_id))
+    return int(getattr(result, "rowcount", 0) or 0)
 
 
 STOPPED_TOOL_RESULT = "Stopped by the user before the tool returned a result."
@@ -385,6 +801,7 @@ async def save_stopped_container_turn(
     container_id: int,
     content: str,
     tool_call_ids: list[str] | None = None,
+    reasoning: str = "",
 ) -> list[Message]:
     """Persist what the client kept when the user stopped a turn; return the rows.
 
@@ -399,6 +816,7 @@ async def save_stopped_container_turn(
             Message(
                 role=MessageRole.ASSISTANT,
                 content=content,
+                reasoning=reasoning.strip() or None,
                 **container_message_kwargs(kind, container_id),
             )
         )

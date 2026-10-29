@@ -20,6 +20,7 @@ from precursor.backend.db import SessionLocal
 from precursor.backend.services.app_settings import resolve_llm_model
 from precursor.backend.services.llm import complete_text_with_usage, get_llm_provider
 from precursor.backend.services.llm.base import ChatMessage, UsageEvent
+from precursor.backend.services.model_fallbacks import resolve_model_category
 from precursor.backend.services.usage_stats import record_usage
 
 __all__ = ["LLMCallFailed", "OneShotResult", "complete_once"]
@@ -59,13 +60,18 @@ async def complete_once(
     topic_id: int | None = None,
     chat_id: int | None = None,
     model: str | None = None,
+    provider_id: str | None = None,
     reasoning_effort: str | None = None,
     release_connection: bool = True,
+    use_conversation_selection: bool = True,
 ) -> OneShotResult:
     """Run a tool-less completion and record its token usage.
 
     ``model`` defaults to the chat model; pass a feature-specific one (the live
-    fast model, the auto-name model) when the feature has its own setting.
+    fast model, the auto-name model) when the feature has its own setting. With
+    a ``model``, ``provider_id`` serves it from that provider instead of the
+    global default (it is ignored without one: the chat model belongs to the
+    default provider).
 
     With ``release_connection`` the caller's session is committed before the
     provider call so a slow model doesn't keep a pooled connection checked out.
@@ -75,9 +81,30 @@ async def complete_once(
     Usage is written in its own session, so it lands even when the caller later
     rejects the output or rolls back.
     """
-    resolved_model = model or await resolve_llm_model(session)
+    from precursor.backend.services.conversation_llm import resolve_selection, saved_selection
+
+    selection = (
+        await saved_selection(session, topic_id=topic_id, chat_id=chat_id)
+        if use_conversation_selection
+        else None
+    )
+    resolved_model = model or await resolve_llm_model(session) if selection is None else ""
     try:
-        provider = await get_llm_provider(session)
+        if selection is not None:
+            resolved = await resolve_selection(session, selection)
+            provider = resolved.provider
+            resolved_model = resolved.model
+            reasoning_effort = resolved.reasoning_effort
+        else:
+            category = await resolve_model_category(session) if not model else None
+            if model and provider_id:
+                provider = await get_llm_provider(
+                    session, override_provider=provider_id, strict=True
+                )
+            elif category is not None:
+                provider = await get_llm_provider(session, model_category=category)
+            else:
+                provider = await get_llm_provider(session)
     except Exception as exc:
         raise LLMCallFailed(usage_source, exc) from exc
     if release_connection:
@@ -95,6 +122,7 @@ async def complete_once(
     except Exception as exc:
         raise LLMCallFailed(usage_source, exc) from exc
 
+    resolved_model = getattr(provider, "effective_model", None) or resolved_model
     if usage is not None:
         async with SessionLocal() as usage_session:
             await record_usage(

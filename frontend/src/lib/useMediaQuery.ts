@@ -57,11 +57,3 @@ export function useMediaQuery(query: string): boolean {
 export function useIsNarrow(): boolean {
   return useMediaQuery(NARROW_QUERY);
 }
-
-/**
- * Width below which the workspace can't host its three panes at once — a file
- * tree, an editor and a 24rem assistant leave the editor unusably thin well
- * before the phone breakpoint. Above it the assistant docks beside the editor;
- * below it, it starts stowed and expands over the workspace.
- */
-export const WORKSPACE_PANES_QUERY = "(max-width: 1023px)";

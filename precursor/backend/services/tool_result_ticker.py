@@ -1,10 +1,11 @@
-"""Background ticker that prunes expired TOOL-result content.
+"""Background ticker that prunes expired TOOL-result content and model thinking.
 
 A single lightweight task periodically replaces the ``content`` of aged TOOL
-rows with a short placeholder (see ``services/tool_result_retention``), bounding
-long-term DB growth. Gated by the same ``scheduler_enabled`` flag as the other
-tickers; the poll interval defaults to daily. When retention is disabled the
-sweep is a cheap no-op, so the ticker can keep running regardless.
+rows with a short placeholder and clears aged ``reasoning`` (see
+``services/tool_result_retention``), bounding long-term DB growth. Gated by the
+same ``scheduler_enabled`` flag as the other tickers; the poll interval defaults
+to daily. When retention is disabled the sweep is a cheap no-op, so the ticker
+can keep running regardless.
 """
 
 from __future__ import annotations

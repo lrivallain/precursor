@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { api } from "./api";
+import { eventBus } from "./events";
 import type { Reminder, ReminderContainer } from "./types";
 
 export interface UseRemindersOptions {
@@ -60,6 +61,17 @@ export function useReminders({
   useEffect(() => {
     void refreshReminder();
   }, [refreshReminder]);
+  // An agent (MCP set_reminder), another window, or the ticker firing it can
+  // change this conversation's reminder behind our back.
+  useEffect(
+    () =>
+      eventBus.subscribe((ev) => {
+        if (ev.type !== "reminder.changed") return;
+        const target = container === "topic" ? ev.topic_id : ev.chat_id;
+        if (target === id) void refreshReminder();
+      }),
+    [container, id, refreshReminder],
+  );
 
   function handleReminderSaved(saved: Reminder | null): void {
     setReminder(saved);

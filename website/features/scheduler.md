@@ -66,6 +66,10 @@ watching: it raises the [out-of-band "agent needs you"
 signal](/features/agents-mode/running#the-agent-needs-you-signal) — a focus-independent
 notification, a 🔔 in the tab title, and top billing in the ⌘K palette.
 
+A scheduled **topic** that needs a [tool approval](/features/approvals#unattended-runs)
+notifies you the same way; if nobody answers within the schedule's *Approval
+timeout* (default 60 minutes), the call is denied and the run finishes without it.
+
 ## `/guard` — gate a run behind a cheap probe
 
 A scheduled prompt can be prefixed with one or more `/guard` directives that gate
@@ -123,6 +127,17 @@ Two companion commands manage the lifecycle:
   before it fires.
 - **`/done`** — mark a **fired** reminder as handled, removing it from the
   Reminders section.
+
+### Seeing a pending reminder
+
+A scheduled reminder doesn't flag the conversation in the sidebar until it
+fires. To check one, open the **conversation stats** panel on the right of the
+transcript: its **Reminder** section shows the time, how far away it is, and the
+note. **Edit** changes or cancels it. Once it fires, a **Done** button appears
+next to Edit. With no reminder set, the section offers **Set reminder**. When the
+panel is collapsed, an alarm-clock icon on its rail shows that a reminder is set;
+hover it for the details or click it to open the panel. The section updates
+live, so a reminder an agent sets through MCP shows up without a reload.
 
 Reminders are also exposed through the built-in `precursor`
 [MCP server](/features/mcp), so the model (or another MCP host) can set, list,

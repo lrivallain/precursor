@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Iterator
+
+import pytest
 from fastapi.testclient import TestClient
 
 from precursor.backend.config import get_settings
@@ -12,6 +16,18 @@ from precursor.backend.services.app_settings import (
     resolve_mcp_expose,
 )
 from precursor.backend.services.mcp import precursor_server as ps
+
+
+@pytest.fixture(autouse=True)
+def _reset_mcp_expose() -> Iterator[None]:
+    """Leave every section off after each test.
+
+    The test DB is process-wide, so a toggle left behind (e.g. by the
+    round-trip test below) would otherwise leak into the defaults assertion
+    depending on how xdist spreads the tests over workers.
+    """
+    yield
+    asyncio.run(_set_expose("{}"))
 
 
 def test_precursor_registered_as_builtin() -> None:
@@ -397,7 +413,10 @@ def test_http_transport_404_when_disabled() -> None:
 def test_http_transport_handshake_when_enabled() -> None:
     app = create_app()
     with TestClient(app, base_url=_base_url()) as client:
-        client.put("/api/settings", json={"mcp_http_enabled": True})
+        client.put(
+            "/api/settings",
+            json={"mcp_http_enabled": True, "mcp_expose": {"topics": True, "post_message": True}},
+        )
         r = _mcp_post(client, _INIT)
         assert r.status_code == 200
         sid = r.headers.get("mcp-session-id")
@@ -413,8 +432,10 @@ def test_http_transport_handshake_when_enabled() -> None:
             session_id=sid,
         )
         assert r2.status_code == 200
-        assert "list_topics" in r2.text
-        assert "post_message" in r2.text
+        assert '"name":"list_topics"' in r2.text
+        assert '"name":"post_message"' in r2.text
+        assert '"name":"list_schedules"' not in r2.text
+        client.put("/api/settings", json={"mcp_expose": {}})
 
 
 def test_http_transport_rejects_foreign_host() -> None:

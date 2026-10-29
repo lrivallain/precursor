@@ -104,9 +104,13 @@ def _entry(name: str, state: str = "disconnected") -> MCPServerEntry:
 
 
 def _install(monkeypatch, manager: _RecordingManager) -> None:  # type: ignore[no-untyped-def]
+    from precursor.backend.services import turn_engine
     from precursor.backend.services.mcp import client as client_module
 
     monkeypatch.setattr(client_module, "get_mcp_client_manager", lambda: manager)
+    # The enabled list is narrowed to registered servers, via turn_engine's own
+    # binding of the manager.
+    monkeypatch.setattr(turn_engine, "get_mcp_client_manager", lambda: manager)
 
 
 async def test_warmup_visits_servers_one_at_a_time(monkeypatch) -> None:  # type: ignore[no-untyped-def]

@@ -16,6 +16,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import delete, event, func, insert, select
 
@@ -23,6 +24,25 @@ from precursor.backend.db import SessionLocal, engine
 from precursor.backend.main import create_app
 from precursor.backend.models import AgentEventRecord, AgentSession, AppSetting
 from precursor.backend.services.agent_event_retention import prune_agent_events
+
+
+@pytest.fixture(autouse=True)
+def _restore_retention_settings() -> Any:
+    """Don't leave a tiny retention cap on: later apps' tickers would prune their events."""
+    yield
+
+    async def _clear() -> None:
+        async with SessionLocal() as session:
+            await session.execute(
+                delete(AppSetting).where(
+                    AppSetting.key.in_(
+                        ["agent_event_retention_days", "agent_event_max_per_session"]
+                    )
+                )
+            )
+            await session.commit()
+
+    asyncio.run(_clear())
 
 
 def _init_db() -> None:

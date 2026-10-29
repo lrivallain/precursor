@@ -1,3 +1,4 @@
+import { ApprovalBadge } from "./ApprovalBadge";
 import { useEffect, useMemo, useState } from "react";
 import {
   AlarmClock,
@@ -11,6 +12,7 @@ import {
   PinOff,
   Search,
   Settings2,
+  Split,
   StickyNote,
 } from "lucide-react";
 import { api } from "../lib/api";
@@ -184,12 +186,24 @@ export function ChatList({
               }`}
             />
           )}
+          {chat.parent_topic_title && (
+            <span
+              className="shrink-0 text-muted"
+              aria-label={`Side chat of ${chat.parent_topic_title}`}
+              data-tooltip={`Side chat of “${chat.parent_topic_title}”`}
+            >
+              <Split size={13} />
+            </span>
+          )}
           {reminderChatIds?.has(chat.id) && (
             <AlarmClock
               size={13}
               className="shrink-0 text-accent"
               aria-label="Reminder waiting"
             />
+          )}
+          {(chat.pending_approvals ?? 0) > 0 && (
+            <ApprovalBadge count={chat.pending_approvals ?? 0} />
           )}
           {chat.unread_count > 0 && !isActive && (
             <span className="shrink-0 rounded-full bg-accent px-1.5 text-xs text-white">

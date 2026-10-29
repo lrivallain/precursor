@@ -9,19 +9,29 @@ cards appended. The caches themselves (``_events``/``_loaded``) stay on
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from sqlalchemy import select
 
 from precursor.backend.db import SessionLocal
 from precursor.backend.models import AgentEventRecord
-from precursor.backend.schemas.agent import AgentEvent, AgentEventPage
-from precursor.backend.services.agents.event_normalizer import normalize_event
+from precursor.backend.schemas.agent import AgentEvent, AgentEventPage, AgentLiveThinking
+from precursor.backend.services.agents import rewind
+from precursor.backend.services.agents.event_normalizer import is_content_free, normalize_event
 
 if TYPE_CHECKING:
     from precursor.backend.services.agents.manager import AgentManager
 
 logger = logging.getLogger(__name__)
+
+
+class TimelineView(NamedTuple):
+    # The archived, append-only history a cursor addresses.
+    stable: list[AgentEvent]
+    # Unresolved permission cards: volatile, never archived.
+    pending: list[AgentEvent]
+    # The round's thinking as it streams, before its complete event is archived.
+    thinking: AgentLiveThinking | None
 
 
 class Timeline:
@@ -30,16 +40,17 @@ class Timeline:
         # bound methods, so a test patching the manager still takes effect.
         self._manager = manager
 
-    async def timeline(
-        self, agent_id: int, *, agent_run_id: int | None = None
-    ) -> tuple[list[AgentEvent], list[AgentEvent]]:
+    async def timeline(self, agent_id: int, *, agent_run_id: int | None = None) -> TimelineView:
         """Split the transcript into its stable prefix and its volatile tail.
 
-        The archived history is append-only, which is what lets a live reader ask
-        for only what it hasn't seen (:meth:`get_events_page`). Unresolved
-        permission cards are *not* archived — they appear and vanish as approvals
+        The archived history only grows between rewinds (see :meth:`epoch`), which
+        is what lets a live reader ask for only what it hasn't seen
+        (:meth:`get_events_page`). Unresolved permission cards are *not*
+        archived — they appear and vanish as approvals
         are answered — so they are returned separately instead of being counted
-        into a cursor they would immediately invalidate.
+        into a cursor they would immediately invalidate. The same goes for the
+        thinking the model is streaming: its frames are never archived, and the
+        complete reasoning event replaces it once the round ends.
 
         The archive is per *agent* — the transcript the user reads spans every
         execution — but the live fallback and the pending-approval cards belong
@@ -70,14 +81,18 @@ class Timeline:
             if live is None:
                 loaded = await self._manager._load_run(run.id) if run is not None else None
                 if loaded is None or not loaded[0].copilot_session_id:
-                    return [], []
+                    return TimelineView([], [], None)
                 live = await self._manager._ensure_live(loaded[1], loaded[0])
             try:
                 raw = await live.sdk_session.get_events()
             except Exception:
                 logger.debug("get_events failed for agent %s", agent_id, exc_info=True)
                 raw = []
-            events = [normalize_event(ev) for ev in raw or []]
+            events = [
+                ev
+                for ev in (normalize_event(r) for r in raw or [])
+                if not is_content_free(ev.kind, ev.text)
+            ]
         # Unresolved permission requests render as inline workflow steps so the
         # approval card appears in-place (with details of what's requested)
         # rather than floating detached from the timeline.
@@ -94,7 +109,13 @@ class Timeline:
             if live is not None
             else []
         )
-        return events, pending
+        stream = live.stream if live is not None else None
+        thinking = (
+            AgentLiveThinking(text=stream.reasoning, active=not stream.answering)
+            if stream is not None and stream.reasoning
+            else None
+        )
+        return TimelineView(events, pending, thinking)
 
     async def get_events(
         self, agent_id: int, *, agent_run_id: int | None = None
@@ -103,27 +124,50 @@ class Timeline:
 
         See :meth:`timeline` for how ``agent_run_id`` scopes the read.
         """
-        stable, pending = await self.timeline(agent_id, agent_run_id=agent_run_id)
-        return [*stable, *pending]
+        view = await self.timeline(agent_id, agent_run_id=agent_run_id)
+        return [*view.stable, *view.pending]
 
     async def get_events_page(
-        self, agent_id: int, *, agent_run_id: int | None = None, after: int = 0
+        self,
+        agent_id: int,
+        *,
+        agent_run_id: int | None = None,
+        after: int = 0,
+        epoch: str | None = None,
     ) -> AgentEventPage:
         """The transcript from ``after`` onward, for an incremental live reader.
 
         A cursor past the end no longer addresses this transcript — it was
         cleared, pruned by retention, or was taken against a different run — so
         answer with the whole thing and flag it as a replacement rather than
-        silently skipping the events the caller is missing.
+        silently skipping the events the caller is missing. A rewind shrinks the
+        archive and may have grown it back past the cursor before the reader
+        returns, so a changed ``epoch`` resets too.
         """
-        stable, pending = await self.timeline(agent_id, agent_run_id=agent_run_id)
-        reset = after < 0 or after > len(stable)
+        view = await self.timeline(agent_id, agent_run_id=agent_run_id)
+        current = self.epoch(agent_id)
+        reset = after < 0 or after > len(view.stable) or (epoch is not None and epoch != current)
         return AgentEventPage(
-            events=stable[0 if reset else after :],
-            pending=pending,
-            cursor=len(stable),
+            events=view.stable[0 if reset else after :],
+            pending=view.pending,
+            thinking=view.thinking,
+            cursor=len(view.stable),
             reset=reset,
+            epoch=current,
+            rewindable_run_ids=await rewind.rewindable_run_ids(agent_id),
         )
+
+    def epoch(self, agent_id: int) -> str:
+        """Identity of the agent's archive, changed whenever it is truncated.
+
+        Prefixed with a per-process nonce: the counters are in memory, so after
+        a restart a reader holding an old epoch must not match a fresh ``0``.
+        """
+        return f"{self._manager._epoch_nonce}.{self._manager._transcript_epochs.get(agent_id, 0)}"
+
+    def bump_epoch(self, agent_id: int) -> None:
+        epochs = self._manager._transcript_epochs
+        epochs[agent_id] = epochs.get(agent_id, 0) + 1
 
     async def ensure_loaded(self, agent_id: int) -> None:
         """Hydrate the in-memory timeline from the ``agent_events`` archive once.
@@ -132,6 +176,9 @@ class Timeline:
         ``SessionStartData`` on resume, so the durable history lives only in the
         DB. Load it lazily the first time an agent is touched (an event arriving
         or a timeline read) and mark it loaded so we don't re-read per event.
+
+        Content-free rows archived before streaming frames stopped being kept are
+        skipped, so the rebuilt cache matches what a fresh run would hold.
         """
         if agent_id in self._manager._loaded:
             return
@@ -150,6 +197,8 @@ class Timeline:
             for payload, run_id in rows:
                 try:
                     parsed = AgentEvent.model_validate_json(payload)
+                    if is_content_free(parsed.kind, parsed.text):
+                        continue
                     # The column is the authority: rows archived before the event
                     # payload carried a run id still resolve to their execution.
                     if run_id is not None:

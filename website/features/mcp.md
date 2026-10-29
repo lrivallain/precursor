@@ -8,7 +8,7 @@ Precursor is **both** an MCP client and an MCP server, with working transports i
 each direction. [Model Context Protocol](https://modelcontextprotocol.io) is the
 open standard for connecting AI apps to tools and data.
 
-<Screenshot src="/screenshots/mcp-settings.png" alt="The MCP settings tab with toggles for built-in tool servers" caption="Settings → MCP — toggle built-in tool servers per turn and expose your own conversations." />
+<Screenshot src="/screenshots/mcp-settings.png" alt="The MCP settings tab with toggles for built-in tool servers" caption="Settings → MCP — pick which Precursor capabilities to serve (with Select all / Unselect all), then toggle built-in tool servers per turn." />
 
 ## As a client — attaching tool servers
 
@@ -24,7 +24,6 @@ Built-in servers ship in-tree:
 | `github` | GitHub issue/PR/repo operations. |
 | `fetch` | Fetch and read web content, and make arbitrary HTTP requests. |
 | `playwright` | Drive a real Chromium — navigate, read the rendered DOM/text, screenshot. Uses a **persistent profile** so an interactive sign-in reaches **authenticated** pages (see below). |
-| `workspace-fs` | Sandboxed file operations inside a [workspace](/features/workspaces). |
 | `drawio` | Author native `.drawio` diagrams into a workspace, with server-side layout (see below). |
 | `cmd-runner` | Run bash / python / node in a [Docker jail](/features/command-runner). |
 | `workiq` | Microsoft 365 (mail, calendar, …) — read-only locally, or full read/write via the hosted preview. |
@@ -149,7 +148,7 @@ the Workspace UI — and it stays editable in draw.io, unlike a rendered image. 
 is also editable **in Precursor**, via
 [Workspaces → Editing diagrams](/features/workspaces#editing-diagrams).
 
-It shares `workspace-fs`'s sandbox: every path goes through `safe_join`, so
+It shares the [workspace](/features/workspaces) sandbox: every path goes through `safe_join`, so
 nothing outside `workspaces_dir/<slug>` is reachable.
 
 | Tool | What it does |
@@ -410,14 +409,53 @@ hold via a hosted WorkIQ sign-in. In practice, if you've signed in to the WorkIQ
 preview the servers configure themselves with nothing to fill in. Until a
 tenant is known the entries stay unconfigured and say so.
 
+### Approving tool calls
+
+Whether an attached tool runs on its own is governed by the conversation's
+[tool approval policy](/features/approvals). Under **balanced**, a tool runs
+without asking only when its server marks it read-only (the MCP `readOnlyHint`
+annotation); a tool that says nothing is treated as a change and waits for you.
+
 ## As a server — exposing your conversations
 
 Precursor runs an MCP server (the SDK's `MCPServer`) named **`precursor`** that exposes its own data
 to MCP hosts (VS Code, CLI agents): topics, messages, chats, agents, live
-(meeting) sessions, cross-entity search, skills, memory,
+(meeting) sessions, cross-entity search, [Precursor IQ](/features/iq)
+retrieval and cited answers, skills, memory,
 [agent state](/features/agents-mode/artifacts-state#durable-state-the-private-scratchpad),
 [workflow state](/features/workflows/steps#pipeline-state-what-a-workflow-remembers),
-`append_note`, `post_message`, schedules, and reminders.
+`append_note`, `post_message`, [side chats](/features/chats#side-chats), schedules,
+reminders, [workspaces](/features/workspaces), and a few **basic tools**.
+
+**Basic tools** is a section of small stateless helpers that read none of your
+data, so a model stops guessing at things it is bad at. Like every section it is
+off by default.
+
+| Tool | What it does |
+| --- | --- |
+| `get_datetime` | Current date, time, weekday, ISO week and UTC offset, in this machine's zone or any IANA `timezone`. |
+| `convert_timezone` | Convert an ISO 8601 date-time between IANA zones. |
+| `date_math` | Shift a date by years/months/weeks/days/hours/minutes, or measure the gap between two dates (including business days). |
+| `calculate` | Evaluate arithmetic and common math functions (`sqrt`, `log`, `round`, …) without running arbitrary code. |
+| `convert_units` | Length, mass, volume, time, data size, speed and temperature. |
+| `generate_uuid` | UUID v4 (random) or v7 (time-ordered), up to 100 at a time. |
+| `random_value` | Cryptographically secure URL-safe or hex tokens, and integers in a range. |
+| `hash_or_encode` | MD5/SHA hashes and base64, URL, hex and HTML encode/decode. |
+| `count_text` | Characters, words, lines, sentences, paragraphs and an estimated token count. |
+| `get_system_info` | App version, OS, architecture, Python, locale and time zone. Never host or user names, paths or environment variables. |
+
+**Workspaces are part of this server.** The standalone `workspace-fs` server was
+folded in. The **Workspaces** section serves `list_workspaces`,
+`list_workspace_files` and `read_workspace_file`; **Edit workspaces** adds
+`create_workspace` (an empty local workspace, or a git clone from a repository
+URL), `create_workspace_file`, `write_workspace_file` and
+`create_workspace_folder`. Both sections are opt-in even for Precursor's own
+agents, and an agent still gets a permission prompt before each write. An
+existing `workspace-fs` enablement is migrated automatically on upgrade (and a
+`workspace-fs` agent scope now resolves to `precursor`).
+
+In **Settings → MCP → Precursor capabilities**, **Select all** and **Unselect
+all** flip every section at once.
 
 `append_note` and `post_message` are deliberately different tools. `append_note`
 persists the text you hand it and returns — the right call for filing an
@@ -448,18 +486,35 @@ external host that launches `python -m …precursor_server` on its own gets no
 token and so relays nothing; point it at the **HTTP endpoint** below instead,
 which runs inside the app process and therefore updates the UI directly.
 
-**Search spans every surface** — the same ⌘K palette engine — so a host can find
-a topic, chat, agent task or meeting by content and then follow the hit's
+**Search spans every surface**, using the same substring lookup the ⌘K palette
+falls back to, so a host can find a topic, chat, agent task or meeting by content and then follow the hit's
 `accessor` hint (`get_chat`, `get_agent`, …) to read the full record. Chat, agent
 and live hits only appear when their own section is exposed, since their snippets
 disclose that content.
+
+**[Precursor IQ](/features/iq) adds ranked, cited retrieval.** `retrieve`
+returns the passages most relevant to a natural-language query, plus a
+grounding Markdown block that numbers them as `[^n]` citations, WorkIQ-style.
+`ask` has Precursor's model write a cited answer from those passages. Each has
+its own toggle (`iq`, `iq_ask`), and every hit is also gated by its source's
+section, so IQ never returns more than the per-section tools would.
+
+**Side chats.** `create_side_chat` starts a chat linked to a topic, optionally
+from one of its replies (`message_id`) or an excerpt of it (`quote`). It
+generates nothing: the chat is created empty for the user, and the result
+carries its in-app URL. It has its own write toggle, `side_chats`. `get_topic`
+lists the topic's side chats only when `chats` is exposed too, since their
+titles disclose chat content.
 
 **Topics come back with their tree position resolved.** Every topic payload
 carries a `path` — the ancestor slugs joined root-first with `/` — so a caller
 never has to walk `parent_id` upward with a chain of `get_topic` round trips.
 
 Every tool is gated by a per-section **`mcp_expose`** toggle — **off by default**,
-because exposing conversation history outbound is opt-in.
+because exposing conversation history outbound is opt-in. The server only
+*advertises* the tools of exposed sections (with nothing exposed, just
+`precursor_info`), so the tool count on the `precursor` card in Settings follows
+the toggles; saving them reloads that server's tool list.
 
 Two transports serve the same tools:
 

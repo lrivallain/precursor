@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import { Check, Copy } from "lucide-react";
 
 type ConfirmVariant = "default" | "warning" | "danger";
 
@@ -9,6 +10,8 @@ export interface ConfirmOptions {
   confirmLabel?: string;
   cancelLabel?: string;
   variant?: ConfirmVariant;
+  /** Exact text the user must type before the action can be confirmed. */
+  requireText?: string;
 }
 
 type ConfirmFn = (options: ConfirmOptions) => Promise<boolean>;
@@ -38,6 +41,15 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const confirmBtnRef = useRef<HTMLButtonElement>(null);
   const cancelBtnRef = useRef<HTMLButtonElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const copyBtnRef = useRef<HTMLButtonElement>(null);
+  const [typed, setTyped] = useState("");
+  const [copied, setCopied] = useState(false);
+  const requireText = active?.options.requireText;
+  // Read from the key handler, which must not re-subscribe (and re-focus) per keystroke.
+  const typedOk = requireText === undefined || typed === requireText;
+  const typedOkRef = useRef(typedOk);
+  typedOkRef.current = typedOk;
   const activeVariant = active?.options.variant ?? "default";
 
   const settleActive = useCallback((ok: boolean): void => {
@@ -56,11 +68,32 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    setTyped("");
+    setCopied(false);
+  }, [active]);
+
+  const copyRequired = useCallback(async (): Promise<void> => {
+    if (requireText === undefined) return;
+    try {
+      await navigator.clipboard.writeText(requireText);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      inputRef.current?.focus();
+    }
+  }, [requireText]);
+
+  useEffect(() => {
     if (!active) return;
 
     const previousFocus =
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const focusTarget = activeVariant === "danger" ? cancelBtnRef.current : confirmBtnRef.current;
+    const focusTarget =
+      active.options.requireText !== undefined
+        ? inputRef.current
+        : activeVariant === "danger"
+          ? cancelBtnRef.current
+          : confirmBtnRef.current;
     window.requestAnimationFrame(() => focusTarget?.focus());
 
     function trapTab(e: KeyboardEvent): void {
@@ -95,10 +128,13 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
         e.key === "Enter" &&
         !e.shiftKey &&
         !(e.target instanceof HTMLTextAreaElement) &&
-        !(e.target instanceof HTMLButtonElement && e.target === cancelBtnRef.current)
+        !(
+          e.target instanceof HTMLButtonElement &&
+          (e.target === cancelBtnRef.current || e.target === copyBtnRef.current)
+        )
       ) {
         e.preventDefault();
-        settleActive(true);
+        if (typedOkRef.current) settleActive(true);
         return;
       }
       trapTab(e);
@@ -145,6 +181,42 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
               <p id="confirm-dialog-message" className="text-sm text-text whitespace-pre-wrap">
                 {message}
               </p>
+              {requireText !== undefined && (
+                <div className="mt-3 space-y-1.5 text-sm">
+                  <div className="flex items-center gap-1.5 text-muted">
+                    <span>Type</span>
+                    <code className="rounded bg-surface px-1.5 py-0.5 text-text break-all select-all">
+                      {requireText}
+                    </code>
+                    <button
+                      ref={copyBtnRef}
+                      type="button"
+                      className="shrink-0 p-1 rounded hover:bg-surface text-muted hover:text-text"
+                      aria-label="Copy name to clipboard"
+                      data-tooltip={copied ? "Copied!" : "Copy name"}
+                      onClick={() => void copyRequired()}
+                    >
+                      {copied ? (
+                        <Check size={13} className="text-emerald-500" aria-hidden="true" />
+                      ) : (
+                        <Copy size={13} aria-hidden="true" />
+                      )}
+                    </button>
+                    <span>to confirm.</span>
+                  </div>
+                  <input
+                    ref={inputRef}
+                    type="text"
+                    value={typed}
+                    onChange={(e) => setTyped(e.target.value)}
+                    aria-label={`Type ${requireText} to confirm`}
+                    autoComplete="off"
+                    autoCapitalize="off"
+                    spellCheck={false}
+                    className="w-full rounded border border-border bg-surface px-2 py-1.5 text-sm"
+                  />
+                </div>
+              )}
             </div>
             <div className="border-t border-border px-4 py-3 flex justify-end gap-2">
               <button
@@ -158,7 +230,8 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
               <button
                 ref={confirmBtnRef}
                 type="button"
-                className={`px-3 py-1.5 rounded text-sm text-white ${confirmClass(activeVariant)}`}
+                disabled={!typedOk}
+                className={`px-3 py-1.5 rounded text-sm text-white disabled:opacity-40 disabled:cursor-not-allowed ${confirmClass(activeVariant)}`}
                 onClick={() => settleActive(true)}
               >
                 {confirmLabel}

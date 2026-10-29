@@ -192,12 +192,14 @@ export function AgentsMain({
   controller,
   onOpenWorkflow,
   onOpenSettings,
+  onOpenMigration,
   onSetRole,
 }: {
   controller: AgentsController;
   onOpenWorkflow: (id: number) => void;
   onOpenSettings: () => void;
-  onSetRole: (roleId: number | null) => Promise<void>;
+  onOpenMigration?: () => void;
+  onSetRole: (roleName: string | null) => Promise<void>;
 }) {
   const {
     agents,
@@ -239,6 +241,7 @@ export function AgentsMain({
         if (result.agent_id != null) void openAgent(result.agent_id);
       }}
       onOpenWorkflow={(id) => onOpenWorkflow(id)}
+      onOpenMigration={onOpenMigration}
     />
   ) : (
     <AgentView

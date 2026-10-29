@@ -1,8 +1,8 @@
 import { useSyncExternalStore } from "react";
 import { mcpAuthStore } from "./mcpAuth";
-import { streamChat, streamChatSession, type ChatStreamBody } from "./sse";
+import { resumeConversation, streamChat, streamChatSession, type ChatStreamBody } from "./sse";
 import { parseToolMeta, STOPPED_TOOL_RESULT } from "./toolMeta";
-import type { Attachment, Message } from "./types";
+import type { Attachment, Message, ToolApproval, WorkspaceTurnContext } from "./types";
 
 export interface UsageReport {
   prompt_tokens: number;
@@ -37,6 +37,9 @@ interface Session {
   id: number;
   streaming: boolean;
   pendingContent: string;
+  // The model's thinking for the in-progress round, attached to the assistant
+  // message that round persists (`tool_calls` or `done`).
+  pendingReasoning: string;
   messages: Message[];
   abort: AbortController;
   // Usage reported for the in-progress round, applied to the next assistant
@@ -44,9 +47,12 @@ interface Session {
   pendingUsage: UsageReport | null;
   // Usage of the most recent completed round.
   lastUsage: UsageReport | null;
+  requestError: string | null;
 }
 
 type Listener = () => void;
+
+const EMPTY_APPROVALS: ToolApproval[] = [];
 
 function hashString(s: string): number {
   let h = 0;
@@ -57,11 +63,14 @@ function hashString(s: string): number {
 class StreamStore {
   private sessions = new Map<string, Session>();
   private remoteStreaming = new Set<string>();
+  // Open approvals per conversation. Kept apart from `sessions`: they outlive a
+  // finished stream (the turn is parked on them) and are reloaded from the server.
+  private approvalMap = new Map<string, ToolApproval[]>();
   private version = 0;
   private listeners = new Set<Listener>();
-  private onCompleteCb: ((key: string) => void) | null = null;
+  private onCompleteCb: ((key: string, ok: boolean) => void) | null = null;
 
-  setOnComplete(cb: ((key: string) => void) | null): void {
+  setOnComplete(cb: ((key: string, ok: boolean) => void) | null): void {
     this.onCompleteCb = cb;
   }
 
@@ -93,12 +102,20 @@ class StreamStore {
     return this.sessions.get(key)?.pendingContent ?? "";
   }
 
+  pendingReasoning(key: string): string {
+    return this.sessions.get(key)?.pendingReasoning ?? "";
+  }
+
   bufferedMessages(key: string): Message[] {
     return this.sessions.get(key)?.messages ?? [];
   }
 
   lastUsage(key: string): UsageReport | null {
     return this.sessions.get(key)?.lastUsage ?? null;
+  }
+
+  requestError(key: string): string | null {
+    return this.sessions.get(key)?.requestError ?? null;
   }
 
   /** Streaming conversation ids of a given kind (local + remote). */
@@ -123,6 +140,17 @@ class StreamStore {
       this.remoteStreaming.delete(key);
       this.notify();
     }
+  }
+
+  approvals(key: string): ToolApproval[] {
+    return this.approvalMap.get(key) ?? EMPTY_APPROVALS;
+  }
+
+  setApprovals(key: string, rows: ToolApproval[]): void {
+    if (rows.length === 0 && !this.approvalMap.has(key)) return;
+    if (rows.length === 0) this.approvalMap.delete(key);
+    else this.approvalMap.set(key, rows);
+    this.notify();
   }
 
   clear(key: string): void {
@@ -160,11 +188,13 @@ class StreamStore {
     promptOverride?: string,
     attachments?: Attachment[],
     noteAttachmentIds?: number[],
+    workspaceContext?: WorkspaceTurnContext,
   ): Promise<void> {
     return this.run(
       key,
       {
         content,
+        ...(workspaceContext ? { workspace_context: workspaceContext } : {}),
         ...(promptOverride ? { prompt_override: promptOverride } : {}),
         ...(attachments && attachments.length
           ? { attachment_ids: attachments.map((a) => a.id) }
@@ -189,8 +219,18 @@ class StreamStore {
     messageId: number,
     content: string,
     attachments?: Attachment[],
+    workspaceContext?: WorkspaceTurnContext,
   ): Promise<void> {
-    return this.run(key, { content, retry_message_id: messageId }, content, attachments);
+    return this.run(
+      key,
+      {
+        content,
+        retry_message_id: messageId,
+        ...(workspaceContext ? { workspace_context: workspaceContext } : {}),
+      },
+      content,
+      attachments,
+    );
   }
 
   private async run(
@@ -199,45 +239,80 @@ class StreamStore {
     content: string,
     attachments?: Attachment[],
   ): Promise<void> {
+    const { kind, id } = parseKey(key);
+    const optimistic: Message = {
+      id: -Date.now(),
+      ...containerFields(kind, id),
+      role: "user",
+      content,
+      tool_calls: null,
+      created_at: new Date().toISOString(),
+      attachments: attachments && attachments.length ? attachments : [],
+    };
+    return this.drive(key, [optimistic], (opts) =>
+      kind === "topic" ? streamChat(id, body, opts) : streamChatSession(id, body, opts),
+    );
+  }
+
+  /**
+   * Continue a turn that parked on tool approvals. The server runs the approved
+   * tools, records every result, then lets the model carry on (it may park again).
+   */
+  async resume(key: string): Promise<void> {
+    const { kind, id } = parseKey(key);
+    return this.drive(key, [], (opts) => resumeConversation(kind, id, opts), {
+      quietConflict: true,
+    });
+  }
+
+  private async drive(
+    key: string,
+    initial: Message[],
+    call: (opts: {
+      signal: AbortSignal;
+      onEvent: (ev: { event: string; data: string }) => void;
+    }) => Promise<void>,
+    { quietConflict = false }: { quietConflict?: boolean } = {},
+  ): Promise<void> {
     if (this.sessions.get(key)?.streaming) return;
     const { kind, id } = parseKey(key);
     const controller = new AbortController();
-    const optimisticId = -Date.now();
     const session: Session = {
       key,
       kind,
       id,
       streaming: true,
       pendingContent: "",
-      messages: [
-        {
-          id: optimisticId,
-          ...containerFields(kind, id),
-          role: "user",
-          content,
-          tool_calls: null,
-          created_at: new Date().toISOString(),
-          attachments: attachments && attachments.length ? attachments : [],
-        },
-      ],
+      pendingReasoning: "",
+      messages: initial,
       abort: controller,
       pendingUsage: null,
       lastUsage: null,
+      requestError: null,
     };
     this.sessions.set(key, session);
     this.notify();
 
+    // False when the user stopped the turn or the request failed.
+    let ok = true;
     try {
-      const onEvent = (ev: { event: string; data: string }): void =>
-        this.handleEvent(key, ev);
-      if (kind === "topic") {
-        await streamChat(id, body, { signal: controller.signal, onEvent });
-      } else {
-        await streamChatSession(id, body, { signal: controller.signal, onEvent });
-      }
+      await call({
+        signal: controller.signal,
+        onEvent: (ev) => this.handleEvent(key, ev),
+      });
     } catch (err) {
-      if ((err as Error).name !== "AbortError") {
+      ok = false;
+      // Another window already resumed this turn: nothing to report.
+      const conflict = quietConflict && (err as { status?: number }).status === 409;
+      if ((err as Error).name !== "AbortError" && !conflict) {
         console.error(err);
+        const message = err instanceof Error ? err.message : String(err);
+        const failed = this.sessions.get(key);
+        if (failed) failed.requestError = message;
+        this.handleEvent(key, {
+          event: "error",
+          data: JSON.stringify({ message }),
+        });
       }
     } finally {
       const cur = this.sessions.get(key);
@@ -245,7 +320,7 @@ class StreamStore {
         cur.streaming = false;
         this.notify();
       }
-      this.onCompleteCb?.(key);
+      this.onCompleteCb?.(key, ok);
     }
   }
 
@@ -286,6 +361,8 @@ class StreamStore {
       }
     } else if (ev.event === "delta") {
       session.pendingContent += payload.content as string;
+    } else if (ev.event === "reasoning") {
+      session.pendingReasoning += payload.content as string;
     } else if (ev.event === "usage") {
       const usage: UsageReport = {
         prompt_tokens: (payload.prompt_tokens as number) ?? 0,
@@ -321,6 +398,7 @@ class StreamStore {
         ...fk,
         role: "assistant",
         content: session.pendingContent,
+        reasoning: session.pendingReasoning.trim() || null,
         tool_calls: JSON.stringify(
           calls.map((c) => ({
             id: c.id,
@@ -349,9 +427,32 @@ class StreamStore {
         });
       }
       session.pendingContent = "";
+      session.pendingReasoning = "";
     } else if (ev.event === "tool_result") {
       const tcId = payload.tool_call_id as string;
       const messageId = payload.message_id as number;
+      const known = session.messages.some(
+        (m) => m.role === "tool" && parseToolMeta(m.tool_calls)?.tool_call_id === tcId,
+      );
+      // A resumed turn settles calls whose rows this buffer never held (they
+      // were parked on an approval, possibly before a reload).
+      if (!known) {
+        session.messages.push({
+          id: messageId,
+          ...fk,
+          role: "tool",
+          content: payload.content as string,
+          tool_calls: JSON.stringify({
+            tool_call_id: tcId,
+            name: payload.name,
+            arguments: payload.arguments,
+            is_error: Boolean(payload.is_error),
+            pending: false,
+            ...(payload.link ? { link: payload.link } : {}),
+          }),
+          created_at: now,
+        });
+      }
       session.messages = session.messages.map((m) => {
         if (m.role !== "tool" || !m.tool_calls) return m;
         let meta: Record<string, unknown>;
@@ -373,6 +474,16 @@ class StreamStore {
           }),
         };
       });
+    } else if (ev.event === "approval_required") {
+      // The turn parked: these calls are waiting on the user, not running.
+      const rows = (payload.approvals as ToolApproval[] | undefined) ?? [];
+      const parked = new Set(rows.map((r) => r.tool_call_id));
+      session.messages = session.messages.filter((m) => {
+        if (m.role !== "tool") return true;
+        const meta = parseToolMeta(m.tool_calls);
+        return !(meta?.pending && meta.tool_call_id && parked.has(meta.tool_call_id));
+      });
+      this.approvalMap.set(session.key, rows);
     } else if (ev.event === "system") {
       session.messages.push({
         id: -Date.now(),
@@ -397,14 +508,17 @@ class StreamStore {
         ...fk,
         role: "assistant",
         content: payload.content as string,
+        reasoning: session.pendingReasoning.trim() || null,
         tool_calls: null,
         prompt_tokens: usage?.prompt_tokens ?? null,
         completion_tokens: usage?.completion_tokens ?? null,
         model: (payload.model as string | null) ?? null,
+        provider: (payload.provider as string | null) ?? null,
         elapsed_ms: (payload.elapsed_ms as number | null) ?? null,
         created_at: now,
       });
       session.pendingContent = "";
+      session.pendingReasoning = "";
     } else if (ev.event === "suggestions") {
       // Emitted right after `done`; patch the just-created assistant turn with
       // the follow-up chips (matched by the persisted message id).
@@ -447,6 +561,10 @@ export const streamStore = new StreamStore();
  * same turn also lives in the buffer (reconciled to its real id by the
  * `user_message` event). Deduping by id keeps that first turn from rendering
  * twice; for an established conversation there is no overlap and this is a no-op.
+ *
+ * Before that event arrives the buffered prompt still carries its optimistic
+ * (negative) id, so it is matched against the persisted tail by content instead.
+ * Only the tail counts: an earlier identical prompt ("yes") must not hide it.
  */
 export function mergeConversation(
   persisted: Message[],
@@ -455,7 +573,17 @@ export function mergeConversation(
   if (buffered.length === 0) return persisted;
   const bufferedIds = new Set(buffered.map((m) => m.id));
   const deduped = persisted.filter((m) => !bufferedIds.has(m.id));
-  return [...deduped, ...buffered];
+  const tailPrompts = new Set<string>();
+  for (let i = deduped.length - 1; i >= 0 && deduped[i].role === "user"; i--) {
+    tailPrompts.add(deduped[i].content);
+  }
+  if (tailPrompts.size === 0) return [...deduped, ...buffered];
+  return [
+    ...deduped,
+    ...buffered.filter(
+      (m) => !(m.id < 0 && m.role === "user" && tailPrompts.has(m.content)),
+    ),
+  ];
 }
 
 export function useStreamVersion(): number {
