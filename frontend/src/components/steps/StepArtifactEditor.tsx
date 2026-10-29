@@ -8,6 +8,7 @@ import { useConfirm } from "../ConfirmDialog";
 import { Markdown } from "../Markdown";
 import { RefineTextarea } from "../RefineTextarea";
 import { BTN_SECONDARY, BTN_SMALL } from "./StepUi";
+import { EditPreviewTabs } from "./EditPreviewTabs";
 import { VersionHistory } from "./VersionHistory";
 
 type Mutate = <T>(action: () => Promise<T>) => Promise<T | undefined>;
@@ -71,20 +72,6 @@ export function StepArtifactEditor({ step, mutate }: { step: Step; mutate: Mutat
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
-        <div className="inline-flex overflow-hidden rounded-lg border border-border text-xs" role="tablist" aria-label="Artifact view">
-          {(["edit", "preview"] as const).map((v) => (
-            <button
-              key={v}
-              type="button"
-              role="tab"
-              aria-selected={view === v}
-              onClick={() => setView(v)}
-              className={`px-3 py-1.5 ${view === v ? "bg-accent/15 font-medium text-accent" : "text-muted hover:bg-surface"}`}
-            >
-              {v === "edit" ? "Edit" : "Preview"}
-            </button>
-          ))}
-        </div>
         <span className="text-xs text-muted">
           {step.artifact_version > 0 ? `Version ${step.artifact_version}` : "No artifact yet"}
           {dirty ? " · unsaved edits" : ""}
@@ -130,6 +117,8 @@ export function StepArtifactEditor({ step, mutate }: { step: Step; mutate: Mutat
         </div>
       )}
 
+      <div className="space-y-1.5">
+      <EditPreviewTabs view={view} onChange={setView} label="Artifact view" />
       {view === "edit" ? (
         <RefineTextarea
           value={draft}
@@ -156,6 +145,7 @@ export function StepArtifactEditor({ step, mutate }: { step: Step; mutate: Mutat
           )}
         </div>
       )}
+      </div>
 
       {historyOpen && step.artifact_version > 0 && (
         <VersionHistory

@@ -1,6 +1,6 @@
 import { useLayoutEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { ArrowRight, Check, ClipboardCheck, FileCheck2, Lightbulb, Trash2, X } from "lucide-react";
+import { ArrowRight, Check, ClipboardCheck, FileCheck2, Lightbulb, Link2, Link2Off, Trash2, X } from "lucide-react";
 import { api, apiErrorMessage } from "../../lib/api";
 import { PLAN_STAGES, autoHasWork, planNext, planProgress, planStage } from "../../lib/stepPlans";
 import { openTopic } from "../../lib/sideChats";
@@ -9,6 +9,7 @@ import { useConfirm } from "../ConfirmDialog";
 import { InlineTitle } from "../InlineTitle";
 import { Markdown } from "../Markdown";
 import { AutomationBar } from "./AutomationBar";
+import { LinkTopicDialog } from "./LinkTopicDialog";
 import { dropPlanDrafts } from "../../lib/stepDrafts";
 import { STEPS_HEADER_SLOT } from "./StepsSectionParts";
 import {
@@ -78,6 +79,7 @@ export function StepPlanHeader({
   const confirm = useConfirm();
   const [review, setReview] = useState<string | null>(null);
   const [reviewError, setReviewError] = useState<string | null>(null);
+  const [linking, setLinking] = useState(false);
   const { done, total } = planProgress(plan);
   const [slot, setSlot] = useState<HTMLElement | null>(null);
   useLayoutEffect(() => setSlot(document.getElementById(STEPS_HEADER_SLOT)), []);
@@ -130,6 +132,23 @@ export function StepPlanHeader({
     ...(working
       ? [{ label: "Open the final output", icon: FileCheck2, onSelect: () => onSelect("final") } satisfies MenuItem]
       : []),
+    {
+      label: plan.source_topic_id != null ? "Change the topic…" : "Link a topic…",
+      icon: Link2,
+      separated: true,
+      onSelect: () => setLinking(true),
+    },
+    ...(plan.source_topic_id != null
+      ? [
+          {
+            label: "Unlink the topic",
+            icon: Link2Off,
+            onSelect: async () => {
+              await mutate(() => api.stepPlans.update(plan.id, { source_topic_id: null }));
+            },
+          } satisfies MenuItem,
+        ]
+      : []),
     { label: "Delete plan", icon: Trash2, danger: true, separated: true, onSelect: remove },
   ];
 
@@ -152,6 +171,16 @@ export function StepPlanHeader({
         <span className="hidden shrink-0 text-xs tabular-nums text-muted md:inline" data-tooltip="Steps approved">
           {done}/{total} approved
         </span>
+      )}
+      {plan.source_topic_id == null && (
+        <button
+          type="button"
+          onClick={() => setLinking(true)}
+          className="hidden shrink-0 items-center gap-1 rounded-full border border-dashed border-border px-2.5 py-0.5 text-xs text-muted hover:border-accent/60 hover:text-accent lg:inline-flex"
+          data-tooltip="Link a topic: its discussion becomes context, and the final output can be sent back to it"
+        >
+          <Link2 size={12} /> Link a topic
+        </button>
       )}
       {plan.source_topic_id != null && (
         <button
@@ -181,9 +210,18 @@ export function StepPlanHeader({
     </div>
   );
 
+  const linkDialog = linking && (
+    <LinkTopicDialog
+      plan={plan}
+      onClose={() => setLinking(false)}
+      onLink={async (topicId) => (await mutate(() => api.stepPlans.update(plan.id, { source_topic_id: topicId }))) !== undefined}
+    />
+  );
+
   const hasBody = reviewError !== null || review !== null;
   return (
     <>
+      {linkDialog}
       {slot ? createPortal(bar, slot) : <div className="border-b border-border px-5 py-3">{bar}</div>}
       {hasBody && (
         <div className="border-b border-border px-5 pb-3">

@@ -153,6 +153,9 @@ class StepPlanUpdate(ConversationLLMFields):
     role: str | None = None
     output_instructions: str | None = Field(default=None, max_length=20_000)
     automation_mode: AutomationMode | None = None
+    # Link the plan to a topic (its discussion becomes background, the final
+    # output can be filed there), or ``null`` to unlink it.
+    source_topic_id: int | None = None
 
 
 class StepCreate(BaseModel):

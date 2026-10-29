@@ -15,6 +15,14 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **Step by step: link a topic any time, tidier final panel.** A plan can be
+  linked to a topic from the new-plan dialog (its discussion becomes context; with
+  no ask typed, its latest message is used) or later with *Link a topic* in the
+  plan bar, and changed or unlinked from **⋯ Plan tools**; linking leaves a note
+  in the topic. *Send to topic* is hidden while a plan has no topic. In a step's
+  artifact and in the final output alike, the *Edit / Preview* tabs now sit
+  directly above the content and the version history opens below it, scrolled into
+  view. `PATCH /api/step-plans/{id}` accepts `source_topic_id`.
 - **Step by step: versions for the final output.** Like a step's artifact, the
   final output keeps a numbered history (*you* or *model* authored) with *View*
   and *Restore*; restoring or re-saving an earlier text records no duplicate.

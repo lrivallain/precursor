@@ -531,14 +531,16 @@ async def create_plan(session: AsyncSession, payload: StepPlanCreate) -> StepPla
 STEP_PLAN_TRACE_KIND = "step_plan"
 
 
-async def _trace_in_topic(session: AsyncSession, plan: StepPlan, topic_id: int) -> None:
+async def _trace_in_topic(
+    session: AsyncSession, plan: StepPlan, topic_id: int, verb: str = "Started"
+) -> None:
     """Leave a UI-only note in the topic so the spawned plan stays traceable."""
     session.add(
         Message(
             topic_id=topic_id,
             role=MessageRole.SYSTEM,
             kind=STEP_PLAN_TRACE_KIND,
-            content=f"Started step by step: [{plan.title}](/steps/{plan.id})",
+            content=f"{verb} step by step: [{plan.title}](/steps/{plan.id})",
         )
     )
     await session.commit()
@@ -569,7 +571,16 @@ async def update_plan(session: AsyncSession, plan_id: int, payload: StepPlanUpda
     if "output_instructions" in fields:
         text = (payload.output_instructions or "").strip()
         plan.output_instructions = text or None
+    newly_linked: int | None = None
+    if "source_topic_id" in fields and payload.source_topic_id != plan.source_topic_id:
+        if payload.source_topic_id is not None:
+            if await session.get(Topic, payload.source_topic_id) is None:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
+            newly_linked = payload.source_topic_id
+        plan.source_topic_id = payload.source_topic_id
     await session.commit()
+    if newly_linked is not None:
+        await _trace_in_topic(session, plan, newly_linked, verb="Linked")
     return plan
 
 

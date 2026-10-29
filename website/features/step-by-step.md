@@ -16,7 +16,9 @@ combines them into a single final output you can file back into the topic.
 - From a topic, type **`/steps`**: the plan is built from the topic's latest message, the
   model proposes the first steps, and the plan opens in **Step by step**.
 - From the section itself (or the command palette), choose **New step plan** and paste the
-  ask. Untick *Let the model propose the steps* to write them yourself.
+  ask. Untick *Let the model propose the steps* to write them yourself. Optionally pick a
+  **topic**: its discussion becomes context for the model, and with no ask typed the topic's
+  latest message is used.
 
 The ask is frozen into the plan, so every later model call is grounded in it — and the
 plan keeps working even if the topic is edited or deleted.
@@ -26,6 +28,12 @@ the topic's discussion, linking to the plan, and the topic's side panel lists it
 side chats — with their progress. In the other direction, the plan's bar (which takes the place of the app's top bar) shows a
 blue link back to the topic, and a final output sent to the topic links to the plan. The plan takes its
 title from the ask: the `/steps` command is not part of it.
+
+A plan created on its own can be tied to a topic later: use **Link a topic** in the bar (or
+*Change the topic…* / *Unlink the topic* in **⋯ Plan tools**). The topic then gets the same
+note and side-panel entry, and its discussion feeds later drafts and chats. While a plan has no
+topic, *Send to topic* is not shown. Relinking to another topic does not move the *posted*
+marker of a final output already filed in the first one.
 
 ## Drafting the tree
 
@@ -161,8 +169,10 @@ tone or format, and guidance for one run). Edit it by hand or discuss it in the 
 chat, then **Send to topic** to file it back into the topic the plan came from.
 
 The final output is versioned like a step's artifact. Every distinct text you save, or that the
-model generates, becomes the next **Version N** (shown beside the *Edit / Preview* tabs, with
+model generates, becomes the next **Version N** (shown in the toolbar, with
 *you* or *model* as its author), and **History** lists them, each with *View* and *Restore*.
+The *Edit / Preview* tabs sit right above the content, and the history opens below it (scrolled
+into view), in the final output as in a step's artifact.
 Restoring an older version only moves the *current* marker, and saving a text that matches an
 earlier version points back at it, so neither adds a duplicate. When you **Send to topic**, the
 version that was filed gets a green **posted** badge in the history and next to the version

@@ -10,6 +10,7 @@ import { Markdown } from "../Markdown";
 import { RefineTextarea } from "../RefineTextarea";
 import { AssessmentPanel } from "./AssessmentPanel";
 import type { AppliedInfo } from "./ArtifactCard";
+import { EditPreviewTabs } from "./EditPreviewTabs";
 import { PlanChat } from "./PlanChat";
 import { WorkTabs } from "./WorkTabs";
 import { BTN_PRIMARY, BTN_SECONDARY, INPUT, OverflowMenu, StaleBadge } from "./StepUi";
@@ -270,9 +271,7 @@ export function ConsolidationPanel({
           ? "The final output is out of date. Regenerate it, or mark it as reviewed, first."
           : null;
 
-  const sendBlocker = !plan.source_topic_id
-    ? "This plan wasn't started from a topic, so there is nowhere to send it."
-    : !hasFinal
+  const sendBlocker = !hasFinal
       ? "Generate the final output first."
       : dirty
         ? "Save your edits first."
@@ -416,20 +415,6 @@ export function ConsolidationPanel({
         work={
         <div className="space-y-3">
           <div className="flex flex-wrap items-center gap-2">
-            <div className="inline-flex overflow-hidden rounded-lg border border-border text-xs" role="tablist" aria-label="Final output view">
-              {(["edit", "preview"] as const).map((v) => (
-                <button
-                  key={v}
-                  type="button"
-                  role="tab"
-                  aria-selected={view === v}
-                  onClick={() => setView(v)}
-                  className={`px-3 py-1.5 ${view === v ? "bg-accent/15 font-medium text-accent" : "text-muted hover:bg-surface"}`}
-                >
-                  {v === "edit" ? "Edit" : "Preview"}
-                </button>
-              ))}
-            </div>
             {hasFinal && plan.final_version > 0 && (
               <span className="inline-flex items-center gap-1.5 text-xs text-muted">
                 <span className="font-medium text-fg">Version {plan.final_version}</span>
@@ -475,18 +460,20 @@ export function ConsolidationPanel({
                 {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}{" "}
                 {reviewable ? "Mark as reviewed" : "Save"}
               </button>
-              <button
-                type="button"
-                onClick={() => void sendToTopic()}
-                disabled={sendBlocker !== null || sending}
-                className={BTN_PRIMARY}
-                data-tooltip={
-                  sendBlocker ?? "Post the final output as a message in the topic this plan came from"
-                }
-              >
-                {sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-                Send to topic
-              </button>
+              {plan.source_topic_id != null && (
+                <button
+                  type="button"
+                  onClick={() => void sendToTopic()}
+                  disabled={sendBlocker !== null || sending}
+                  className={BTN_PRIMARY}
+                  data-tooltip={
+                    sendBlocker ?? "Post the final output as a message in the topic this plan came from"
+                  }
+                >
+                  {sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                  Send to topic
+                </button>
+              )}
               {plan.status !== "done" && (
                 <OverflowMenu
                   label="Final output actions"
@@ -502,15 +489,6 @@ export function ConsolidationPanel({
               )}
             </div>
           </div>
-
-          {history && versions.length > 0 && (
-            <VersionHistory
-              load={async () => versions}
-              refreshKey={versions}
-              current={plan.final_version}
-              onRestore={restore}
-            />
-          )}
 
           {newer && (
             <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
@@ -529,6 +507,8 @@ export function ConsolidationPanel({
             </div>
           )}
 
+          <div className="space-y-1.5">
+          <EditPreviewTabs view={view} onChange={setView} label="Final output view" />
           {view === "edit" ? (
             <RefineTextarea
               value={draft}
@@ -550,6 +530,16 @@ export function ConsolidationPanel({
             <div className="min-h-40 rounded-lg border border-border bg-bg px-4 py-3">
               {draft.trim() ? <Markdown>{draft}</Markdown> : <p className="text-sm text-muted">No final output yet.</p>}
             </div>
+          )}
+          </div>
+
+          {history && versions.length > 0 && (
+            <VersionHistory
+              load={async () => versions}
+              refreshKey={versions}
+              current={plan.final_version}
+              onRestore={restore}
+            />
           )}
         </div>
         }

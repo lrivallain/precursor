@@ -852,6 +852,41 @@ def test_spawning_a_plan_leaves_a_trace_in_its_topic(monkeypatch: pytest.MonkeyP
         assert client.get(f"/api/step-plans?topic_id={topic['id']}").json()[0]["id"] == plan["id"]
 
 
+def test_a_plan_can_be_linked_to_a_topic_and_unlinked_later(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_llm(monkeypatch)
+    with TestClient(create_app()) as client:
+        topic = client.post("/api/topics", json={"title": "Mail"}).json()
+        plan = _plan(client, propose=False)
+        assert plan["source_topic_id"] is None
+        url = f"/api/step-plans/{plan['id']}"
+
+        linked = client.patch(url, json={"source_topic_id": topic["id"]})
+        assert linked.status_code == 200, linked.text
+        assert linked.json()["source_topic_id"] == topic["id"]
+        assert linked.json()["source_topic_title"] == "Mail"
+        trace = [
+            m
+            for m in client.get(f"/api/topics/{topic['id']}/messages").json()
+            if m["kind"] == "step_plan"
+        ]
+        assert len(trace) == 1 and trace[0]["content"].startswith("Linked step by step")
+        assert client.get(f"/api/step-plans?topic_id={topic['id']}").json()[0]["id"] == plan["id"]
+
+        # Saving the same link again, or other fields, leaves no second trace.
+        client.patch(url, json={"source_topic_id": topic["id"]})
+        client.patch(url, json={"title": "Renamed"})
+        assert linked.json()["source_topic_id"] == _get(client, plan["id"])["source_topic_id"]
+        messages = client.get(f"/api/topics/{topic['id']}/messages").json()
+        assert len([m for m in messages if m["kind"] == "step_plan"]) == 1
+
+        assert client.patch(url, json={"source_topic_id": 9999}).status_code == 404
+        unlinked = client.patch(url, json={"source_topic_id": None})
+        assert unlinked.json()["source_topic_id"] is None
+        assert unlinked.json()["source_topic_title"] is None
+
+
 # --- automation and assessments -------------------------------------------------
 
 STEP_ASSESSMENT = json.dumps(

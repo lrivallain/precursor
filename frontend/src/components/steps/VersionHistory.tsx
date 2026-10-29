@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, Send } from "lucide-react";
 import { apiErrorMessage } from "../../lib/api";
 import { Markdown } from "../Markdown";
@@ -33,6 +33,12 @@ export function VersionHistory({
   const [versions, setVersions] = useState<VersionRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [shown, setShown] = useState<number | null>(null);
+  const box = useRef<HTMLElement>(null);
+
+  // It opens below the content, possibly out of view: bring it into view.
+  useEffect(() => {
+    box.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, []);
 
   const reload = useCallback(async () => {
     try {
@@ -50,7 +56,7 @@ export function VersionHistory({
   }, [reload]);
 
   return (
-    <section className="space-y-2 rounded-lg border border-border p-3" aria-label="Version history">
+    <section ref={box} className="space-y-2 rounded-lg border border-border p-3" aria-label="Version history">
       <h4 className="text-xs font-medium uppercase tracking-wide text-muted">Version history</h4>
       {error && <ErrorBanner message={error} />}
       {!versions && !error && (

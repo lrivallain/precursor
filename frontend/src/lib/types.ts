@@ -3109,6 +3109,8 @@ export interface StepPlanUpdate {
   source_text?: string;
   role?: string | null;
   output_instructions?: string | null;
+  /** Link the plan to a topic, or `null` to unlink it. */
+  source_topic_id?: number | null;
   llm_selection?: ConversationLLMSelection | null;
 }
 
