@@ -3,6 +3,7 @@ import { Loader2 } from "lucide-react";
 import { api, apiErrorMessage } from "../../lib/api";
 import type { StepPlan } from "../../lib/types";
 import { Modal } from "../Modal";
+import { StepTopicPicker } from "./StepTopicPicker";
 import { BTN_PRIMARY, BTN_SECONDARY, ErrorBanner, INPUT } from "./StepUi";
 
 /** "New step plan" from pasted text. Proposing steps is a model call, so it can take a while. */
@@ -19,17 +20,22 @@ export function NewStepPlanDialog({
   const [text, setText] = useState("");
   const [title, setTitle] = useState("");
   const [propose, setPropose] = useState(true);
+  const [topicId, setTopicId] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // A linked topic can supply the ask: its latest message is used when the text is empty.
+  const canCreate = text.trim() !== "" || topicId !== null;
+
   async function create(): Promise<void> {
-    if (!text.trim() || busy) return;
+    if (!canCreate || busy) return;
     setBusy(true);
     setError(null);
     try {
       onCreated(
         await api.stepPlans.create({
-          source_text: text.trim(),
+          source_text: text.trim() || undefined,
+          topic_id: topicId,
           title: title.trim() || undefined,
           propose,
         }),
@@ -57,9 +63,19 @@ export function NewStepPlanDialog({
         New step plan
       </h2>
       <p className="mt-1 text-sm text-muted">
-        Paste the ask (an email, a brief…). It will be split into steps you can freely edit.
+        Paste the ask (an email, a brief…), optionally from a topic. It will be split into steps you can freely edit.
       </p>
-      <label className="mt-4 block text-xs font-medium text-muted">
+      <div className="mt-4 text-xs font-medium text-muted">
+        Topic (optional)
+        <div className="mt-1 font-normal">
+          <StepTopicPicker value={topicId} onChange={setTopicId} disabled={busy} />
+        </div>
+        <span className="mt-1 block font-normal">
+          Its discussion gives the model context, and the final output can be sent back to it.
+          {topicId !== null && " Leave the ask empty to use the topic's latest message."}
+        </span>
+      </div>
+      <label className="mt-3 block text-xs font-medium text-muted">
         Title (optional)
         <input
           value={title}
@@ -109,7 +125,7 @@ export function NewStepPlanDialog({
         <button
           type="button"
           onClick={() => void create()}
-          disabled={busy || !text.trim()}
+          disabled={busy || !canCreate}
           className={BTN_PRIMARY}
         >
           {busy && <Loader2 size={14} className="animate-spin" />}

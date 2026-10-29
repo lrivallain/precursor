@@ -12,7 +12,9 @@ explicitly.
 
 from __future__ import annotations
 
-from sqlalchemy import Boolean, ForeignKey, Integer, String, Text
+from datetime import datetime
+
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from precursor.backend.models.base import Base, TimestampMixin
@@ -44,6 +46,21 @@ STEP_STATUSES = (
     STEP_CANCELLED,
 )
 
+# How much the model does on its own. ``manual``: nothing unless asked.
+# ``assisted``: a model draft is assessed right away. ``auto``: the model can also
+# draft every untouched step and build a provisional final in a background run.
+# In every mode a person validates; the model only drafts and scores.
+AUTOMATION_MANUAL = "manual"
+AUTOMATION_ASSISTED = "assisted"
+AUTOMATION_AUTO = "auto"
+AUTOMATION_MODES = (AUTOMATION_MANUAL, AUTOMATION_ASSISTED, AUTOMATION_AUTO)
+
+# State of the automated run. ``running`` is only trusted while the process holds
+# the run (see ``step_plans.RUNNING``); otherwise it reads as ``paused``.
+AUTO_IDLE = "idle"
+AUTO_RUNNING = "running"
+AUTO_PAUSED = "paused"
+
 AUTHOR_USER = "user"
 AUTHOR_MODEL = "model"
 
@@ -68,10 +85,29 @@ class StepPlan(Base, TimestampMixin):
     # What the final output should be (format, tone, language…).
     output_instructions: Mapped[str | None] = mapped_column(Text, nullable=True)
     final_output: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Which of ``StepPlanFinalVersion`` the final output is (0: none yet).
+    final_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
     # A validated artifact changed after the final output was built.
     final_stale: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="0"
     )
+    # The final output was built before every working step was validated: it is
+    # a draft for review, never an approved result.
+    final_provisional: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
+    automation_mode: Mapped[str] = mapped_column(
+        String(12), nullable=False, default=AUTOMATION_MANUAL, server_default=AUTOMATION_MANUAL
+    )
+    auto_state: Mapped[str] = mapped_column(
+        String(12), nullable=False, default=AUTO_IDLE, server_default=AUTO_IDLE
+    )
+    # The model's self-assessment of the whole result (JSON), and the signature
+    # of the inputs it looked at: when they change the assessment is stale.
+    assessment_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    assessed_sig: Mapped[str | None] = mapped_column(String(40), nullable=True)
 
 
 class Step(Base, TimestampMixin):
@@ -101,6 +137,15 @@ class Step(Base, TimestampMixin):
     created_by: Mapped[str] = mapped_column(
         String(8), nullable=False, default=AUTHOR_USER, server_default=AUTHOR_USER
     )
+    # The model's self-assessment of this step's artifact (JSON) and the signature
+    # (ask + instruction + artifact) it was made against.
+    assessment_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    assessed_sig: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    # The ask or this step's instruction changed after it was validated: the
+    # approval is kept but no longer counts until the user re-approves it.
+    needs_review: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
 
 
 class StepArtifactVersion(Base, TimestampMixin):
@@ -113,3 +158,20 @@ class StepArtifactVersion(Base, TimestampMixin):
     version: Mapped[int] = mapped_column(Integer, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False, default="")
     author: Mapped[str] = mapped_column(String(8), nullable=False, default=AUTHOR_USER)
+
+
+class StepPlanFinalVersion(Base, TimestampMixin):
+    """One distinct text the plan's final output has had, like a step's versions."""
+
+    __tablename__ = "step_plan_final_versions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    plan_id: Mapped[int] = mapped_column(
+        ForeignKey("step_plans.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    author: Mapped[str] = mapped_column(String(8), nullable=False, default=AUTHOR_USER)
+    # When this version was last filed into the topic, and as which message.
+    posted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    posted_message_id: Mapped[int | None] = mapped_column(Integer, nullable=True)

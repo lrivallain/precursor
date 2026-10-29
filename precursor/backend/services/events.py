@@ -29,7 +29,7 @@ import contextlib
 import logging
 import os
 import secrets
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from datetime import datetime
@@ -115,6 +115,22 @@ def set_current_client_id(value: str | None) -> None:
 
 def get_current_client_id() -> str | None:
     return _current_client_id.get()
+
+
+@contextlib.contextmanager
+def broadcast_events() -> Iterator[None]:
+    """Publish inside this block to every window, including the requesting one.
+
+    Events are normally tagged with the originating client so that window keeps
+    its optimistic update. A model turn started by a click has no such update
+    (the transcript and the artifact change on the server), so the window that
+    clicked must hear about it too.
+    """
+    token = _current_client_id.set(None)
+    try:
+        yield
+    finally:
+        _current_client_id.reset(token)
 
 
 # Whether this interpreter is the app (the process that serves /api/events).

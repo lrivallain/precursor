@@ -8,6 +8,7 @@ import {
   GripVertical,
   IndentDecrease,
   IndentIncrease,
+  Loader2,
   Plus,
   Trash2,
   X,
@@ -21,12 +22,14 @@ import {
   planMove,
   progressOf,
   siblingIds,
-  STEP_STATUS_DOT,
+  DISPLAY_STATUS_DOT,
+  displayStatus,
   type MoveKind,
   type MoveTarget,
   type StepNode,
 } from "../../lib/stepPlans";
 import { useConfirm } from "../ConfirmDialog";
+import { ScoreChip } from "./AssessmentPanel";
 import { StepStatusPill } from "./StepUi";
 
 type Mutate = <T>(action: () => Promise<T>) => Promise<T | undefined>;
@@ -43,6 +46,10 @@ interface Props {
   /** Shown instead of the tree when there is no step yet. */
   emptyMessage: string;
   footer?: ReactNode;
+  /** The step the automated run is drafting right now. */
+  activeStepId?: number | null;
+  /** Steps holding edits that are not saved yet. */
+  unsavedStepIds?: ReadonlySet<number>;
 }
 
 const ACTION_BTN =
@@ -62,6 +69,8 @@ export function StepTree({
   renderDetail,
   emptyMessage,
   footer,
+  activeStepId = null,
+  unsavedStepIds,
 }: Props) {
   const confirm = useConfirm();
   const [adding, setAdding] = useState<{ parent: number | null } | null>(null);
@@ -191,7 +200,7 @@ export function StepTree({
               className="flex min-w-0 flex-1 items-center gap-2 text-left text-sm"
             >
               <span
-                className={`h-2 w-2 shrink-0 rounded-full ${STEP_STATUS_DOT[step.effective_status]}`}
+                className={`h-2 w-2 shrink-0 rounded-full ${DISPLAY_STATUS_DOT[displayStatus(step)]}`}
                 aria-hidden
               />
               <span
@@ -204,12 +213,30 @@ export function StepTree({
               {progress && (
                 <span
                   className="shrink-0 text-[11px] tabular-nums text-muted"
-                  data-tooltip={`${progress.done} of ${progress.total} sub-steps validated`}
+                  data-tooltip={`${progress.done} of ${progress.total} sub-steps approved`}
                 >
                   {progress.done}/{progress.total}
                 </span>
               )}
-              <StepStatusPill status={step.effective_status} />
+              {step.id === activeStepId && (
+                <Loader2
+                  size={13}
+                  className="shrink-0 animate-spin text-sky-600 dark:text-sky-400"
+                  role="status"
+                  aria-label="The model is drafting this step"
+                  data-tooltip="The model is drafting this step"
+                />
+              )}
+              {unsavedStepIds?.has(step.id) && (
+                <span
+                  className="size-2 shrink-0 rounded-full bg-amber-500"
+                  role="img"
+                  aria-label="Unsaved edits"
+                  data-tooltip="Unsaved edits: they are kept while you look around, until you save or discard them"
+                />
+              )}
+              {step.assessment && <ScoreChip assessment={step.assessment} stale={step.assessment_stale} />}
+              <StepStatusPill step={step} />
             </button>
             {proposed && (
               <>

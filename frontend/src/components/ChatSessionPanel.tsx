@@ -43,6 +43,8 @@ interface ChatSessionPanelProps {
   onSetRole?: (roleName: string | null) => Promise<void>;
   /** Shown from the workspace panel: turns carry the open file, and the stats rail is left out. */
   workspaceContext?: WorkspaceTurnContext | null;
+  /** Bump to refetch the transcript after a change made outside this panel. */
+  reloadSignal?: number;
 }
 
 // Chats are flat sessions with no GitHub issue, so the gh-* commands, the
@@ -55,6 +57,7 @@ export function ChatSessionPanel({
   onRemindersChanged,
   onSetRole,
   workspaceContext,
+  reloadSignal,
 }: ChatSessionPanelProps) {
   const settings = useSettings();
   const showStats = (settings?.show_chat_stats ?? true) && !workspaceContext;
@@ -76,6 +79,7 @@ export function ChatSessionPanel({
     onRemindersChanged,
     onSetRole,
     workspaceContext,
+    reloadSignal,
   });
   const { streamKey, systemNote, visibleMessages, streaming, reminders } = conv;
   const rewindFrom = conv.rewind.preview?.fromId ?? null;

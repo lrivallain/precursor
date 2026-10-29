@@ -12,11 +12,14 @@ from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.db import get_session
-from precursor.backend.models.step_plan import AUTHOR_USER
+from precursor.backend.models.step_plan import AUTHOR_USER, AUTOMATION_AUTO
 from precursor.backend.schemas.chat import ChatRead
 from precursor.backend.schemas.message import MessageRead
 from precursor.backend.schemas.step_plan import (
+    ArtifactDraftResult,
     ConsolidateRequest,
+    FinalDraftResult,
+    FinalVersionRead,
     FinalWrite,
     SendToTopicRequest,
     StepArtifactRevert,
@@ -34,8 +37,10 @@ from precursor.backend.schemas.step_plan import (
     StepStartRequest,
     StepStatusUpdate,
     StepUpdate,
+    UseMessageRequest,
 )
 from precursor.backend.services import step_plan_llm as llm
+from precursor.backend.services import step_plan_runner as runner
 from precursor.backend.services import step_plans as svc
 from precursor.backend.services.events import publish_step_plan_changed
 from precursor.backend.services.side_chats import to_chat_read
@@ -132,9 +137,43 @@ async def start_plan(
     payload: StepStartRequest | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> StepPlanRead:
-    await svc.start_plan(
+    plan = await svc.start_plan(
         session, plan_id, accept_proposed=payload.accept_proposed if payload else True
     )
+    if plan.automation_mode == AUTOMATION_AUTO:
+        await runner.start(session, plan_id)
+    await publish_step_plan_changed(plan_id)
+    return await _plan(session, plan_id)
+
+
+@router.post("/{plan_id}/complete", response_model=StepPlanRead)
+async def complete_plan(plan_id: int, session: AsyncSession = Depends(get_session)) -> StepPlanRead:
+    """Mark the plan done once its final output is built from approved steps."""
+    await svc.complete_plan(session, plan_id)
+    await publish_step_plan_changed(plan_id)
+    return await _plan(session, plan_id)
+
+
+@router.post("/{plan_id}/auto/start", response_model=StepPlanRead)
+async def start_auto(plan_id: int, session: AsyncSession = Depends(get_session)) -> StepPlanRead:
+    """Start (or resume) the automated run: it drafts and scores, never validates."""
+    await runner.start(session, plan_id)
+    await publish_step_plan_changed(plan_id)
+    return await _plan(session, plan_id)
+
+
+@router.post("/{plan_id}/auto/pause", response_model=StepPlanRead)
+async def pause_auto(plan_id: int, session: AsyncSession = Depends(get_session)) -> StepPlanRead:
+    """Stop the run once the step in flight is done."""
+    await runner.pause(session, plan_id)
+    await publish_step_plan_changed(plan_id)
+    return await _plan(session, plan_id)
+
+
+@router.post("/{plan_id}/assess", response_model=StepPlanRead)
+async def assess_plan(plan_id: int, session: AsyncSession = Depends(get_session)) -> StepPlanRead:
+    """Model self-assessment of the whole result against the original ask."""
+    await llm.assess_plan(session, plan_id)
     await publish_step_plan_changed(plan_id)
     return await _plan(session, plan_id)
 
@@ -164,18 +203,28 @@ async def consolidation_chat(
     return await to_chat_read(session, chat)
 
 
-@router.post("/{plan_id}/consolidate/generate", response_model=StepPlanRead)
+@router.post("/{plan_id}/consolidate/generate", response_model=FinalDraftResult)
 async def generate_final(
     plan_id: int,
     payload: ConsolidateRequest | None = None,
     session: AsyncSession = Depends(get_session),
-) -> StepPlanRead:
-    await llm.generate_final(
+) -> FinalDraftResult:
+    draft = await llm.generate_final(
         session,
         plan_id,
         instructions=payload.instructions if payload else None,
         force=payload.force if payload else False,
+        complete=True,
     )
+    await publish_step_plan_changed(plan_id)
+    return FinalDraftResult(plan=await _plan(session, plan_id), outcome=draft.outcome)
+
+
+@router.post("/{plan_id}/final/from-message", response_model=StepPlanRead)
+async def final_from_message(
+    plan_id: int, payload: UseMessageRequest, session: AsyncSession = Depends(get_session)
+) -> StepPlanRead:
+    await llm.use_message_as_final(session, plan_id, payload.message_id, complete=True)
     await publish_step_plan_changed(plan_id)
     return await _plan(session, plan_id)
 
@@ -189,13 +238,34 @@ async def write_final(
     return await _plan(session, plan_id)
 
 
+@router.get("/{plan_id}/final/versions", response_model=list[FinalVersionRead])
+async def list_final_versions(
+    plan_id: int, session: AsyncSession = Depends(get_session)
+) -> list[FinalVersionRead]:
+    return await svc.list_final_versions(session, plan_id)
+
+
+@router.post("/{plan_id}/final/revert", response_model=StepPlanRead)
+async def revert_final(
+    plan_id: int, payload: StepArtifactRevert, session: AsyncSession = Depends(get_session)
+) -> StepPlanRead:
+    await llm.revert_final(session, plan_id, payload.version)
+    await publish_step_plan_changed(plan_id)
+    return await _plan(session, plan_id)
+
+
 @router.post("/{plan_id}/send-to-topic", response_model=MessageRead)
 async def send_to_topic(
     plan_id: int,
     payload: SendToTopicRequest | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> MessageRead:
-    _, message = await llm.send_to_topic(session, plan_id, payload.text if payload else None)
+    _, message = await llm.send_to_topic(
+        session,
+        plan_id,
+        payload.text if payload else None,
+        force=payload.force if payload else False,
+    )
     await publish_step_plan_changed(plan_id)
     return message
 
@@ -269,15 +339,32 @@ async def revert_artifact(
     return await _step(session, step_id)
 
 
-@steps_router.post("/{step_id}/artifact/generate", response_model=StepRead)
+@steps_router.post("/{step_id}/artifact/generate", response_model=ArtifactDraftResult)
 async def generate_artifact(
     step_id: int,
     payload: StepGenerateRequest | None = None,
     session: AsyncSession = Depends(get_session),
-) -> StepRead:
-    step = await llm.generate_artifact(
+) -> ArtifactDraftResult:
+    draft = await llm.generate_artifact(
         session, step_id, instructions=payload.instructions if payload else None
     )
+    await publish_step_plan_changed(draft.step.plan_id)
+    return ArtifactDraftResult(step=await _step(session, step_id), outcome=draft.outcome)
+
+
+@steps_router.post("/{step_id}/assess", response_model=StepRead)
+async def assess_step(step_id: int, session: AsyncSession = Depends(get_session)) -> StepRead:
+    """Model self-assessment of this step's artifact."""
+    step = await llm.assess_step(session, step_id)
+    await publish_step_plan_changed(step.plan_id)
+    return await _step(session, step_id)
+
+
+@steps_router.post("/{step_id}/artifact/from-message", response_model=StepRead)
+async def artifact_from_message(
+    step_id: int, payload: UseMessageRequest, session: AsyncSession = Depends(get_session)
+) -> StepRead:
+    step = await llm.use_message_as_artifact(session, step_id, payload.message_id)
     await publish_step_plan_changed(step.plan_id)
     return await _step(session, step_id)
 

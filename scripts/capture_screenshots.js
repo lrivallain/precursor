@@ -280,7 +280,7 @@ const scenes = {
   },
 
   // A step plan mid-way: the tree with its statuses on the left, the artifact
-  // of a step waiting for validation on the right.
+  // of a step waiting for review on the right.
   "step-by-step": {
     viewport: { width: 1440, height: 900 },
     async go(page) {

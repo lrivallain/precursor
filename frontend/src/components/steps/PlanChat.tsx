@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { api, apiErrorMessage } from "../../lib/api";
+import { eventBus } from "../../lib/events";
+import { convKey, streamStore } from "../../lib/streamStore";
 import type { Chat } from "../../lib/types";
 import { ChatSessionPanel } from "../ChatSessionPanel";
+import { ArtifactActionContext, type ArtifactAction } from "./ArtifactCard";
 import { BTN_SECONDARY, ErrorBanner } from "./StepUi";
 
 /**
@@ -13,10 +16,13 @@ import { BTN_SECONDARY, ErrorBanner } from "./StepUi";
 export function PlanChat({
   open,
   onOpened,
+  artifactAction,
 }: {
   open: () => Promise<Chat>;
   /** The chat was just opened (it may have moved the step to "in progress"). */
   onOpened?: () => void;
+  /** What the "send" button of a deliverable the model marked does. */
+  artifactAction?: ArtifactAction;
 }) {
   const [chat, setChat] = useState<Chat | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -41,6 +47,24 @@ export function PlanChat({
     // `open` and `onOpened` are fresh closures every render; the chat is
     // identified by the key the parent mounts this with.
   }, [attempt]);
+
+  // The model works on this discussion from the server (a Generate click, a
+  // run, an assessment). Follow it live instead of waiting for a reload.
+  const [reloadSignal, setReloadSignal] = useState(0);
+  const chatId = chat?.id ?? null;
+  useEffect(() => {
+    if (chatId == null) return;
+    eventBus.start();
+    return eventBus.subscribe((event) => {
+      if (event.type === "stream.started" && event.chat_id === chatId) {
+        streamStore.setRemoteStreaming(convKey("chat", chatId), true);
+      } else if (event.type === "stream.ended" && event.chat_id === chatId) {
+        streamStore.setRemoteStreaming(convKey("chat", chatId), false);
+      } else if (event.type === "message.changed" && event.chat_id === chatId) {
+        setReloadSignal((n) => n + 1);
+      }
+    });
+  }, [chatId]);
 
   const refresh = useCallback(async () => {
     if (!chat) return;
@@ -69,9 +93,11 @@ export function PlanChat({
     );
   }
   return (
+    <ArtifactActionContext.Provider value={artifactAction ?? null}>
     <ChatSessionPanel
       key={chat.id}
       chat={chat}
+      reloadSignal={reloadSignal}
       onChatUpdated={() => void refresh()}
       onArchived={() => setAttempt((n) => n + 1)}
       onSetRole={async (role) => {
@@ -79,5 +105,6 @@ export function PlanChat({
         await refresh();
       }}
     />
+    </ArtifactActionContext.Provider>
   );
 }

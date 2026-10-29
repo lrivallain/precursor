@@ -1,16 +1,21 @@
 """The model-driven actions of a step-by-step plan.
 
-Every action is an explicit, one-shot, tool-less call (``complete_once``) whose
-result lands in the plan as data the user then reviews — suggested steps stay
-``proposed`` until accepted, a drafted artifact lands in ``to_validate``. The
-model never changes a plan on its own initiative.
+Structured actions (suggesting steps, reviewing the plan) are explicit,
+one-shot, tool-less calls (``complete_once``). Drafting an artifact or the final
+output is a real turn of the step's (or the consolidation) chat, run through the
+shared headless pipeline, so it is tracked in that discussion and inherits the
+chat's model, role, tools and approval gates. A reply is a discussion: only the
+deliverable the model marks (``ARTIFACT_OPEN`` … ``ARTIFACT_CLOSE``) becomes an
+artifact version, always landing in ``to_validate`` — the model never validates.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
-import re
-from typing import Any
+import logging
+from dataclasses import dataclass
+from typing import Any, Literal
 
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,23 +24,34 @@ from precursor.backend.db import SessionLocal
 from precursor.backend.models import Chat, Message, MessageRole, Step, StepPlan
 from precursor.backend.models.step_plan import (
     AUTHOR_MODEL,
+    AUTHOR_USER,
+    AUTOMATION_MANUAL,
     PLAN_ACTIVE,
     PLAN_CONSOLIDATING,
     PLAN_DONE,
     PLAN_DRAFTING,
+    STEP_CANCELLED,
     STEP_TO_VALIDATE,
     STEP_VALIDATED,
 )
 from precursor.backend.schemas.conversation_llm import ConversationLLMSelection
 from precursor.backend.schemas.message import MessageRead
-from precursor.backend.schemas.step_plan import StepCreate
+from precursor.backend.schemas.step_plan import Assessment, StepCreate
 from precursor.backend.services import step_plans as svc
 from precursor.backend.services.compaction import render_transcript
 from precursor.backend.services.conversation_turn import load_model_history
-from precursor.backend.services.events import publish_message_changed
+from precursor.backend.services.events import (
+    broadcast_events,
+    publish_message_changed,
+    publish_message_changed_chat,
+    publish_step_plan_changed,
+)
 from precursor.backend.services.llm.one_shot import complete_once
+from precursor.backend.services.turn import run_chat_turn
 
 from sqlalchemy import select  # isort: skip
+
+log = logging.getLogger(__name__)
 
 USAGE_SOURCE = "/step-by-step"
 _DISCUSSION_CAP = 40_000
@@ -76,17 +92,21 @@ validated independently. Reply with JSON only, no prose and no code fence:
 Return 2 to 6 steps that together cover the step completely, without overlap, \
 in a sensible order. Keep the specifics of the original step. {_LANGUAGE}"""
 
-_ARTIFACT_SYSTEM = """\
-You write the result (the "artifact") of ONE step of a larger plan. It will be \
-reviewed by the user and later combined with the other steps' artifacts into \
-one deliverable.
+_ARTIFACT_DRAFT_PROMPT = f"""\
+Draft the result (the "artifact") of this step now, or revise the current one. \
+It will be reviewed by the user and later combined with the other steps' \
+artifacts into one deliverable.
 
-Use the step's discussion as the source of truth for decisions and wording: \
-what the user and assistant settled on wins over your own preferences. Ground \
-everything in the original ask and the discussion; never invent facts, \
-figures or commitments. Write clean Markdown, ready to be reused as is, in the \
-language of the original ask. Output ONLY the artifact — no preamble, no \
-closing remarks, no code fence around it."""
+- Use this discussion as the source of truth for decisions and wording: what \
+the user and you settled on wins over your own preferences.
+- Ground everything in the original ask and the discussion; never invent \
+facts, figures or commitments.
+- Put the complete artifact between a line `{svc.ARTIFACT_OPEN}` and a line \
+`{svc.ARTIFACT_CLOSE}`: clean Markdown, ready to be reused as is, no preamble \
+and no code fence inside the markers. {_LANGUAGE}
+- Anything else (questions you need answered, alternatives, caveats) goes \
+OUTSIDE the markers, briefly. If you can't write a trustworthy artifact yet, \
+ask your questions and leave the markers out."""
 
 _REVIEW_SYSTEM = """\
 You review a step-by-step plan before it is consolidated. Compare the original \
@@ -102,10 +122,70 @@ instruction.
 Be specific and brief; quote step titles. Say so plainly when the plan looks \
 sound. Write in the language of the original ask."""
 
-_FINAL_SYSTEM = """\
-You consolidate a step-by-step plan into ONE final deliverable. You get the \
-original ask, the requested output (if any) and each step's validated \
-artifact in plan order.
+_SELF_ASSESSMENT = """\
+Be a strict, honest reviewer of the work, not its cheerleader. Your score is a \
+self-assessment, not a measured probability: 90+ only when every requirement is \
+clearly covered and supported; below 50 when something essential is missing or \
+unsupported. Never reward length or confident tone. Facts that appear in neither \
+the ask nor the material are assumptions, not evidence."""
+
+_ASSESS_STEP_SYSTEM = f"""\
+You assess how well ONE step's artifact answers what that step asked for, in the \
+context of the original ask. {_SELF_ASSESSMENT}
+
+Reply with JSON only, no prose and no code fence:
+{{"score": 0-100, "summary": "one or two sentences", "covered": ["requirement \
+addressed", "..."], "evidence": ["where the support comes from: a quoted line, a \
+source, a figure from the ask; leave empty if there is none"], "assumptions": \
+["unverified statement the artifact relies on"], "gaps": ["requirement not \
+covered, missing fact or open question"]}}
+
+Each list holds short items (under 160 characters), at most 8. "covered" and \
+"gaps" must refer to the requirements of the step's instruction and of the ask \
+it serves. {_LANGUAGE}"""
+
+_ASSESS_PLAN_SYSTEM = f"""\
+You assess the READINESS of a step-by-step plan against the original ask: \
+does the set of step artifacts answer every request, and does it hold together? \
+No final deliverable exists yet, so you are NOT assessing one. {_SELF_ASSESSMENT}
+
+Do NOT average the steps' scores. Go through the original ask request by \
+request, then look across the steps for omissions and contradictions.
+
+Reply with JSON only, no prose and no code fence:
+{{"score": 0-100, "summary": "one or two sentences", "covered": ["request of the \
+ask that is answered", "..."], "evidence": ["which step(s) support it"], \
+"assumptions": ["unverified statement the result relies on"], "gaps": ["request \
+of the ask that no artifact answers, or answers only in part"], "contradictions": \
+["two steps that disagree: name both and the point"]}}
+
+Each list holds short items (under 200 characters), at most 10. Steps without an \
+artifact count as gaps. {_LANGUAGE}"""
+
+_ASSESS_FINAL_SYSTEM = f"""\
+You assess the FINAL DELIVERABLE of a step-by-step plan: the text that will be \
+handed over. Judge that text itself against the original ask and the requested \
+output instructions, using the step artifacts only as the supporting material \
+to check it against. {_SELF_ASSESSMENT}
+
+Do NOT average anything. Go through the original ask request by request and \
+check that the final text answers each one; then check that its claims, \
+numbers and commitments are supported by the artifacts (and say where they \
+are not), and look for omissions and for contradictions inside it or against \
+the artifacts.
+
+Reply with JSON only, no prose and no code fence:
+{{"score": 0-100, "summary": "one or two sentences", "covered": ["request of the \
+ask that the final text answers", "..."], "evidence": ["which step(s) support \
+it"], "assumptions": ["statement of the final text that no artifact supports"], \
+"gaps": ["request of the ask or output instruction the final text misses or \
+answers only in part"], "contradictions": ["two passages that disagree, or the \
+final text against an artifact: name both and the point"]}}
+
+Each list holds short items (under 200 characters), at most 10. {_LANGUAGE}"""
+
+_FINAL_DRAFT_PROMPT = f"""\
+Consolidate the plan into ONE final deliverable now.
 
 - Answer the original ask completely, using the artifacts as your material; \
 keep their decisions, numbers, names and commitments verbatim.
@@ -115,8 +195,11 @@ isn't supported by the artifacts, and never drop an artifact's substance.
 otherwise write a clear, well-structured Markdown answer.
 - If artifacts contradict each other, keep the later step's version and list \
 the conflict at the end under "Points to check".
-- Write in the language of the original ask. Output ONLY the deliverable — no \
-preamble and no code fence around it."""
+- Put the complete deliverable between a line `{svc.ARTIFACT_OPEN}` and a line \
+`{svc.ARTIFACT_CLOSE}`, with no preamble and no code fence inside the markers. \
+{_LANGUAGE}
+- Anything else (questions, caveats) goes OUTSIDE the markers, briefly. If you \
+can't consolidate yet, ask and leave the markers out."""
 
 
 # --- plumbing -----------------------------------------------------------------
@@ -148,14 +231,6 @@ async def _complete(session: AsyncSession, plan: StepPlan, *, system: str, user:
         **_selection_kwargs(plan),
     )
     return result.text.strip()
-
-
-_FENCE_RE = re.compile(r"^```[a-zA-Z]*\n(.*)\n```$", re.DOTALL)
-
-
-def _unfence(text: str) -> str:
-    match = _FENCE_RE.match(text.strip())
-    return match.group(1).strip() if match else text.strip()
 
 
 def extract_json(text: str) -> Any:
@@ -310,39 +385,183 @@ async def suggest_steps(
 # --- artifacts ----------------------------------------------------------------
 
 
+DraftOutcome = Literal["published", "discussion", "awaiting_approval"]
+
+
+@dataclass
+class ArtifactDraft:
+    step: Step
+    outcome: DraftOutcome
+
+
+@dataclass
+class FinalDraft:
+    plan: StepPlan
+    outcome: DraftOutcome
+
+
+def _visible_prompt(base: str, instructions: str | None) -> str:
+    focus = (instructions or "").strip()
+    return f"{base}\n\n{focus}" if focus else base
+
+
+def _llm_prompt(rules: str, instructions: str | None) -> str:
+    focus = (instructions or "").strip()
+    return f"{rules}\n\nExtra guidance from the user: {focus}" if focus else rules
+
+
 async def generate_artifact(
     session: AsyncSession, step_id: int, *, instructions: str | None = None
-) -> Step:
-    """Draft the step's artifact from its instruction and discussion."""
+) -> ArtifactDraft:
+    """Ask the step's discussion to draft the artifact.
+
+    The turn is tracked in the step's chat. Only a deliverable the model marked
+    is saved (as a ``to_validate`` version); a reply with questions or
+    alternatives stays in the discussion.
+    """
     step = await svc.get_step(session, step_id)
-    plan = await svc.get_plan(session, step.plan_id)
-    steps = await svc.plan_steps(session, plan.id)
+    steps = await svc.plan_steps(session, step.plan_id)
     if any(s.parent_step_id == step.id and s.status != "proposed" for s in steps):
         raise HTTPException(
             status.HTTP_409_CONFLICT, "This step is split into sub-steps; it has no artifact."
         )
-    parts = [
-        *await svc.step_grounding(session, plan, steps, step),
-        f"Step: {step.title}",
-    ]
-    if step.instruction:
-        parts.append(f"What this step must produce:\n{step.instruction}")
-    if step.artifact.strip():
-        parts.append(f"Current artifact (revise it):\n<<<ARTIFACT\n{step.artifact}\nARTIFACT>>>")
-    discussion = await _discussion(session, await _chat_id(session, step_id=step.id))
-    if discussion:
-        parts.append(f"Discussion about this step:\n<<<DISCUSSION\n{discussion}\nDISCUSSION>>>")
-    focus = (instructions or "").strip()
-    if focus:
-        parts.append(f"Extra guidance from the user: {focus}")
-    text = _unfence(
-        await _complete(session, plan, system=_ARTIFACT_SYSTEM, user="\n\n".join(parts))
+    chat = await svc.ensure_step_chat(session, step.id)
+    with broadcast_events():
+        result = await run_chat_turn(
+            chat.id,
+            _visible_prompt("Draft the artifact for this step.", instructions),
+            llm_prompt=_llm_prompt(_ARTIFACT_DRAFT_PROMPT, instructions),
+        )
+    session.expire_all()
+    if result.awaiting_approval:
+        return ArtifactDraft(await svc.get_step(session, step_id), "awaiting_approval")
+    deliverable = svc.extract_deliverable(result.reply or "")
+    if deliverable is None:
+        return ArtifactDraft(await svc.get_step(session, step_id), "discussion")
+    saved = await svc.write_artifact(
+        session, step_id, deliverable, author=AUTHOR_MODEL, mark=STEP_TO_VALIDATE
     )
-    if not text:
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "The model returned an empty artifact.")
-    return await svc.write_artifact(
-        session, step.id, text, author=AUTHOR_MODEL, mark=STEP_TO_VALIDATE
+    # The draft is on screen before the (slower) assessment starts.
+    with broadcast_events():
+        await publish_step_plan_changed(saved.plan_id)
+    await _assess_after_draft(session, saved)
+    return ArtifactDraft(saved, "published")
+
+
+async def _chat_message(session: AsyncSession, chat_id: int | None, message_id: int) -> str:
+    msg = await session.get(Message, message_id)
+    if chat_id is None or msg is None or msg.chat_id != chat_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Message not found in this discussion.")
+    if msg.role != MessageRole.ASSISTANT or not msg.content.strip():
+        raise HTTPException(status.HTTP_409_CONFLICT, "Pick one of the assistant's replies.")
+    return msg.content
+
+
+async def use_message_as_artifact(session: AsyncSession, step_id: int, message_id: int) -> Step:
+    """Publish a reply the user picked: its marked deliverable, else all of it."""
+    chat_id = await _chat_id(session, step_id=step_id)
+    content = await _chat_message(session, chat_id, message_id)
+    text = svc.extract_deliverable(content) or content.strip()
+    current = await svc.get_step(session, step_id)
+    if current.artifact.strip("\n") == text.strip("\n"):
+        # Sending what the artifact already holds (an old card clicked again)
+        # must not demote a validated step.
+        return current
+    saved = await svc.write_artifact(
+        session, step_id, text, author=AUTHOR_MODEL, mark=STEP_TO_VALIDATE
     )
+    await _assess_after_draft(session, saved)
+    return saved
+
+
+_background: set[asyncio.Task[None]] = set()
+
+
+def _spawn(coro: Any) -> None:
+    task = asyncio.ensure_future(coro)
+    _background.add(task)
+    task.add_done_callback(_background.discard)
+
+
+async def _assess_later(step_id: int | None, plan_id: int) -> None:
+    """Score a discussion edit off the request path: it's a slow model call."""
+    with broadcast_events():
+        async with SessionLocal() as session:
+            if step_id is not None:
+                step = await svc.get_step(session, step_id)
+                await _assess_after_draft(session, step)
+            else:
+                await _assess_plan_quietly(session, await svc.get_plan(session, plan_id))
+        await publish_step_plan_changed(plan_id)
+
+
+async def apply_chat_reply(chat_id: int, reply: str) -> None:
+    """Apply the deliverable of a live discussion reply to the artifact.
+
+    Called once an interactive reply in a step's (or the consolidation) chat is
+    saved, so asking the model in the discussion to write or change the
+    artifact takes effect without a separate click. Only a marked deliverable
+    counts; it lands as a new unvalidated version, so the model still never
+    approves anything, and a validated artifact is left alone (the user
+    reopens the step first). Never raises: the reply is already saved.
+    """
+    deliverable = svc.extract_deliverable(reply)
+    if deliverable is None:
+        return
+    try:
+        async with SessionLocal() as session:
+            chat = await session.get(Chat, chat_id)
+            if chat is None or (chat.step_id is None and chat.step_plan_id is None):
+                return
+            if chat.step_id is not None:
+                plan_id = await _apply_to_step(session, chat_id, chat.step_id, deliverable)
+                step_id: int | None = chat.step_id
+            else:
+                assert chat.step_plan_id is not None
+                plan_id = chat.step_plan_id
+                await save_final(session, plan_id, deliverable)
+                await trace_in_chat(
+                    session, chat_id, "Saved as the consolidated draft (from this reply)."
+                )
+                step_id = None
+        if plan_id is not None:
+            await publish_step_plan_changed(plan_id)
+            _spawn(_assess_later(step_id, plan_id))
+    except HTTPException as exc:
+        async with SessionLocal() as session:
+            await trace_in_chat(session, chat_id, f"Not applied to the artifact: {exc.detail}")
+    except Exception:
+        log.exception("Applying a discussion reply failed for chat %s", chat_id)
+
+
+async def _apply_to_step(
+    session: AsyncSession, chat_id: int, step_id: int, deliverable: str
+) -> int | None:
+    step = await svc.get_step(session, step_id)
+    if step.status == STEP_VALIDATED:
+        await trace_in_chat(
+            session,
+            chat_id,
+            "Not applied: this step is validated. Reopen it to let the discussion "
+            "change its artifact.",
+        )
+        return None
+    if step.status == STEP_CANCELLED:
+        return None
+    before = step.artifact_version
+    saved = await svc.write_artifact(
+        session, step_id, deliverable, author=AUTHOR_MODEL, mark=STEP_TO_VALIDATE
+    )
+    if saved.artifact_version == before:
+        await trace_in_chat(session, chat_id, "This reply matches the current artifact: unchanged.")
+        return None
+    await trace_in_chat(
+        session,
+        chat_id,
+        f"Applied to the artifact as version {saved.artifact_version}, to validate. "
+        "Your unsaved edits in the editor are kept.",
+    )
+    return saved.plan_id
 
 
 async def review_plan(session: AsyncSession, plan_id: int) -> str:
@@ -355,6 +574,191 @@ async def review_plan(session: AsyncSession, plan_id: int) -> str:
     return await _complete(session, plan, system=_REVIEW_SYSTEM, user=user)
 
 
+# --- assessments --------------------------------------------------------------
+
+_ITEM_CAP = 300
+_LIST_CAP = 10
+
+
+def _items(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    out = [str(v).strip()[:_ITEM_CAP] for v in value if str(v).strip()]
+    return out[:_LIST_CAP]
+
+
+def parse_assessment(text: str) -> Assessment:
+    data = extract_json(text)
+    if not isinstance(data, dict):
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY, "The model didn't return a usable assessment. Try again."
+        )
+    try:
+        score = round(float(data.get("score") or 0))
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY, "The model didn't return a score. Try again."
+        ) from None
+    return Assessment(
+        score=max(0, min(100, score)),
+        summary=str(data.get("summary") or "").strip()[:600],
+        covered=_items(data.get("covered")),
+        evidence=_items(data.get("evidence")),
+        assumptions=_items(data.get("assumptions")),
+        gaps=_items(data.get("gaps")),
+        contradictions=_items(data.get("contradictions")),
+    )
+
+
+def _assessment_note(subject: str, a: Assessment, *, version: int | None = None) -> str:
+    where = f" of version {version}" if version else ""
+    lines = [
+        f"Model self-assessment{where} — {subject}: **{a.score}/100** "
+        "(an estimate by the model, not a measured probability)."
+    ]
+    if a.summary:
+        lines.append(a.summary)
+    if a.gaps:
+        lines.append("Gaps: " + "; ".join(a.gaps))
+    if a.contradictions:
+        lines.append("Contradictions: " + "; ".join(a.contradictions))
+    return "\n\n".join(lines)
+
+
+async def trace_in_chat(session: AsyncSession, chat_id: int | None, text: str) -> None:
+    """Leave a UI-only note in a plan chat so an automated action stays traceable."""
+    if chat_id is None:
+        return
+    session.add(
+        Message(
+            chat_id=chat_id,
+            role=MessageRole.SYSTEM,
+            kind=svc.STEP_PLAN_TRACE_KIND,
+            content=text,
+        )
+    )
+    await session.commit()
+    with broadcast_events():
+        await publish_message_changed_chat(chat_id)
+
+
+async def _assess_or_trace(
+    session: AsyncSession, plan: StepPlan, system: str, user: str, chat_id: int | None
+) -> Assessment:
+    """Run an assessment call; a failure closes the "Assessing…" note in the chat."""
+    try:
+        return parse_assessment(await _complete(session, plan, system=system, user=user))
+    except Exception:
+        await trace_in_chat(session, chat_id, "The assessment didn't complete. Try it again.")
+        raise
+
+
+async def assess_step(session: AsyncSession, step_id: int) -> Step:
+    """Have the model assess one step's artifact; the score is tied to that content."""
+    step = await svc.get_step(session, step_id)
+    plan = await svc.get_plan(session, step.plan_id)
+    steps = await svc.plan_steps(session, plan.id)
+    if not step.artifact.strip():
+        raise HTTPException(status.HTTP_409_CONFLICT, "There's no artifact to assess yet.")
+    if any(s.parent_step_id == step.id and s.status != "proposed" for s in steps):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "This step is split into sub-steps; assess those instead."
+        )
+    user = (
+        f"{svc.plan_header(plan)}\n\nPlan outline:\n{svc.render_outline(steps, mark=step.id)}"
+        f"\n\nStep: {step.title}\nWhat it must produce:\n{step.instruction or '(no instruction)'}"
+        f"\n\nIts artifact:\n<<<ARTIFACT\n{step.artifact}\nARTIFACT>>>"
+    )
+    sig = svc.step_signature(plan, step)
+    await trace_in_chat(
+        session,
+        await _chat_id(session, step_id=step.id),
+        f"Assessing «{step.title}» (version {step.artifact_version}): the model checks the "
+        "artifact against what this step must produce…",
+    )
+    assessment = await _assess_or_trace(
+        session, plan, _ASSESS_STEP_SYSTEM, user, await _chat_id(session, step_id=step.id)
+    )
+    step = await svc.get_step(session, step_id)
+    step.assessment_json = assessment.model_dump_json()
+    step.assessed_sig = sig
+    await session.commit()
+    await trace_in_chat(
+        session,
+        await _chat_id(session, step_id=step.id),
+        _assessment_note(step.title, assessment, version=step.artifact_version),
+    )
+    return step
+
+
+async def assess_plan(session: AsyncSession, plan_id: int) -> StepPlan:
+    """Have the model assess the plan's overall result against the original ask.
+
+    The scope follows what exists: with no final output it is the readiness of
+    the step artifacts; once a final output is written it is that text, with the
+    approved artifacts as support. The assessment records its scope and its
+    signature covers the final text, so editing it makes the score out of date.
+    """
+    plan = await svc.get_plan(session, plan_id)
+    steps = await svc.plan_steps(session, plan.id)
+    leaves = svc.working_leaves(steps)
+    if not any(s.artifact.strip() for s in leaves):
+        raise HTTPException(status.HTTP_409_CONFLICT, "No step has a result to assess yet.")
+    blocks = []
+    for s in leaves:
+        state = "validated" if svc.is_approved(s) else f"NOT validated ({s.status})"
+        body = s.artifact.strip() or "(no artifact yet)"
+        blocks.append(f"### {s.title} [{state}]\nAsked: {s.instruction or '-'}\n\n{body}")
+    scope = svc.plan_scope(plan)
+    if scope == "final":
+        note = " (provisional: not every step is validated)" if plan.final_provisional else ""
+        user = (
+            f"{svc.plan_header(plan)}\n\nRequested output instructions:\n"
+            f"{plan.output_instructions or '(none)'}\n\n"
+            f"The final deliverable{note}:\n<<<FINAL\n{plan.final_output}\nFINAL>>>\n\n"
+            "Supporting step artifacts:\n" + "\n\n".join(blocks)
+        )
+        system = _ASSESS_FINAL_SYSTEM
+        intro = "Assessing the final output: the model checks that text against the original ask…"
+    else:
+        user = f"{svc.plan_header(plan)}\n\nSteps and their artifacts:\n" + "\n\n".join(blocks)
+        system = _ASSESS_PLAN_SYSTEM
+        intro = (
+            "Assessing the plan's readiness: the model checks the steps' artifacts against the ask…"
+        )
+    sig = svc.plan_signature(plan, steps)
+    chat_id = await _chat_id(session, plan_id=plan.id)
+    await trace_in_chat(session, chat_id, intro)
+    assessment = await _assess_or_trace(session, plan, system, user, chat_id)
+    assessment.scope = scope
+    plan = await svc.get_plan(session, plan_id)
+    plan.assessment_json = assessment.model_dump_json()
+    plan.assessed_sig = sig
+    await session.commit()
+    await trace_in_chat(
+        session,
+        chat_id,
+        _assessment_note("final output" if scope == "final" else "plan readiness", assessment),
+    )
+    return plan
+
+
+async def _assess_after_draft(session: AsyncSession, step: Step) -> None:
+    """In assisted and automated plans a model draft is scored right away.
+
+    A failed assessment never loses the draft: it just stays unassessed.
+    """
+    plan = await svc.get_plan(session, step.plan_id)
+    if plan.automation_mode == AUTOMATION_MANUAL:
+        return
+    try:
+        await assess_step(session, step.id)
+    except HTTPException as exc:
+        log.warning("Step assessment failed for step %s: %s", step.id, exc.detail)
+    except Exception:
+        log.exception("Step assessment failed for step %s", step.id)
+
+
 # --- consolidation ------------------------------------------------------------
 
 
@@ -364,64 +768,156 @@ async def generate_final(
     *,
     instructions: str | None = None,
     force: bool = False,
-) -> StepPlan:
+    complete: bool = False,
+) -> FinalDraft:
+    """Ask the consolidation discussion for the final output.
+
+    With every working step validated the output is built from approved
+    artifacts only. Consolidating anyway also draws on unvalidated drafts and
+    the result is flagged provisional: a draft for review, not an approved one.
+    """
     plan = await svc.get_plan(session, plan_id)
     if plan.status == PLAN_DRAFTING:
         raise HTTPException(status.HTTP_409_CONFLICT, "Start the plan first.")
     steps = await svc.plan_steps(session, plan.id)
     leaves = svc.working_leaves(steps)
-    pending = [s for s in leaves if s.status != STEP_VALIDATED]
+    pending = [s for s in leaves if not svc.is_approved(s)]
     if pending and not force:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             f"{len(pending)} step(s) aren't validated yet. Validate or cancel them, "
-            "or consolidate anyway.",
+            "or consolidate anyway (the result stays provisional).",
         )
-    artifacts = svc.render_artifacts(steps, include_unvalidated=force)
-    if not any(s.artifact.strip() for s in leaves if force or s.status == STEP_VALIDATED):
+    if not any(s.artifact.strip() for s in leaves if force or svc.is_approved(s)):
         raise HTTPException(status.HTTP_409_CONFLICT, "No step has a result to consolidate yet.")
-    parts = [svc.plan_header(plan)]
-    if plan.output_instructions:
-        parts.append(f"Requested output:\n{plan.output_instructions}")
-    parts.append(f"Plan outline:\n{svc.render_outline(steps)}")
-    parts.append(f"Steps' artifacts, in plan order:\n<<<ARTIFACTS\n{artifacts}\nARTIFACTS>>>")
-    discussion = await _discussion(session, await _chat_id(session, plan_id=plan.id))
-    if discussion:
-        parts.append(
-            f"Discussion with the user about the consolidation (follow its guidance):\n"
-            f"<<<DISCUSSION\n{discussion}\nDISCUSSION>>>"
+    rules = _FINAL_DRAFT_PROMPT
+    if pending:
+        rules += (
+            "\n\nSome steps are NOT validated yet: use their drafts too, and list "
+            'those steps under "Points to check" as unvalidated.'
         )
-    focus = (instructions or "").strip()
-    if focus:
-        parts.append(f"Extra guidance from the user: {focus}")
-    text = _unfence(await _complete(session, plan, system=_FINAL_SYSTEM, user="\n\n".join(parts)))
-    if not text:
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "The model returned an empty output.")
-    return await save_final(session, plan.id, text)
+    else:
+        rules += "\n\nUse the validated artifacts only."
+    chat = await svc.ensure_consolidation_chat(session, plan.id)
+    with broadcast_events():
+        result = await run_chat_turn(
+            chat.id,
+            _visible_prompt("Consolidate the plan into the final deliverable.", instructions),
+            llm_prompt=_llm_prompt(rules, instructions),
+        )
+    session.expire_all()
+    if result.awaiting_approval:
+        return FinalDraft(await svc.get_plan(session, plan_id), "awaiting_approval")
+    deliverable = svc.extract_deliverable(result.reply or "")
+    if deliverable is None:
+        return FinalDraft(await svc.get_plan(session, plan_id), "discussion")
+    saved = await save_final(session, plan_id, deliverable, complete=complete, author=AUTHOR_MODEL)
+    await _assess_plan_quietly(session, saved)
+    return FinalDraft(saved, "published")
 
 
-async def save_final(session: AsyncSession, plan_id: int, content: str) -> StepPlan:
+async def _assess_plan_quietly(session: AsyncSession, plan: StepPlan) -> None:
+    if plan.automation_mode == AUTOMATION_MANUAL:
+        return
+    try:
+        await assess_plan(session, plan.id)
+    except HTTPException as exc:
+        log.warning("Plan assessment failed for plan %s: %s", plan.id, exc.detail)
+    except Exception:
+        log.exception("Plan assessment failed for plan %s", plan.id)
+
+
+async def use_message_as_final(
+    session: AsyncSession, plan_id: int, message_id: int, *, complete: bool = False
+) -> StepPlan:
+    chat_id = await _chat_id(session, plan_id=plan_id)
+    content = await _chat_message(session, chat_id, message_id)
+    return await save_final(
+        session,
+        plan_id,
+        svc.extract_deliverable(content) or content.strip(),
+        complete=complete,
+        author=AUTHOR_MODEL,
+    )
+
+
+async def revert_final(session: AsyncSession, plan_id: int, version: int) -> StepPlan:
+    """Make an earlier version the final output again (no new version is created)."""
+    versions = await svc.list_final_versions(session, plan_id)
+    row = next((v for v in versions if v.version == version), None)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Version not found")
+    return await save_final(session, plan_id, row.content)
+
+
+async def save_final(
+    session: AsyncSession,
+    plan_id: int,
+    content: str,
+    *,
+    complete: bool = False,
+    author: str = AUTHOR_USER,
+) -> StepPlan:
+    """Keep ``content`` as the final output.
+
+    ``complete`` is for a user's own request: an output built from approved
+    steps then finishes the plan. The automated run and discussion edits never
+    pass it, so a model can't finish a plan on its own. Every distinct text is
+    kept as a version (see ``step_plans.record_final_version``).
+    """
     plan = await svc.get_plan(session, plan_id)
     if plan.status == PLAN_DRAFTING:
         raise HTTPException(status.HTTP_409_CONFLICT, "Start the plan first.")
-    plan.final_output = content.strip("\n") or None
+    steps = await svc.plan_steps(session, plan.id)
+    await svc.record_final_version(session, plan, content.strip("\n"), author=author)
     plan.final_stale = False
+    # Built while a working step is unapproved: a draft, not an approved result.
+    plan.final_provisional = bool(plan.final_output) and not svc.is_ready(steps)
     if plan.status == PLAN_ACTIVE and plan.final_output:
         plan.status = PLAN_CONSOLIDATING
+    if complete and plan.final_output and not plan.final_provisional:
+        plan.status = PLAN_DONE
     await session.commit()
     return plan
 
 
-def topic_note_content(plan: StepPlan, text: str) -> str:
-    return f"**From step-by-step plan: {plan.title}**\n\n{text.strip()}"
+def topic_note_content(
+    plan: StepPlan, text: str, *, provisional: bool = False, version: int | None = None
+) -> str:
+    label = " (provisional — not every step was validated)" if provisional else ""
+    which = f" · final output v{version}" if version else ""
+    return (
+        f"**From step-by-step plan: [{plan.title}](/steps/{plan.id}){which}{label}**"
+        f"\n\n{text.strip()}"
+    )
 
 
 async def send_to_topic(
-    session: AsyncSession, plan_id: int, text: str | None
+    session: AsyncSession, plan_id: int, text: str | None, *, force: bool = False
 ) -> tuple[StepPlan, MessageRead]:
-    """File the final output into the plan's topic as a user message, like a note."""
+    """File the final output into the plan's topic as a user message, like a note.
+
+    A provisional output is only filed on an explicit ``force``, labelled as
+    such, and doesn't complete the plan. An out-of-date one (a step changed
+    since it was written) is never filed: regenerate or review it first.
+    """
     plan = await svc.get_plan(session, plan_id)
     body = (text if text is not None else plan.final_output) or ""
+    if plan.final_stale and (plan.final_output or "").strip():
+        # Not overridable by ``force``: an out-of-date output is neither reviewed
+        # nor provisional, it simply doesn't match the steps any more.
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "The steps changed since this final output was written. Regenerate it, or "
+            "review it and save it, before sending.",
+        )
+    provisional = plan.final_provisional or not svc.is_ready(await svc.plan_steps(session, plan.id))
+    if provisional and not force:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Not every step is validated: this output is provisional. Validate the "
+            "remaining steps, or send it anyway.",
+        )
     if not body.strip():
         raise HTTPException(status.HTTP_409_CONFLICT, "There's no final output to send yet.")
     if plan.source_topic_id is None:
@@ -429,13 +925,22 @@ async def send_to_topic(
     topic_id = plan.source_topic_id
     async with SessionLocal() as ws:
         msg = Message(
-            topic_id=topic_id, role=MessageRole.USER, content=topic_note_content(plan, body)
+            topic_id=topic_id,
+            role=MessageRole.USER,
+            content=topic_note_content(
+                plan,
+                body,
+                provisional=provisional,
+                version=plan.final_version if body.strip("\n") == plan.final_output else None,
+            ),
         )
         ws.add(msg)
         await ws.commit()
         await ws.refresh(msg, attribute_names=["attachments"])
         read = MessageRead.model_validate(msg, from_attributes=True)
-    plan.status = PLAN_DONE
+    await svc.mark_final_posted(session, plan.id, body.strip("\n"), read.id)
+    if not provisional:
+        plan.status = PLAN_DONE
     await session.commit()
     await publish_message_changed(topic_id)
     return plan, read
@@ -443,12 +948,21 @@ async def send_to_topic(
 
 __all__ = [
     "PLAN_CONSOLIDATING",
+    "ArtifactDraft",
+    "FinalDraft",
+    "apply_chat_reply",
+    "assess_plan",
+    "assess_step",
     "extract_json",
     "generate_artifact",
     "generate_final",
     "parse_steps",
+    "revert_final",
     "review_plan",
     "save_final",
     "send_to_topic",
     "suggest_steps",
+    "trace_in_chat",
+    "use_message_as_artifact",
+    "use_message_as_final",
 ]

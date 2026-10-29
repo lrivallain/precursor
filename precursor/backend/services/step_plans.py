@@ -21,12 +21,18 @@ subtree (and their chats) explicitly.
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
+import json
+import re
 from collections import defaultdict
 from collections.abc import Iterable
+from datetime import UTC, datetime
+from typing import Literal
 from uuid import uuid4
 
 from fastapi import HTTPException, status
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.models import (
@@ -36,12 +42,14 @@ from precursor.backend.models import (
     Step,
     StepArtifactVersion,
     StepPlan,
+    StepPlanFinalVersion,
     Topic,
     TopicSummary,
 )
 from precursor.backend.models.step_plan import (
     AUTHOR_MODEL,
     AUTHOR_USER,
+    AUTO_RUNNING,
     PLAN_ACTIVE,
     PLAN_CONSOLIDATING,
     PLAN_DONE,
@@ -54,6 +62,9 @@ from precursor.backend.models.step_plan import (
     STEP_VALIDATED,
 )
 from precursor.backend.schemas.step_plan import (
+    ActivityNote,
+    Assessment,
+    FinalVersionRead,
     StepArtifactVersionRead,
     StepCreate,
     StepPlanCreate,
@@ -65,10 +76,45 @@ from precursor.backend.schemas.step_plan import (
 )
 from precursor.backend.services import roles as roles_service
 from precursor.backend.services.conversation_llm import validate_selection
+from precursor.backend.services.events import publish_message_changed
 from precursor.backend.services.slugs import allocate_unique_slug
+
+# Plans whose automated run is alive in this process. ``auto_state`` in the
+# database survives a restart, this set doesn't: that is how an interrupted run
+# reads as paused instead of running forever.
+RUNNING: set[int] = set()
+# The step the automated run is drafting right now, per plan.
+CURRENT_STEP: dict[int, int] = {}
 
 MAX_STEPS_PER_PLAN = 200
 MAX_DEPTH = 6
+
+# A reply is a discussion; only what sits between these lines is a deliverable.
+# HTML comments, so they stay invisible when the transcript renders Markdown.
+ARTIFACT_OPEN = "<!-- artifact -->"
+ARTIFACT_CLOSE = "<!-- /artifact -->"
+_DELIVERABLE_RES = (
+    re.compile(r"<!--\s*artifact\s*-->(.*?)<!--\s*/artifact\s*-->", re.DOTALL | re.IGNORECASE),
+    re.compile(r"<artifact>(.*?)</artifact>", re.DOTALL | re.IGNORECASE),
+)
+_FENCED = re.compile(r"^```[a-zA-Z]*\n(.*)\n```$", re.DOTALL)
+
+
+def extract_deliverable(reply: str) -> str | None:
+    """The last marked deliverable of a model reply, or None when it has none."""
+    best: tuple[int, str] | None = None
+    for pattern in _DELIVERABLE_RES:
+        for match in pattern.finditer(reply):
+            if best is None or match.start() >= best[0]:
+                best = (match.start(), match.group(1))
+    if best is None:
+        return None
+    text = best[1].strip()
+    fenced = _FENCED.match(text)
+    text = fenced.group(1).strip() if fenced else text
+    return text or None
+
+
 _TITLE_MAX = 255
 
 # A step's discussion starts as a placeholder; the title is the step's own.
@@ -191,9 +237,53 @@ def _depth(steps: list[Step], step_id: int | None) -> int:
     return depth
 
 
-def _is_ready(steps: list[Step]) -> bool:
+def is_approved(step: Step) -> bool:
+    """Validated by the user and still valid for the current ask and instruction."""
+    return step.status == STEP_VALIDATED and not step.needs_review
+
+
+def is_ready(steps: list[Step]) -> bool:
     leaves = working_leaves(steps)
-    return bool(leaves) and all(s.status == STEP_VALIDATED for s in leaves)
+    return bool(leaves) and all(is_approved(s) for s in leaves)
+
+
+# --- assessments --------------------------------------------------------------
+#
+# An assessment is tied to a signature of what it looked at; the signature is
+# recomputed on read, so a changed artifact, instruction or ask marks it stale
+# without any bookkeeping on the write paths.
+
+
+def _sig(*parts: str) -> str:
+    digest = hashlib.sha1("\x00".join(parts).encode("utf-8"), usedforsecurity=False)
+    return digest.hexdigest()
+
+
+def step_signature(plan: StepPlan, step: Step) -> str:
+    return _sig(plan.source_text, step.instruction, step.artifact)
+
+
+def plan_scope(plan: StepPlan) -> Literal["steps", "final"]:
+    """What the plan's overall assessment reads: the final output once one exists."""
+    return "final" if (plan.final_output or "").strip() else "steps"
+
+
+def plan_signature(plan: StepPlan, steps: list[Step]) -> str:
+    leaves = [f"{s.id}:{step_signature(plan, s)}" for s in working_leaves(steps)]
+    parts = [plan.source_text, plan.output_instructions or "", *leaves]
+    if plan_scope(plan) == "final":
+        # A steps-only assessment is never the assessment of a final output.
+        parts += ["final-output", plan.final_output or ""]
+    return _sig(*parts)
+
+
+def parse_assessment(raw: str | None) -> Assessment | None:
+    if not raw:
+        return None
+    try:
+        return Assessment.model_validate(json.loads(raw))
+    except ValueError:
+        return None
 
 
 # --- read models --------------------------------------------------------------
@@ -224,16 +314,31 @@ async def _chat_links(
 
 
 _STEP_FIELDS = tuple(
-    f for f in StepRead.model_fields if f not in {"effective_status", "chat_id", "chat_slug"}
+    f
+    for f in StepRead.model_fields
+    if f
+    not in {
+        "effective_status",
+        "chat_id",
+        "chat_slug",
+        "assessment",
+        "assessment_stale",
+    }
 )
 
 
-def _step_read(step: Step, effective: str, chat: tuple[int, str] | None) -> StepRead:
+def _step_read(
+    step: Step, effective: str, chat: tuple[int, str] | None, plan: StepPlan
+) -> StepRead:
     read = StepRead.model_validate(
         {**{f: getattr(step, f) for f in _STEP_FIELDS}, "effective_status": effective}
     )
     if chat is not None:
         read.chat_id, read.chat_slug = chat
+    read.assessment = parse_assessment(step.assessment_json)
+    read.assessment_stale = read.assessment is not None and step.assessed_sig != step_signature(
+        plan, step
+    )
     return read
 
 
@@ -249,18 +354,55 @@ async def to_plan_read(session: AsyncSession, plan: StepPlan) -> StepPlanRead:
         topic_title = topic.title if topic else None
     read = StepPlanRead.model_validate(plan)
     read.source_topic_title = topic_title
-    read.ready_to_consolidate = _is_ready(steps)
+    read.ready_to_consolidate = is_ready(steps)
     if consolidation is not None:
         read.consolidation_chat_id, read.consolidation_chat_slug = consolidation
-    read.steps = [_step_read(s, effective[s.id], step_chats.get(s.id)) for s, _ in ordered(steps)]
+    read.steps = [
+        _step_read(s, effective[s.id], step_chats.get(s.id), plan) for s, _ in ordered(steps)
+    ]
+    read.assessment = parse_assessment(plan.assessment_json)
+    read.assessment_stale = read.assessment is not None and plan.assessed_sig != plan_signature(
+        plan, steps
+    )
+    if plan.auto_state == AUTO_RUNNING and plan.id not in RUNNING:
+        read.auto_state = "paused"
+    posted = await latest_posted_final(session, plan.id)
+    if posted is not None:
+        read.final_posted_version, read.final_posted_at = posted.version, posted.posted_at
+    read.auto_step_id = CURRENT_STEP.get(plan.id) if plan.id in RUNNING else None
+    read.activity = await _recent_activity(session, plan.id, [s.id for s in steps])
     return read
+
+
+ACTIVITY_LIMIT = 30
+
+
+async def _recent_activity(
+    session: AsyncSession, plan_id: int, step_ids: list[int]
+) -> list[ActivityNote]:
+    """The latest traces left in the plan's chats: what the model and the run did."""
+    rows = await session.execute(
+        select(Message.id, Message.content, Message.created_at, Chat.step_id)
+        .join(Chat, Chat.id == Message.chat_id)
+        .where(
+            Message.kind == STEP_PLAN_TRACE_KIND,
+            or_(Chat.step_plan_id == plan_id, Chat.step_id.in_(step_ids)),
+        )
+        .order_by(Message.id.desc())
+        .limit(ACTIVITY_LIMIT)
+    )
+    return [
+        ActivityNote(id=i, text=text, step_id=step_id, created_at=at)
+        for i, text, at, step_id in reversed(rows.all())
+    ]
 
 
 async def read_step(session: AsyncSession, step: Step) -> StepRead:
     steps = await plan_steps(session, step.plan_id)
     effective = effective_statuses(steps)
     chats, _ = await _chat_links(session, step_ids=[step.id], plan_id=step.plan_id)
-    return _step_read(step, effective[step.id], chats.get(step.id))
+    plan = await get_plan(session, step.plan_id)
+    return _step_read(step, effective[step.id], chats.get(step.id), plan)
 
 
 async def list_plans(session: AsyncSession, topic_id: int | None = None) -> list[StepPlanItem]:
@@ -290,7 +432,7 @@ async def list_plans(session: AsyncSession, topic_id: int | None = None) -> list
                 source_topic_id=p.source_topic_id,
                 source_topic_title=titles.get(p.source_topic_id) if p.source_topic_id else None,
                 step_count=len(leaves),
-                validated_count=sum(1 for s in leaves if s.status == STEP_VALIDATED),
+                validated_count=sum(1 for s in leaves if is_approved(s)),
                 final_stale=p.final_stale,
                 created_at=p.created_at,
                 updated_at=p.updated_at,
@@ -302,7 +444,16 @@ async def list_plans(session: AsyncSession, topic_id: int | None = None) -> list
 # --- plans --------------------------------------------------------------------
 
 
+_STEPS_COMMAND = re.compile(r"^\s*/steps\b[ \t]*", re.IGNORECASE)
+
+
+def _strip_steps_command(text: str) -> str:
+    """Drop a leading ``/steps`` — the command that spawned the plan isn't the ask."""
+    return _STEPS_COMMAND.sub("", text, count=1).strip()
+
+
 def _title_from(text: str) -> str:
+    text = _strip_steps_command(text)
     for line in text.splitlines():
         line = line.strip().lstrip("#>*- ").strip()
         if line:
@@ -316,7 +467,7 @@ async def _source_for(session: AsyncSession, payload: StepPlanCreate) -> tuple[s
         topic = await session.get(Topic, payload.topic_id)
         if topic is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
-    text = (payload.source_text or "").strip()
+    text = _strip_steps_command(payload.source_text or "")
     if not text and topic is not None:
         if payload.message_id is not None:
             msg = await session.get(Message, payload.message_id)
@@ -324,7 +475,7 @@ async def _source_for(session: AsyncSession, payload: StepPlanCreate) -> tuple[s
                 raise HTTPException(status.HTTP_404_NOT_FOUND, "Message not found")
             text = msg.content.strip()
         else:
-            row = await session.execute(
+            rows = await session.execute(
                 select(Message.content)
                 .where(
                     Message.topic_id == topic.id,
@@ -332,9 +483,14 @@ async def _source_for(session: AsyncSession, payload: StepPlanCreate) -> tuple[s
                     Message.kind.is_(None),
                 )
                 .order_by(Message.id.desc())
-                .limit(1)
+                .limit(20)
             )
-            text = (row.scalar_one_or_none() or "").strip()
+            # A bare "/steps" turn carries no ask of its own: fall back to the
+            # latest message that does.
+            text = next(
+                (t for c in rows.scalars() if (t := _strip_steps_command(c or ""))),
+                "",
+            )
     if not text:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -356,6 +512,7 @@ async def create_plan(session: AsyncSession, payload: StepPlanCreate) -> StepPla
         title=(payload.title or "").strip() or _title_from(text),
         source_text=text,
         status=PLAN_DRAFTING,
+        automation_mode=payload.automation_mode,
         source_topic_id=topic.id if topic else None,
         role=role,
         llm_selection=(
@@ -366,7 +523,28 @@ async def create_plan(session: AsyncSession, payload: StepPlanCreate) -> StepPla
     )
     session.add(plan)
     await session.commit()
+    if topic is not None:
+        await _trace_in_topic(session, plan, topic.id)
     return plan
+
+
+STEP_PLAN_TRACE_KIND = "step_plan"
+
+
+async def _trace_in_topic(
+    session: AsyncSession, plan: StepPlan, topic_id: int, verb: str = "Started"
+) -> None:
+    """Leave a UI-only note in the topic so the spawned plan stays traceable."""
+    session.add(
+        Message(
+            topic_id=topic_id,
+            role=MessageRole.SYSTEM,
+            kind=STEP_PLAN_TRACE_KIND,
+            content=f"{verb} step by step: [{plan.title}](/steps/{plan.id})",
+        )
+    )
+    await session.commit()
+    await publish_message_changed(topic_id)
 
 
 async def update_plan(session: AsyncSession, plan_id: int, payload: StepPlanUpdate) -> StepPlan:
@@ -377,7 +555,12 @@ async def update_plan(session: AsyncSession, plan_id: int, payload: StepPlanUpda
     if payload.source_text is not None:
         if not payload.source_text.strip():
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "The ask can't be empty.")
-        plan.source_text = payload.source_text.strip()
+        new_text = payload.source_text.strip()
+        if new_text != plan.source_text:
+            plan.source_text = new_text
+            await _flag_for_review(session, plan)
+    if payload.automation_mode is not None:
+        plan.automation_mode = payload.automation_mode
     if "role" in fields:
         plan.role = await roles_service.require_role(session, payload.role)
     if "llm_selection" in fields:
@@ -388,7 +571,16 @@ async def update_plan(session: AsyncSession, plan_id: int, payload: StepPlanUpda
     if "output_instructions" in fields:
         text = (payload.output_instructions or "").strip()
         plan.output_instructions = text or None
+    newly_linked: int | None = None
+    if "source_topic_id" in fields and payload.source_topic_id != plan.source_topic_id:
+        if payload.source_topic_id is not None:
+            if await session.get(Topic, payload.source_topic_id) is None:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
+            newly_linked = payload.source_topic_id
+        plan.source_topic_id = payload.source_topic_id
     await session.commit()
+    if newly_linked is not None:
+        await _trace_in_topic(session, plan, newly_linked, verb="Linked")
     return plan
 
 
@@ -413,6 +605,9 @@ async def delete_plan(session: AsyncSession, plan_id: int) -> None:
             delete(StepArtifactVersion).where(StepArtifactVersion.step_id == s.id)
         )
         await session.delete(s)
+    await session.execute(
+        delete(StepPlanFinalVersion).where(StepPlanFinalVersion.plan_id == plan_id)
+    )
     await session.delete(plan)
     await session.commit()
 
@@ -428,6 +623,38 @@ async def detach_topic(session: AsyncSession, topic_id: int) -> list[int]:
     for plan in plans:
         plan.source_topic_id = None
     return [p.id for p in plans]
+
+
+async def _flag_for_review(session: AsyncSession, plan: StepPlan) -> None:
+    """The ask changed: every approval and the final output must be looked at again."""
+    for step in working_leaves(await plan_steps(session, plan.id)):
+        if step.status == STEP_VALIDATED:
+            step.needs_review = True
+    _reopen_plan(plan)
+
+
+async def complete_plan(session: AsyncSession, plan_id: int) -> StepPlan:
+    """Mark the plan done: it needs a final output built from approved steps only."""
+    plan = await get_plan(session, plan_id)
+    if plan.status == PLAN_DONE:
+        return plan
+    if plan.status not in (PLAN_ACTIVE, PLAN_CONSOLIDATING):
+        raise HTTPException(status.HTTP_409_CONFLICT, "Start the plan first.")
+    if not (plan.final_output or "").strip():
+        raise HTTPException(status.HTTP_409_CONFLICT, "There's no final output yet.")
+    if plan.final_stale:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "The steps changed since the final output was built: regenerate it first.",
+        )
+    if plan.final_provisional or not is_ready(await plan_steps(session, plan_id)):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Not every step is validated: this output is provisional and can't complete the plan.",
+        )
+    plan.status = PLAN_DONE
+    await session.commit()
+    return plan
 
 
 def _reopen_plan(plan: StepPlan) -> None:
@@ -500,8 +727,13 @@ async def update_step(session: AsyncSession, step_id: int, payload: StepUpdate) 
     step = await get_step(session, step_id)
     if payload.title is not None:
         step.title = payload.title.strip()[:_TITLE_MAX]
-    if payload.instruction is not None:
+    if payload.instruction is not None and payload.instruction.strip() != step.instruction:
         step.instruction = payload.instruction.strip()
+        if step.artifact.strip():
+            # What was approved or filed no longer matches what the step asks for.
+            if step.status == STEP_VALIDATED:
+                step.needs_review = True
+            _reopen_plan(await get_plan(session, step.plan_id))
     await session.commit()
     return step
 
@@ -670,6 +902,7 @@ async def set_step_status(session: AsyncSession, step_id: int, new_status: str) 
             raise HTTPException(status.HTTP_409_CONFLICT, "There's no artifact to validate yet.")
         previous = step.status
         step.status = new_status
+        step.needs_review = False
         if previous != new_status and (
             STEP_VALIDATED in (previous, new_status) or STEP_CANCELLED in (previous, new_status)
         ):
@@ -704,13 +937,46 @@ async def write_artifact(
     text = content.strip("\n")
     changed = text != step.artifact
     if changed:
-        step.artifact_version += 1
-        step.artifact = text
-        session.add(
-            StepArtifactVersion(
-                step_id=step.id, version=step.artifact_version, content=text, author=author
+        known = (
+            (
+                await session.execute(
+                    select(StepArtifactVersion)
+                    .where(
+                        StepArtifactVersion.step_id == step.id, StepArtifactVersion.content == text
+                    )
+                    .order_by(StepArtifactVersion.version.desc())
+                )
             )
+            .scalars()
+            .first()
         )
+        if known is not None:
+            # Same text as an earlier draft: point back at it instead of
+            # recording a duplicate.
+            step.artifact_version = known.version
+            step.artifact = text
+        else:
+            latest = (
+                await session.execute(
+                    select(func.max(StepArtifactVersion.version)).where(
+                        StepArtifactVersion.step_id == step.id
+                    )
+                )
+            ).scalar() or 0
+            step.artifact_version = max(latest, step.artifact_version) + 1
+            step.artifact = text
+            session.add(
+                StepArtifactVersion(
+                    step_id=step.id, version=step.artifact_version, content=text, author=author
+                )
+            )
+    _settle_artifact(plan, step, changed=changed, mark=mark)
+    await session.commit()
+    return step
+
+
+def _settle_artifact(plan: StepPlan, step: Step, *, changed: bool, mark: str | None) -> None:
+    """Status, review flag and plan reopening after a step's artifact moved."""
     was_validated = step.status == STEP_VALIDATED
     if mark is not None and step.status != STEP_CANCELLED:
         step.status = mark
@@ -719,10 +985,12 @@ async def write_artifact(
             step.status = STEP_TO_VALIDATE
         elif step.status == STEP_OPEN:
             step.status = STEP_IN_PROGRESS
-    if was_validated and (changed or step.status != STEP_VALIDATED):
+    if step.status != STEP_VALIDATED:
+        step.needs_review = False
+    if (was_validated and (changed or step.status != STEP_VALIDATED)) or (
+        changed and (plan.final_output or "").strip()
+    ):
         _reopen_plan(plan)
-    await session.commit()
-    return step
 
 
 async def list_versions(session: AsyncSession, step_id: int) -> list[StepArtifactVersionRead]:
@@ -745,58 +1013,180 @@ async def revert_artifact(session: AsyncSession, step_id: int, version: int) -> 
     ).scalar_one_or_none()
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Version not found")
-    return await write_artifact(session, step_id, row.content, author=AUTHOR_USER)
+    step = await get_step(session, step_id)
+    plan = await get_plan(session, step.plan_id)
+    if step.status == STEP_PROPOSED:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Accept this suggestion first.")
+    # Restoring points the step back at an existing version: the history keeps
+    # one row per distinct draft, so nothing new is recorded.
+    changed = row.content != step.artifact
+    step.artifact = row.content
+    step.artifact_version = row.version
+    _settle_artifact(plan, step, changed=changed, mark=None)
+    await session.commit()
+    return step
+
+
+# --- final output versions ----------------------------------------------------
+
+
+async def record_final_version(
+    session: AsyncSession, plan: StepPlan, text: str, *, author: str = AUTHOR_USER
+) -> None:
+    """Point the plan's final output at ``text``, as a version.
+
+    Mirrors a step's artifact history: a text the output already had points back
+    at that version instead of recording a duplicate, so restoring an older
+    version (or saving unchanged text) never creates a new one.
+    """
+    if not text.strip():
+        plan.final_output, plan.final_version = None, 0
+        return
+    known = (
+        (
+            await session.execute(
+                select(StepPlanFinalVersion)
+                .where(
+                    StepPlanFinalVersion.plan_id == plan.id, StepPlanFinalVersion.content == text
+                )
+                .order_by(StepPlanFinalVersion.version.desc())
+            )
+        )
+        .scalars()
+        .first()
+    )
+    plan.final_output = text
+    if known is not None:
+        plan.final_version = known.version
+        return
+    latest = (
+        await session.execute(
+            select(func.max(StepPlanFinalVersion.version)).where(
+                StepPlanFinalVersion.plan_id == plan.id
+            )
+        )
+    ).scalar() or 0
+    plan.final_version = max(latest, plan.final_version) + 1
+    session.add(
+        StepPlanFinalVersion(
+            plan_id=plan.id, version=plan.final_version, content=text, author=author
+        )
+    )
+
+
+async def list_final_versions(session: AsyncSession, plan_id: int) -> list[FinalVersionRead]:
+    await get_plan(session, plan_id)
+    rows = await session.execute(
+        select(StepPlanFinalVersion)
+        .where(StepPlanFinalVersion.plan_id == plan_id)
+        .order_by(StepPlanFinalVersion.version.desc())
+    )
+    return [FinalVersionRead.model_validate(v) for v in rows.scalars().all()]
+
+
+async def latest_posted_final(session: AsyncSession, plan_id: int) -> StepPlanFinalVersion | None:
+    """The version filed into the topic most recently."""
+    return (
+        (
+            await session.execute(
+                select(StepPlanFinalVersion)
+                .where(
+                    StepPlanFinalVersion.plan_id == plan_id,
+                    StepPlanFinalVersion.posted_at.is_not(None),
+                )
+                .order_by(
+                    StepPlanFinalVersion.posted_at.desc(), StepPlanFinalVersion.version.desc()
+                )
+                .limit(1)
+            )
+        )
+        .scalars()
+        .first()
+    )
+
+
+async def mark_final_posted(
+    session: AsyncSession, plan_id: int, text: str, message_id: int
+) -> StepPlanFinalVersion | None:
+    """Flag the version holding ``text`` as filed into the topic (none when it matches no version)."""
+    row = (
+        (
+            await session.execute(
+                select(StepPlanFinalVersion)
+                .where(
+                    StepPlanFinalVersion.plan_id == plan_id, StepPlanFinalVersion.content == text
+                )
+                .order_by(StepPlanFinalVersion.version.desc())
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if row is not None:
+        row.posted_at = datetime.now(UTC)
+        row.posted_message_id = message_id
+    return row
 
 
 # --- chats --------------------------------------------------------------------
 
 
+# Creating a chat is check-then-insert, and the SPA asks for it from several
+# places at once (a remounting panel, a draft button). Without a lock both
+# callers see "none yet" and the step ends up with two discussions, one of them
+# empty. The lock is taken before the session reads anything, so the second
+# caller's snapshot already includes the first one's chat.
+_chat_locks: dict[tuple[str, int], asyncio.Lock] = defaultdict(asyncio.Lock)
+
+
 async def ensure_step_chat(session: AsyncSession, step_id: int) -> Chat:
     """The step's discussion, created on first use."""
-    step = await get_step(session, step_id)
-    if step.status == STEP_PROPOSED:
-        raise HTTPException(status.HTTP_409_CONFLICT, "Accept this suggestion first.")
-    existing = (
-        await session.execute(
-            select(Chat).where(Chat.step_id == step.id).order_by(Chat.id).limit(1)
+    async with _chat_locks["step", step_id]:
+        step = await get_step(session, step_id)
+        if step.status == STEP_PROPOSED:
+            raise HTTPException(status.HTTP_409_CONFLICT, "Accept this suggestion first.")
+        existing = (
+            await session.execute(
+                select(Chat).where(Chat.step_id == step.id).order_by(Chat.id).limit(1)
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            return existing
+        plan = await get_plan(session, step.plan_id)
+        chat = Chat(
+            title=step.title[:_TITLE_MAX],
+            slug=await allocate_unique_slug(session, uuid4().hex, Chat),
+            role=plan.role,
+            llm_selection=plan.llm_selection,
+            step_id=step.id,
         )
-    ).scalar_one_or_none()
-    if existing is not None:
-        return existing
-    plan = await get_plan(session, step.plan_id)
-    chat = Chat(
-        title=step.title[:_TITLE_MAX],
-        slug=await allocate_unique_slug(session, uuid4().hex, Chat),
-        role=plan.role,
-        llm_selection=plan.llm_selection,
-        step_id=step.id,
-    )
-    session.add(chat)
-    if step.status == STEP_OPEN:
-        step.status = STEP_IN_PROGRESS
-    await session.commit()
-    return chat
+        session.add(chat)
+        if step.status == STEP_OPEN:
+            step.status = STEP_IN_PROGRESS
+        await session.commit()
+        return chat
 
 
 async def ensure_consolidation_chat(session: AsyncSession, plan_id: int) -> Chat:
-    plan = await get_plan(session, plan_id)
-    existing = (
-        await session.execute(
-            select(Chat).where(Chat.step_plan_id == plan.id).order_by(Chat.id).limit(1)
+    async with _chat_locks["plan", plan_id]:
+        plan = await get_plan(session, plan_id)
+        existing = (
+            await session.execute(
+                select(Chat).where(Chat.step_plan_id == plan.id).order_by(Chat.id).limit(1)
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            return existing
+        chat = Chat(
+            title=f"{CONSOLIDATION_CHAT_TITLE}: {plan.title}"[:_TITLE_MAX],
+            slug=await allocate_unique_slug(session, uuid4().hex, Chat),
+            role=plan.role,
+            llm_selection=plan.llm_selection,
+            step_plan_id=plan.id,
         )
-    ).scalar_one_or_none()
-    if existing is not None:
-        return existing
-    chat = Chat(
-        title=f"{CONSOLIDATION_CHAT_TITLE}: {plan.title}"[:_TITLE_MAX],
-        slug=await allocate_unique_slug(session, uuid4().hex, Chat),
-        role=plan.role,
-        llm_selection=plan.llm_selection,
-        step_plan_id=plan.id,
-    )
-    session.add(chat)
-    await session.commit()
-    return chat
+        session.add(chat)
+        await session.commit()
+        return chat
 
 
 # --- prompt grounding ---------------------------------------------------------
@@ -832,10 +1222,24 @@ def render_artifacts(steps: list[Step], *, include_unvalidated: bool = False) ->
         if _accepted_children(kids, s.id):
             blocks.append(f"{heading} {s.title}")
             continue
-        if s.status != STEP_VALIDATED and not (include_unvalidated and s.artifact.strip()):
+        if not is_approved(s) and not (include_unvalidated and s.artifact.strip()):
             continue
-        note = "" if s.status == STEP_VALIDATED else " (not validated yet)"
+        note = "" if is_approved(s) else " (not validated yet)"
         blocks.append(f"{heading} {s.title}{note}\n\n{_cap(s.artifact, _ARTIFACT_CAP)}")
+    return "\n\n".join(blocks)
+
+
+def render_drafts(steps: list[Step]) -> str:
+    """Markdown of the working steps' artifacts that aren't validated yet."""
+    kids = children_by_parent(steps)
+    blocks: list[str] = []
+    for s, depth in ordered(steps):
+        if s.status in (STEP_PROPOSED, STEP_CANCELLED) or is_approved(s):
+            continue
+        if _accepted_children(kids, s.id) or not s.artifact.strip():
+            continue
+        heading = "#" * min(depth + 2, 6)
+        blocks.append(f"{heading} {s.title}\n\n{_cap(s.artifact, _ARTIFACT_CAP)}")
     return "\n\n".join(blocks)
 
 
@@ -969,9 +1373,19 @@ async def build_step_context(session: AsyncSession, chat: Chat) -> str:
         parts = [
             "This chat works on ONE step of a larger step-by-step plan. Stay on "
             "this step: help the user think it through, answer their questions and "
-            "draft its result. The step's artifact is saved from the app (the user "
-            "or the 'Draft from discussion' action does it), so when you draft "
-            "content, present it as clean Markdown ready to become the artifact.",
+            "draft its result. When the user asks you to write, redo or change the "
+            f"artifact, put the WHOLE artifact between the lines `{ARTIFACT_OPEN}` "
+            f"and `{ARTIFACT_CLOSE}` (nothing but the deliverable inside, never a "
+            "diff or an excerpt): the app saves exactly that as a new, unvalidated "
+            "version of the step's artifact right away. Don't use the markers for "
+            "anything else; questions, alternatives, explanations and notes stay "
+            "outside them, and a reply without markers leaves the artifact untouched."
+            + (
+                " This step is validated, so a marked artifact is NOT applied until "
+                "the user reopens the step: say so instead of promising a change."
+                if step.status == STEP_VALIDATED
+                else ""
+            ),
             *await step_grounding(session, plan, steps, step),
             f"Current step: {step.title}",
         ]
@@ -993,7 +1407,12 @@ async def build_step_context(session: AsyncSession, chat: Chat) -> str:
         parts = [
             "This chat is the final consolidation of a step-by-step plan: the user "
             "reviews how the validated steps combine into one deliverable and asks "
-            "for adjustments. Ground every statement in the steps' artifacts.",
+            "for adjustments. Ground every statement in the steps' artifacts. When the "
+            "user asks you to write or change the deliverable, put the WHOLE "
+            f"deliverable between the lines `{ARTIFACT_OPEN}` and `{ARTIFACT_CLOSE}` "
+            "(nothing but the deliverable inside, never a diff): the app saves it "
+            "right away as the consolidated draft. Keep questions and notes outside "
+            "the markers; a reply without markers changes nothing.",
             plan_header(plan),
         ]
         background = await topic_background(session, plan)
@@ -1002,9 +1421,15 @@ async def build_step_context(session: AsyncSession, chat: Chat) -> str:
         parts.append(f"Plan outline:\n{render_outline(steps)}")
         if plan.output_instructions:
             parts.append(f"Requested output:\n{plan.output_instructions}")
-        artifacts = render_artifacts(steps, include_unvalidated=True)
+        artifacts = render_artifacts(steps)
         if artifacts:
-            parts.append(f"Steps' artifacts:\n<<<ARTIFACTS\n{artifacts}\nARTIFACTS>>>")
+            parts.append(f"Validated artifacts:\n<<<ARTIFACTS\n{artifacts}\nARTIFACTS>>>")
+        drafts = render_drafts(steps)
+        if drafts:
+            parts.append(
+                "Drafts NOT validated yet (provisional: use them only when the user "
+                f"asks to consolidate anyway):\n<<<DRAFTS\n{drafts}\nDRAFTS>>>"
+            )
         if plan.final_output:
             stale = " (out of date: a step changed since)" if plan.final_stale else ""
             parts.append(

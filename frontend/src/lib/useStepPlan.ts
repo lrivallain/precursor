@@ -3,6 +3,8 @@ import { api, apiErrorMessage } from "./api";
 import { eventBus } from "./events";
 import type { StepPlan } from "./types";
 
+const POLL_MS = 3000;
+
 export interface StepPlanState {
   plan: StepPlan | null;
   loading: boolean;
@@ -66,6 +68,15 @@ export function useStepPlan(planId: number, onChanged: () => void): StepPlanStat
       if (event.type === "step-plan.changed" && event.step_plan_id === planId) void read();
     });
   }, [planId, read]);
+
+  // Server events can be missed (a dropped stream, a reloaded server), so a
+  // running plan is also re-read on a timer.
+  const running = plan?.auto_state === "running";
+  useEffect(() => {
+    if (!running) return;
+    const timer = window.setInterval(() => void read(), POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [running, read]);
 
   const mutate = useCallback(
     async <T,>(action: () => Promise<T>): Promise<T | undefined> => {

@@ -24,7 +24,7 @@ export function StepPlanList({ plans, ...props }: Props) {
         detail:
           plan.status === "drafting"
             ? PLAN_STATUS_LABEL[plan.status]
-            : `${PLAN_STATUS_LABEL[plan.status]} · ${plan.validated_count}/${plan.step_count} validated`,
+            : `${PLAN_STATUS_LABEL[plan.status]} · ${plan.validated_count}/${plan.step_count} approved`,
         dot: PLAN_STATUS_DOT[plan.status],
         extra:
           plan.source_topic_title || plan.final_stale ? (

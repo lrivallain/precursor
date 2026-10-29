@@ -87,6 +87,8 @@ export interface UseConversationOptions {
   workspaceContext?: WorkspaceTurnContext | null;
   /** Topic-only: post the notes pad as a GitHub issue comment. */
   onPostComment?: UseNotesDraftOptions["onPostComment"];
+  /** Bump to refetch the transcript (something changed it outside this view). */
+  reloadSignal?: number;
 }
 
 export interface Conversation {
@@ -158,6 +160,7 @@ export function useConversation({
   onSetRole,
   workspaceContext,
   onPostComment,
+  reloadSignal,
 }: UseConversationOptions): Conversation {
   const confirmAction = useConfirm();
   const containerApi = useMemo(() => api.container(kind, id), [kind, id]);
@@ -378,6 +381,16 @@ export function useConversation({
     // re-running on its identity would cancel the in-flight reload.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [streaming, streamKey]);
+
+  const seenReloadSignal = useRef(reloadSignal);
+  useEffect(() => {
+    if (reloadSignal === seenReloadSignal.current) return;
+    seenReloadSignal.current = reloadSignal;
+    // A turn running in this view reloads when it ends; don't race it.
+    if (streamStore.isStreaming(streamKey)) return;
+    void reloadMessages();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reloadSignal]);
 
   function localMessage(role: "user" | "system", content: string): Message {
     return {

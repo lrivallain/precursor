@@ -1,4 +1,5 @@
 import type {
+  FinalVersion,
   Step,
   StepArtifactVersion,
   StepCreate,
@@ -7,6 +8,8 @@ import type {
   StepPlanCreate,
   StepPlanItem,
   StepPlanReview,
+  ArtifactDraftResult,
+  FinalDraftResult,
   StepPlanUpdate,
   SettableStepStatus,
   StepUpdate,
@@ -825,6 +828,14 @@ export const api = {
         method: "POST",
         body: JSON.stringify({ accept_proposed: acceptProposed }),
       }),
+    startAuto: (id: number) =>
+      request<StepPlan>(`/api/step-plans/${id}/auto/start`, { method: "POST" }),
+    pauseAuto: (id: number) =>
+      request<StepPlan>(`/api/step-plans/${id}/auto/pause`, { method: "POST" }),
+    assessPlan: (id: number) =>
+      request<StepPlan>(`/api/step-plans/${id}/assess`, { method: "POST" }),
+    assessStep: (stepId: number) =>
+      request<Step>(`/api/steps/${stepId}/assess`, { method: "POST" }),
     review: (id: number) =>
       request<StepPlanReview>(`/api/step-plans/${id}/review`, { method: "POST" }),
     createStep: (id: number, payload: StepCreate) =>
@@ -835,7 +846,7 @@ export const api = {
     consolidationChat: (id: number) =>
       request<Chat>(`/api/step-plans/${id}/consolidation/chat`, { method: "POST" }),
     generateFinal: (id: number, opts?: { instructions?: string; force?: boolean }) =>
-      request<StepPlan>(`/api/step-plans/${id}/consolidate/generate`, {
+      request<FinalDraftResult>(`/api/step-plans/${id}/consolidate/generate`, {
         method: "POST",
         body: JSON.stringify({
           instructions: opts?.instructions || null,
@@ -847,10 +858,24 @@ export const api = {
         method: "PUT",
         body: JSON.stringify({ content }),
       }),
-    sendToTopic: (id: number, text?: string) =>
+    finalVersions: (id: number) =>
+      request<FinalVersion[]>(`/api/step-plans/${id}/final/versions`),
+    revertFinal: (id: number, version: number) =>
+      request<StepPlan>(`/api/step-plans/${id}/final/revert`, {
+        method: "POST",
+        body: JSON.stringify({ version }),
+      }),
+    finalFromMessage: (id: number, messageId: number) =>
+      request<StepPlan>(`/api/step-plans/${id}/final/from-message`, {
+        method: "POST",
+        body: JSON.stringify({ message_id: messageId }),
+      }),
+    complete: (id: number) =>
+      request<StepPlan>(`/api/step-plans/${id}/complete`, { method: "POST" }),
+    sendToTopic: (id: number, text?: string, force = false) =>
       request<Message>(`/api/step-plans/${id}/send-to-topic`, {
         method: "POST",
-        body: JSON.stringify({ text: text ?? null }),
+        body: JSON.stringify({ text: text ?? null, force }),
       }),
     updateStep: (stepId: number, payload: StepUpdate) =>
       request<Step>(`/api/steps/${stepId}`, {
@@ -883,9 +908,14 @@ export const api = {
         body: JSON.stringify({ version }),
       }),
     generateArtifact: (stepId: number, instructions?: string) =>
-      request<Step>(`/api/steps/${stepId}/artifact/generate`, {
+      request<ArtifactDraftResult>(`/api/steps/${stepId}/artifact/generate`, {
         method: "POST",
         body: JSON.stringify({ instructions: instructions || null }),
+      }),
+    artifactFromMessage: (stepId: number, messageId: number) =>
+      request<Step>(`/api/steps/${stepId}/artifact/from-message`, {
+        method: "POST",
+        body: JSON.stringify({ message_id: messageId }),
       }),
     suggestSubsteps: (stepId: number, instructions?: string) =>
       request<StepPlan>(`/api/steps/${stepId}/suggest-substeps`, {

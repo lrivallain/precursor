@@ -26,7 +26,9 @@ import { matchBuiltinCommand } from "../lib/commands";
 import { useSkills } from "../lib/skillsStore";
 import { errorNoticeBody, isErrorNotice } from "../lib/systemNotice";
 import type { Attachment, MessageRole, Skill } from "../lib/types";
+import { parseStepPlanNote } from "../lib/stepPlans";
 import { Markdown } from "./Markdown";
+import { StepPlanNoteHeader } from "./steps/StepPlanNoteHeader";
 import { MessageMeta, formatTimestamp } from "./MessageMeta";
 import { ReasoningDisclosure } from "./ReasoningDisclosure";
 
@@ -112,6 +114,7 @@ export function MessageBubble({ role, content, reasoning, pending, attachments, 
   const builtinCommand =
     isUser && !pending && !skillInvocation ? matchBuiltinCommand(content) : null;
   const showThinking = pending && !content;
+  const planNote = isUser && !pending ? parseStepPlanNote(content) : null;
   const thinking = role === "assistant" ? reasoning?.trim() ?? "" : "";
   const imageAttachments = (attachments ?? []).filter((a) => a.mime.startsWith("image/"));
   const fileAttachments = (attachments ?? []).filter((a) => !a.mime.startsWith("image/"));
@@ -257,7 +260,7 @@ export function MessageBubble({ role, content, reasoning, pending, attachments, 
 
   return (
     <div
-      className={`group flex flex-col gap-1 min-w-0 ${isUser ? "items-end" : "items-start"}`}
+      className={`group flex flex-col gap-1 min-w-0 ${isUser ? "items-end" : "items-start"} ${planNote ? "w-full" : ""}`}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
     >
@@ -268,7 +271,7 @@ export function MessageBubble({ role, content, reasoning, pending, attachments, 
       <div
         className={`relative px-3 py-2 rounded-lg border ${
           onRetry ? "border-red-500/40" : "border-border"
-        } ${isUser ? "bg-accent/10" : "bg-surface"} max-w-full`}
+        } ${isUser ? "bg-accent/10" : "bg-surface"} max-w-full ${planNote ? "w-full" : ""}`}
       >
         {highlighted && (
           // Ties the prompt to the timeline rail's blue (current) dash.
@@ -470,9 +473,10 @@ export function MessageBubble({ role, content, reasoning, pending, attachments, 
                 ))}
               </div>
             )}
+            {planNote && <StepPlanNoteHeader note={planNote} />}
             <div ref={contentRef} data-reply-id={quotableId}>
               <Markdown className="text-sm leading-relaxed" sourceAnnotated={quotableId != null}>
-                {content || "\u200B"}
+                {planNote ? planNote.body : content || "\u200B"}
               </Markdown>
             </div>
             {pending && (

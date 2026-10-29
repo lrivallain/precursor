@@ -13,7 +13,97 @@ are the per-version history; releasing does not rewrite this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **Step by step: a clearer header on the final output filed in a topic.** The
+  note now opens with a coloured band that splits its metadata from the
+  content: a *Step by step · Final output* eyebrow, the plan title as a blue
+  link that opens the plan, the version chip (*v2*) and an amber *Provisional*
+  chip when it was filed before every step was approved. The stored message is
+  unchanged Markdown, so the model and exports still read it, and notes filed
+  earlier get the band too.
+- **Step by step: one panel for step artifacts and the final output.** Both
+  are now the same editor (version label, history, save, edit/preview, the
+  *newer version* guard), so the final output gets the resizable box and the
+  **Refine with AI** rewrite helper it was missing, and opens in *Edit* like a
+  step. Generating the final output or sending a discussion reply to it no
+  longer asks to discard unsaved edits: they stay behind the *newer version*
+  banner, as in a step. The code behind both is shared (`DocumentEditor`,
+  `useProposals`).
+
 ### Added
+
+- **Step by step: link a topic any time, tidier final panel.** A plan can be
+  linked to a topic from the new-plan dialog (its discussion becomes context; with
+  no ask typed, its latest message is used) or later with *Link a topic* in the
+  plan bar, and changed or unlinked from **⋯ Plan tools**; linking leaves a note
+  in the topic. *Send to topic* is hidden while a plan has no topic. In a step's
+  artifact and in the final output alike, the *Edit / Preview* tabs now sit
+  directly above the content and the version history opens below it, scrolled into
+  view. `PATCH /api/step-plans/{id}` accepts `source_topic_id`.
+- **Step by step: versions for the final output.** Like a step's artifact, the
+  final output keeps a numbered history (*you* or *model* authored) with *View*
+  and *Restore*; restoring or re-saving an earlier text records no duplicate.
+  The version sent to the topic is marked *posted* in the history and the
+  version label, and the note in the topic names it.
+- **Step by step: no lost drafts, no stale final, an honest assessment scope.**
+  Unsaved artifact and final-output edits now survive moving between steps, the
+  final output and other sections (an amber dot marks them, and a reload asks
+  first); whitespace-only edits count. A final output that is out of date with the
+  steps can no longer be sent to the topic or complete the plan, even after the
+  changed step is re-approved: regenerate it or *Mark as reviewed*. The overall
+  assessment says what it read: *Plan readiness* (steps only, not a final
+  deliverable) before a final output exists, *Final output assessment* once it
+  does, and it goes out of date when the final changes. A title, instruction,
+  output instruction or ask whose autosave fails keeps its text, shows the error
+  and offers a retry, even after navigating away.
+- **Step by step: automation, assessments and a tracked discussion.** A topic's
+  side panel lists its step plans and keeps a trace of the plan it spawned (and
+  the plan links back to the topic); the plan header no longer repeats its title
+  or carries `/steps`. Drafting and consolidating are now real turns of the
+  step's chat, with the plan's model, role and tools, and the deliverable is
+  picked out of the reply. An Automation choice (manual, assisted, automated)
+  lets the model draft and score steps and a provisional final output, with
+  pause/resume; the model never validates. Each draft and the whole result get a
+  model self-assessment (score, coverage, evidence, assumptions, gaps,
+  contradictions) that goes out of date when the work changes. The artifact and
+  discussion can sit side by side, and the steps tree and that split are
+  resizable. See [Step by step](website/features/step-by-step.md).
+- **Step by step: a live discussion and cleaner versions.** The step and
+  consolidation chats now update live when *Draft with model*, a run or the final
+  output works (events from your own window used to be dropped), and a new version
+  is the current one immediately. *Restore* on an older version moves the current
+  marker instead of creating a new version, and identical content never makes a
+  duplicate. A proposed artifact shows **Applied as vN** once sent, with its button
+  and the divider arrow idle, and assessments are announced in the chat while the
+  model runs them.
+- **Step by step: a simpler, more natural flow.** Each step shows one main action
+  for where it stands (*Draft with model*, *Approve*, *Reopen*) and keeps the rest
+  in a **⋯** menu; statuses collapse to To do, In progress (blue), To review
+  (amber), Approved (green) and Skipped. The plan bar shows the stage (plan the
+  steps, work through them, final output, done) with one next-action button, and a
+  *Plan tools* menu for suggesting steps, reviewing the plan and deleting it.
+  Assessments are a small chip (score first, reasons on click), the final output
+  keeps only *Generate* and *Send to topic* in view (instructions and guidance sit
+  behind *Options*), and the discussion-to-artifact arrow lights up only when the
+  model has proposed something; the separate "send the latest reply" bar is gone.
+- **Step by step: live runs, finishing, and a readable artifact.** *Start* now runs
+  an automated plan, and a run is visible: a spinner on the step in progress, its
+  name in the plan bar and an *Activity* list, with the page refreshing on its
+  own. Generating the final output from approved steps (or *Mark as done*, for a
+  plan without a topic) now completes the plan instead of leaving it
+  *consolidating*. An artifact in the discussion is shown as a *Proposed artifact*
+  card with its own *Send to artifact* button instead of raw markers; sending an
+  unchanged artifact no longer un-validates its step.
+- **Step by step: draft a step from its own button, and the discussion edits the
+  artifact.** Each step has a *Draft with model* / *Redraft* button (with an
+  optional steer) and a hint on what to do next; asking in the step's or the
+  consolidation's discussion to write or change the artifact now saves it as a new
+  unvalidated version, traced in the chat (a validated step is left alone).
+  Assessments are collapsed to their score, and the plan header moves into the
+  app's top bar. *Use latest reply* became a
+  prominent *Send the latest reply to the artifact* arrow from the discussion to
+  the artifact.
 
 - **Step by step.** A new section splits a long ask (a customer email, a brief)
   into a tree of steps. Each step has its own Markdown artifact with version
@@ -423,6 +513,10 @@ are the per-version history; releasing does not rewrite this file.
   is gone. The amber "Category needs presets" warning stays.
 
 ### Fixed
+
+- **Step by step: "Regenerate with model" ignored the discussion.** A race
+  could create two discussions for the same step, so the model drafted from one
+  while the panel showed the other. A step has one discussion again.
 
 - **Agents and workflows keep valid WorkIQ access.** Attaching WorkIQ to an
   agent no longer forces an OAuth refresh of a still-valid access token. That

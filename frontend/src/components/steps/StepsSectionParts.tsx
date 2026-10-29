@@ -7,13 +7,15 @@ import { StepPlansOverview } from "./StepPlansOverview";
 // The step-by-step section's pieces of the app shell: header, main pane and
 // sidebar slot, all reading the section controller.
 
+export const STEPS_HEADER_SLOT = "steps-header-slot";
+
+// With a plan open, the app top bar is the plan's header (StepPlanHeader
+// portals into this slot) so no second row is spent on it.
 export function StepsHeader({ controller }: { controller: StepPlansController }) {
-  const plan = controller.plans.find((p) => p.id === controller.activePlanId);
-  return (
-    <span className="truncate font-medium min-w-0 flex-1">
-      {plan ? plan.title : "Step by step"}
-    </span>
-  );
+  if (controller.activePlanId == null) {
+    return <span className="truncate font-medium min-w-0 flex-1">Step by step</span>;
+  }
+  return <div id={STEPS_HEADER_SLOT} className="flex min-w-0 flex-1 items-center gap-2" />;
 }
 
 export function StepsMain({ controller }: { controller: StepPlansController }) {

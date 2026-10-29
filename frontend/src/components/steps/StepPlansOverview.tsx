@@ -77,7 +77,7 @@ export function StepPlansOverview({
                         <span className="block h-full bg-teal-500" style={{ width: `${pct}%` }} />
                       </span>
                       <span className="mt-1 block text-xs text-muted">
-                        {plan.validated_count}/{plan.step_count} validated
+                        {plan.validated_count}/{plan.step_count} approved
                       </span>
                     </span>
                   )}

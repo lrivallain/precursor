@@ -47,6 +47,12 @@ plus a frontend extension registry.
 - All HTTP goes through `src/lib/api.ts`. Streaming chat goes through
   `src/lib/sse.ts` (we don't use `EventSource` because we POST a JSON body).
 - Keep type definitions in `src/lib/types.ts` mirrored to the Pydantic schemas.
+- Side panels and split panes must be user-resizable: use
+  `lib/useResizableWidth.ts` + `components/ResizeHandle.tsx` (width persisted
+  under a `precursor.*` localStorage key), as `LivePanel`, `WorkspaceDiscussion`
+  and the steps tree do. New panels get a handle from the start; existing
+  fixed-width ones (`ChatStatsPanel`, `AgentView`, …) are retrofitted as they
+  are touched.
 - Hover hints use `data-tooltip="…"`, never the native `title` attribute —
   `components/Tooltip.tsx` mounts a provider that styles and viewport-clamps
   them. Newlines in the value are honoured. `title` also supplies an element's

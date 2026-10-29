@@ -9,6 +9,7 @@ import { ComposerApprovalControl } from "./ComposerApprovalControl";
 import { ComposerModelControls } from "./ComposerModelControls";
 import { ChatStatsPanel } from "./ChatStatsPanel";
 import { useSideChats } from "./SideChatsSection";
+import { useTopicStepPlans } from "./steps/TopicStepPlansSection";
 import { TopicSeedCard } from "./SideChatSeedCard";
 import { SelectionActions } from "./SelectionActions";
 import { api, apiErrorMessage } from "../lib/api";
@@ -154,6 +155,8 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
   const { streamKey, setPersisted, systemNote, visibleMessages, streaming, reminders } = conv;
 
   const sideChatItems = useSideChats(topic.id);
+  const stepPlanItems = useTopicStepPlans(topic.id);
+  const [startingStepPlan, setStartingStepPlan] = useState(false);
   // Side chats grouped by the reply they were started from, linked under it.
   const sideChatsByReply = useMemo(() => {
     const map = new Map<number, SideChatItem[]>();
@@ -191,12 +194,15 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
 
   // Split the topic's latest ask into a step plan. The model call is slow, so a
   // note says so; a model failure still leaves an (empty) plan in Step by step.
-  async function runSteps(): Promise<void> {
+  async function runSteps(argument: string): Promise<void> {
     systemNote("Splitting the latest ask into steps… this can take a moment.");
+    setStartingStepPlan(true);
     try {
-      await startStepPlanFromTopic(topic.id);
+      await startStepPlanFromTopic(topic.id, argument);
     } catch (err) {
       systemNote(`Couldn't split the ask into steps: ${apiErrorMessage(err)}`);
+    } finally {
+      setStartingStepPlan(false);
     }
   }
 
@@ -259,7 +265,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
       return;
     }
     if (name === "steps") {
-      await runSteps();
+      await runSteps(argument);
       return;
     }
     if (name === "pin" || name === "unpin") {
@@ -862,6 +868,11 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
             items: sideChatItems,
             starting: startingSideChat,
             onStart: () => void runSideChat(null),
+          }}
+          stepPlans={{
+            items: stepPlanItems,
+            starting: startingStepPlan,
+            onStart: () => void runSteps(""),
           }}
         />
       )}

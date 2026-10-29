@@ -979,6 +979,7 @@ async def _seed_step_plan(s: AsyncSession, topic_id: int) -> None:
         title="Answer the renewal questions",
         source_text=_STEP_PLAN_ASK,
         status="active",
+        automation_mode="assisted",
         source_topic_id=topic_id,
         output_instructions="A short, friendly reply, one section per question.",
     )
@@ -1005,6 +1006,49 @@ async def _seed_step_plan(s: AsyncSession, topic_id: int) -> None:
         ids.append(step.id)
         if artifact:
             s.add(StepArtifactVersion(step_id=step.id, version=1, content=artifact, author="model"))
+    await s.flush()
+
+    # Scores are fixtures, tied to the current content so they read as fresh.
+    from precursor.backend.schemas.step_plan import Assessment
+    from precursor.backend.services import step_plans as step_svc
+
+    steps = await step_svc.plan_steps(s, plan.id)
+    by_title = {st.title: st for st in steps}
+    for title, assessment in (
+        (
+            "Explain the search latency regression",
+            Assessment(
+                score=91,
+                summary="Answers what changed, how bad it is and when it is fixed.",
+                covered=["What changed", "Severity (p95 doubled)", "Fix date"],
+                evidence=["Release notes for 2026.7"],
+                gaps=[],
+            ),
+        ),
+        (
+            "Confirm EU data residency",
+            Assessment(
+                score=68,
+                summary="Clear on storage; thin on processing and subprocessors.",
+                covered=["Storage regions", "Backup replication"],
+                evidence=["Support access policy"],
+                assumptions=["Processing happens in the same regions as storage"],
+                gaps=["Subprocessors are not named"],
+            ),
+        ),
+    ):
+        step = by_title[title]
+        step.assessment_json = assessment.model_dump_json()
+        step.assessed_sig = step_svc.step_signature(plan, step)
+    plan.assessment_json = Assessment(
+        score=54,
+        summary="Two of five questions answered; the rest are still open.",
+        covered=["Latency regression", "EU data residency"],
+        evidence=["Steps 1 and 2"],
+        assumptions=["The reserved tier is priced per seat"],
+        gaps=["SSO timeline", "Escalation contact", "Reserved tier pricing"],
+    ).model_dump_json()
+    plan.assessed_sig = step_svc.plan_signature(plan, steps)
     await s.flush()
 
 

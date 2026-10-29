@@ -2988,6 +2988,29 @@ export type StepStatus =
 /** Statuses a user can set directly (a `proposed` step is accepted or dismissed). */
 export type SettableStepStatus = Exclude<StepStatus, "proposed">;
 
+/** Who drives the work: the user, the model drafts for review, or a full model run. */
+export type AutomationMode = "manual" | "assisted" | "auto";
+export type AutoState = "idle" | "running" | "paused";
+
+/** A model's self-assessment of a result. Not a calibrated probability. */
+export interface Assessment {
+  /** 0-100: how well the result seems to answer what it was asked. */
+  score: number;
+  summary: string;
+  covered: string[];
+  evidence: string[];
+  assumptions: string[];
+  gaps: string[];
+  /** Plan level only: places where two steps disagree. */
+  contradictions: string[];
+  /**
+   * Plan level only: what was read. "steps" is readiness of the plan before
+   * any final output exists (it does not assess a final deliverable); "final"
+   * is the final output's text against the ask.
+   */
+  scope?: "steps" | "final";
+}
+
 export interface Step {
   id: number;
   plan_id: number;
@@ -3000,11 +3023,24 @@ export interface Step {
   effective_status: StepStatus;
   artifact: string;
   artifact_version: number;
+  /** A validated artifact whose ask or instruction changed: re-review it. */
+  needs_review: boolean;
+  assessment: Assessment | null;
+  /** The artifact, instruction or ask changed since it was assessed. */
+  assessment_stale: boolean;
   created_by: "user" | "model";
   chat_id: number | null;
   chat_slug: string | null;
   created_at: string;
   updated_at: string;
+}
+
+/** One line of the plan's activity feed (a step trace written by the run). */
+export interface ActivityNote {
+  id: number;
+  text: string;
+  step_id: number | null;
+  created_at: string;
 }
 
 export interface StepPlan {
@@ -3018,7 +3054,22 @@ export interface StepPlan {
   llm_selection: ConversationLLMSelection | null;
   output_instructions: string | null;
   final_output: string | null;
+  /** Which version of the final output this is (0: none yet). */
+  final_version: number;
+  /** The latest version filed into the topic, if any. */
+  final_posted_version: number | null;
+  final_posted_at: string | null;
   final_stale: boolean;
+  /** The final output was written before every step was validated. */
+  final_provisional: boolean;
+  automation_mode: AutomationMode;
+  auto_state: AutoState;
+  /** The step being drafted right now, only while the run is going. */
+  auto_step_id: number | null;
+  /** The latest run traces, oldest first. */
+  activity: ActivityNote[];
+  assessment: Assessment | null;
+  assessment_stale: boolean;
   ready_to_consolidate: boolean;
   consolidation_chat_id: number | null;
   consolidation_chat_slug: string | null;
@@ -3048,14 +3099,18 @@ export interface StepPlanCreate {
   role?: string | null;
   /** Ask the model for the initial step list (slow). Defaults to true server-side. */
   propose?: boolean;
+  automation_mode?: AutomationMode;
   llm_selection?: ConversationLLMSelection | null;
 }
 
 export interface StepPlanUpdate {
   title?: string;
+  automation_mode?: AutomationMode;
   source_text?: string;
   role?: string | null;
   output_instructions?: string | null;
+  /** Link the plan to a topic, or `null` to unlink it. */
+  source_topic_id?: number | null;
   llm_selection?: ConversationLLMSelection | null;
 }
 
@@ -3081,6 +3136,25 @@ export interface StepArtifactVersion {
   content: string;
   author: "user" | "model";
   created_at: string;
+}
+
+export interface FinalVersion extends StepArtifactVersion {
+  /** Set when this version was filed into the topic. */
+  posted_at: string | null;
+  posted_message_id: number | null;
+}
+
+/** What a model draft turned into: saved as a version, kept in the discussion, or paused. */
+export type DraftOutcome = "published" | "discussion" | "awaiting_approval";
+
+export interface ArtifactDraftResult {
+  step: Step;
+  outcome: DraftOutcome;
+}
+
+export interface FinalDraftResult {
+  plan: StepPlan;
+  outcome: DraftOutcome;
 }
 
 export interface StepPlanReview {

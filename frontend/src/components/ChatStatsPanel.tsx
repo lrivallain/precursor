@@ -4,6 +4,7 @@ import {
   ChevronLeft,
   ChevronRight,
   BarChart3,
+  ListChecks,
   MessagesSquare,
   Paperclip,
   Shrink,
@@ -18,6 +19,7 @@ import { COMPACT_NUDGE_PERCENT, CompactContextButton } from "./CompactContext";
 import { ContextBreakdown } from "./ContextBreakdown";
 import { ReminderSection, reminderSummary, type ReminderPanelControls } from "./ChatStatsReminder";
 import { SideChatsSection, type SideChatsControls } from "./SideChatsSection";
+import { TopicStepPlansSection, type TopicStepPlansControls } from "./steps/TopicStepPlansSection";
 import { ArtifactsSection, useConversationArtifacts } from "./ArtifactsSection";
 import type { WsDiscussionRef } from "../lib/routes";
 
@@ -38,6 +40,7 @@ interface ChatStatsPanelProps {
   discussion: WsDiscussionRef;
   /** Topics only: the side chats started from this topic. */
   sideChats?: SideChatsControls;
+  stepPlans?: TopicStepPlansControls;
 }
 
 interface RoundStat {
@@ -121,6 +124,7 @@ export function ChatStatsPanel({
   reminder,
   discussion,
   sideChats,
+  stepPlans,
   selection,
 }: ChatStatsPanelProps) {
   const settings = useSettings();
@@ -270,6 +274,17 @@ export function ChatStatsPanel({
             )}
           </button>
         )}
+        {stepPlans && stepPlans.items.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setCollapsed(false)}
+            className="mt-2 rounded p-1.5 text-muted hover:bg-surface"
+            data-tooltip={`${stepPlans.items.length} step by step ${stepPlans.items.length === 1 ? "plan" : "plans"}`}
+            aria-label="Show step by step plans"
+          >
+            <ListChecks size={16} />
+          </button>
+        )}
         {windowPct !== null && windowPct >= COMPACT_NUDGE_PERCENT && !compactDisabled && (
           <button
             type="button"
@@ -308,6 +323,7 @@ export function ChatStatsPanel({
         <ReminderSection {...reminder} />
         <ArtifactsSection {...artifacts} discussion={discussion} />
         {sideChats && <SideChatsSection {...sideChats} />}
+        {stepPlans && <TopicStepPlansSection {...stepPlans} />}
 
         {contextWindow !== null && contextWindow > 0 && estimate ? (
           <ContextBreakdown
