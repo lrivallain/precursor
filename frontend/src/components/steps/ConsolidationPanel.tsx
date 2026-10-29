@@ -1,20 +1,17 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { CheckCircle2, ChevronDown, ChevronRight, FileText, History, Loader2, Save, Send, Sparkles } from "lucide-react";
+import { useState } from "react";
+import { CheckCircle2, ChevronDown, ChevronRight, FileText, Loader2, Send, Sparkles } from "lucide-react";
 import { api } from "../../lib/api";
 import { openTopic } from "../../lib/sideChats";
-import { dropDraft, draftKey, markFailed, planFieldKey, useFieldDraft, useStoredDraft } from "../../lib/stepDrafts";
-import { hasUnsavedEdits } from "../../lib/stepPlans";
-import type { FinalVersion, Message, StepPlan } from "../../lib/types";
+import { dropDraft, markFailed, planFieldKey, useFieldDraft } from "../../lib/stepDrafts";
+import type { Message, StepPlan } from "../../lib/types";
 import { useConfirm } from "../ConfirmDialog";
-import { Markdown } from "../Markdown";
-import { RefineTextarea } from "../RefineTextarea";
 import { AssessmentPanel } from "./AssessmentPanel";
-import type { AppliedInfo } from "./ArtifactCard";
-import { EditPreviewTabs } from "./EditPreviewTabs";
+import { DocumentEditor, useDocumentDraft } from "./DocumentEditor";
 import { PlanChat } from "./PlanChat";
-import { WorkTabs } from "./WorkTabs";
+import { draftNotice } from "./StepDraftButton";
 import { BTN_PRIMARY, BTN_SECONDARY, INPUT, OverflowMenu, StaleBadge } from "./StepUi";
-import { VersionHistory } from "./VersionHistory";
+import { useProposals } from "./useProposals";
+import { WorkTabs } from "./WorkTabs";
 
 type Mutate = <T>(action: () => Promise<T>) => Promise<T | undefined>;
 
@@ -69,72 +66,23 @@ export function ConsolidationPanel({
 }) {
   const confirm = useConfirm();
   const finalOutput = plan.final_output ?? "";
-  const [view, setView] = useState<"edit" | "preview">(finalOutput ? "preview" : "edit");
-  const [saving, setSaving] = useState(false);
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState<Message | null>(null);
-  const [newer, setNewer] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  const [adopting, setAdopting] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [options, setOptions] = useState(false);
   const [guidance, setGuidance] = useState("");
-  const [proposals, setProposals] = useState<{ id: number; artifact: string }[]>([]);
-  const registerProposal = useCallback((messageId: number, artifact: string) => {
-    setProposals((all) => [...all.filter((p) => p.id !== messageId), { id: messageId, artifact }]);
-    return () => setProposals((all) => all.filter((p) => p.id !== messageId));
-  }, []);
-  const [versions, setVersions] = useState<FinalVersion[]>([]);
-  const [history, setHistory] = useState(false);
-  // Versions are matched by content, so "applied" survives a reload and also
-  // covers text that was applied from another window.
-  useEffect(() => {
-    let cancelled = false;
-    api.stepPlans
-      .finalVersions(plan.id)
-      .then((rows) => {
-        if (!cancelled) setVersions(rows);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [plan.id, plan.final_version, plan.final_output, plan.final_posted_version]);
-  const appliedInfo = useCallback(
-    (artifact: string): AppliedInfo | null => {
-      const text = artifact.trim();
-      const match = text ? versions.find((v) => v.content.trim() === text) : undefined;
-      return match
-        ? { label: `Applied as v${match.version}`, current: match.version === plan.final_version }
-        : null;
-    },
-    [versions, plan.final_version],
-  );
-  // The proposal the divider arrow carries: the newest finished reply, unless
-  // it is already the final output.
-  const newest = proposals.reduce<{ id: number; artifact: string } | null>((a, p) => (!a || p.id > a.id ? p : a), null);
-  const latestProposal = newest && !appliedInfo(newest.artifact)?.current ? newest.id : null;
-  // The text the draft started from, so a model-written final output arriving
-  // isn't mistaken for the user's unsaved edits.
-  // Both outlive this panel (see stepDrafts): leaving for a step keeps them.
-  const { draft, setDraft, base, setBase } = useStoredDraft(draftKey(plan.id, "final"), finalOutput);
-  const dirty = hasUnsavedEdits(draft, base);
-  const dirtyRef = useRef(dirty);
-  dirtyRef.current = dirty;
-  const draftRef = useRef(draft);
-  draftRef.current = draft;
-  const baseRef = useRef(base);
-  baseRef.current = base;
-
-  useEffect(() => {
-    if (dirtyRef.current && finalOutput.trim() !== draftRef.current.trim()) {
-      setNewer(finalOutput !== baseRef.current);
-    } else {
-      setDraft(finalOutput);
-      setBase(finalOutput);
-      setNewer(false);
-    }
-  }, [plan.id, finalOutput]);
+  const doc = useDocumentDraft(plan.id, "final", finalOutput);
+  const { dirty } = doc;
+  const { versions, transfer, artifactAction } = useProposals({
+    load: () => api.stepPlans.finalVersions(plan.id),
+    refreshKey: `${plan.id}:${plan.final_version}:${plan.final_output}:${plan.final_posted_version}`,
+    current: plan.final_version,
+    hasChat: plan.consolidation_chat_id != null,
+    send: adoptReply,
+    noun: "final output",
+    sendTooltip: "Save this as the final output (provisional until every step is approved).",
+  });
 
   const unvalidated = !plan.ready_to_consolidate;
   const hasFinal = finalOutput.trim().length > 0;
@@ -144,26 +92,7 @@ export function ConsolidationPanel({
   // steps and it still holds": it clears the out-of-date flag.
   const reviewable = plan.final_stale && hasFinal && !dirty;
 
-  async function save(): Promise<void> {
-    if ((!dirty && !reviewable) || saving) return;
-    setSaving(true);
-    try {
-      await mutate(() => api.stepPlans.writeFinal(plan.id, dirty ? draft : finalOutput));
-    } finally {
-      setSaving(false);
-    }
-  }
-
   async function generate(): Promise<void> {
-    if (dirty) {
-      const ok = await confirm({
-        title: "Discard unsaved edits?",
-        message: "Your unsaved edits to the final output will be replaced by the generated text.",
-        confirmLabel: "Replace",
-        variant: "warning",
-      });
-      if (!ok) return;
-    }
     if (unvalidated) {
       const ok = await confirm({
         title: "Not every step is approved",
@@ -185,59 +114,14 @@ export function ConsolidationPanel({
       setGenerating(false);
     }
     if (!result) return;
-    if (result.outcome === "published") setView("preview");
-    else if (result.outcome === "awaiting_approval") {
-      setNotice(
-        "The model is waiting for your approval of a tool call in the discussion. Approve or deny it there, then ask again.",
-      );
-    } else {
-      setNotice(
-        "The model answered in the discussion without a deliverable (a question or alternatives), so the final output is unchanged. Reply in the discussion, or send one of its replies to the final output.",
-      );
-    }
+    setNotice(draftNotice(result.outcome, result.plan.final_version, "final output", "send it or finish the plan"));
   }
 
-  // Take a consolidation-discussion reply as the final output.
-  async function useReply(messageId: number): Promise<boolean> {
-    if (adopting) return false;
-    if (dirty) {
-      const ok = await confirm({
-        title: "Discard unsaved edits?",
-        message: "Your unsaved edits to the final output will be replaced by the discussion reply.",
-        confirmLabel: "Replace",
-        variant: "warning",
-      });
-      if (!ok) return false;
-    }
-    setAdopting(true);
+  // Take a consolidation-discussion reply as the final output; unsaved edits
+  // stay behind the editor's "newer version" banner.
+  async function adoptReply(messageId: number): Promise<boolean> {
     setNotice(null);
-    try {
-      const updated = await mutate(() => api.stepPlans.finalFromMessage(plan.id, messageId));
-      if (updated) {
-        setView("preview");
-      }
-      return !!updated;
-    } finally {
-      setAdopting(false);
-    }
-  }
-
-  async function restore(v: { version: number }): Promise<void> {
-    if (dirty) {
-      const ok = await confirm({
-        title: "Discard unsaved edits?",
-        message: `Your unsaved edits to the final output will be replaced by version ${v.version}.`,
-        confirmLabel: "Restore",
-        variant: "warning",
-      });
-      if (!ok) return;
-    }
-    const updated = await mutate(() => api.stepPlans.revertFinal(plan.id, v.version));
-    if (updated) setView("preview");
-  }
-
-  async function markDone(): Promise<void> {
-    await mutate(() => api.stepPlans.complete(plan.id));
+    return !!(await mutate(() => api.stepPlans.finalFromMessage(plan.id, messageId)));
   }
 
   async function sendToTopic(): Promise<void> {
@@ -259,6 +143,10 @@ export function ConsolidationPanel({
     } finally {
       setSending(false);
     }
+  }
+
+  async function markDone(): Promise<void> {
+    await mutate(() => api.stepPlans.complete(plan.id));
   }
 
   const doneBlocker = !hasFinal
@@ -386,162 +274,73 @@ export function ConsolidationPanel({
         ariaLabel="Consolidation"
         workLabel="Final output"
         workIcon={<FileText size={14} />}
-        transfer={
-          plan.consolidation_chat_id != null
-            ? {
-                label: "Send the proposal to the final output",
-                tooltip:
-                  "Send the model's latest proposal to the final output (provisional until every step is approved). Your unsaved edits are kept until you confirm.",
-                idleReason:
-                  "Nothing to send yet. This lights up when a reply in the discussion proposes a final output.",
-                ready: latestProposal !== null,
-                onClick: () => (latestProposal !== null ? useReply(latestProposal) : Promise.resolve(false)),
-              }
-            : undefined
-        }
+        transfer={transfer}
         discussion={
           <PlanChat
             open={() => api.stepPlans.consolidationChat(plan.id)}
             onOpened={() => void reload()}
-            artifactAction={{
-              label: "Send to final output",
-              tooltip: "Save this as the final output (provisional until every step is approved).",
-              send: async (id) => void (await useReply(id)),
-              register: registerProposal,
-              applied: appliedInfo,
-            }}
+            artifactAction={artifactAction}
           />
         }
         work={
-        <div className="space-y-3">
-          <div className="flex flex-wrap items-center gap-2">
-            {hasFinal && plan.final_version > 0 && (
-              <span className="inline-flex items-center gap-1.5 text-xs text-muted">
-                <span className="font-medium text-fg">Version {plan.final_version}</span>
-                {plan.final_posted_version != null && (
-                  <span
-                    className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] text-emerald-700 dark:text-emerald-300"
-                    data-tooltip={`Version ${plan.final_posted_version} was posted in the topic${plan.final_posted_at ? ` on ${new Date(plan.final_posted_at).toLocaleString()}` : ""}`}
-                  >
-                    <Send size={10} />
-                    {plan.final_posted_version === plan.final_version
-                      ? "posted"
-                      : `v${plan.final_posted_version} posted`}
-                  </span>
-                )}
-              </span>
-            )}
-            {dirty && <span className="text-xs text-muted">unsaved edits</span>}
-            <div className="ml-auto flex items-center gap-2">
-              {versions.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => setHistory((v) => !v)}
-                  aria-expanded={history}
-                  className={BTN_SECONDARY}
-                  data-tooltip="Earlier versions of the final output"
-                >
-                  <History size={14} /> History
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={() => void save()}
-                disabled={(!dirty && !reviewable) || saving}
-                className={BTN_SECONDARY}
-                data-tooltip={
-                  reviewable
-                    ? "You checked this output against the current steps: clears the out-of-date flag"
-                    : dirty
-                      ? "Save the final output (⌘/Ctrl+S)"
-                      : "Nothing to save"
-                }
-              >
-                {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}{" "}
-                {reviewable ? "Mark as reviewed" : "Save"}
-              </button>
-              {plan.source_topic_id != null && (
-                <button
-                  type="button"
-                  onClick={() => void sendToTopic()}
-                  disabled={sendBlocker !== null || sending}
-                  className={BTN_PRIMARY}
-                  data-tooltip={
-                    sendBlocker ?? "Post the final output as a message in the topic this plan came from"
+          <DocumentEditor
+            doc={doc}
+            persisted={finalOutput}
+            version={plan.final_version}
+            versions={versions}
+            noun="final output"
+            placeholder="The final answer, in Markdown. Generate it from the approved steps, or write it yourself."
+            onSave={(text) => mutate(() => api.stepPlans.writeFinal(plan.id, text))}
+            onRestore={(v) => mutate(() => api.stepPlans.revertFinal(plan.id, v))}
+            unchangedSave={
+              reviewable
+                ? {
+                    label: "Mark as reviewed",
+                    tooltip: "You checked this output against the current steps: clears the out-of-date flag",
                   }
+                : undefined
+            }
+            status={
+              plan.final_posted_version != null && plan.final_version > 0 ? (
+                <span
+                  className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] text-emerald-700 dark:text-emerald-300"
+                  data-tooltip={`Version ${plan.final_posted_version} was posted in the topic${plan.final_posted_at ? ` on ${new Date(plan.final_posted_at).toLocaleString()}` : ""}`}
                 >
-                  {sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-                  Send to topic
-                </button>
-              )}
-              {plan.status !== "done" && (
-                <OverflowMenu
-                  label="Final output actions"
-                  items={[
-                    {
-                      label: "Mark the plan as done",
-                      icon: CheckCircle2,
-                      onSelect: markDone,
-                      disabledReason: doneBlocker ?? undefined,
-                    },
-                  ]}
-                />
-              )}
-            </div>
-          </div>
-
-          {newer && (
-            <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
-              A newer final output exists.
-              <button
-                type="button"
-                className="underline"
-                onClick={() => {
-                  setDraft(finalOutput);
-                  setBase(finalOutput);
-                  setNewer(false);
-                }}
-              >
-                Discard my edits and load it
-              </button>
-            </div>
-          )}
-
-          <div className="space-y-1.5">
-          <EditPreviewTabs view={view} onChange={setView} label="Final output view" />
-          {view === "edit" ? (
-            <RefineTextarea
-              value={draft}
-              onValueChange={setDraft}
-              refineKind="note"
-              markdown
-              rows={18}
-              onKeyDown={(e) => {
-                if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
-                  e.preventDefault();
-                  void save();
-                }
-              }}
-              placeholder="The final answer, in Markdown. Generate it from the approved steps, or write it yourself."
-              aria-label="Final output (Markdown)"
-              className="w-full resize-y rounded-lg border border-border bg-bg px-3 py-2 font-mono text-sm outline-none focus:border-accent/60"
-            />
-          ) : (
-            <div className="min-h-40 rounded-lg border border-border bg-bg px-4 py-3">
-              {draft.trim() ? <Markdown>{draft}</Markdown> : <p className="text-sm text-muted">No final output yet.</p>}
-            </div>
-          )}
-          </div>
-
-          {history && versions.length > 0 && (
-            <VersionHistory
-              load={async () => versions}
-              refreshKey={versions}
-              current={plan.final_version}
-              onRestore={restore}
-            />
-          )}
-        </div>
+                  <Send size={10} />
+                  {plan.final_posted_version === plan.final_version ? "posted" : `v${plan.final_posted_version} posted`}
+                </span>
+              ) : undefined
+            }
+            actions={
+              <>
+                {plan.source_topic_id != null && (
+                  <button
+                    type="button"
+                    onClick={() => void sendToTopic()}
+                    disabled={sendBlocker !== null || sending}
+                    className={BTN_PRIMARY}
+                    data-tooltip={sendBlocker ?? "Post the final output as a message in the topic this plan came from"}
+                  >
+                    {sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                    Send to topic
+                  </button>
+                )}
+                {plan.status !== "done" && (
+                  <OverflowMenu
+                    label="Final output actions"
+                    items={[
+                      {
+                        label: "Mark the plan as done",
+                        icon: CheckCircle2,
+                        onSelect: markDone,
+                        disabledReason: doneBlocker ?? undefined,
+                      },
+                    ]}
+                  />
+                )}
+              </>
+            }
+          />
         }
       />
     </div>

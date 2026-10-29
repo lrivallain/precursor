@@ -5,14 +5,14 @@ import type { DraftOutcome, Step } from "../../lib/types";
 import { useConfirm } from "../ConfirmDialog";
 import { BTN_PRIMARY, BTN_SECONDARY, INPUT } from "./StepUi";
 
-export function draftNotice(outcome: DraftOutcome, version: number): string {
+export function draftNotice(outcome: DraftOutcome, version: number, noun = "artifact", review = "approve it"): string {
   switch (outcome) {
     case "published":
-      return `The model wrote version ${version} from the discussion. It still needs your review before you approve it.`;
+      return `The model wrote version ${version} from the discussion. It still needs your review before you ${review}.`;
     case "awaiting_approval":
-      return "The model is waiting for your approval of a tool call in the discussion. Approve or deny it there, then draft again.";
+      return "The model is waiting for your approval of a tool call in the discussion. Approve or deny it there, then ask again.";
     default:
-      return "The model answered in the discussion without a deliverable (a question or alternatives), so the artifact is unchanged. Reply in the discussion, or send its proposal to the artifact.";
+      return `The model answered in the discussion without a deliverable (a question or alternatives), so the ${noun} is unchanged. Reply in the discussion, or send its proposal to the ${noun}.`;
   }
 }
 

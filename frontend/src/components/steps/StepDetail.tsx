@@ -1,13 +1,13 @@
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { FileText, Loader2, RotateCcw, Scissors, Sparkles, XCircle, CheckCircle2, Undo2 } from "lucide-react";
 import { api } from "../../lib/api";
-import type { AutomationMode, SettableStepStatus, StepArtifactVersion } from "../../lib/types";
+import type { AutomationMode, SettableStepStatus } from "../../lib/types";
 import { addChildBlocker, isGroup, primaryAction, progressOf, type StepNode } from "../../lib/stepPlans";
 import { useConfirm } from "../ConfirmDialog";
-import type { AppliedInfo } from "./ArtifactCard";
 import { PlanChat } from "./PlanChat";
-import { StepArtifactEditor } from "./StepArtifactEditor";
+import { DocumentEditor, useDocumentDraft } from "./DocumentEditor";
 import { StepEditor } from "./StepEditor";
+import { useProposals } from "./useProposals";
 import { WorkTabs } from "./WorkTabs";
 import { AssessmentPanel } from "./AssessmentPanel";
 import { GuidancePanel, useStepDraft } from "./StepDraftButton";
@@ -44,43 +44,17 @@ export function StepDetail({
   const [note, setNote] = useState<string | null>(null);
   const [panel, setPanel] = useState<Panel>(null);
   const [splitting, setSplitting] = useState(false);
-  const [proposals, setProposals] = useState<{ id: number; artifact: string }[]>([]);
-  const [versions, setVersions] = useState<StepArtifactVersion[]>([]);
   const draft = useStepDraft({ step, mutate, onNotice: setNote });
-
-  const registerProposal = useCallback((messageId: number, artifact: string) => {
-    setProposals((all) => [...all.filter((p) => p.id !== messageId), { id: messageId, artifact }]);
-    return () => setProposals((all) => all.filter((p) => p.id !== messageId));
-  }, []);
-
-  // Versions are matched by content, so "applied" survives a reload and also
-  // covers text that was applied from another window.
-  useEffect(() => {
-    let cancelled = false;
-    api.stepPlans
-      .versions(step.id)
-      .then((rows) => {
-        if (!cancelled) setVersions(rows);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [step.id, step.artifact_version, step.artifact]);
-
-  const appliedInfo = useCallback(
-    (artifact: string): AppliedInfo | null => {
-      const text = artifact.trim();
-      const match = versions.find((v) => v.content.trim() === text);
-      return match ? { label: `Applied as v${match.version}`, current: match.version === step.artifact_version } : null;
-    },
-    [versions, step.artifact_version],
-  );
-
-  // The proposal the divider arrow carries: the newest finished one, unless
-  // its text is already in the artifact.
-  const newest = proposals.reduce<{ id: number; artifact: string } | null>((a, p) => (!a || p.id > a.id ? p : a), null);
-  const latestProposal = newest && !appliedInfo(newest.artifact)?.current ? newest.id : null;
+  const doc = useDocumentDraft(step.plan_id, step.id, step.artifact);
+  const { versions, transfer, artifactAction } = useProposals({
+    load: () => api.stepPlans.versions(step.id),
+    refreshKey: `${step.id}:${step.artifact_version}:${step.artifact}`,
+    current: step.artifact_version,
+    hasChat: step.chat_id != null,
+    send: sendProposal,
+    noun: "artifact",
+    sendTooltip: "Save this as a new version of the step's artifact. Your unsaved edits are kept.",
+  });
 
   // A proposal becomes a new artifact version; unsaved edits in the editor are
   // kept behind its "newer version" banner.
@@ -299,32 +273,25 @@ export function StepDetail({
             ariaLabel="Step work"
             workLabel="Artifact"
             workIcon={<FileText size={14} />}
-            transfer={
-              step.chat_id != null
-                ? {
-                    label: "Send the proposal to the artifact",
-                    tooltip:
-                      "Send the model's latest proposal to the artifact as a new version. Your unsaved edits are kept.",
-                    idleReason:
-                      "Nothing to send yet. This lights up when a reply in the discussion proposes an artifact.",
-                    ready: latestProposal !== null,
-                    onClick: () => (latestProposal !== null ? sendProposal(latestProposal) : Promise.resolve(false)),
-                  }
-                : undefined
+            transfer={transfer}
+            work={
+              <DocumentEditor
+                doc={doc}
+                persisted={step.artifact}
+                version={step.artifact_version}
+                versions={versions}
+                noun="artifact"
+                placeholder="Write this step's result in Markdown, or draft it with the model (button above)."
+                onSave={(text) => mutate(() => api.stepPlans.writeArtifact(step.id, text))}
+                onRestore={(v) => mutate(() => api.stepPlans.revertArtifact(step.id, v))}
+              />
             }
-            work={<StepArtifactEditor step={step} mutate={mutate} />}
             discussion={
               <PlanChat
                 key={step.id}
                 open={() => api.stepPlans.stepChat(step.id)}
                 onOpened={() => void reload()}
-                artifactAction={{
-                  label: "Send to artifact",
-                  tooltip: "Save this as a new version of the step's artifact. Your unsaved edits are kept.",
-                  send: async (id) => void (await sendProposal(id)),
-                  register: registerProposal,
-                  applied: appliedInfo,
-                }}
+                artifactAction={artifactAction}
               />
             }
           />

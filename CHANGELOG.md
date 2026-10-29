@@ -13,6 +13,17 @@ are the per-version history; releasing does not rewrite this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **Step by step: one panel for step artifacts and the final output.** Both
+  are now the same editor (version label, history, save, edit/preview, the
+  *newer version* guard), so the final output gets the resizable box and the
+  **Refine with AI** rewrite helper it was missing, and opens in *Edit* like a
+  step. Generating the final output or sending a discussion reply to it no
+  longer asks to discard unsaved edits: they stay behind the *newer version*
+  banner, as in a step. The code behind both is shared (`DocumentEditor`,
+  `useProposals`).
+
 ### Added
 
 - **Step by step: link a topic any time, tidier final panel.** A plan can be

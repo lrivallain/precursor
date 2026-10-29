@@ -64,6 +64,18 @@ async function run() {
     await page.getByText("Version 2", { exact: true }).waitFor();
     assert.equal((await versions()).length, 2);
 
+    // the final output is the same panel as a step artifact: after a reload it
+    // opens in Edit, resizable, with the rewrite helper
+    await page.reload();
+    await page
+      .getByRole("complementary", { name: "Plan steps" })
+      .getByText("Final output", { exact: true })
+      .click();
+    await editor.waitFor();
+    assert.equal(await page.getByRole("tab", { name: "Edit" }).getAttribute("aria-selected"), "true");
+    assert.equal(await editor.evaluate((el) => getComputedStyle(el).resize), "vertical");
+    await page.getByRole("button", { name: "Refine with AI" }).waitFor();
+
     await history.click();
     const row = (n) => page.getByRole("region", { name: "Version history" }).getByRole("listitem").filter({ hasText: `v${n}` });
     await row(2).getByText("current").waitFor();
