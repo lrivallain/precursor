@@ -595,7 +595,7 @@ async def test_resolve_bearer_returns_none_on_group_wrapped_auth_required(monkey
     monkeypatch.setattr(wp.logger, "warning", lambda *a, **k: warnings.append(a[0]))
 
     # Auth-required → None (don't hand the agent the dead token) and no scary warning.
-    assert await wp.resolve_workiq_bearer_token() is None
+    assert await wp.resolve_workiq_bearer_token(renew_now=True) is None
     assert warnings == []
 
 
@@ -624,7 +624,7 @@ async def test_resolve_bearer_falls_back_on_transient_error(monkeypatch) -> None
     monkeypatch.setattr(wp, "streamable_http_session", _raising_client)
     monkeypatch.setattr(wp.logger, "warning", lambda *a, **k: warnings.append(a[0]))
 
-    resolved = await wp.resolve_workiq_bearer_token()
+    resolved = await wp.resolve_workiq_bearer_token(renew_now=True)
     assert resolved is not None
     assert resolved[0] == "warm"
     assert len(warnings) == 1
