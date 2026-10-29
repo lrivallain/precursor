@@ -2,7 +2,7 @@ import { useId, useState } from "react";
 import { ListChecks } from "lucide-react";
 import { parseStepPlanTrace } from "../../lib/stepPlans";
 import { Markdown } from "../Markdown";
-import { StepPlanNoteHeader } from "./StepPlanNoteHeader";
+import { StepPlanLink } from "./StepPlanNoteHeader";
 
 /** Creation snapshots are plain text: prompt syntax must never become metadata or markup. */
 export function StepPlanTrace({ content }: { content: string }) {
@@ -15,38 +15,46 @@ export function StepPlanTrace({ content }: { content: string }) {
     const long = prompt !== preview;
     return (
       <div
-        className="min-w-0 w-full rounded-lg border border-accent/30 bg-accent/10 px-3 py-2 text-sm text-fg"
+        className="section-steps step-plan-receipt flex min-w-0 w-full items-start gap-2.5 rounded-lg border px-3 py-3 text-sm"
         data-testid="step-plan-trace"
         data-plan-id={trace.planId}
       >
-        <StepPlanNoteHeader note={trace} label={trace.action} />
-        {prompt != null ? (
-          <>
-            <div className="mb-1.5 text-xs font-medium text-muted">
-              Original prompt{trace.snapshot?.source === "topic_message" ? " · From topic message" : " · Submitted"}
-            </div>
-            <div id={promptId} className="whitespace-pre-wrap [overflow-wrap:anywhere] leading-relaxed">
-              {expanded ? prompt : preview}{long && !expanded ? "…" : ""}
-            </div>
-            {long && (
-              <button
-                type="button"
-                aria-expanded={expanded}
-                aria-controls={promptId}
-                onClick={() => setExpanded((value) => !value)}
-                className="mt-2 rounded text-xs font-medium text-accent hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-              >
-                {expanded ? "Show less" : "Show all"}
-              </button>
+        <ListChecks size={16} className="mt-0.5 shrink-0 text-muted" aria-hidden />
+        <div className="min-w-0 flex-1">
+          <div className="text-xs font-medium text-muted">
+            {trace.action === "Linked" ? "Plan linked to Step by step" : "Request sent to Step by step"}
+          </div>
+          <StepPlanLink note={trace} />
+          <div className="mt-2.5 border-l border-border pl-3 text-muted" data-testid="step-plan-prompt">
+            {prompt != null ? (
+              <>
+                <div className="mb-1.5 text-xs font-medium">
+                  Original prompt{trace.snapshot?.source === "topic_message" ? " · From topic message" : " · Submitted"}
+                </div>
+                <div id={promptId} className="whitespace-pre-wrap [overflow-wrap:anywhere] leading-relaxed">
+                  {expanded ? prompt : preview}{long && !expanded ? "…" : ""}
+                </div>
+                {long && (
+                  <button
+                    type="button"
+                    aria-expanded={expanded}
+                    aria-controls={promptId}
+                    onClick={() => setExpanded((value) => !value)}
+                    className="mt-2 rounded text-xs font-medium text-accent hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                  >
+                    {expanded ? "Show less" : "Show all"}
+                  </button>
+                )}
+              </>
+            ) : (
+              <p className="text-xs">
+                {trace.action === "Linked"
+                  ? "No original prompt snapshot was saved with this link."
+                  : "The original prompt was not recorded with this older trace."}
+              </p>
             )}
-          </>
-        ) : (
-          <p className="text-xs text-muted">
-            {trace.action === "Linked"
-              ? "No original prompt snapshot was saved with this link."
-              : "The original prompt was not recorded with this older trace."}
-          </p>
-        )}
+          </div>
+        </div>
       </div>
     );
   }

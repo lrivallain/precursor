@@ -189,6 +189,15 @@
   color: var(--section-accent, var(--accent));
 }
 
+.step-plan-document {
+  background-color: color-mix(in oklab, var(--section-accent) 12%, var(--bg));
+  --color-muted: color-mix(in oklab, var(--text) 70%, var(--bg));
+}
+
+.step-plan-receipt {
+  border-color: color-mix(in oklab, var(--section-accent) 40%, var(--border));
+}
+
 html,
 body,
 #root {

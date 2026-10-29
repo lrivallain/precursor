@@ -124,7 +124,10 @@ DEMO_PORT=8899 NODE_PATH=.demo/node_modules node scripts/test_step_prompt_traces
 
 It exercises `/steps`, bare `/steps`, and the topic button without model calls,
 immutable full-text snapshots, keyboard expansion, historical links, literal
-prompt syntax, and light/dark narrow layouts. Retake its synthetic documentation
+prompt/title syntax, and the structural distinction between quiet request receipts and
+returned Markdown documents (checklist icons, footer plan links, output versions and
+body-only formatted HTML/plain clipboard copies),
+in light/dark desktop, intermediate and narrow layouts. Retake its synthetic documentation
 scene with `node scripts/capture_screenshots.js step-plan-traces`.
 
 The suite is hermetic: the root `conftest.py` points the app at a throwaway

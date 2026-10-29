@@ -974,7 +974,9 @@ _STEP_PLAN_STEPS: list[tuple[str, str, str, str, int | None]] = [
 
 
 async def _seed_step_prompt_traces(s: AsyncSession, collection_id: int) -> None:
+    from precursor.backend.models.step_plan import StepPlanFinalVersion
     from precursor.backend.schemas.step_plan import StepPlanTraceData
+    from precursor.backend.services.step_plan_llm import topic_note_content
 
     topic = Topic(
         title="Step by step prompt audit",
@@ -1010,6 +1012,44 @@ async def _seed_step_prompt_traces(s: AsyncSession, collection_id: int) -> None:
                 content=snapshot.model_dump_json(),
             )
         )
+        if source == "submitted":
+            output = "# Counting from 1 to 3\n\n1, 2, 3"
+            plan.final_output = output
+            plan.final_version = 2
+            plan.final_provisional = True
+            note = Message(
+                topic_id=topic.id,
+                role=MessageRole.USER,
+                content=topic_note_content(plan, output, version=2, provisional=True),
+            )
+            s.add(note)
+            await s.flush()
+            s.add_all(
+                [
+                    StepPlanFinalVersion(
+                        plan_id=plan.id, version=1, content="1, 2, 3", author="user"
+                    ),
+                    StepPlanFinalVersion(
+                        plan_id=plan.id,
+                        version=2,
+                        content=output,
+                        author="user",
+                        posted_at=NOW,
+                        posted_message_id=note.id,
+                    ),
+                ]
+            )
+    legacy = StepPlan(title="An older demo plan", source_topic_id=topic.id)
+    s.add(legacy)
+    await s.flush()
+    s.add(
+        Message(
+            topic_id=topic.id,
+            role=MessageRole.SYSTEM,
+            kind="step_plan",
+            content=f"Started step by step: [{legacy.title}](/steps/{legacy.id})",
+        )
+    )
 
 
 async def _seed_step_plan(s: AsyncSession, topic_id: int) -> None:

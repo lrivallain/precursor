@@ -24,20 +24,32 @@ The ask is copied into the plan, so every later model call is grounded in it —
 plan keeps working even if the topic is edited or deleted. You can edit the plan's ask
 later; its original topic trace stays unchanged.
 
-**The topic keeps the trail.** Starting a plan (with `/steps` or the button) leaves an
-artifact-style card in the topic's discussion, with a link to the plan and an immutable
-copy of the **original prompt**. Text after `/steps` is the submitted ask (without the
-command prefix); a bare `/steps` or the topic button uses the latest non-empty user ask
-and labels the snapshot **From topic message**. The card records the full effective text,
+**The topic keeps the trail.** Starting a plan (with `/steps` or the button) leaves a
+quiet **Request sent to Step by step** activity receipt in the topic's discussion, with
+the existing checklist icon, a blue link to the plan and an immutable copy of the
+**original prompt** under a subtle quote rule. A thin outline in the feature's teal
+colour surrounds the whole receipt, including its heading, link and prompt.
+Text after `/steps` is the submitted ask (without the command prefix); a bare `/steps`
+or the topic button uses the latest non-empty user ask
+and labels the snapshot **From topic message**. The receipt records the full effective text,
 not a reconstruction from the plan's later ask.
 
 Short prompts are readable immediately. Longer ones show a compact excerpt with **Show
 all** / **Show less**, including keyboard activation; nothing is truncated in storage.
 Prompt text is shown literally, so Markdown, HTML and plan-like headers remain part of
-the prompt rather than changing the card. Older link-only traces still open their plans
+the prompt rather than changing the receipt. Older link-only traces still open their plans
 and explain that no original prompt was recorded; they are not backfilled from a mutable ask.
 
-<Screenshot src="/screenshots/step-plan-traces.png" alt="Topic trace cards with a short submitted prompt and a longer prompt copied from the topic, with a Show all control" caption="The original prompt stays beside the process link, even when the plan's ask is edited later." />
+Returned **Final output** notes have a different role: a bordered Markdown document with a
+soft Step by step teal background matching the receipt outline, distinct from ordinary
+discussion. Its content leads, with quiet checklist metadata and version/provisional labels.
+The plan link sits in the document footer, without repeating its title above a heading
+already supplied by the output. The original prompt remains secondary and directly readable.
+Hover the returned document and choose the **Copy formatted** envelope to paste it into
+an email with its layout intact. Both the formatted copy and its plain-text fallback
+contain only the document, without the plan metadata or footer link.
+
+<Screenshot src="/screenshots/step-plan-traces.png" alt="A quiet request receipt, a returned Markdown document with version and provisional labels and an envelope copy action, a longer prompt with Show all, and an older trace without a snapshot" caption="The request is an activity receipt; the returned output is the document. Both keep their link to the plan." />
 
 The topic's side panel lists its plans — like side chats — with their progress. In the
 other direction, the plan's bar (which takes the place of the app's top bar) shows a
@@ -46,7 +58,7 @@ title from the ask: the `/steps` command is not part of it.
 
 A plan created on its own can be tied to a topic later: use **Link a topic** in the bar (or
 *Change the topic…* / *Unlink the topic* in **⋯ Plan tools**). The topic then gets the same
-link card and side-panel entry, and its discussion feeds later drafts and chats. A link added
+link receipt and side-panel entry, and its discussion feeds later drafts and chats. A link added
 after creation does not claim to record the original prompt. While a plan has no
 topic, *Send to topic* is not shown. Relinking to another topic does not move the *posted*
 marker of a final output already filed in the first one.
@@ -195,9 +207,9 @@ a *newer version* banner.
 Restoring an older version only moves the *current* marker, and saving a text that matches an
 earlier version points back at it, so neither adds a duplicate. When you **Send to topic**, the
 version that was filed gets a green **posted** badge in the history and next to the version
-number, and the note in the topic names it (*final output v2*). In the topic the note opens with a
-coloured header band, split from the content: the plan title (a link back to the plan), the
-version and, when it applies, a *Provisional* chip. Later versions don't move the
+number, and the note in the topic names it (*final output v2*). In the topic the note is a
+softly teal-tinted document with quiet **Final output** metadata, the version and, when it applies,
+a *Provisional* label; the plan title links back to the plan from its footer. Later versions don't move the
 badge: it stays on the version that was actually posted.
 
 If a step changes after the final output was written, the final output is **out of date**, even
