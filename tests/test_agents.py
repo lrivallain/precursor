@@ -147,8 +147,41 @@ async def _set_mcp_enabled(mapping: dict[str, bool]) -> None:
         await session.commit()
 
 
+@pytest.mark.parametrize("provider_result", [None, {}, {"X-Test": "header-value"}])
+def test_entry_to_sdk_config_http_headers_are_json_objects(
+    provider_result: dict[str, str] | None,
+) -> None:
+    import json
+
+    from precursor.backend.services.agents import runtime
+    from precursor.backend.services.agents.mcp_config import entry_to_sdk_config
+    from precursor.backend.services.mcp.client import MCPServerEntry
+
+    sdk = runtime.load_sdk()
+    entry = MCPServerEntry(
+        name="http-server",
+        transport="streamable_http",
+        url="https://example.test/mcp",
+    )
+    expected = provider_result or {}
+    if provider_result is None:
+        config = entry_to_sdk_config(sdk, entry, "")
+        assert json.loads(json.dumps(config))["headers"] == {}
+    entry.headers_provider = lambda _token: provider_result
+    config = entry_to_sdk_config(sdk, entry, "")
+    wire = json.loads(json.dumps({"mcpServers": {entry.name: config}}))
+    assert wire["mcpServers"][entry.name] == {
+        "type": "http",
+        "url": entry.url,
+        "headers": expected,
+        "tools": ["*"],
+    }
+
+
 async def test_catalog_mcp_configs_attaches_enabled_servers() -> None:
     """Agents attach enabled catalog servers (built-in + user), never precursor."""
+    import json
+
     import pytest
 
     from precursor.backend.services.agents import runtime
@@ -175,9 +208,14 @@ async def test_catalog_mcp_configs_attaches_enabled_servers() -> None:
         transport="stdio",
         command=None,
     )
+    manager.register_user_entry(
+        name="microsoft-learn",
+        transport="streamable_http",
+        url="https://learn.microsoft.com/api/mcp",
+    )
     try:
-        # Enable two built-ins (one stdio, one http), the user http server, and
-        # the broken one; leave 'workiq' disabled and 'precursor' enabled.
+        # Include authenticated and headerless HTTP servers; leave 'workiq'
+        # disabled and 'precursor' enabled.
         await _set_mcp_enabled(
             {
                 "fetch": True,
@@ -185,6 +223,7 @@ async def test_catalog_mcp_configs_attaches_enabled_servers() -> None:
                 "workiq": False,
                 "my-http": True,
                 "my-broken": True,
+                "microsoft-learn": True,
                 "precursor": True,
             }
         )
@@ -217,9 +256,18 @@ async def test_catalog_mcp_configs_attaches_enabled_servers() -> None:
         assert http["url"] == "https://example.test/mcp"
         assert http["headers"] == {"Authorization": "Bearer secret-token"}
         assert http["tools"] == ["*"]
+
+        wire = json.loads(json.dumps({"mcpServers": configs}))
+        assert wire["mcpServers"]["microsoft-learn"] == {
+            "type": "http",
+            "url": "https://learn.microsoft.com/api/mcp",
+            "headers": {},
+            "tools": ["*"],
+        }
     finally:
         manager.unregister_user_entry("my-http")
         manager.unregister_user_entry("my-broken")
+        manager.unregister_user_entry("microsoft-learn")
         await _set_mcp_enabled({})
 
 

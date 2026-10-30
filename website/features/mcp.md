@@ -38,6 +38,10 @@ You can also add **your own** servers (stdio or streamable-HTTP). A
 host-dependency **preflight** gates enabling a server — `cmd-runner` needs Docker
 when its jail is on, and `playwright` needs Node.js (`npx`) on PATH.
 
+HTTP servers that require no custom headers, such as Microsoft Learn, can also
+be attached to agent sessions. Precursor sends an empty headers object to the
+Copilot runtime; authenticated servers retain their configured headers.
+
 Plugins can contribute servers too, such as Kanban's `kanban.board`. Core maps
 server/tool pairs to stable model-facing names containing only ASCII letters,
 digits, underscores and hyphens, capped at 64 characters for compatibility
