@@ -537,6 +537,11 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Fixed
 
+- **Agents start with headerless HTTP MCP servers.** Send an empty headers
+  object instead of `null` to the Copilot runtime so enabling servers such as
+  Microsoft Learn no longer blocks the first prompt with `headers: Expected
+  object`. Configured authentication headers are unchanged.
+
 - **Step by step: "Regenerate with model" ignored the discussion.** A race
   could create two discussions for the same step, so the model drafted from one
   while the panel showed the other. A step has one discussion again.

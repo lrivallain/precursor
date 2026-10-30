@@ -292,7 +292,7 @@ def entry_to_sdk_config(sdk: Any, entry: Any, github_token: str) -> Any:
         return sdk.MCPHTTPServerConfig(
             type="http",
             url=entry.url,
-            headers=headers or None,
+            headers=headers or {},
             tools=["*"],
         )
     raise ValueError(f"unsupported transport {entry.transport!r}")
