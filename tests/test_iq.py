@@ -148,7 +148,9 @@ async def test_retrieve_matches_words_out_of_order_and_ranks_title_first() -> No
 
 async def test_retrieve_is_accent_insensitive() -> None:
     tid = await _topic("Qwyrzt réunion trimestrielle")
-    result = await retrieve("qwyrzt reunion")
+    # Test accent folding, not whether the query's indexing budget reaches this topic.
+    await _indexed()
+    result = await retrieve("qwyrzt reunion", drain_budget=0)
     assert any(h.entity_id == tid for h in result.hits)
 
 
