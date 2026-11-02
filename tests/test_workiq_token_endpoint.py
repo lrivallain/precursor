@@ -10,6 +10,8 @@ tokens and escalates to a browser sign-in. These pin the seam that prevents it.
 
 from __future__ import annotations
 
+from urllib.parse import parse_qs
+
 import httpx2
 import pytest
 from mcp.shared.auth import OAuthClientInformationFull, OAuthMetadata, OAuthToken
@@ -115,6 +117,83 @@ async def test_seeding_leaves_the_refresh_body_untouched(monkeypatch) -> None:
     fields = {pair.split("=")[0] for pair in request.content.decode().split("&")}
     assert fields == {"grant_type", "refresh_token", "client_id"}
     assert provider.context.protected_resource_metadata is None
+
+
+@pytest.mark.parametrize(
+    ("profile", "scope"),
+    [
+        (wp.PREVIEW_PROFILE, "fdcc1f02-fc51-4226-8753-f668596af7f7/WorkIQAgent.Ask"),
+        (
+            AGENT365_PROFILE,
+            f"{AGENT365_PROFILE.url}/McpServers.Teams.All "
+            f"{AGENT365_PROFILE.url}/McpServersMetadata.Read.All",
+        ),
+    ],
+)
+@pytest.mark.anyio
+async def test_refresh_preserves_the_granted_resource_scope(profile, scope) -> None:
+    provider = _primed(profile)
+    provider.context.oauth_metadata = _entra_metadata()
+    provider.context.current_tokens = OAuthToken(
+        access_token="stale",
+        refresh_token="renewable",
+        token_type="Bearer",
+        scope=scope,
+    )
+
+    request = await provider._refresh_token()
+    fields = parse_qs(request.content.decode())
+
+    assert str(request.url) == ENTRA_TOKEN_ENDPOINT
+    assert fields == {
+        "grant_type": ["refresh_token"],
+        "refresh_token": ["renewable"],
+        "client_id": [profile.client_id],
+        "scope": [scope],
+    }
+    assert int(request.headers["content-length"]) == len(request.content)
+
+
+@pytest.mark.anyio
+async def test_scoped_refresh_preserves_other_sdk_request_fields(monkeypatch) -> None:
+    provider = _primed(wp.PREVIEW_PROFILE)
+    provider.context.current_tokens = OAuthToken(
+        access_token="stale",
+        refresh_token="renewable",
+        token_type="Bearer",
+        scope="api://workiq/ask",
+    )
+
+    async def _sdk_request(self) -> httpx2.Request:
+        return httpx2.Request(
+            "POST",
+            ENTRA_TOKEN_ENDPOINT,
+            headers={"Authorization": "Basic test-client", "X-Test": "retained"},
+            data={
+                "grant_type": "refresh_token",
+                "refresh_token": "renewable",
+                "client_id": "client",
+                "resource": wp.PREVIEW_PROFILE.url,
+            },
+            extensions={"test": True},
+        )
+
+    monkeypatch.setattr(wp.OAuthClientProvider, "_refresh_token", _sdk_request)
+
+    request = await provider._refresh_token()
+
+    assert parse_qs(request.content.decode()) == {
+        "grant_type": ["refresh_token"],
+        "refresh_token": ["renewable"],
+        "client_id": ["client"],
+        "resource": [wp.PREVIEW_PROFILE.url],
+        "scope": ["api://workiq/ask"],
+    }
+    assert request.headers["authorization"] == "Basic test-client"
+    assert request.headers["x-test"] == "retained"
+    assert request.headers["content-type"] == "application/x-www-form-urlencoded"
+    assert int(request.headers["content-length"]) == len(request.content)
+    assert request.extensions == {"test": True}
 
 
 @pytest.mark.anyio

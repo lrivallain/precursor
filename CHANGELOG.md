@@ -537,6 +537,12 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Fixed
 
+- **WorkIQ refreshes keep their granted scope.** Silent renewal now explicitly
+  requests the stored token's WorkIQ or Agent 365 scopes instead of leaving the
+  target resource implicit. A scope-less grant could fail with Entra's
+  `AADSTS530084` token-protection error even when renewal of the same credential
+  for its granted WorkIQ scope succeeded, causing repeated reauthentication.
+
 - **Agents start with headerless HTTP MCP servers.** Send an empty headers
   object instead of `null` to the Copilot runtime so enabling servers such as
   Microsoft Learn no longer blocks the first prompt with `headers: Expected

@@ -269,6 +269,15 @@ instead of Entra. Those hosts have no token endpoint, the SDK read the resulting
 browser prompt — the two halves of the same bug, so fixing the expiry alone was
 not enough.
 
+Refresh grants also retain the stored token's **granted scope**, so renewal
+explicitly targets the same WorkIQ or Agent 365 resource as the original sign-in.
+Entra refresh tokens are not resource-bound: omitting the scope leaves resource
+selection implicit and can produce a token-protection refusal (`AADSTS530084`)
+even when an explicit WorkIQ-scope renewal succeeds. Precursor reuses only the
+already-granted scopes; it does not request additional permissions or bypass
+Conditional Access. Legacy tokens without a stored scope retain the SDK's
+default refresh behavior.
+
 And when it does decide a token is due, it **says so** to the SDK. The refresh
 branch is gated on the SDK's own freshness check, which was happy with a token
 that still had a few minutes left — so the keep-alive opened a session intending

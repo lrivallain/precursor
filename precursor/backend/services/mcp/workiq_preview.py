@@ -1543,10 +1543,14 @@ class _WorkIQOAuthClientProvider(OAuthClientProvider):
     :meth:`_seed_authorization_server` resolves the metadata first; that
     docstring has the detail.
 
+    **The scope.** Refresh grants retain the stored token's granted scope.
+    Entra refresh tokens are not resource-bound, and a scope-less renewal can
+    fail token-protection checks even when renewing the explicit WorkIQ scope
+    succeeds.
+
     **The tracing.** The SDK is otherwise silent about all of this bar one
     ``Token refresh failed: 400`` line naming neither the credential nor Entra's
-    reason. The remaining overrides are pure instrumentation — each defers to
-    ``super()`` — and hang off the SDK's own seams:
+    reason. The overrides also instrument the SDK's own seams:
 
     * :meth:`_initialize` — what was loaded from storage (this is where a missing
       refresh token first becomes visible);
@@ -1666,12 +1670,27 @@ class _WorkIQOAuthClientProvider(OAuthClientProvider):
             token_endpoint=str(asm.token_endpoint) if asm.token_endpoint else None,
         )
 
-    async def _refresh_token(self) -> Any:
+    async def _refresh_token(self) -> httpx2.Request:
         self._trace(
             "silent refresh: requesting new tokens from Entra",
             token_valid=self.context.is_token_valid(),
         )
-        return await super()._refresh_token()
+        request = await super()._refresh_token()
+        tokens = self.context.current_tokens
+        if tokens is None or not tokens.scope:
+            return request
+        # Keep renewal on the granted resource, not Entra's scope-less defaults.
+        fields = dict(parse_qsl(request.content.decode(), keep_blank_values=True))
+        fields["scope"] = tokens.scope
+        headers = request.headers.copy()
+        headers.pop("Content-Length", None)
+        return httpx2.Request(
+            request.method,
+            request.url,
+            headers=headers,
+            data=fields,
+            extensions=request.extensions,
+        )
 
     async def _handle_refresh_response(self, response: Any) -> bool:
         if response.status_code != 200:
