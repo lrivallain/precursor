@@ -15,6 +15,10 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Changed
 
+- **Attachment previews stay in the app.** Message, composer, and notes
+  attachments open in a modal viewer with image/text zoom, fit/reset controls,
+  embedded PDFs, and an optional **Open in new tab** link. Unsupported formats
+  and preview failures explain how to access the original file.
 - **Step by step: copy returned outputs for email.** Final-output documents in
   a topic now expose the usual *Copy formatted* envelope. It preserves the
   document's layout without copying the plan metadata or footer link, and its

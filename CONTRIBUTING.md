@@ -106,6 +106,16 @@ This covers Agents/Workflows overviews, item selection, history, deep links,
 search, shared progress, empty/error states and the mobile drawer. It requires
 the anonymous demo on port 8899; it does not execute agents or pipelines.
 
+For attachment previews, use the same anonymous demo:
+
+```bash
+NODE_PATH=.demo/node_modules node scripts/test_attachment_preview.js
+```
+
+This covers desktop/mobile previews, zoom limits, keyboard/focus behavior,
+optional new tabs, inert text, PDF embedding, error/unsupported states, and
+composer/notes uploads without invoking a model.
+
 For conversation provider selection, use the same anonymous demo:
 
 ```bash

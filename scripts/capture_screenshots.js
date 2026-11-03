@@ -34,6 +34,7 @@ try {
 const path = require("path");
 const fs = require("fs");
 const { BASE, prepareDemoPage, mockAgentRuntime } = require("./demo_browser");
+const { mockAttachmentPreviews } = require("./attachment_preview_fixture");
 
 const OUT = path.resolve(__dirname, "..", "website", "public", "screenshots");
 
@@ -262,6 +263,18 @@ const OPENAI_ENDPOINT_MODELS = [
 ].map(([id, name, publisher]) => ({ id, name, publisher, summary: "", tags: [] }));
 
 const scenes = {
+  "attachment-preview": {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      await mockAttachmentPreviews(page);
+      await page.goto(`${BASE}/topics/release-2026-8`, { waitUntil: "networkidle" });
+      await page.getByRole("button", { name: "Preview workflow-overview.svg", exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: "workflow-overview.svg", exact: true });
+      await dialog.locator("img").evaluate((image) => image.decode());
+      return clipOf(page, "dialog", 8);
+    },
+  },
+
   home: {
     viewport: { width: 1440, height: 1000 },
     async go(page) {
