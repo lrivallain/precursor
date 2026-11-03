@@ -18,6 +18,7 @@ import { ComposerCompactProvider, useIsCompactWidth } from "../lib/composerCompa
 import type { SlashCommand } from "../lib/commands";
 import type { Attachment } from "../lib/types";
 import { SlashCommandPicker } from "./SlashCommandPicker";
+import { AttachmentPreview } from "./AttachmentPreview";
 
 export interface ComposerSpeech {
   supported: boolean;
@@ -482,24 +483,22 @@ function AttachmentChip({
   const isImage = attachment.mime.startsWith("image/");
   return (
     <div className="flex items-center gap-2 pl-1 pr-2 py-1 rounded border border-border bg-surface text-xs max-w-[14rem]">
-      {isImage ? (
-        <img
-          src={api.attachments.url(attachment.id)}
-          alt=""
-          className="w-8 h-8 rounded object-cover border border-border shrink-0"
-        />
-      ) : (
-        <a
-          href={api.attachments.url(attachment.id)}
-          target="_blank"
-          rel="noreferrer"
-          className="w-8 h-8 rounded border border-border shrink-0 flex items-center justify-center text-muted hover:text-text"
-          title={label}
-        >
+      <AttachmentPreview
+        attachment={attachment}
+        url={api.attachments.url(attachment.id)}
+        className="w-8 h-8 rounded border border-border shrink-0 flex items-center justify-center text-muted hover:text-text"
+      >
+        {isImage ? (
+          <img
+            src={api.attachments.url(attachment.id)}
+            alt=""
+            className="w-8 h-8 rounded object-cover border border-border shrink-0"
+          />
+        ) : (
           <Paperclip size={14} />
-        </a>
-      )}
-      <span className="truncate" title={label}>
+        )}
+      </AttachmentPreview>
+      <span className="truncate" data-tooltip={label}>
         {label}
       </span>
       <button

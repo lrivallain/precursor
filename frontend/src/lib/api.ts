@@ -1187,6 +1187,11 @@ export const api = {
         },
 
   attachments: {
+    readText: async (url: string, signal: AbortSignal): Promise<string> => {
+      const response = await fetch(url, { signal, headers: { "X-Client-Id": CLIENT_ID } });
+      if (!response.ok) throw await httpError(response);
+      return response.text();
+    },
     // Attachments (images + selected documents)
     uploadForTopic: (topicId: number, file: File): Promise<Attachment> =>
       postForm<Attachment>(`/api/topics/${topicId}/attachments`, file),

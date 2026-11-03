@@ -31,6 +31,7 @@ import { Markdown } from "./Markdown";
 import { StepPlanLink, StepPlanNoteHeader } from "./steps/StepPlanNoteHeader";
 import { MessageMeta, formatTimestamp } from "./MessageMeta";
 import { ReasoningDisclosure } from "./ReasoningDisclosure";
+import { AttachmentPreview } from "./AttachmentPreview";
 
 interface Props {
   role: MessageRole;
@@ -437,12 +438,10 @@ export function MessageBubble({ role, content, reasoning, pending, attachments, 
             {imageAttachments.length > 0 && (
               <div className="mb-1.5 flex flex-wrap gap-1.5">
                 {imageAttachments.map((a) => (
-                  <a
+                  <AttachmentPreview
                     key={a.id}
-                    href={api.attachments.url(a.id)}
-                    target="_blank"
-                    rel="noreferrer"
-                    title={a.original_filename || `image-${a.id}`}
+                    attachment={a}
+                    url={api.attachments.url(a.id)}
                     className="block"
                   >
                     <img
@@ -450,26 +449,24 @@ export function MessageBubble({ role, content, reasoning, pending, attachments, 
                       alt={a.original_filename || ""}
                       className="max-w-[18rem] max-h-64 rounded border border-border object-contain bg-bg"
                     />
-                  </a>
+                  </AttachmentPreview>
                 ))}
               </div>
             )}
             {fileAttachments.length > 0 && (
               <div className="mb-1.5 flex flex-wrap gap-1.5">
                 {fileAttachments.map((a) => (
-                  <a
+                  <AttachmentPreview
                     key={a.id}
-                    href={api.attachments.url(a.id)}
-                    target="_blank"
-                    rel="noreferrer"
-                    title={a.original_filename || `attachment-${a.id}`}
+                    attachment={a}
+                    url={api.attachments.url(a.id)}
                     className="inline-flex items-center gap-1.5 rounded border border-border bg-bg px-2 py-1 text-xs hover:bg-surface"
                   >
                     <Paperclip size={12} />
                     <span className="max-w-[16rem] truncate">
                       {a.original_filename || `attachment-${a.id}`}
                     </span>
-                  </a>
+                  </AttachmentPreview>
                 ))}
               </div>
             )}

@@ -46,6 +46,12 @@ export const ATTACHMENT_ACCEPT = `image/*,text/*,.pdf,.docx,.pptx,${TEXT_ATTACHM
 export const SUPPORTED_ATTACHMENT_LABEL =
   "image/*, .pdf, .docx, .pptx, and text/code files (.txt, .md, .csv, .json, .py, …)";
 
+export function isTextAttachment(attachment: { mime: string; original_filename: string }): boolean {
+  const mime = attachment.mime.toLowerCase().split(";", 1)[0].trim();
+  return mime.startsWith("text/") || TEXT_APPLICATION_MIMES.has(mime)
+    || TEXT_ATTACHMENT_SUFFIXES.some((suffix) => attachment.original_filename.toLowerCase().endsWith(suffix));
+}
+
 export function isSupportedAttachmentFile(file: File): boolean {
   const mime = (file.type || "").toLowerCase().split(";", 1)[0].trim();
   if (mime.startsWith("image/")) return true;

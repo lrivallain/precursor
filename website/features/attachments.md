@@ -25,6 +25,26 @@ Text and code files cover the common plain-text and source formats — Markdown,
 CSV/TSV, JSON/YAML/TOML, XML/HTML, shell scripts, and most programming languages.
 Any `text/*` file is accepted even if its extension isn't in the list.
 
+## Preview without leaving the app
+
+Click an attachment thumbnail or file chip in a message, the composer, or the
+notes editor to open an **in-app preview** instead of a new browser tab.
+
+<Screenshot src="/screenshots/attachment-preview.png" alt="An image attachment open in the in-app viewer with zoom controls" caption="Inspect attachments without leaving your conversation." />
+
+Images start fitted to the window. Use **Zoom in / Zoom out** (25% to 400%),
+then scroll to inspect details; **Fit** restores the initial view. Text and code
+files display as plain text with the same zoom controls and a **Reset** button.
+You can also use **+ / -**, **0** to reset, or **Ctrl/Cmd + wheel** over the
+preview. Text previews show at most 200,000 characters, with a notice when
+truncated; this does not change the model's attachment budget.
+
+PDFs use your browser's embedded PDF viewer and its zoom controls. DOCX, PPTX,
+and other formats the browser cannot preview show a clear fallback. A small
+**Open in new tab** link stays in the preview's top bar so you can open or
+download the original file at any time. Close with **Escape**, the close
+button, or a click outside the viewer.
+
 ## How much of a document the model sees
 
 Each attached document contributes up to **200,000 characters** of extracted

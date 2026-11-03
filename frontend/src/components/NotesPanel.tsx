@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { GithubIcon as Github } from "./icons/GithubIcon";
 import { CommandPanel } from "./CommandPanel";
+import { AttachmentPreview } from "./AttachmentPreview";
 import { api } from "../lib/api";
 import { ATTACHMENT_ACCEPT } from "../lib/attachments";
 import { joinNote, type NoteAppendRequest } from "../lib/notesOpen";
@@ -166,24 +167,22 @@ export function NotesPanel({
                 key={a.id}
                 className="flex items-center gap-2 pl-1 pr-2 py-1 rounded border border-border bg-surface text-xs max-w-[14rem]"
               >
-                {isImage ? (
-                  <img
-                    src={api.notes.attachmentUrl(a.id)}
-                    alt=""
-                    className="w-8 h-8 rounded object-cover border border-border shrink-0"
-                  />
-                ) : (
-                  <a
-                    href={api.notes.attachmentUrl(a.id)}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="w-8 h-8 rounded border border-border shrink-0 flex items-center justify-center text-muted hover:text-text"
-                    title={label}
-                  >
+                <AttachmentPreview
+                  attachment={a}
+                  url={api.notes.attachmentUrl(a.id)}
+                  className="w-8 h-8 rounded border border-border shrink-0 flex items-center justify-center text-muted hover:text-text"
+                >
+                  {isImage ? (
+                    <img
+                      src={api.notes.attachmentUrl(a.id)}
+                      alt=""
+                      className="w-8 h-8 rounded object-cover border border-border shrink-0"
+                    />
+                  ) : (
                     <Paperclip size={14} />
-                  </a>
-                )}
-                <span className="truncate" title={label}>
+                  )}
+                </AttachmentPreview>
+                <span className="truncate" data-tooltip={label}>
                   {label}
                 </span>
                 <button
@@ -214,27 +213,26 @@ export function NotesPanel({
             {attachments
               .filter((a) => a.mime.startsWith("image/"))
               .map((a) => (
-                <a key={a.id} href={api.notes.attachmentUrl(a.id)} target="_blank" rel="noreferrer">
+                <AttachmentPreview key={a.id} attachment={a} url={api.notes.attachmentUrl(a.id)}>
                   <img
                     src={api.notes.attachmentUrl(a.id)}
                     alt={a.original_filename || ""}
                     className="max-w-[16rem] max-h-56 rounded border border-border object-contain bg-bg"
                   />
-                </a>
+                </AttachmentPreview>
               ))}
             {attachments
               .filter((a) => !a.mime.startsWith("image/"))
               .map((a) => (
-                <a
+                <AttachmentPreview
                   key={a.id}
-                  href={api.notes.attachmentUrl(a.id)}
-                  target="_blank"
-                  rel="noreferrer"
+                  attachment={a}
+                  url={api.notes.attachmentUrl(a.id)}
                   className="inline-flex items-center gap-1.5 rounded border border-border bg-surface px-2 py-1 text-xs hover:bg-bg"
                 >
                   <Paperclip size={12} />
                   <span>{a.original_filename || `attachment-${a.id}`}</span>
-                </a>
+                </AttachmentPreview>
               ))}
           </div>
         ) : undefined
