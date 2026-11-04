@@ -5,6 +5,7 @@ from __future__ import annotations
 import enum
 from datetime import datetime
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 from sqlalchemy import CheckConstraint, DateTime, Enum, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -40,6 +41,9 @@ class Message(Base, TimestampMixin):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    public_id: Mapped[str] = mapped_column(
+        String(64), unique=True, index=True, nullable=False, default=lambda: str(uuid4())
+    )
     topic_id: Mapped[int | None] = mapped_column(
         ForeignKey("topics.id", ondelete="CASCADE"), index=True, nullable=True
     )

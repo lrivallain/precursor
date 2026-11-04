@@ -116,6 +116,17 @@ This covers desktop/mobile previews, zoom limits, keyboard/focus behavior,
 optional new tabs, inert text, PDF embedding, error/unsupported states, and
 composer/notes uploads without invoking a model.
 
+For message permalinks, use the same anonymous demo:
+
+```bash
+NODE_PATH=.demo/node_modules node scripts/test_message_links.js
+```
+
+This covers long-form topic/chat permalinks, older replies, exact focus, copied
+URLs, reload, search and history, plus agent messages in older runs and folded
+work. Transcript responses are browser fixtures; no model or agent is executed.
+Set `DEMO_PORT` on both the demo server and browser command to use another port.
+
 For workspace file refresh, use the same anonymous demo:
 
 ```bash

@@ -22,6 +22,7 @@ import { ReminderBanner } from "./ReminderBanner";
 import type { Chat, WorkspaceTurnContext } from "../lib/types";
 import { RoleSelector } from "./RoleSelector";
 import { SideChatSeedCard } from "./SideChatSeedCard";
+import { discussionPermalink } from "../lib/routes";
 
 interface TopicNoteState {
   loading: boolean;
@@ -73,6 +74,7 @@ export function ChatSessionPanel({
   const conv = useConversation({
     kind: "chat",
     id: chat.id,
+    address: { publicId: chat.public_id, slug: chat.slug },
     composer,
     onCommand: dispatchCommand,
     onUpdated: onChatUpdated,
@@ -210,6 +212,7 @@ export function ChatSessionPanel({
         <div ref={conv.scrollRef} onScroll={conv.onScroll} className="flex-1 overflow-y-auto p-4 pr-12 min-w-0">
           <div className="relative mx-auto space-y-3" style={{ maxWidth: chatWidth }}>
             <ResizeHandle onMouseDown={onChatResize} />
+            {conv.linkError && <p role="status" className="text-sm text-red-500">{conv.linkError}</p>}
             {conv.loadingOlder && (
               <div className="text-center text-[11px] text-muted py-1">
                 Loading earlier messages…
@@ -225,6 +228,7 @@ export function ChatSessionPanel({
               <TranscriptMessage
                 key={m.id}
                 message={m}
+                discussionPermalink={discussionPermalink("chat", chat.public_id)}
                 streaming={streaming}
                 retryable={m.id === conv.retryableId}
                 onRetry={conv.retryTurn}

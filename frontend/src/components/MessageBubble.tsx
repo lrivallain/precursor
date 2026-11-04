@@ -32,6 +32,7 @@ import { StepPlanLink, StepPlanNoteHeader } from "./steps/StepPlanNoteHeader";
 import { MessageMeta, formatTimestamp } from "./MessageMeta";
 import { ReasoningDisclosure } from "./ReasoningDisclosure";
 import { AttachmentPreview } from "./AttachmentPreview";
+import { CopyMessageLink } from "./CopyMessageLink";
 
 interface Props {
   role: MessageRole;
@@ -42,6 +43,7 @@ interface Props {
   pending?: boolean;
   attachments?: Attachment[];
   onDelete?: () => void;
+  permalink?: string;
   // When provided on a pending assistant bubble, renders an inline Stop button
   // so the user can cancel the in-flight request from where they're looking.
   onStop?: () => void;
@@ -107,7 +109,7 @@ function matchSkillInvocation(
   return { skill, argument: (m[2] ?? "").trim() };
 }
 
-export function MessageBubble({ role, content, reasoning, pending, attachments, onDelete, onStop, collapsible, agentSessionId, createdAt, model, provider, elapsedMs, isError, onRetry, highlighted, onRewindHere, onEditResend, revealActions, onStartSideChat, footer, quotableId, onEditReply, editor, edited }: Props) {
+export function MessageBubble({ role, content, reasoning, pending, attachments, onDelete, permalink, onStop, collapsible, agentSessionId, createdAt, model, provider, elapsedMs, isError, onRetry, highlighted, onRewindHere, onEditResend, revealActions, onStartSideChat, footer, quotableId, onEditReply, editor, edited }: Props) {
   const isUser = role === "user";
   const skills = useSkills();
   const skillInvocation =
@@ -207,6 +209,7 @@ export function MessageBubble({ role, content, reasoning, pending, attachments, 
       >
         <div className="text-[11px] uppercase tracking-wide text-muted">
           {roleLabel[role]}
+          {permalink && <CopyMessageLink path={permalink} />}
         </div>
         <div className="relative rounded-lg border border-border bg-accent/10 max-w-full">
           {onDelete && (
@@ -291,6 +294,7 @@ export function MessageBubble({ role, content, reasoning, pending, attachments, 
               isUser ? "left-2" : "right-2"
             } z-10 flex items-center gap-1 rounded-full bg-surface border border-border px-1 py-0.5 shadow-sm`}
           >
+            {permalink && <CopyMessageLink path={permalink} />}
             {(role === "assistant" || isUser) && (
               <>
                 <button

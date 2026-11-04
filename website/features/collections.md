@@ -77,7 +77,7 @@ top-level topic**: it takes its own children with it and leaves its former
 parent behind.
 
 Because the collection is part of a topic's URL, moving one rewrites that URL.
-Its [permalink](/features/topics#addressing-a-topic) (`/t/<uuid>`) doesn't
+Its [permalink](/features/topics#addressing-a-topic) (`/topics/id/<uuid>`) doesn't
 change, so links you've already shared keep resolving.
 
 ## Per-collection GitHub repository

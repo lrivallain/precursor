@@ -109,6 +109,21 @@ detached background process, so Precursor can run without a terminal:
   `uv-tool`) and updates in place accordingly — `git pull` plus a plugin
   frontend rebuild, or a wheel reinstall.
 
+## Request flow: discussion message links
+
+The frontend resolves `/topics/id/<uuid>` and `/chats/id/<uuid>` through the
+public-ID lookup APIs and retains `#message=<uuid>` when normalizing to the
+readable address. `useMessageLink` coordinates cancellation, exact-row focus
+and highlighting after `useWindowedMessages` has loaded the needed history.
+Both chats and messages have immutable public UUIDs; numeric IDs remain the
+pagination/edit cursors. The legacy `/t/<uuid>` route still resolves.
+
+Agent links use `/agents/<uuid>#event=<link_id>`. `AgentView` reads all runs,
+reveals folded or hidden messages, mounts the target and uses the shared jump
+controller. The event's archived `link_id` is distinct from its prompt-only
+SDK `event_id`; historical archive rows receive deterministic link identities
+when hydrated. Unavailable messages show a notice rather than a different row.
+
 ## Request flow: streamed chat
 
 1. `POST /api/topics/{topic_id}/messages/stream` with the user prompt.

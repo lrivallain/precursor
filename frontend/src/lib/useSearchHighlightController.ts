@@ -76,7 +76,8 @@ export function useSearchHighlightController(
   // sections resolve their URL selection synchronously once their list loads.
   function urlNamesSelection(): boolean {
     const r = parseAppRoute();
-    if (sidebarMode === "chats") return activeChat?.slug === r.chatSlug;
+    if (sidebarMode === "chats")
+      return r.chatPublicId ? activeChat?.public_id === r.chatPublicId : activeChat?.slug === r.chatSlug;
     if (sidebarMode === "topics") {
       if (r.topicPublicId) return activeTopic?.public_id === r.topicPublicId;
       return activeTopic?.slug === r.topicPath[r.topicPath.length - 1];
@@ -146,7 +147,7 @@ export function useSearchHighlightController(
     if (want) params.set("q", want);
     else params.delete("q");
     const qs = params.toString();
-    navigate(window.location.pathname + (qs ? `?${qs}` : ""), { replace: true });
+    navigate(window.location.pathname + (qs ? `?${qs}` : "") + window.location.hash, { replace: true });
   }, [
     searchHighlight,
     atHome,
@@ -161,7 +162,7 @@ export function useSearchHighlightController(
   // rendered. Messages load asynchronously, so poll briefly until a match
   // appears (or give up after ~2.5s).
   useEffect(() => {
-    if (!searchHighlight.trim() || atHome) return;
+    if (!searchHighlight.trim() || atHome || /^#(?:message|event)=/.test(window.location.hash)) return;
     let tries = 0;
     const id = window.setInterval(() => {
       const el = document.querySelector(".search-hl");

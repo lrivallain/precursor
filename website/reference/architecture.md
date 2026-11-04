@@ -88,6 +88,21 @@ dir for an installed wheel. And `instance_settings()` resolves `.env` from
 *there* rather than from wherever the CLI happened to be invoked, so the port an
 instance comes up on doesn't depend on the caller's working directory.
 
+## Request flow: discussion message links
+
+The SPA resolves long-form `/topics/id/<uuid>` and `/chats/id/<uuid>`
+permalinks through the topic/chat public-ID APIs, then normalizes to the
+readable route without dropping the fragment or query. A shared message-link
+controller reads `#message=<uuid>`, loads older transcript pages when necessary,
+and focuses the exact persisted row. Its pending jump is cancelled on navigation.
+Numeric message IDs remain internal pagination/edit cursors.
+
+Agents use `/agents/<uuid>#event=<link_id>`. Their adapter opens Activity across
+all runs, reveals the linked message even inside folded work or hidden assistant
+chatter, mounts its segment and delegates focus/highlighting to the same
+controller. Event link identities are independent of SDK rewind IDs and survive
+archive hydration. Missing targets are reported, never substituted.
+
 ## Request flow: streamed chat
 
 1. `POST /api/topics/{topic_id}/messages/stream` with the user prompt.

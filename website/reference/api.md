@@ -47,6 +47,26 @@ palette and the About dialog).
 
 ## Surface at a glance
 
+### Discussion permalinks
+
+Chat reads now include an immutable `public_id`, resolved by
+`GET /api/chats/by-public-id/{public_id}` (including archived chats; `404` when
+missing). Persisted message reads include an immutable `public_id`, distinct
+from their internal numeric `id`; edits preserve it and new rows never reuse
+deleted messages' UUIDs. Existing rows are backfilled by Alembic.
+
+The SPA accepts `/topics/id/{public_id}#message={message_public_id}` and
+`/chats/id/{public_id}#message={message_public_id}`. Existing `/t/{public_id}`
+and readable routes remain valid. Message lookup is scoped to the selected
+discussion and uses the existing cursor-paginated transcript API.
+
+Archived `AgentEvent` objects expose a stable `link_id` for
+`/agents/{public_id}#event={link_id}` links. This is separate from `event_id`,
+the SDK's prompt-only rewind identifier. New links are persisted in the event
+payload; historical events derive deterministic links from their archive
+identity. Transient streaming frames and pending approval cards have no
+message permalink. These links do not change authentication or access.
+
 ### Conversation model selection
 
 Chat/topic create, read and update schemas include nullable `llm_selection`.

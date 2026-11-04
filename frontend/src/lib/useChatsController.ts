@@ -141,7 +141,12 @@ export function useChatsController(deps: ChatsControllerDeps): ChatsController {
     if (sidebarMode !== "chats" || !activeChat) return;
     if (pendingChatRouteRef.current) return;
     const target = chatUrl(activeChat);
-    if (window.location.pathname !== target) navigate(target);
+    if (window.location.pathname === target) return;
+    if (window.location.pathname === `/chats/id/${activeChat.public_id}`) {
+      navigate(target + window.location.search + window.location.hash, { replace: true });
+    } else {
+      navigate(target);
+    }
   }, [activeChat, sidebarMode, atHome]);
 
   // Live sync across windows: chat changes arrive over the shared event bus.
@@ -362,7 +367,8 @@ export function useChatsController(deps: ChatsControllerDeps): ChatsController {
   // drops the selection so the start hero shows, as `/live` and `/agents` do.
   function syncFromRoute(r: AppRoute): void {
     const slug = r.chatSlug;
-    if (!slug) {
+    const publicId = r.chatPublicId;
+    if (!slug && !publicId) {
       setActiveChat(null);
       return;
     }
@@ -370,7 +376,9 @@ export function useChatsController(deps: ChatsControllerDeps): ChatsController {
     pendingChatRouteRef.current = true;
     void (async () => {
       try {
-        const c = await api.chats.getBySlug(slug);
+        const c = publicId
+          ? await api.chats.getByPublicId(publicId)
+          : await api.chats.getBySlug(slug!);
         pendingChatRouteRef.current = false;
         setActiveChat(c);
         try {

@@ -109,8 +109,26 @@ A title **you** set always wins. Rename a chat — from the sidebar's right-clic
 menu, the header, or `/rename` — and auto-naming steps aside for good, even if a
 naming request was already in flight.
 
-Only the title changes. Chats are addressed by a stable id in their URL, so a
-rename never breaks a link you've already opened or shared.
+Only the title changes; auto-naming does not change the chat's slug.
+
+### Message links
+
+Hover a prompt or reply and choose **Copy link to message**:
+
+```text
+/chats/id/<chat-uuid>#message=<message-uuid>
+```
+
+The long-form permalink uses immutable IDs, so it survives both title and slug
+changes. Existing `/chats/<slug>` addresses still work; opening a UUID permalink
+rewrites the address bar to the current readable route while retaining the
+message target.
+
+Earlier messages are loaded automatically, and the exact message receives
+focus and a brief highlight. Reload and Back/Forward retain the target.
+If the message was deleted or rewound, the discussion reports that it is no
+longer available. Links belong to the same Precursor instance, not a public
+sharing service. Promoting or deleting the chat removes its old chat address.
 
 ### `/suggest-name`
 

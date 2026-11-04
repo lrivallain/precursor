@@ -388,7 +388,7 @@ export const api = {
     get: (id: number) => request<Topic>(`/api/topics/${id}`),
     getBySlug: (slug: string) =>
       request<Topic>(`/api/topics/by-slug/${encodeURIComponent(slug)}`),
-    // Resolve the immutable `/t/<uuid>` permalink.
+    // Resolve the immutable `/topics/id/<uuid>` permalink (also legacy `/t/`).
     getByPublicId: (publicId: string) =>
       request<Topic>(`/api/topics/by-public-id/${encodeURIComponent(publicId)}`),
     create: (data: Partial<Topic> & { create_linked_issue?: boolean }) =>
@@ -474,6 +474,8 @@ export const api = {
     get: (id: number) => request<Chat>(`/api/chats/${id}`),
     getBySlug: (slug: string) =>
       request<Chat>(`/api/chats/by-slug/${encodeURIComponent(slug)}`),
+    getByPublicId: (publicId: string) =>
+      request<Chat>(`/api/chats/by-public-id/${encodeURIComponent(publicId)}`),
     create: (data: ChatCreate) =>
       request<Chat>(`/api/chats`, { method: "POST", body: JSON.stringify(data) }),
     update: (id: number, data: ChatUpdate) =>

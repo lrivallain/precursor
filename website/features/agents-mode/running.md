@@ -79,6 +79,24 @@ To drop only the last few turns instead of the whole context, [rewind](/features
 from the timeline rail or a prompt's toolbar. Unlike `/clear`, the turns before
 the cut stay in the agent's context.
 
+## Message links
+
+Hover a user prompt or assistant reply and choose **Copy link to message**:
+
+```text
+/agents/<agent-uuid>#event=<event-link-uuid>
+```
+
+The link opens **Activity**, includes earlier runs, reveals the exact message
+inside folded work or hidden assistant chatter, and briefly highlights it.
+It survives reloads and process restarts; it does not depend on the message's
+position in the timeline or on the SDK's rewind IDs.
+
+If a rewind, clear, retention sweep or deletion removed the event, the view
+reports **This message is no longer available**. In-flight streaming text and
+temporary approval cards are not linkable messages. Links point into the same
+Precursor instance and do not grant access or publish the transcript.
+
 ## When a model disappears or rejects its configuration
 
 Optional [model alternatives](/guide/configuration#optional-model-alternatives)
