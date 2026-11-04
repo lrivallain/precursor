@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Loader2, Workflow as WorkflowIcon } from "lucide-react";
+import { HardDrive, Loader2, Workflow as WorkflowIcon } from "lucide-react";
 import { api } from "../lib/api";
 import { settingsStore, useSettings } from "../lib/settingsStore";
 
@@ -33,6 +33,10 @@ const CAPABILITIES: {
   },
 ];
 
+function clampDays(raw: string): number {
+  return Math.min(3650, Math.max(0, Math.round(Number(raw) || 0)));
+}
+
 export function WorkflowsSettings({ onOpenMigration }: { onOpenMigration?: () => void } = {}) {
   const settings = useSettings();
   const [busy, setBusy] = useState(false);
@@ -40,6 +44,7 @@ export function WorkflowsSettings({ onOpenMigration }: { onOpenMigration?: () =>
 
   const timeoutSeconds = settings?.workflows_default_step_timeout_seconds ?? 0;
   const agentsEnabled = settings?.agents_enabled ?? false;
+  const stepRetentionDays = settings?.workflow_step_retention_days ?? 30;
 
   async function patch(update: Record<string, boolean | number>): Promise<void> {
     setBusy(true);
@@ -131,6 +136,53 @@ export function WorkflowsSettings({ onOpenMigration }: { onOpenMigration?: () =>
           </span>
         </label>
       </section>
+
+      {/* Always shown: the sweep is gated on the scheduler, not on Agents mode,
+          so it keeps clearing archived step inputs after the toggle goes off. */}
+      <div className="space-y-2 rounded border border-border bg-surface/50 p-3">
+        <span className="flex items-center gap-1.5 text-sm font-medium">
+          <HardDrive size={14} /> Step input retention
+        </span>
+        <p className="text-[11px] text-muted">
+          Each step archives the full prompt it was handed, which adds up fast
+          when steps chain large outputs. Once a run has finished this long ago,
+          those prompts are replaced with a placeholder. A step keeps its output,
+          status and token counts either way, but can no longer be replayed.
+        </p>
+        <div className="flex flex-wrap gap-4">
+        <label className="block space-y-1">
+          <span className="block text-[12px]">Keep step inputs for</span>
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              min={0}
+              max={3650}
+              step={1}
+              disabled={busy}
+              value={stepRetentionDays}
+              onChange={(e) =>
+                settingsStore.set({
+                  ...settings!,
+                  workflow_step_retention_days: clampDays(e.target.value),
+                })
+              }
+              onBlur={(e) =>
+                void patch({ workflow_step_retention_days: clampDays(e.target.value) })
+              }
+              className="w-20 rounded border border-border bg-surface px-2 py-1 text-[12px]"
+            />
+            <span className="text-[12px] text-muted">days</span>
+          </div>
+          <span className="block text-[11px] text-muted">
+            0 keeps them forever.
+          </span>
+        </label>
+        </div>
+        <p className="text-[11px] text-muted">
+          Settings → Usage stats shows what a sweep would free and runs it on
+          demand.
+        </p>
+      </div>
 
       {onOpenMigration && (
         <section className="space-y-1">

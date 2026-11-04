@@ -1692,6 +1692,7 @@ export interface Settings {
   live_transcript_retention_days: number;
   agent_event_retention_days: number;
   agent_event_max_per_session: number;
+  workflow_step_retention_days: number;
   cmd_runner_jail: boolean;
   cmd_runner_image: string;
   cmd_runner_network: boolean;
@@ -1788,6 +1789,7 @@ export interface SettingsUpdate {
   live_transcript_retention_days?: number;
   agent_event_retention_days?: number;
   agent_event_max_per_session?: number;
+  workflow_step_retention_days?: number;
   cmd_runner_jail?: boolean;
   cmd_runner_image?: string;
   cmd_runner_network?: boolean;

@@ -525,6 +525,10 @@ DEFAULT_LIVE_TRANSCRIPT_RETENTION_DAYS = 7
 DEFAULT_AGENT_EVENT_RETENTION_DAYS = 30
 DEFAULT_AGENT_EVENT_MAX_PER_SESSION = 2000
 
+# Retention window (in days) for the input context archived on workflow run
+# steps, measured from when the run finished. 0 keeps it forever.
+DEFAULT_WORKFLOW_STEP_RETENTION_DAYS = 30
+
 # Clamp bounds.
 _MIN_INPUT_TOKENS, _MAX_INPUT_TOKENS = 1_000, 5_000_000
 _MIN_TOOL_RESULT_TOKENS, _MAX_TOOL_RESULT_TOKENS = 100, 2_000_000
@@ -647,6 +651,18 @@ async def resolve_agent_event_max_per_session(session: AsyncSession) -> int:
     )
 
 
+async def resolve_workflow_step_retention_days(session: AsyncSession) -> int:
+    """Return the workflow-step input-context retention window in days (0 = disabled)."""
+    return await resolve(
+        session,
+        SettingSpec(
+            "workflow_step_retention_days",
+            _clamped_int(_MIN_RETENTION_DAYS, _MAX_RETENTION_DAYS),
+            default=DEFAULT_WORKFLOW_STEP_RETENTION_DAYS,
+        ),
+    )
+
+
 async def resolve_cmd_runner_config(session: AsyncSession) -> CmdRunnerConfig:
     """Effective cmd-runner config: factory defaults with DB overrides applied."""
     jail = await _get_db_value(session, "cmd_runner_jail")
@@ -722,6 +738,7 @@ async def resolve_system_settings(session: AsyncSession) -> dict[str, Any]:
         "live_transcript_retention_days": await resolve_live_transcript_retention_days(session),
         "agent_event_retention_days": await resolve_agent_event_retention_days(session),
         "agent_event_max_per_session": await resolve_agent_event_max_per_session(session),
+        "workflow_step_retention_days": await resolve_workflow_step_retention_days(session),
         "cmd_runner_jail": cfg.jail,
         "cmd_runner_image": cfg.image,
         "cmd_runner_network": cfg.network,

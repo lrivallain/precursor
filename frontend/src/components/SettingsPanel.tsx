@@ -2079,7 +2079,8 @@ function SystemTab({
         })}
         <p className="text-[11px] text-muted">
           Feature-specific retention lives with its feature: agent timelines
-          under <span className="font-medium">Agents</span>, meeting transcripts
+          under <span className="font-medium">Agents</span>, workflow step inputs under{" "}
+          <span className="font-medium">Workflows</span>, meeting transcripts
           under <span className="font-medium">Live</span>. Usage stats shows what
           every sweep would free, runs one on demand, and compacts the database.
         </p>
