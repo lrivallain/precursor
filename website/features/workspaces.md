@@ -211,6 +211,12 @@ frame, and `.drawio` files open in a full diagram editor (below). Images (PNG,
 JPEG, GIF, WebP, BMP, ICO, AVIF) are displayed scaled to fit, and PDFs open in
 the browser's built-in viewer; both are view-only.
 
+**Refresh file** (the circular arrow beside the file actions) reloads the
+displayed file from disk without leaving its current edit or preview mode.
+Use it to pick up changes made by an assistant or an external editor, including
+updated image and PDF previews. If you have unsaved edits, it asks before
+discarding them; cancelling leaves your buffer untouched.
+
 Hover a folder in the tree for its actions: **New file**, **New folder**, and
 **Delete folder**, which removes the folder with everything in it once you
 confirm by typing its name (a **Copy** button in the dialog saves retyping it).
