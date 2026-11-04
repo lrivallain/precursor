@@ -15,6 +15,9 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Changed
 
+- **Settings: save without closing.** Saving keeps the panel open on the current
+  category with a confirmation. Closing only warns about edits made since the
+  last successful save; failed saves keep your changes available to retry.
 - **Storage: workflow step inputs are now bounded.** The prompt archived on each
   workflow run step (`workflow_run_steps.input_context`) was the largest table
   in a busy install and had no retention. The new `workflow_step_retention_days`

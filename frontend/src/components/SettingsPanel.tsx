@@ -318,6 +318,7 @@ export function SettingsPanel({ onClose: closeNow, initialCategory, onCollection
   const [playwrightBrowser, setPlaywrightBrowser] = useState("msedge");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
   const [mcpEditing, setMcpEditing] = useState<MCPServerStatus | "new" | null>(null);
   const [me, setMe] = useState<Me | null>(null);
   const [appVersion, setAppVersion] = useState<string | null>(null);
@@ -526,6 +527,7 @@ export function SettingsPanel({ onClose: closeNow, initialCategory, onCollection
   async function save(): Promise<void> {
     setSaving(true);
     setSaveError(null);
+    setSaved(false);
     try {
       const payload: Parameters<typeof api.settings.update>[0] = {
         theme,
@@ -587,11 +589,16 @@ export function SettingsPanel({ onClose: closeNow, initialCategory, onCollection
       // catalog — the composer picker must not keep the previous one.
       if (apiKeys.github_token) void modelsStore.refresh();
       settingsStore.set(updated);
-      setGithubToken("");
-      setAzureKey("");
+      setGithubToken((current) => current === githubToken ? "" : current);
+      setAzureKey((current) => current === azureKey ? "" : current);
+      const savedProviderConfig = updated.llm_providers ?? {};
+      setProviderConfig((current) => current === providerConfig ? savedProviderConfig : current);
+      const savedDefaultModel = updated.llm_model_category ? "" : updated.llm_model;
+      setDefaultModel((current) => current === defaultModel ? savedDefaultModel : current);
       setTheme(theme);
       setFont(font);
-      closeNow();
+      baseline.current = captureFormSnapshot("", "", savedProviderConfig, savedDefaultModel);
+      setSaved(true);
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -751,14 +758,22 @@ export function SettingsPanel({ onClose: closeNow, initialCategory, onCollection
     }
   }
 
-  const formSnapshot = JSON.stringify([
-    theme, font, defaultProvider, defaultModel, mockEnabled, modelFallbacks, providerConfig,
-    repo, githubToken, azureKey, azureEndpoint, azureLanguage, ttlMinutes, showChatStats,
-    notificationsEnabled, completionSoundEnabled, maxToolRounds, topicApprovalPolicy, chatApprovalPolicy, scheduledApprovalTimeout, issueAssociationsEnabled,
-    liveFastModel, liveReasoningEffort, liveEnabled, liveTranscriptRetentionDays,
-    chatAutonameEnabled, chatAutonameModel, expose, httpEnabled, workiqTenant,
-    playwrightBrowser, backupEnabled, backupDir, backupRetention, sys,
-  ]);
+  function captureFormSnapshot(
+    githubSecret = githubToken,
+    azureSecret = azureKey,
+    llmConfig = providerConfig,
+    model = defaultModel,
+  ): string {
+    return JSON.stringify([
+      theme, font, defaultProvider, model, mockEnabled, modelFallbacks, llmConfig,
+      repo, githubSecret, azureSecret, azureEndpoint, azureLanguage, ttlMinutes, showChatStats,
+      notificationsEnabled, completionSoundEnabled, maxToolRounds, topicApprovalPolicy, chatApprovalPolicy, scheduledApprovalTimeout, issueAssociationsEnabled,
+      liveFastModel, liveReasoningEffort, liveEnabled, liveTranscriptRetentionDays,
+      chatAutonameEnabled, chatAutonameModel, expose, httpEnabled, workiqTenant,
+      playwrightBrowser, backupEnabled, backupDir, backupRetention, sys,
+    ]);
+  }
+  const formSnapshot = captureFormSnapshot();
   // Captured on the render right after the initial load populates the form.
   const baseline = useRef<string | null>(null);
   useEffect(() => {
@@ -1796,6 +1811,7 @@ export function SettingsPanel({ onClose: closeNow, initialCategory, onCollection
         </div>
 
         {saveError && <p role="alert" className="border-t border-border px-3 py-2 text-xs text-danger">{saveError}</p>}
+        {saved && baseline.current === formSnapshot && <p role="status" className="border-t border-border px-3 py-2 text-xs text-muted">Settings saved.</p>}
         <footer className="border-t border-border p-3 flex items-center justify-end gap-2 shrink-0">
           <span
             className="mr-auto text-[11px] text-muted"
