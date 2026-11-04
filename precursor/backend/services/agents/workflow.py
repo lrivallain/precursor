@@ -66,6 +66,7 @@ from precursor.backend.services.workflow_state import (
     build_state_index_prompt,
     render_step_instructions,
 )
+from precursor.backend.services.workflow_step_retention import PRUNED_PLACEHOLDER
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -2248,6 +2249,8 @@ async def replay_step(
         return workflow, "Stop the run before replaying a step."
     if run_step.agent_id is None:
         return workflow, "This step ran no agent, so there's nothing to replay."
+    if run_step.input_context == PRUNED_PLACEHOLDER:
+        return workflow, "This step's input was cleared by retention, so it can't be replayed."
 
     agent = await session.get(AgentSession, run_step.agent_id)
     if agent is None:

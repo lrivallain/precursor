@@ -144,6 +144,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             logger.info("Pruned %d archived agent event(s) on startup", pruned_events.rows)
     except Exception:  # pragma: no cover - best-effort cleanup
         logger.warning("Agent-event retention sweep failed", exc_info=True)
+    from precursor.backend.services.workflow_step_retention import (
+        prune_expired_workflow_step_inputs,
+    )
+
+    try:
+        cleared_steps = await prune_expired_workflow_step_inputs()
+        if cleared_steps.rows:
+            logger.info("Cleared %d workflow step input(s) on startup", cleared_steps.rows)
+    except Exception:  # pragma: no cover - best-effort cleanup
+        logger.warning("Workflow-step retention sweep failed", exc_info=True)
     if get_settings().iq_enabled:
         from precursor.backend.services.iq import indexer as iq_indexer
 

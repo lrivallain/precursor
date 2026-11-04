@@ -109,6 +109,9 @@ class SettingsPayload(BaseModel):
     # cap bounds a single long autonomous agent, which the window alone misses.
     agent_event_retention_days: int | None = None
     agent_event_max_per_session: int | None = None
+    # Days after a workflow run finishes before its steps' archived input context
+    # is cleared (0 = keep forever). Outputs, status and token counts are kept.
+    workflow_step_retention_days: int | None = None
     # Command runner ("jail").
     cmd_runner_jail: bool | None = None
     cmd_runner_image: str | None = None
@@ -230,6 +233,7 @@ class SettingsRead(BaseModel):
     live_transcript_retention_days: int = 7
     agent_event_retention_days: int = 30
     agent_event_max_per_session: int = 2000
+    workflow_step_retention_days: int = 30
     cmd_runner_jail: bool = True
     cmd_runner_image: str = "python:3.14-slim"
     cmd_runner_network: bool = False
