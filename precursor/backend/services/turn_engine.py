@@ -73,6 +73,10 @@ from precursor.backend.services.mcp.client import (
 )
 from precursor.backend.services.mcp.workspace_links import link_from_result
 from precursor.backend.services.meeting_analysis import live_chat_grounding
+from precursor.backend.services.message_links import (
+    MESSAGE_LINK_INSTRUCTION,
+    with_message_reference,
+)
 from precursor.backend.services.roles import resolve_role_prompt
 from precursor.backend.services.suggestions import SUGGESTIONS_INSTRUCTION, split_suggestions
 from precursor.backend.services.usage_stats import record_usage
@@ -242,6 +246,7 @@ def hydrate_history(
     *,
     attachment_max_chars: int = DEFAULT_LLM_MAX_ATTACHMENT_CHARS,
     prompt_override: str | None = None,
+    discussion_path: str | None = None,
 ) -> list[ChatMessage]:
     """Turn persisted Messages back into ChatMessages, preserving tool calls.
 
@@ -262,12 +267,20 @@ def hydrate_history(
             summary = rows[idx].content
             rows = rows[idx + 1 :]
             break
-    out = _hydrate_rows(rows, attachment_max_chars=attachment_max_chars)
+    out = _hydrate_rows(
+        rows, attachment_max_chars=attachment_max_chars, discussion_path=discussion_path
+    )
     if prompt_override:
         for idx in range(len(out) - 1, -1, -1):
             if out[idx].role == "user":
                 out[idx] = ChatMessage(
-                    role="user", content=prompt_override, image_urls=out[idx].image_urls
+                    role="user",
+                    content=with_message_reference(
+                        prompt_override,
+                        discussion_path,
+                        next(m.public_id for m in reversed(rows) if m.role == MessageRole.USER),
+                    ),
+                    image_urls=out[idx].image_urls,
                 )
                 break
     if summary:
@@ -298,7 +311,9 @@ def _with_compaction_summary(history: list[ChatMessage], summary: str) -> list[C
     return [ChatMessage(role="user", content=prefix), *history]
 
 
-def _hydrate_rows(rows: list[Message], *, attachment_max_chars: int) -> list[ChatMessage]:
+def _hydrate_rows(
+    rows: list[Message], *, attachment_max_chars: int, discussion_path: str | None
+) -> list[ChatMessage]:
     out: list[ChatMessage] = []
     i = 0
     while i < len(rows):
@@ -338,7 +353,15 @@ def _hydrate_rows(rows: list[Message], *, attachment_max_chars: int) -> list[Cha
                 )
                 j += 1
             if expected_ids and expected_ids.issubset(seen_ids):
-                out.append(ChatMessage(role="assistant", content=m.content, tool_calls=calls))
+                out.append(
+                    ChatMessage(
+                        role="assistant",
+                        content=with_message_reference(m.content, discussion_path, m.public_id)
+                        if m.content
+                        else "",
+                        tool_calls=calls,
+                    )
+                )
                 out.extend(tool_msgs)
             else:
                 logger.info(
@@ -371,7 +394,13 @@ def _hydrate_rows(rows: list[Message], *, attachment_max_chars: int) -> list[Cha
             )
             if non_image_context:
                 content = f"{content}\n\n{non_image_context}" if content else non_image_context
-        out.append(ChatMessage(role=role, content=content, image_urls=image_urls))
+        out.append(
+            ChatMessage(
+                role=role,
+                content=with_message_reference(content, discussion_path, m.public_id),
+                image_urls=image_urls,
+            )
+        )
         i += 1
     return out
 
@@ -793,6 +822,7 @@ async def run_tool_loop(
         provider_tools = [*provider_tools, approval_service.REQUEST_APPROVAL_DEF]
         system_prompt = f"{system_prompt}\n\n{approval_service.APPROVAL_PROMPT}"
 
+    system_prompt = f"{system_prompt}\n\n{MESSAGE_LINK_INSTRUCTION}"
     messages: list[ChatMessage] = [
         ChatMessage(role="system", content=system_prompt),
         *history,
@@ -969,6 +999,7 @@ class PersistedAnswer:
     """The stored final answer: its id, clean text and follow-up chips."""
 
     message_id: int
+    public_id: str
     text: str
     suggestions: list[str]
 
@@ -1001,9 +1032,12 @@ async def persist_final_turn(
         await ws.commit()
         await ws.refresh(assistant)
         message_id = assistant.id
+        public_id = assistant.public_id
     await publish_container_changed(kind, container_id)
     await record_round_usage(usage, model=model, kind=kind, container_id=container_id)
-    return PersistedAnswer(message_id=message_id, text=text, suggestions=suggestions)
+    return PersistedAnswer(
+        message_id=message_id, public_id=public_id, text=text, suggestions=suggestions
+    )
 
 
 async def persist_tool_calls_turn(
@@ -1012,8 +1046,8 @@ async def persist_tool_calls_turn(
     ev: AssistantToolCallsTurn,
     *,
     model: str,
-) -> int:
-    """Store an assistant-with-tool-calls round and meter it; return its id."""
+) -> tuple[int, str]:
+    """Store an assistant-with-tool-calls round; return its database and public ids."""
     usage = ev.usage
     async with SessionLocal() as ws:
         assistant = Message(
@@ -1029,9 +1063,10 @@ async def persist_tool_calls_turn(
         await ws.commit()
         await ws.refresh(assistant)
         assistant_id = assistant.id
+        public_id = assistant.public_id
     await publish_container_changed(kind, container_id)
     await record_round_usage(usage, model=model, kind=kind, container_id=container_id)
-    return assistant_id
+    return assistant_id, public_id
 
 
 async def persist_tool_result(kind: ContainerKind, container_id: int, ev: ToolResultTurn) -> int:
@@ -1197,6 +1232,7 @@ async def run_message_stream(
                         "data": json.dumps(
                             {
                                 "id": answer.message_id,
+                                "public_id": answer.public_id,
                                 "content": answer.text,
                                 "model": actual_model,
                                 "provider": ev.provider,
@@ -1214,7 +1250,7 @@ async def run_message_stream(
                     return
 
                 elif isinstance(ev, AssistantToolCallsTurn):
-                    assistant_id = await persist_tool_calls_turn(
+                    assistant_id, public_id = await persist_tool_calls_turn(
                         kind, container_id, ev, model=ev.model or model
                     )
                     last_assistant_id = assistant_id
@@ -1225,6 +1261,7 @@ async def run_message_stream(
                         "data": json.dumps(
                             {
                                 "assistant_id": assistant_id,
+                                "public_id": public_id,
                                 "calls": [
                                     {
                                         "id": c.id,

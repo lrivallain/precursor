@@ -21,6 +21,7 @@ import { makeHighlightRehype, useSearchHighlight } from "../lib/searchHighlight"
 import { openChatBySlug } from "../lib/sideChats";
 import { openStepPlan } from "../lib/stepPlans";
 import { makeMarkdownCaretRehype, markdownCaretAtPoint } from "../lib/markdownCaret";
+import { navigate } from "../lib/routes";
 
 interface MarkdownProps {
   children: string;
@@ -105,6 +106,21 @@ function inAppStepPlanId(href: string | undefined): number | null {
 function isExternalHref(href: string | undefined): boolean {
   if (!href) return false;
   return /^https?:\/\//i.test(href);
+}
+
+function inAppMessageHref(href: string | undefined): string | null {
+  if (!href) return null;
+  let url: URL;
+  try {
+    url = new URL(href, window.location.href);
+  } catch {
+    return null;
+  }
+  if (url.origin !== window.location.origin) return null;
+  const fragment = new URLSearchParams(url.hash.slice(1));
+  const message = /^\/(?:topics|chats)\/id\/[^/]+$/.test(url.pathname) && fragment.has("message");
+  const event = /^\/agents\/[^/]+$/.test(url.pathname) && fragment.has("event");
+  return message || event ? url.pathname + url.search + url.hash : null;
 }
 
 const WARNING_MARKER = /^\s*\[!WARNING\]\s*/i;
@@ -292,7 +308,8 @@ export const Markdown = memo(function Markdown({
             return <CodeBlock {...props}>{preChildren}</CodeBlock>;
           },
           a({ href, children: linkChildren, ...props }) {
-            const external = isExternalHref(href);
+            const messageHref = inAppMessageHref(href);
+            const external = isExternalHref(href) && !messageHref;
             const chatSlug = inAppChatSlug(href);
             const stepPlanId = inAppStepPlanId(href);
             return (
@@ -319,6 +336,17 @@ export const Markdown = memo(function Markdown({
                         if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
                         e.preventDefault();
                         openStepPlan(stepPlanId);
+                      },
+                    }
+                  : {})}
+                {...(messageHref
+                  ? {
+                      onClick: (e: React.MouseEvent<HTMLAnchorElement>) => {
+                        if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+                        e.preventDefault();
+                        navigate(messageHref);
+                        window.dispatchEvent(new PopStateEvent("popstate"));
+                        window.dispatchEvent(new Event("precursor:message-jump"));
                       },
                     }
                   : {})}

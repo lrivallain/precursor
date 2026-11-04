@@ -326,6 +326,8 @@ class AgentEvent(BaseModel):
     # from. Only prompts carry it, and only those archived since rewind
     # shipped, so older turns stay navigation-only.
     event_id: str | None = None
+    # Independent of the SDK's prompt-only rewind id; survives archive reloads.
+    link_id: str | None = None
 
 
 class AgentLiveThinking(BaseModel):

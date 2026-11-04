@@ -21,7 +21,7 @@ export interface Topic {
   llm_selection: ConversationLLMSelection | null;
   id: number;
   slug: string;
-  // Immutable UUID permalink (`/t/<public_id>`). Unlike the readable URL it
+  // Immutable UUID permalink (`/topics/id/<public_id>`). Unlike the readable URL it
   // never changes when the topic is renamed, re-parented or moved collection.
   public_id: string;
   title: string;
@@ -123,6 +123,7 @@ export interface TopicNode extends Topic {
 export interface Chat {
   llm_selection: ConversationLLMSelection | null;
   id: number;
+  public_id: string;
   slug: string;
   title: string;
   description: string | null;
@@ -527,6 +528,7 @@ export interface AgentEvent {
   // The SDK id of a user prompt: what a rewind truncates from. Absent on other
   // events and on prompts archived before rewind existed.
   event_id?: string | null;
+  link_id?: string | null;
 }
 
 // One incremental read of an agent's transcript (mirrors AgentEventPage).
@@ -1348,6 +1350,8 @@ export interface Attachment {
 
 export interface Message {
   id: number;
+  /** Absent on local-only notices and optimistic streaming rows. */
+  public_id?: string;
   topic_id: number | null;
   chat_id?: number | null;
   role: MessageRole;

@@ -45,6 +45,7 @@ class ChatRead(ChatBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    public_id: str
     slug: str
     created_at: datetime
     updated_at: datetime

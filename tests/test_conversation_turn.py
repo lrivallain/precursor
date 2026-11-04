@@ -81,7 +81,8 @@ async def test_persist_user_turn_retry_reuses_the_prompt_and_drops_the_tail() ->
 
     assert user_msg.id == prompt_id
     assert bound == []
-    assert [(m.role, m.content) for m in history] == [("user", "try me")]
+    assert [(m.role, m.content.split("\n\n", 1)[1]) for m in history] == [("user", "try me")]
+    assert f"#message={prompt.public_id}]" in history[0].content
 
 
 async def test_snapshot_history_swaps_only_the_latest_user_turn_for_the_override() -> None:
@@ -101,8 +102,15 @@ async def test_snapshot_history_swaps_only_the_latest_user_turn_for_the_override
             session, "topic", topic_id, prompt_override="Translate: bravo"
         )
 
-    assert [m.content for m in plain] == ["first", "answer", "/to-en bravo"]
-    assert [m.content for m in expanded] == ["first", "answer", "Translate: bravo"]
+    assert [m.content.split("\n\n", 1)[1] for m in plain] == ["first", "answer", "/to-en bravo"]
+    assert [m.content.split("\n\n", 1)[1] for m in expanded] == [
+        "first",
+        "answer",
+        "Translate: bravo",
+    ]
+    assert [m.content.split("\n\n", 1)[0] for m in plain] == [
+        m.content.split("\n\n", 1)[0] for m in expanded
+    ]
 
 
 async def test_resolve_turn_settings_honours_override_and_exclusions(

@@ -40,7 +40,7 @@ class Topic(Base, TimestampMixin):
 
     # Immutable permalink id (a UUID), minted at row creation. The readable URL
     # (`/topics/<collection>/<ancestors…>/<slug>`) moves whenever the topic is
-    # renamed, re-parented or moved between collections; `/t/<public_id>` never
+    # renamed, re-parented or moved between collections; `/topics/id/<public_id>` never
     # does, so it is the address to paste into an issue or a bookmark. Resolving
     # it redirects to the readable URL — see routers/topics.py.
     public_id: Mapped[str] = mapped_column(

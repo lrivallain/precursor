@@ -42,6 +42,7 @@ import { useReminders, type RemindersController } from "./useReminders";
 import { inCut, useRewind, type RewindController } from "./useRewind";
 import { useTurnTimeline, type TurnTimeline } from "./useTurnTimeline";
 import { useWindowedMessages } from "./useWindowedMessages";
+import { useDiscussionTarget, useMessageJump } from "./useMessageLink";
 import type { ComposerAttachments } from "../components/Composer";
 import type { Message, WorkspaceTurnContext } from "./types";
 
@@ -67,6 +68,7 @@ export interface PromptRewindActions {
 export interface UseConversationOptions {
   kind: ConvKind;
   id: number;
+  address?: { publicId: string; slug: string };
   /** The composer feeding this conversation (see useComposerInput). */
   composer: ComposerInput;
   /**
@@ -92,6 +94,7 @@ export interface UseConversationOptions {
 }
 
 export interface Conversation {
+  linkError: string | null;
   streamKey: string;
   persisted: Message[];
   setPersisted: Dispatch<SetStateAction<Message[]>>;
@@ -153,6 +156,7 @@ export interface Conversation {
 export function useConversation({
   kind,
   id,
+  address,
   composer,
   onCommand,
   onUpdated,
@@ -197,6 +201,8 @@ export function useConversation({
   // and SSE handler so a stream survives switching conversations.
   useStreamVersion();
   const streamKey = convKey(kind, id);
+  const [loadedKey, setLoadedKey] = useState<string | null>(null);
+  const [historyError, setHistoryError] = useState<{ key: string; message: string } | null>(null);
   const streaming = streamStore.isStreaming(streamKey);
   const pendingContent = streamStore.pendingContent(streamKey);
   const pendingReasoning = streamStore.pendingReasoning(streamKey);
@@ -240,7 +246,7 @@ export function useConversation({
 
   // Reverse-infinite-scroll wiring lives in useWindowedMessages; bind the scroll
   // helpers back into the hook once useChatScroll has produced them.
-  const { scrollRef, onScroll, captureTopAnchor, pinToBottom } = useChatScroll(
+  const { scrollRef, onScroll, captureTopAnchor, pinToBottom, pinnedRef } = useChatScroll(
     [messages, pendingContent, pendingReasoning],
     win.onReachTop,
   );
@@ -248,6 +254,15 @@ export function useConversation({
   useEffect(() => {
     bindScroll({ captureTopAnchor, pinToBottom });
   }, [bindScroll, captureTopAnchor, pinToBottom]);
+  const linkTarget = useDiscussionTarget(kind, address?.publicId, address?.slug);
+  const linkError = useMessageJump({
+    target: linkTarget,
+    ready: loadedKey === streamKey,
+    resetKey: streamKey,
+    scrollRef,
+    prepare: win.ensureLoaded,
+    unpin: () => { pinnedRef.current = false; },
+  });
 
   const approvals = useApprovals({
     kind,
@@ -328,10 +343,13 @@ export function useConversation({
   // Load persisted history when the conversation changes.
   useEffect(() => {
     let cancelled = false;
+    setLoadedKey(null);
+    setHistoryError(null);
     void (async () => {
       const msgs = await win.fetchFirstPage();
       if (cancelled) return;
       win.applyFirstPage(msgs);
+      setLoadedKey(streamKey);
       // If we just switched into a conversation whose session has already
       // finished, drop the buffered copy now that we have the canonical server
       // state.
@@ -343,7 +361,14 @@ export function useConversation({
         streamStore.clear(streamKey);
         if (error) systemNote(`Error: ${error}`);
       }
-    })();
+    })().catch((reason) => {
+      if (cancelled) return;
+      win.applyFirstPage([]);
+      setHistoryError({
+        key: streamKey,
+        message: `Could not load this discussion: ${reason instanceof Error ? reason.message : String(reason)}`,
+      });
+    });
     return () => {
       cancelled = true;
     };
@@ -655,6 +680,7 @@ export function useConversation({
 
   return {
     streamKey,
+    linkError: historyError?.key === streamKey ? historyError.message : linkError,
     persisted,
     setPersisted,
     loadingOlder,

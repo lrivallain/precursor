@@ -229,7 +229,7 @@ export function useAgentsController(deps: AgentsControllerDeps): AgentsControlle
     // its `?q=`: the mirror doesn't re-run when only the list changes.
     const shown = resolveAgentRef(parseAppRoute().agentRef, agents);
     if (activeAgentId != null && shown === activeAgentId) {
-      navigate(target + window.location.search, { replace: true });
+      navigate(target + window.location.search + window.location.hash, { replace: true });
     } else {
       navigate(target);
     }

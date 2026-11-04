@@ -63,7 +63,9 @@ import {
 import { parseSuggestions, stripSuggestionBlock } from "../lib/suggestions";
 import { useDictation } from "../lib/useDictation";
 import { useResizableHeight } from "../lib/useResizableHeight";
-import { navigate } from "../lib/routes";
+import { discussionPermalink, messagePermalink, navigate } from "../lib/routes";
+import { useDiscussionTarget, useMessageJump } from "../lib/useMessageLink";
+import { CopyMessageLink } from "./CopyMessageLink";
 import { Composer } from "./Composer";
 import { ComposerModelControls } from "./ComposerModelControls";
 import { Markdown } from "./Markdown";
@@ -900,6 +902,7 @@ function ArtifactViewer({
 // One simple message node (user/system/assistant/reasoning/error).
 function MessageNode({
   event,
+  permalink,
   category,
   reasoning,
   isLastAnswer,
@@ -917,6 +920,7 @@ function MessageNode({
   revealActions = false,
 }: {
   event: AgentEvent;
+  permalink?: string;
   category: "user" | "system" | "assistant" | "reasoning" | "error";
   /** The round's thinking, shown collapsed above the message. */
   reasoning?: string | null;
@@ -1098,42 +1102,48 @@ function MessageNode({
             />
           </p>
         ))}
-      {isAssistant && event.text && (
-        <div className="absolute -bottom-3 right-2 z-10 flex items-center gap-1 rounded-full border border-border bg-surface px-1 py-0.5 opacity-0 shadow-sm transition-opacity group-hover/node:opacity-100">
-          <button
-            type="button"
-            onClick={() => copyTo("text")}
-            className="rounded-full p-1 text-muted hover:text-accent"
-            aria-label="Copy message"
-            data-tooltip="Copy message"
-          >
-            {copied === "text" ? (
-              <Check size={12} className="text-emerald-500" />
-            ) : (
-              <Copy size={12} />
-            )}
-          </button>
-          <button
-            type="button"
-            onClick={() => copyTo("md")}
-            className="rounded-full p-1 text-muted hover:text-accent"
-            aria-label="Copy raw markdown"
-            data-tooltip="Copy raw markdown"
-          >
-            {copied === "md" ? (
-              <Check size={12} className="text-emerald-500" />
-            ) : (
-              <Code2 size={12} />
-            )}
-          </button>
+      {isAssistant && (event.text || permalink) && (
+        <div className="hover-reveal absolute -bottom-3 right-2 z-10 flex items-center gap-1 rounded-full border border-border bg-surface px-1 py-0.5 opacity-0 shadow-sm transition-opacity group-hover/node:opacity-100 group-focus-within/node:opacity-100">
+          {permalink && <CopyMessageLink path={permalink} />}
+          {event.text && (
+            <>
+              <button
+                type="button"
+                onClick={() => copyTo("text")}
+                className="rounded-full p-1 text-muted hover:text-accent"
+                aria-label="Copy message"
+                data-tooltip="Copy message"
+              >
+                {copied === "text" ? (
+                  <Check size={12} className="text-emerald-500" />
+                ) : (
+                  <Copy size={12} />
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => copyTo("md")}
+                className="rounded-full p-1 text-muted hover:text-accent"
+                aria-label="Copy raw markdown"
+                data-tooltip="Copy raw markdown"
+              >
+                {copied === "md" ? (
+                  <Check size={12} className="text-emerald-500" />
+                ) : (
+                  <Code2 size={12} />
+                )}
+              </button>
+            </>
+          )}
         </div>
       )}
-      {isUser && (onRewindHere || onEditResend) && (
+      {isUser && (permalink || onRewindHere || onEditResend) && (
         <div
-          className={`absolute -bottom-3 left-2 z-10 flex items-center gap-1 rounded-full border border-border bg-surface px-1 py-0.5 shadow-sm transition-opacity group-hover/node:opacity-100 ${
+          className={`hover-reveal absolute -bottom-3 left-2 z-10 flex items-center gap-1 rounded-full border border-border bg-surface px-1 py-0.5 shadow-sm transition-opacity group-hover/node:opacity-100 group-focus-within/node:opacity-100 ${
             revealActions ? "opacity-100" : "opacity-0"
           }`}
         >
+          {permalink && <CopyMessageLink path={permalink} />}
           {onRewindHere && (
             <button
               type="button"
@@ -1680,6 +1690,7 @@ function buildCockpitTimeline(
     live: boolean;
     autonomy: boolean;
     expanded: ReadonlySet<number>;
+    targetId?: string | null;
   },
 ): CockpitTimeline {
   const { showPrefs } = opts;
@@ -1735,6 +1746,7 @@ function buildCockpitTimeline(
   });
 
   const visible = (r: WorkflowRow, isAnswer: boolean): boolean => {
+    if (opts.targetId && r.type === "node" && r.ev.link_id === opts.targetId) return true;
     if (r.type === "hook") return showPrefs.lifecycle;
     if (r.type === "tool") return showPrefs.tool;
     if (r.cat === "user" && isAutonomyNudge(r.ev.text)) return showPrefs.lifecycle;
@@ -1806,7 +1818,8 @@ function buildCockpitTimeline(
       }
       return;
     }
-    const open = opts.expanded.has(ex.index);
+    const open = opts.expanded.has(ex.index) || (Boolean(opts.targetId) &&
+      work.some((it) => it.row.type === "node" && it.row.ev.link_id === opts.targetId));
     entries.push({
       kind: "fold",
       key: `f${ex.index}`,
@@ -2102,6 +2115,16 @@ export function AgentView({
     [agents, agentId],
   );
   const hasSelected = selected != null;
+  const eventTarget = useDiscussionTarget("agent", selected?.public_id);
+  const leaveEventLink = useCallback(() => {
+    const url = new URL(window.location.href);
+    const hash = new URLSearchParams(url.hash.slice(1));
+    if (!hash.has("event")) return;
+    hash.delete("event");
+    // Keep the all-runs context when the user leaves a linked earlier reply.
+    setRunChoice("all");
+    navigate(url.pathname + url.search + (hash.size ? `#${hash}` : ""), { replace: true });
+  }, []);
   useEffect(() => {
     selectedRef.current = hasSelected;
   }, [hasSelected]);
@@ -2129,8 +2152,9 @@ export function AgentView({
         live: turnActive,
         autonomy: selectedAutonomy,
         expanded,
+        targetId: eventTarget,
       }),
-    [events, showPrefs, selectedStatus, turnActive, selectedAutonomy, expanded],
+    [events, showPrefs, selectedStatus, turnActive, selectedAutonomy, expanded, eventTarget],
   );
 
   // Per-assistant-answer generation time, derived from event timestamps and
@@ -2176,6 +2200,8 @@ export function AgentView({
   // only for what arrived since. Refs rather than state because a refresh reads
   // them without wanting to be re-subscribed when they move.
   const archivedRef = useRef<AgentEvent[]>([]);
+  const eventsScopeRef = useRef("");
+  const [eventsLoadedKey, setEventsLoadedKey] = useState("");
   const cursorRef = useRef(0);
   // The archive the cursor counts into; a rewind changes it (see AgentEventPage).
   const epochRef = useRef<string | null>(null);
@@ -2198,6 +2224,8 @@ export function AgentView({
           fresh ? 0 : cursorRef.current,
           epochRef.current,
         );
+        const key = `${id}:${agentRunId ?? "all"}`;
+        if (eventsScopeRef.current !== key) return;
         // `reset` means our cursor no longer addresses this transcript (cleared,
         // pruned, or taken against another run) and the payload is a whole
         // replacement. Otherwise append — and keep the same array identity when
@@ -2214,6 +2242,7 @@ export function AgentView({
         // Parked approval cards live outside the cursor and are replaced whole,
         // so they're re-appended on every read rather than accumulated.
         setEvents(page.pending.length > 0 ? [...archived, ...page.pending] : archived);
+        setEventsLoadedKey(key);
         const thinking = page.thinking ?? null;
         setLiveThinking((prev) =>
           prev?.text === thinking?.text && prev?.active === thinking?.active ? prev : thinking,
@@ -2222,7 +2251,11 @@ export function AgentView({
         setRewindableRunIds((prev) =>
           prev.length === rewindable.length && prev.every((v, i) => v === rewindable[i]) ? prev : rewindable,
         );
-      } catch {
+      } catch (reason) {
+        if (eventsScopeRef.current !== `${id}:${agentRunId ?? "all"}`) return;
+        if (new URLSearchParams(window.location.hash.slice(1)).has("event")) {
+          setError(`Could not load this message: ${reason instanceof Error ? reason.message : String(reason)}`);
+        }
         archivedRef.current = [];
         cursorRef.current = 0;
         epochRef.current = null;
@@ -2283,10 +2316,12 @@ export function AgentView({
   // Left alone it tracks the newest run, so starting the agent again pulls the
   // view along instead of stranding you on a finished conversation.
   const latestRunId = runs[0]?.id ?? null;
-  const runFilter = runChoice === "all" ? null : (runChoice ?? latestRunId);
+  const runFilter = eventTarget || runChoice === "all" ? null : (runChoice ?? latestRunId);
 
   // Load the selected session's timeline, and keep it live on agent.changed.
   useEffect(() => {
+    eventsScopeRef.current = `${agentId}:${runFilter ?? "all"}`;
+    setEventsLoadedKey("");
     // Drop an optimistic echo when leaving the agent it targeted (it survives the
     // switch *into* its own freshly created session, cleared later when it lands).
     setPending((p) => (p && p.agentId !== agentId ? null : p));
@@ -2302,7 +2337,11 @@ export function AgentView({
     void loadEvents(agentId, runFilter, { fresh: true });
     // Thereafter refresh incrementally — coalesced so a burst costs one read,
     // and cursored so that read carries only the steps since the last one.
-    return subscribeAgentChanged(agentId, () => loadEvents(agentId, runFilter));
+    const unsubscribe = subscribeAgentChanged(agentId, () => loadEvents(agentId, runFilter));
+    return () => {
+      eventsScopeRef.current = "";
+      unsubscribe();
+    };
   }, [agentId, loadEvents, runFilter]);
 
   // A pinned run belongs to the agent it was chosen on — switching agents must
@@ -2382,7 +2421,7 @@ export function AgentView({
   const needsYou = selectedStatus === "needs_approval" || selectedStatus === "blocked";
   const followPane: AgentPane =
     resultIsFresh && atRest && !showPending ? "result" : "activity";
-  const pane: AgentPane = latestVersion ? (paneChoice ?? followPane) : "activity";
+  const pane: AgentPane = eventTarget ? "activity" : latestVersion ? (paneChoice ?? followPane) : "activity";
   // An artifact that isn't a result version (a superseded completion summary,
   // another run's output) opens in a viewer over the page instead.
   const [viewing, setViewing] = useState<AgentArtifact | null>(null);
@@ -2411,10 +2450,11 @@ export function AgentView({
 
   const openVersion = useCallback(
     (v: ResultVersion | null) => {
+      leaveEventLink();
       setVersionPick(v == null || v === latestVersion ? null : v.artifacts[0].id);
       setPaneChoice("result");
     },
-    [latestVersion],
+    [latestVersion, leaveEventLink],
   );
   const openArtifact = useCallback(
     (a: AgentArtifact) => {
@@ -2470,13 +2510,17 @@ export function AgentView({
   const toggleFold = useCallback((exchange: number) => {
     // Opening a fold near the bottom must not yank the view down to the end.
     pinnedRef.current = false;
+    const linkedFold = Boolean(eventTarget) && timeline.segments.some((segment) => segment.entry.exchange === exchange &&
+      segment.entry.kind === "row" && segment.entry.row.type === "node" &&
+      segment.entry.row.ev.link_id === eventTarget);
+    leaveEventLink();
     setExpanded((prev) => {
       const next = new Set(prev);
-      if (next.has(exchange)) next.delete(exchange);
+      if (next.has(exchange) || linkedFold) next.delete(exchange);
       else next.add(exchange);
       return next;
     });
-  }, []);
+  }, [eventTarget, timeline.segments, leaveEventLink]);
 
   // Drive the app-global sign-in banner when a turn surfaces an MCP server that
   // needs interactive auth (e.g. WorkIQ OAuth lapsed). The agent runtime emits a
@@ -2636,6 +2680,22 @@ export function AgentView({
     scrollRef,
     content: timeline,
     ensureLoaded: ensureTurnMounted,
+  });
+  const linkError = useMessageJump({
+    target: eventTarget,
+    ready: hasSelected && eventsLoadedKey === `${agentId}:${runFilter ?? "all"}`,
+    resetKey: String(agentId),
+    scrollRef,
+    unpin: () => { pinnedRef.current = false; },
+    prepare: async (target) => {
+      const at = timeline.segments.findIndex(
+        (segment) => segment.entry.kind === "row" &&
+          segment.entry.row.type === "node" && segment.entry.row.ev.link_id === target,
+      );
+      if (at < 0) return false;
+      setWindowStart((start) => Math.min(start, at));
+      return true;
+    },
   });
   const rewind = useAgentRewind({
     resetKey: `${agentId ?? ""}:${runFilter ?? "all"}`,
@@ -3126,7 +3186,10 @@ export function AgentView({
         {latestVersion && (
           <AgentPaneTabs
             pane={pane}
-            onChange={setPaneChoice}
+            onChange={(next) => {
+              leaveEventLink();
+              setPaneChoice(next);
+            }}
             latest={latestVersion.n}
             live={turnActive}
           />
@@ -3164,6 +3227,7 @@ export function AgentView({
         >
           <div ref={innerRef}>
         {error && <p className="mb-2 text-[11px] text-red-500">{error}</p>}
+        {linkError && <p role="status" className="mb-2 text-sm text-red-500">{linkError}</p>}
 
         {/* The transcript is scoped to one execution. Shown in the transcript
             itself, not only in the Runs rail, so the filter can't strand a user
@@ -3301,6 +3365,8 @@ export function AgentView({
                   <div
                     className={`flex w-full scroll-mt-3 ${align}`}
                     data-exchange={opensTurn ? entry.exchange : undefined}
+                    data-message-link={row.type === "node" ? row.ev.link_id : undefined}
+                    tabIndex={row.type === "node" && row.ev.link_id ? -1 : undefined}
                     {...(opensTurn ? { [TURN_ANCHOR_ATTR]: entry.exchange } : {})}
                   >
                     {row.type === "tool" ? (
@@ -3316,6 +3382,9 @@ export function AgentView({
                     ) : row.type === "node" ? (
                       <MessageNode
                         event={row.ev}
+                        permalink={selected.public_id && row.ev.link_id
+                          ? messagePermalink(discussionPermalink("agent", selected.public_id), row.ev.link_id, "event")
+                          : undefined}
                         category={row.cat}
                         reasoning={showPrefs.thinking ? row.reasoning : null}
                         isLastAnswer={entry.role === "answer"}
@@ -3454,7 +3523,10 @@ export function AgentView({
         agent={selected}
         runs={runs}
         runFilter={runFilter}
-        onRunFilterChange={setRunChoice}
+        onRunFilterChange={(next) => {
+          leaveEventLink();
+          setRunChoice(next);
+        }}
         artifacts={artifacts}
         artifactLabel={artifactLabel}
         onOpenArtifact={openArtifact}

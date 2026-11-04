@@ -126,6 +126,16 @@ async def get_chat_by_slug(slug: str, session: AsyncSession = Depends(get_sessio
     return await to_chat_read(session, chat)
 
 
+@router.get("/by-public-id/{public_id}", response_model=ChatRead)
+async def get_chat_by_public_id(
+    public_id: str, session: AsyncSession = Depends(get_session)
+) -> ChatRead:
+    chat = await session.scalar(select(Chat).where(Chat.public_id == public_id))
+    if chat is None:
+        raise HTTPException(status_code=404, detail="Chat not found")
+    return await to_chat_read(session, chat)
+
+
 @router.get("/{chat_id}", response_model=ChatRead)
 async def get_chat(
     chat_id: int,

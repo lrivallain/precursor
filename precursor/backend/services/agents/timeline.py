@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING, NamedTuple
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from sqlalchemy import select
 
@@ -188,13 +189,17 @@ class Timeline:
             async with SessionLocal() as session:
                 rows = (
                     await session.execute(
-                        select(AgentEventRecord.payload, AgentEventRecord.agent_run_id)
+                        select(
+                            AgentEventRecord.id,
+                            AgentEventRecord.payload,
+                            AgentEventRecord.agent_run_id,
+                        )
                         .where(AgentEventRecord.agent_session_id == agent_id)
                         .order_by(AgentEventRecord.id)
                     )
                 ).all()
             archived: list[AgentEvent] = []
-            for payload, run_id in rows:
+            for record_id, payload, run_id in rows:
                 try:
                     parsed = AgentEvent.model_validate_json(payload)
                     if is_content_free(parsed.kind, parsed.text):
@@ -203,6 +208,10 @@ class Timeline:
                     # payload carried a run id still resolve to their execution.
                     if run_id is not None:
                         parsed.agent_run_id = run_id
+                    if parsed.link_id is None:
+                        parsed.link_id = str(
+                            uuid5(NAMESPACE_URL, f"precursor:agent:{agent_id}:event:{record_id}")
+                        )
                     archived.append(parsed)
                 except Exception:
                     logger.debug(
@@ -217,6 +226,8 @@ async def archive_event(
     agent_id: int, event: AgentEvent, *, agent_run_id: int | None = None
 ) -> None:
     """Persist one normalised event to the durable timeline archive."""
+    if event.link_id is None:
+        event.link_id = str(uuid4())
     try:
         async with SessionLocal() as session:
             session.add(

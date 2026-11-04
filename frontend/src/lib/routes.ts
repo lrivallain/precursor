@@ -8,7 +8,9 @@ import { topicSlugPath } from "./topicTree";
 //   /                                                    → home launcher
 //   /topics/<collection-slug>/<ancestor-slugs…>/<slug>   → topics
 //   /t/<public-id>                                       → topic permalink
+//   /topics/id/<public-id>                              → topic permalink
 //   /chats/<slug>                                        → chats
+//   /chats/id/<public-id>                               → chat permalink
 //   /live/<slug>                                         → live meeting sessions
 //   /agents/<public-id>                                  → agents
 //   /workflows/<id>[/run/<n|latest>]                     → workflows
@@ -18,9 +20,9 @@ import { topicSlugPath } from "./topicTree";
 //   /<plugin-section>/<opaque…>[#hash]                   → plugin sections
 // Topic slugs are globally unique, so the trailing slug alone identifies the
 // item; the collection slug and the ancestor slugs make the URL readable +
-// bookmarkable. `/t/<uuid>` is the immutable address — it survives renames,
-// re-parenting and collection moves, and the SPA rewrites it to the readable
-// form once resolved.
+// bookmarkable. `/topics/id/<uuid>` is the immutable address (`/t/<uuid>` is
+// its legacy alias). It survives renames, re-parenting and collection moves,
+// and the SPA rewrites it to the readable form once resolved.
 
 /** The chat or topic open beside a workspace file (`?chat=<slug>` / `?topic=<public-id>`). */
 export interface WsDiscussionRef {
@@ -48,9 +50,10 @@ export interface AppRoute {
   // links minted before collections joined the URL simply have no collection
   // segment; the trailing slug still resolves them.
   topicPath: string[];
-  // The UUID from a `/t/<public-id>` permalink.
+  // The UUID from a `/topics/id/<public-id>` permalink (or legacy `/t/`).
   topicPublicId: string | null;
   chatSlug: string | null;
+  chatPublicId: string | null;
   liveSlug: string | null;
   // The raw agent path segment — a public UUID for new links, or a legacy
   // integer id. Resolved to an internal numeric id once the agent list loads.
@@ -76,6 +79,7 @@ export interface AppRoute {
 export function navigate(url: string, { replace = false }: { replace?: boolean } = {}): void {
   if (replace) history.replaceState(null, "", url);
   else history.pushState(null, "", url);
+  window.dispatchEvent(new Event("precursor:navigate"));
 }
 
 // Parse the current pathname into a workspace route. `/ws` opens the overlay,
@@ -104,6 +108,7 @@ export function parseAppRoute(): AppRoute {
     topicPath: [],
     topicPublicId: null,
     chatSlug: null,
+    chatPublicId: null,
     liveSlug: null,
     agentRef: null,
     workflowRef: null,
@@ -142,6 +147,9 @@ export function parseAppRoute(): AppRoute {
   }
   if (segs[0] === "iq") return { ...base, mode: "iq" };
   if (segs[0] === "chats") {
+    if (segs[1] === "id" && segs[2]) {
+      return { ...base, mode: "chats", chatPublicId: decodeURIComponent(segs[2]) };
+    }
     return { ...base, mode: "chats", chatSlug: segs[1] ? decodeURIComponent(segs[1]) : null };
   }
   if (segs[0] === "live") {
@@ -155,6 +163,9 @@ export function parseAppRoute(): AppRoute {
     };
   }
   if (segs[0] === "topics") {
+    if (segs[1] === "id" && segs[2]) {
+      return { ...base, mode: "topics", topicPublicId: decodeURIComponent(segs[2]) };
+    }
     return { ...base, mode: "topics", topicPath: segs.slice(1).map(decodeURIComponent) };
   }
   // Anything left is a candidate plugin section, which owns its whole subtree:
@@ -217,6 +228,15 @@ export function topicsModeUrl(collections: Collection[], collectionId: number | 
 
 export function chatUrl(chat: Chat): string {
   return "/chats/" + encodeURIComponent(chat.slug);
+}
+
+export function discussionPermalink(kind: "topic" | "chat" | "agent", publicId: string): string {
+  const root = kind === "agent" ? "/agents/" : kind === "topic" ? "/topics/id/" : "/chats/id/";
+  return root + encodeURIComponent(publicId);
+}
+
+export function messagePermalink(path: string, publicId: string, kind: "message" | "event" = "message"): string {
+  return `${path}#${kind}=${encodeURIComponent(publicId)}`;
 }
 
 export function liveUrl(session: MeetingSession | null): string {

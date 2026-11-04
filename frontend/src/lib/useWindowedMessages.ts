@@ -46,7 +46,7 @@ export interface WindowedMessages {
    * Page further back until the window holds `messageId` (e.g. jumping to an
    * old turn from the timeline). Resolves false when it can't be reached.
    */
-  ensureLoaded: (messageId: number) => Promise<boolean>;
+  ensureLoaded: (messageId: number | string, signal?: AbortSignal) => Promise<boolean>;
 }
 
 /**
@@ -120,7 +120,7 @@ export function useWindowedMessages({
   }, [loadOlder]);
 
   const fetchFirstPage = useCallback(
-    (): Promise<Message[]> => fetchPage({ limit: pageSize }).catch(() => [] as Message[]),
+    (): Promise<Message[]> => fetchPage({ limit: pageSize }),
     [fetchPage, pageSize],
   );
 
@@ -146,15 +146,18 @@ export function useWindowedMessages({
   }, [fetchPage, pageSize]);
 
   const ensureLoaded = useCallback(
-    async (messageId: number): Promise<boolean> => {
-      if (persistedRef.current.some((m) => m.id === messageId)) return true;
+    async (messageId: number | string, signal?: AbortSignal): Promise<boolean> => {
+      const matches = (message: Message) =>
+        typeof messageId === "number" ? message.id === messageId : message.public_id === messageId;
+      if (persistedRef.current.some(matches)) return true;
       let oldest = persistedRef.current.find((m) => m.id > 0)?.id;
-      if (oldest === undefined || oldest < messageId) return false;
+      if (oldest === undefined || (typeof messageId === "number" && oldest < messageId)) return false;
       let more = hasMoreOlderRef.current;
       const pages: Message[] = [];
       try {
-        while (more && oldest > messageId) {
+        while (more && (typeof messageId === "string" || oldest > messageId)) {
           const older = await fetchPage({ limit: pageSize, beforeId: oldest });
+          if (signal?.aborted) return false;
           if (older.length === 0) {
             more = false;
             break;
@@ -162,10 +165,13 @@ export function useWindowedMessages({
           pages.unshift(...older);
           oldest = older[0].id;
           more = older.length >= pageSize;
+          if (older.some(matches)) break;
         }
-      } catch {
+      } catch (error) {
+        if (typeof messageId === "string") throw error;
         return false;
       }
+      if (signal?.aborted) return false;
       if (pages.length) {
         setPersisted((prev) => {
           const seen = new Set(prev.map((m) => m.id));
@@ -173,7 +179,7 @@ export function useWindowedMessages({
         });
         setHasMoreOlder(more);
       }
-      return pages.some((m) => m.id === messageId);
+      return pages.some(matches);
     },
     [fetchPage, pageSize],
   );

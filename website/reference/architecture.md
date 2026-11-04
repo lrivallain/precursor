@@ -88,6 +88,31 @@ dir for an installed wheel. And `instance_settings()` resolves `.env` from
 *there* rather than from wherever the CLI happened to be invoked, so the port an
 instance comes up on doesn't depend on the caller's working directory.
 
+## Request flow: discussion message links
+
+The SPA resolves long-form `/topics/id/<uuid>` and `/chats/id/<uuid>`
+permalinks through the topic/chat public-ID APIs, then normalizes to the
+readable route without dropping the fragment or query. A shared message-link
+controller reads `#message=<uuid>`, loads older transcript pages when necessary,
+and focuses the exact persisted row. Its pending jump is cancelled on navigation.
+Numeric message IDs remain internal pagination/edit cursors.
+
+Agents use `/agents/<uuid>#event=<link_id>`. Their adapter opens Activity across
+all runs, reveals the linked message even inside folded work or hidden assistant
+chatter, mounts its segment and delegates focus/highlighting to the same
+controller. Event link identities are independent of SDK rewind IDs and survive
+archive hydration. Missing targets are reported, never substituted.
+
+Chat/topic history hydration supplies model-only message-reference prefixes,
+preserving compaction boundaries, skill overrides, images and tool-call pairing.
+The shared turn engine instructs the model to cite exact supplied URLs in
+Markdown rather than inventing identifiers. Stored message text is unchanged.
+Agent sessions inject up to 50 current-execution references with 240-character
+excerpts through the SDK's `on_user_prompt_submitted.additionalContext` hook,
+so displayed prompts and sibling runs are unaffected. MCP transcript tools
+also return message permalinks. Markdown reference links navigate in place
+and re-focus the exact message even when its URL is already open.
+
 ## Request flow: streamed chat
 
 1. `POST /api/topics/{topic_id}/messages/stream` with the user prompt.
