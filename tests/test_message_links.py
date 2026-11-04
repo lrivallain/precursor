@@ -6,6 +6,7 @@ import asyncio
 import importlib
 import json
 from collections.abc import AsyncIterator, Sequence
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -73,8 +74,14 @@ def test_model_can_reference_a_previous_reply_and_streams_immediate_link_ids(
 
         async def seed() -> None:
             async with SessionLocal() as session:
+                # Exercise timestamp ties produced by coarse system clocks.
                 session.add_all(
-                    Message(role=role, content=text, **{f"{kind[:-1]}_id": container["id"]})
+                    Message(
+                        role=role,
+                        content=text,
+                        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+                        **{f"{kind[:-1]}_id": container["id"]},
+                    )
                     for role, text in [
                         (MessageRole.USER, "How do links work?"),
                         (MessageRole.ASSISTANT, "They use immutable UUIDs."),
@@ -112,8 +119,9 @@ def test_model_can_reference_a_previous_reply_and_streams_immediate_link_ids(
             )
 
         listed = asyncio.run(transcript())
-        assert listed["messages"][1]["public_id"] == previous["public_id"]
-        assert listed["messages"][1]["permalink"] == link
+        listed_previous = next(m for m in listed["messages"] if m["id"] == previous["id"])
+        assert listed_previous["public_id"] == previous["public_id"]
+        assert listed_previous["permalink"] == link
 
 
 def test_message_references_preserve_compaction_skill_overrides_and_tool_pairing() -> None:
