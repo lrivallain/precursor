@@ -15,6 +15,16 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Changed
 
+- **Link directly to a discussion message.** Topics, chats and agents offer
+  **Copy link to message** on prompts and replies. Long-form topic/chat
+  permalinks use immutable UUIDs; opening a message link loads older history
+  or reveals folded agent work, focuses the exact message and briefly highlights
+  it. Existing readable URLs and `/t/<uuid>` links still work.
+  Copy-link icons live in the message action bar, revealed on hover or keyboard
+  focus and always visible on touch devices. Models receive exact
+  message references and can cite earlier replies with in-app Markdown links;
+  Precursor MCP transcript tools expose the same permalinks.
+
 - **Storage: workflow step inputs are now bounded.** The prompt archived on each
   workflow run step (`workflow_run_steps.input_context`) was the largest table
   in a busy install and had no retention. The new `workflow_step_retention_days`

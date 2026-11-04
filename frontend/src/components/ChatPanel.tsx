@@ -40,6 +40,7 @@ import type {
   WorkspaceTurnContext,
 } from "../lib/types";
 import { RoleSelector } from "./RoleSelector";
+import { discussionPermalink } from "../lib/routes";
 
 interface ChatPanelProps {
   topic: Topic;
@@ -138,6 +139,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
   const conv = useConversation({
     kind: "topic",
     id: topic.id,
+    address: { publicId: topic.public_id, slug: topic.slug },
     composer,
     onCommand: dispatchCommand,
     onUpdated: onTopicUpdated,
@@ -651,6 +653,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
             style={{ maxWidth: chatWidth }}
           >
             <ResizeHandle onMouseDown={onChatResize} />
+          {conv.linkError && <p role="status" className="text-sm text-red-500">{conv.linkError}</p>}
           {conv.loadingOlder && (
             <div className="text-center text-[11px] text-muted py-1">
               Loading earlier messages…
@@ -670,6 +673,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
               <TranscriptMessage
                 key={m.id}
                 message={m}
+                discussionPermalink={discussionPermalink("topic", topic.public_id)}
                 streaming={streaming}
                 retryable={m.id === conv.retryableId}
                 onRetry={conv.retryTurn}

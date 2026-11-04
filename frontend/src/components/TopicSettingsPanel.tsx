@@ -142,7 +142,7 @@ export function TopicSettingsPanel({
   const forbiddenIds = collectDescendantIds(tree, topic.id);
   const collectionSlug = collections.find((c) => c.id === collectionId)?.slug ?? "";
   // Absolute so it can be pasted into an issue or a chat, not just this tab.
-  const permalink = `${window.location.origin}/t/${topic.public_id}`;
+  const permalink = `${window.location.origin}/topics/id/${topic.public_id}`;
   const collectionRepo =
     collections.find((c) => c.id === collectionId)?.github_repo ?? "";
 

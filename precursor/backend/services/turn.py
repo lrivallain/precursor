@@ -232,7 +232,7 @@ async def _run(
                 return result
 
             if isinstance(ev, AssistantToolCallsTurn):
-                last_assistant_id = await persist_tool_calls_turn(
+                last_assistant_id, _ = await persist_tool_calls_turn(
                     kind, container_id, ev, model=ev.model or settings.model
                 )
 

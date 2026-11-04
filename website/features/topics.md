@@ -78,7 +78,7 @@ to another collection and the readable URL changes with it.
 The **permalink** never moves:
 
 ```
-/t/6f2b1c9e-6b1a-4a0e-9f0f-2f5b0f9f1c2a
+/topics/id/6f2b1c9e-6b1a-4a0e-9f0f-2f5b0f9f1c2a
 ```
 
 It's an immutable UUID minted when the topic is created. Opening it resolves the
@@ -88,10 +88,36 @@ the address to paste into an issue, a commit message, or a bookmark that has to
 survive reorganising.
 
 ::: tip Old links keep working
+The original `/t/<uuid>` permalinks still resolve.
 Links minted before collections joined the URL (`/topics/csu/capacity-review`)
 still resolve: the trailing slug is unique on its own, and Precursor rewrites the
 address to the current readable form once it has loaded.
 :::
+
+### Link to an exact message
+
+<Screenshot src="/screenshots/message-links.png" alt="A topic reply with Copy link to message in its hover action bar" caption="Copy a stable link to the exact prompt or reply, not just its discussion." />
+
+Choose **Copy link to message** in a prompt or reply's action bar, revealed on
+hover or keyboard focus (always visible on touch devices). The copied URL
+uses the immutable topic address plus `#message=<message-uuid>`, so renaming or
+moving the topic does not break it. Scheduled prompts offer the same action
+in their action bar, even while collapsed.
+
+Opening the link loads earlier pages when needed, focuses the exact message
+and briefly highlights it without following new replies to the bottom.
+Back/Forward and reload keep the target. Deleted or rewound messages show
+**This message is no longer available** rather than jumping to another reply.
+Links open on the same Precursor instance; they do not publish the discussion
+or grant access to it.
+
+The model also receives the stable link for each message in its available
+history, so it can write references such as **the previous reply** as clickable
+Markdown links. These open the exact message in place, without reloading the app.
+The reference metadata is model-only; it is not added to your saved message text.
+
+The same action works in [chats](/features/chats#message-links) and
+[agents](/features/agents-mode/running#message-links).
 
 ## Status at a glance
 

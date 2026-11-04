@@ -232,7 +232,7 @@ async def get_topic_by_slug(slug: str, session: AsyncSession = Depends(get_sessi
 async def get_topic_by_public_id(
     public_id: str, session: AsyncSession = Depends(get_session)
 ) -> Topic:
-    """Resolve the immutable `/t/<public_id>` permalink.
+    """Resolve the immutable `/topics/id/<public_id>` (also legacy `/t/`) permalink.
 
     The readable URL embeds the collection slug and the ancestor chain, so it
     changes whenever the topic moves. This one doesn't — the SPA resolves it,

@@ -212,7 +212,7 @@ export function useTopicsController(deps: TopicsControllerDeps): TopicsControlle
   useEffect(() => {
     activeCollectionIdRef.current = activeCollectionId;
   }, [activeCollectionId]);
-  // Set while resolving a `/t/<uuid>` permalink so the readable URL replaces it
+  // Set while resolving a UUID permalink so the readable URL replaces it
   // instead of stacking a second history entry for the same topic.
   const permalinkRewriteRef = useRef(false);
   // Set while a topic URL is being resolved. The URL effects must not write the
@@ -268,7 +268,7 @@ export function useTopicsController(deps: TopicsControllerDeps): TopicsControlle
 
   // The topics branch of App's mount + back/forward URL sync.
   function syncFromRoute(r: AppRoute): void {
-    // `/t/<uuid>` — the immutable permalink. Resolve it, then let the URL
+    // The immutable permalink. Resolve it, then let the URL
     // effect below rewrite the address bar to the readable path.
     if (r.topicPublicId) {
       const publicId = r.topicPublicId;
@@ -343,7 +343,7 @@ export function useTopicsController(deps: TopicsControllerDeps): TopicsControlle
     const lastSeg = decodeURIComponent(curSegs[curSegs.length - 1] ?? "");
     if (lastSeg === activeTopic.slug || permalinkRewriteRef.current) {
       permalinkRewriteRef.current = false;
-      navigate(target, { replace: true });
+      navigate(target + window.location.search + window.location.hash, { replace: true });
     } else {
       navigate(target);
     }

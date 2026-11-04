@@ -16,9 +16,11 @@ import { ArtifactCard, splitArtifactReply } from "./steps/ArtifactCard";
 import { StepPlanTrace } from "./steps/StepPlanTrace";
 import type { PromptRewindActions } from "../lib/useConversation";
 import type { ReplyEditController } from "../lib/useReplyEdit";
+import { messagePermalink } from "../lib/routes";
 
 interface TranscriptMessageProps {
   message: Message;
+  discussionPermalink?: string;
   streaming: boolean;
   /** Offer Retry on this prompt (its turn ended in an error). */
   retryable: boolean;
@@ -54,7 +56,7 @@ export function TranscriptMessage(props: TranscriptMessageProps) {
   if (row === null) return null;
   // A turn's prompt anchors the timeline rail (see useTurnTimeline).
   const anchor = m.role === "user" && !m.kind && m.id > 0;
-  if (!anchor && !compacted && !doomed && !cutAbove) return row;
+  if (!anchor && !compacted && !doomed && !cutAbove && !m.public_id) return row;
   const dim = doomed
     ? "opacity-35 grayscale transition-opacity"
     : compacted
@@ -65,6 +67,8 @@ export function TranscriptMessage(props: TranscriptMessageProps) {
       {cutAbove && <RewindCutLine />}
       <div
         className={dim}
+        data-message-link={m.public_id}
+        tabIndex={m.public_id ? -1 : undefined}
         data-compacted={compacted && !doomed ? "" : undefined}
         {...(anchor ? { [TURN_ANCHOR_ATTR]: m.id } : {})}
       >
@@ -90,6 +94,7 @@ export function RewindCutLine() {
 
 function renderRow({
   message: m,
+  discussionPermalink,
   streaming,
   retryable,
   onRetry,
@@ -157,6 +162,7 @@ function renderRow({
   ) : undefined;
   return (
     <MessageBubble
+      permalink={discussionPermalink && m.public_id ? messagePermalink(discussionPermalink, m.public_id) : undefined}
       role={m.role}
       content={split ? split.text : m.content}
       reasoning={m.reasoning}

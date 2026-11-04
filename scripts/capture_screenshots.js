@@ -331,6 +331,26 @@ const scenes = {
       await page.getByText("Regex for semver tags", { exact: true }).first().waitFor();
       return undefined;
     },
+
+  },
+
+  "message-links": {
+    viewport: { width: 1440, height: 1000 },
+    async go(page) {
+      const topics = await (await page.request.get(`${BASE}/api/topics`)).json();
+      const topic = topics.find((item) => item.slug === "release-2026-8");
+      if (!topic) throw new Error("Seed the demo release topic first.");
+      const messages = await (await page.request.get(`${BASE}/api/topics/${topic.id}/messages`)).json();
+      const reply = messages.find((item) => item.role === "assistant" && item.public_id);
+      if (!reply) throw new Error("Seed a persisted release reply first.");
+      await page.goto(`${BASE}/topics/id/${topic.public_id}#message=${reply.public_id}`, { waitUntil: "networkidle" });
+      const row = page.locator(`[data-message-link="${reply.public_id}"]`);
+      await row.waitFor();
+      await row.hover();
+      await row.getByRole("button", { name: "Copy link to message", exact: true }).hover();
+      await page.locator('[data-tooltip^="Guest"][data-tooltip*="GitHub not connected"]').waitFor();
+      return clipOf(page, `[data-message-link="${reply.public_id}"]`, 32);
+    },
   },
 
   "conversation-providers": {

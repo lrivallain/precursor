@@ -345,12 +345,14 @@ class StreamStore {
         session.messages[idx] = {
           ...session.messages[idx],
           id: realId,
+          public_id: payload.public_id as string | undefined,
           content: realContent,
           attachments: realAttachments,
         };
       } else {
         session.messages.push({
           id: realId,
+          public_id: payload.public_id as string | undefined,
           ...fk,
           role: "user",
           content: realContent,
@@ -395,6 +397,7 @@ class StreamStore {
       session.pendingUsage = null;
       session.messages.push({
         id: assistantId,
+        public_id: payload.public_id as string | undefined,
         ...fk,
         role: "assistant",
         content: session.pendingContent,
@@ -505,6 +508,7 @@ class StreamStore {
       session.pendingUsage = null;
       session.messages.push({
         id: payload.id as number,
+        public_id: payload.public_id as string | undefined,
         ...fk,
         role: "assistant",
         content: payload.content as string,
