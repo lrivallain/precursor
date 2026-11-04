@@ -121,7 +121,6 @@ export function MessageBubble({ role, content, reasoning, pending, attachments, 
   const thinking = role === "assistant" ? reasoning?.trim() ?? "" : "";
   const imageAttachments = (attachments ?? []).filter((a) => a.mime.startsWith("image/"));
   const fileAttachments = (attachments ?? []).filter((a) => !a.mime.startsWith("image/"));
-  const [hover, setHover] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState<null | "text" | "md" | "html">(null);
   const [showOriginal, setShowOriginal] = useState(false);
@@ -204,25 +203,26 @@ export function MessageBubble({ role, content, reasoning, pending, attachments, 
     return (
       <div
         className="flex flex-col items-end gap-1 group min-w-0"
-        onMouseEnter={() => setHover(true)}
-        onMouseLeave={() => setHover(false)}
       >
         <div className="text-[11px] uppercase tracking-wide text-muted">
           {roleLabel[role]}
-          {permalink && <CopyMessageLink path={permalink} />}
         </div>
         <div className="relative rounded-lg border border-border bg-accent/10 max-w-full">
-          {onDelete && (
-            <button
-              type="button"
-              onClick={onDelete}
-              style={{ opacity: hover ? 1 : 0, transition: "opacity 120ms ease-out" }}
-              className="absolute -top-2 -left-2 p-1 rounded-full bg-surface border border-border text-muted hover:text-red-500"
-              aria-label="Delete message"
-              data-tooltip="Delete message"
-            >
-              <Trash2 size={12} />
-            </button>
+          {(permalink || onDelete) && (
+            <div className="hover-reveal absolute -top-2 -left-2 z-10 flex items-center gap-1 rounded-full bg-surface border border-border px-1 py-0.5 opacity-0 shadow-sm transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+              {permalink && <CopyMessageLink path={permalink} />}
+              {onDelete && (
+                <button
+                  type="button"
+                  onClick={onDelete}
+                  className="p-1 rounded-full text-muted hover:text-red-500"
+                  aria-label="Delete message"
+                  data-tooltip="Delete message"
+                >
+                  <Trash2 size={12} />
+                </button>
+              )}
+            </div>
           )}
           <button
             type="button"
@@ -264,12 +264,9 @@ export function MessageBubble({ role, content, reasoning, pending, attachments, 
   return (
     <div
       className={`group flex flex-col gap-1 min-w-0 ${isUser ? "items-end" : "items-start"} ${planNote ? "w-full" : ""}`}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
     >
       <div className="flex items-center gap-2">
         <div className="text-[11px] uppercase tracking-wide text-muted">{roleLabel[role]}</div>
-        {permalink && <CopyMessageLink path={permalink} />}
         {agentSessionId != null && <AgentExchangeBadge agentSessionId={agentSessionId} />}
       </div>
       <div
@@ -285,17 +282,14 @@ export function MessageBubble({ role, content, reasoning, pending, attachments, 
             className="pointer-events-none absolute -right-2.5 top-1.5 bottom-1.5 w-[3px] rounded-full bg-accent"
           />
         )}
-        {showActions && (
+        {(showActions || permalink) && (
           <div
-            style={{
-              opacity: hover || revealActions ? 1 : 0,
-              transition: "opacity 120ms ease-out",
-            }}
-            className={`absolute -bottom-3 ${
+            className={`hover-reveal absolute -bottom-3 ${
               isUser ? "left-2" : "right-2"
-            } z-10 flex items-center gap-1 rounded-full bg-surface border border-border px-1 py-0.5 shadow-sm`}
+            } z-10 flex items-center gap-1 rounded-full bg-surface border border-border px-1 py-0.5 shadow-sm transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 ${revealActions ? "opacity-100" : "opacity-0"}`}
           >
-            {(role === "assistant" || isUser) && (
+            {permalink && <CopyMessageLink path={permalink} />}
+            {showActions && (role === "assistant" || isUser) && (
               <>
                 <button
                   type="button"
@@ -340,7 +334,7 @@ export function MessageBubble({ role, content, reasoning, pending, attachments, 
                 </button>
               </>
             )}
-            {onStartSideChat && (
+            {showActions && onStartSideChat && (
               <button
                 type="button"
                 onClick={onStartSideChat}
@@ -351,7 +345,7 @@ export function MessageBubble({ role, content, reasoning, pending, attachments, 
                 <MessageSquarePlus size={12} />
               </button>
             )}
-            {onEditReply && (
+            {showActions && onEditReply && (
               <button
                 type="button"
                 onClick={onEditReply}
@@ -362,7 +356,7 @@ export function MessageBubble({ role, content, reasoning, pending, attachments, 
                 <PenLine size={12} />
               </button>
             )}
-            {onRewindHere && (
+            {showActions && onRewindHere && (
               <button
                 type="button"
                 onClick={onRewindHere}
@@ -373,7 +367,7 @@ export function MessageBubble({ role, content, reasoning, pending, attachments, 
                 <History size={12} />
               </button>
             )}
-            {onEditResend && (
+            {showActions && onEditResend && (
               <button
                 type="button"
                 onClick={onEditResend}
@@ -384,7 +378,7 @@ export function MessageBubble({ role, content, reasoning, pending, attachments, 
                 <Pencil size={12} />
               </button>
             )}
-            {onDelete && (
+            {showActions && onDelete && (
               <button
                 type="button"
                 onClick={onDelete}

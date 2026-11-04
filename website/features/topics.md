@@ -96,13 +96,13 @@ address to the current readable form once it has loaded.
 
 ### Link to an exact message
 
-<Screenshot src="/screenshots/message-links.png" alt="A topic reply with its visible Copy link to message icon beside the role label" caption="Copy a stable link to the exact prompt or reply, not just its discussion." />
+<Screenshot src="/screenshots/message-links.png" alt="A topic reply with Copy link to message in its hover action bar" caption="Copy a stable link to the exact prompt or reply, not just its discussion." />
 
-Choose the **Copy link to message** icon beside a prompt or reply's role label.
-The icon stays visible without hovering. The copied URL
+Choose **Copy link to message** in a prompt or reply's action bar, revealed on
+hover or keyboard focus (always visible on touch devices). The copied URL
 uses the immutable topic address plus `#message=<message-uuid>`, so renaming or
 moving the topic does not break it. Scheduled prompts offer the same action
-beside their label, even while collapsed.
+in their action bar, even while collapsed.
 
 Opening the link loads earlier pages when needed, focuses the exact message
 and briefly highlights it without following new replies to the bottom.

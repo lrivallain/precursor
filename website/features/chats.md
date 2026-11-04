@@ -113,8 +113,8 @@ Only the title changes; auto-naming does not change the chat's slug.
 
 ### Message links
 
-Choose the always-visible **Copy link to message** icon beside a prompt or reply's
-role label:
+Choose **Copy link to message** in a prompt or reply's action bar, revealed on
+hover or keyboard focus (always visible on touch devices):
 
 ```text
 /chats/id/<chat-uuid>#message=<message-uuid>

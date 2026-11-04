@@ -1042,7 +1042,6 @@ function MessageNode({
         <span className={`text-[11px] font-semibold ${isUser && user ? "" : "capitalize"}`}>
           {label}
         </span>
-        {permalink && (isUser || isAssistant) && <CopyMessageLink path={permalink} />}
         {isCompletion ? (
           <span className="inline-flex items-center gap-1 rounded bg-emerald-500/20 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
             <CheckCircle2 size={10} className="shrink-0" />
@@ -1103,42 +1102,48 @@ function MessageNode({
             />
           </p>
         ))}
-      {isAssistant && event.text && (
-        <div className="absolute -bottom-3 right-2 z-10 flex items-center gap-1 rounded-full border border-border bg-surface px-1 py-0.5 opacity-0 shadow-sm transition-opacity group-hover/node:opacity-100">
-          <button
-            type="button"
-            onClick={() => copyTo("text")}
-            className="rounded-full p-1 text-muted hover:text-accent"
-            aria-label="Copy message"
-            data-tooltip="Copy message"
-          >
-            {copied === "text" ? (
-              <Check size={12} className="text-emerald-500" />
-            ) : (
-              <Copy size={12} />
-            )}
-          </button>
-          <button
-            type="button"
-            onClick={() => copyTo("md")}
-            className="rounded-full p-1 text-muted hover:text-accent"
-            aria-label="Copy raw markdown"
-            data-tooltip="Copy raw markdown"
-          >
-            {copied === "md" ? (
-              <Check size={12} className="text-emerald-500" />
-            ) : (
-              <Code2 size={12} />
-            )}
-          </button>
+      {isAssistant && (event.text || permalink) && (
+        <div className="hover-reveal absolute -bottom-3 right-2 z-10 flex items-center gap-1 rounded-full border border-border bg-surface px-1 py-0.5 opacity-0 shadow-sm transition-opacity group-hover/node:opacity-100 group-focus-within/node:opacity-100">
+          {permalink && <CopyMessageLink path={permalink} />}
+          {event.text && (
+            <>
+              <button
+                type="button"
+                onClick={() => copyTo("text")}
+                className="rounded-full p-1 text-muted hover:text-accent"
+                aria-label="Copy message"
+                data-tooltip="Copy message"
+              >
+                {copied === "text" ? (
+                  <Check size={12} className="text-emerald-500" />
+                ) : (
+                  <Copy size={12} />
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => copyTo("md")}
+                className="rounded-full p-1 text-muted hover:text-accent"
+                aria-label="Copy raw markdown"
+                data-tooltip="Copy raw markdown"
+              >
+                {copied === "md" ? (
+                  <Check size={12} className="text-emerald-500" />
+                ) : (
+                  <Code2 size={12} />
+                )}
+              </button>
+            </>
+          )}
         </div>
       )}
-      {isUser && (onRewindHere || onEditResend) && (
+      {isUser && (permalink || onRewindHere || onEditResend) && (
         <div
-          className={`absolute -bottom-3 left-2 z-10 flex items-center gap-1 rounded-full border border-border bg-surface px-1 py-0.5 shadow-sm transition-opacity group-hover/node:opacity-100 ${
+          className={`hover-reveal absolute -bottom-3 left-2 z-10 flex items-center gap-1 rounded-full border border-border bg-surface px-1 py-0.5 shadow-sm transition-opacity group-hover/node:opacity-100 group-focus-within/node:opacity-100 ${
             revealActions ? "opacity-100" : "opacity-0"
           }`}
         >
+          {permalink && <CopyMessageLink path={permalink} />}
           {onRewindHere && (
             <button
               type="button"

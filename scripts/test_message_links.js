@@ -17,6 +17,23 @@ async function focused(page, id) {
   return message;
 }
 
+async function checkLinkToolbar(page, row) {
+  const button = row.getByRole("button", { name: "Copy link to message", exact: true });
+  const toolbar = button.locator("..");
+  assert.ok((await toolbar.getAttribute("class")).includes("absolute"),
+    "The copy-link icon belongs to the message action bar, not its header.");
+  await page.mouse.move(0, 0);
+  await page.evaluate(() => document.activeElement?.blur());
+  const touch = await page.evaluate(() => matchMedia("(hover: none)").matches);
+  await page.waitForFunction(({ node, opacity }) => getComputedStyle(node).opacity === opacity,
+    { node: await toolbar.elementHandle(), opacity: touch ? "1" : "0" });
+  await button.focus();
+  await page.waitForFunction((node) => getComputedStyle(node).opacity === "1", await toolbar.elementHandle());
+  await page.evaluate(() => document.activeElement?.blur());
+  await row.hover();
+  await page.waitForFunction((node) => getComputedStyle(node).opacity === "1", await toolbar.elementHandle());
+}
+
 async function streamedLinks(page, kind, container, messages) {
   const makeMessage = (offset, role, content) => ({
     ...messages.at(-1), id: 20000 + offset, public_id: randomUUID(),
@@ -59,6 +76,7 @@ async function streamedLinks(page, kind, container, messages) {
     // supplied their persisted identities while generation is still in flight.
     for (const message of [prompt, intermediate]) {
       const row = page.locator(`[data-message-link="${message.public_id}"]`);
+      await row.hover();
       await row.getByRole("button", { name: "Copy link to message", exact: true }).click();
       assert.equal(await page.evaluate(() => navigator.clipboard.readText()),
         `${BASE}/${kind}/id/${container.public_id}#message=${message.public_id}`);
@@ -83,6 +101,7 @@ async function run() {
   try {
     const context = await browser.newContext({
       viewport: { width: 1440, height: 1000 },
+      hasTouch: process.env.DEMO_TOUCH === "1",
       permissions: ["clipboard-read", "clipboard-write"],
     });
     const page = await context.newPage();
@@ -142,13 +161,7 @@ async function run() {
       }
       await page.goto(link);
       const message = await focused(page, target.public_id);
-      assert.equal(await message.getByRole("button", { name: "Copy link to message", exact: true })
-        .evaluate((button) => {
-          for (let node = button; node; node = node.parentElement) {
-            if (getComputedStyle(node).opacity === "0") return false;
-          }
-          return true;
-        }), true, "The copy-link icon is visible without hovering.");
+      await checkLinkToolbar(page, message);
       assert.ok(earlierReads > 0, "An old target must load earlier pages.");
       assert.ok(page.url().endsWith(`#message=${target.public_id}`), "Canonicalization retains the target.");
       await message.hover();
@@ -255,6 +268,7 @@ async function run() {
     events.at(-2).text += `\n\nSee [the previous agent reply](${new URL(agentLink).pathname + new URL(agentLink).hash}).`;
     await page.goto(agentLink);
     const eventNode = await focused(page, event.link_id);
+    await checkLinkToolbar(page, eventNode);
     await eventNode.hover();
     await eventNode.getByRole("button", { name: "Copy link to message", exact: true }).click();
     assert.equal(await page.evaluate(() => navigator.clipboard.readText()), agentLink);

@@ -20,7 +20,8 @@ are the per-version history; releasing does not rewrite this file.
   permalinks use immutable UUIDs; opening a message link loads older history
   or reveals folded agent work, focuses the exact message and briefly highlights
   it. Existing readable URLs and `/t/<uuid>` links still work.
-  Copy-link icons stay visible beside message labels. Models receive exact
+  Copy-link icons live in the message action bar, revealed on hover or keyboard
+  focus and always visible on touch devices. Models receive exact
   message references and can cite earlier replies with in-app Markdown links;
   Precursor MCP transcript tools expose the same permalinks.
 

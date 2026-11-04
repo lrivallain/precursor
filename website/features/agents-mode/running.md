@@ -81,8 +81,8 @@ the cut stay in the agent's context.
 
 ## Message links
 
-Choose the always-visible **Copy link to message** icon beside a user prompt or
-assistant reply's label:
+Choose **Copy link to message** in a user prompt or assistant reply's action bar,
+revealed on hover or keyboard focus (always visible on touch devices):
 
 ```text
 /agents/<agent-uuid>#event=<event-link-uuid>
