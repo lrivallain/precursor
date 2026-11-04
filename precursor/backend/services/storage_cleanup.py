@@ -26,6 +26,7 @@ from precursor.backend.services.empty_agent_events import prune_empty_agent_even
 from precursor.backend.services.live_transcript_retention import prune_expired_live_transcripts
 from precursor.backend.services.sweep_result import SweepResult
 from precursor.backend.services.tool_result_retention import prune_expired_tool_results
+from precursor.backend.services.workflow_step_retention import prune_expired_workflow_step_inputs
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +103,18 @@ TARGETS: tuple[CleanupTarget, ...] = (
         setting="live_transcript_retention_days",
         table="meeting_segments",
         run=prune_expired_live_transcripts,
+    ),
+    CleanupTarget(
+        key="workflow_step_inputs",
+        label="Workflow step inputs",
+        description=(
+            "Clears the archived prompt of steps from workflow runs that finished "
+            "long ago. Step outputs, status and token counts are kept; only "
+            "replaying such a step is lost."
+        ),
+        setting="workflow_step_retention_days",
+        table="workflow_run_steps",
+        run=prune_expired_workflow_step_inputs,
     ),
 )
 

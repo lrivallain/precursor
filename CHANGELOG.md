@@ -15,6 +15,13 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Changed
 
+- **Storage: workflow step inputs are now bounded.** The prompt archived on each
+  workflow run step (`workflow_run_steps.input_context`) was the largest table
+  in a busy install and had no retention. The new `workflow_step_retention_days`
+  setting (Settings → Workflows, default 30, `0` keeps forever) replaces it with a
+  placeholder once the run has been finished that long, daily and on startup. It
+  is also a *Workflow step inputs* target in Usage stats. Outputs, status and
+  tokens are kept; a pruned step can no longer be replayed.
 - **Workspaces: refresh the displayed file.** A **Refresh file** button
   reloads the file from disk, including image and PDF previews, while keeping
   the current edit/preview mode. Unsaved changes require confirmation.

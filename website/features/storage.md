@@ -22,6 +22,7 @@ The usual suspects, and what bounds each:
 | --- | --- | --- |
 | [Agents](/features/agents-mode) timelines | `agent_events` | `agent_event_retention_days` + `agent_event_max_per_session` |
 | Tool results and model [thinking](/features/topics#watching-the-model-think) in [chats](/features/chats) and [topics](/features/topics) | `messages` | `tool_result_retention_days` |
+| [Workflow](/features/workflows) step inputs | `workflow_run_steps` | `workflow_step_retention_days` |
 | [Live](/features/live-sessions) transcripts | `meeting_segments` | `live_transcript_retention_days` |
 | [Attachments](/features/attachments) | *(on disk, not in the DB)* | content-addressed blobs + orphan GC |
 
