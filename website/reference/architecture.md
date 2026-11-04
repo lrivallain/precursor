@@ -103,6 +103,16 @@ chatter, mounts its segment and delegates focus/highlighting to the same
 controller. Event link identities are independent of SDK rewind IDs and survive
 archive hydration. Missing targets are reported, never substituted.
 
+Chat/topic history hydration supplies model-only message-reference prefixes,
+preserving compaction boundaries, skill overrides, images and tool-call pairing.
+The shared turn engine instructs the model to cite exact supplied URLs in
+Markdown rather than inventing identifiers. Stored message text is unchanged.
+Agent sessions inject up to 50 current-execution references with 240-character
+excerpts through the SDK's `on_user_prompt_submitted.additionalContext` hook,
+so displayed prompts and sibling runs are unaffected. MCP transcript tools
+also return message permalinks. Markdown reference links navigate in place
+and re-focus the exact message even when its URL is already open.
+
 ## Request flow: streamed chat
 
 1. `POST /api/topics/{topic_id}/messages/stream` with the user prompt.

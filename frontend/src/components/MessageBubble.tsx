@@ -269,6 +269,7 @@ export function MessageBubble({ role, content, reasoning, pending, attachments, 
     >
       <div className="flex items-center gap-2">
         <div className="text-[11px] uppercase tracking-wide text-muted">{roleLabel[role]}</div>
+        {permalink && <CopyMessageLink path={permalink} />}
         {agentSessionId != null && <AgentExchangeBadge agentSessionId={agentSessionId} />}
       </div>
       <div
@@ -294,7 +295,6 @@ export function MessageBubble({ role, content, reasoning, pending, attachments, 
               isUser ? "left-2" : "right-2"
             } z-10 flex items-center gap-1 rounded-full bg-surface border border-border px-1 py-0.5 shadow-sm`}
           >
-            {permalink && <CopyMessageLink path={permalink} />}
             {(role === "assistant" || isUser) && (
               <>
                 <button

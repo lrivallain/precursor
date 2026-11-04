@@ -81,7 +81,8 @@ the cut stay in the agent's context.
 
 ## Message links
 
-Hover a user prompt or assistant reply and choose **Copy link to message**:
+Choose the always-visible **Copy link to message** icon beside a user prompt or
+assistant reply's label:
 
 ```text
 /agents/<agent-uuid>#event=<event-link-uuid>
@@ -96,6 +97,12 @@ If a rewind, clear, retention sweep or deletion removed the event, the view
 reports **This message is no longer available**. In-flight streaming text and
 temporary approval cards are not linkable messages. Links point into the same
 Precursor instance and do not grant access or publish the transcript.
+
+Before each prompt, the agent receives a model-only reference index for the
+latest 50 linkable messages from its own execution, with short excerpts and
+exact URLs. It can use those URLs in Markdown to point back to a specific reply.
+Other concurrent executions are excluded. The index is not added to the
+displayed user prompt. Reference links open the exact message in place.
 
 ## When a model disappears or rejects its configuration
 

@@ -100,6 +100,7 @@ from precursor.backend.services.links import topic_paths as _topic_paths
 from precursor.backend.services.mcp import basic_tools
 from precursor.backend.services.mcp.server import TOOL_SECTIONS
 from precursor.backend.services.mcp.workspace_links import with_open_link
+from precursor.backend.services.message_links import discussion_path, message_path
 from precursor.backend.services.slugs import allocate_unique_slug, slugify
 from precursor.backend.services.workspaces import WorkspaceError, browse_root
 from precursor.backend.services.workspaces import create_workspace as create_workspace_row
@@ -296,9 +297,15 @@ async def _topic_ref(session: AsyncSession, topic: Topic) -> dict[str, Any]:
     }
 
 
-def _message_dict(m: Message) -> dict[str, Any]:
+def _message_dict(m: Message, path: str) -> dict[str, Any]:
     return {
         "id": m.id,
+        "public_id": m.public_id,
+        "permalink": (
+            message_path(path, m.public_id)
+            if m.role in (MessageRole.USER, MessageRole.ASSISTANT)
+            else None
+        ),
         "topic_id": m.topic_id,
         "chat_id": m.chat_id,
         "role": m.role.value if hasattr(m.role, "value") else str(m.role),
@@ -312,6 +319,7 @@ def _message_dict(m: Message) -> dict[str, Any]:
 def _chat_dict(c: Chat) -> dict[str, Any]:
     return {
         "id": c.id,
+        "public_id": c.public_id,
         "slug": c.slug,
         "title": c.title,
         "description": c.description,
@@ -505,13 +513,15 @@ async def get_topic(topic_id: int) -> dict[str, Any]:
 async def list_messages(topic_id: int, limit: int = 50) -> dict[str, Any]:
     """List a topic's messages in chronological order (most recent ``limit``).
 
-    Returns user/assistant/system/tool turns with their content and token usage.
+    Returns turns with their content and token usage. User/assistant turns include
+    a ``permalink`` for Markdown references such as ``[Previous reply](permalink)``.
     """
     if not await _section_enabled("messages"):
         return {"error": _GATED.format(section="messages")}
     limit = max(1, min(limit, _MAX_ROWS))
     async with SessionLocal() as session:
-        if await session.get(Topic, topic_id) is None:
+        topic = await session.get(Topic, topic_id)
+        if topic is None:
             return {"error": f"Topic {topic_id} not found"}
         # Take the newest ``limit`` then present oldest-first.
         rows = (
@@ -527,7 +537,12 @@ async def list_messages(topic_id: int, limit: int = 50) -> dict[str, Any]:
             .all()
         )
     rows = list(reversed(rows))
-    return {"topic_id": topic_id, "messages": [_message_dict(m) for m in rows], "count": len(rows)}
+    path = discussion_path("topic", topic.public_id)
+    return {
+        "topic_id": topic_id,
+        "messages": [_message_dict(m, path) for m in rows],
+        "count": len(rows),
+    }
 
 
 # --------------------------------------------------------------------------
@@ -569,13 +584,15 @@ async def get_chat(chat_id: int) -> dict[str, Any]:
 async def list_chat_messages(chat_id: int, limit: int = 50) -> dict[str, Any]:
     """List a chat's messages in chronological order (most recent ``limit``).
 
-    Returns user/assistant/system/tool turns with their content and token usage.
+    Returns turns with their content and token usage. User/assistant turns include
+    a ``permalink`` for Markdown references such as ``[Previous reply](permalink)``.
     """
     if not await _section_enabled("chats"):
         return {"error": _GATED.format(section="chats")}
     limit = max(1, min(limit, _MAX_ROWS))
     async with SessionLocal() as session:
-        if await session.get(Chat, chat_id) is None:
+        chat = await session.get(Chat, chat_id)
+        if chat is None:
             return {"error": f"Chat {chat_id} not found"}
         rows = (
             (
@@ -590,7 +607,12 @@ async def list_chat_messages(chat_id: int, limit: int = 50) -> dict[str, Any]:
             .all()
         )
     rows = list(reversed(rows))
-    return {"chat_id": chat_id, "messages": [_message_dict(m) for m in rows], "count": len(rows)}
+    path = discussion_path("chat", chat.public_id)
+    return {
+        "chat_id": chat_id,
+        "messages": [_message_dict(m, path) for m in rows],
+        "count": len(rows),
+    }
 
 
 # --------------------------------------------------------------------------

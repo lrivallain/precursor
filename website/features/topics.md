@@ -96,9 +96,10 @@ address to the current readable form once it has loaded.
 
 ### Link to an exact message
 
-<Screenshot src="/screenshots/message-links.png" alt="A topic reply with its Copy link to message action in the hover toolbar" caption="Copy a stable link to the exact prompt or reply, not just its discussion." />
+<Screenshot src="/screenshots/message-links.png" alt="A topic reply with its visible Copy link to message icon beside the role label" caption="Copy a stable link to the exact prompt or reply, not just its discussion." />
 
-Hover a prompt or reply and choose **Copy link to message**. The copied URL
+Choose the **Copy link to message** icon beside a prompt or reply's role label.
+The icon stays visible without hovering. The copied URL
 uses the immutable topic address plus `#message=<message-uuid>`, so renaming or
 moving the topic does not break it. Scheduled prompts offer the same action
 beside their label, even while collapsed.
@@ -109,6 +110,11 @@ Back/Forward and reload keep the target. Deleted or rewound messages show
 **This message is no longer available** rather than jumping to another reply.
 Links open on the same Precursor instance; they do not publish the discussion
 or grant access to it.
+
+The model also receives the stable link for each message in its available
+history, so it can write references such as **the previous reply** as clickable
+Markdown links. These open the exact message in place, without reloading the app.
+The reference metadata is model-only; it is not added to your saved message text.
 
 The same action works in [chats](/features/chats#message-links) and
 [agents](/features/agents-mode/running#message-links).

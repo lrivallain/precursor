@@ -889,6 +889,13 @@ class AgentManager:
             # but also gets the operator's custom guidance and any topic binding.
             kwargs["system_message"] = {"mode": "append", "content": preamble}
 
+        async def message_reference_context(_input: Any, _context: Any) -> dict[str, str] | None:
+            await self._transcript.ensure_loaded(agent.id)
+            references = prompting.message_references(agent, self._events.get(agent.id, []), run.id)
+            return {"additionalContext": references} if references else None
+
+        kwargs["hooks"] = {"on_user_prompt_submitted": message_reference_context}
+
         attempted_models: set[tuple[str, str | None, str]] = set()
         for choice in model_choices:
             model, selected_effort, tier = choice

@@ -1042,6 +1042,7 @@ function MessageNode({
         <span className={`text-[11px] font-semibold ${isUser && user ? "" : "capitalize"}`}>
           {label}
         </span>
+        {permalink && (isUser || isAssistant) && <CopyMessageLink path={permalink} />}
         {isCompletion ? (
           <span className="inline-flex items-center gap-1 rounded bg-emerald-500/20 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
             <CheckCircle2 size={10} className="shrink-0" />
@@ -1104,7 +1105,6 @@ function MessageNode({
         ))}
       {isAssistant && event.text && (
         <div className="absolute -bottom-3 right-2 z-10 flex items-center gap-1 rounded-full border border-border bg-surface px-1 py-0.5 opacity-0 shadow-sm transition-opacity group-hover/node:opacity-100">
-          {permalink && <CopyMessageLink path={permalink} />}
           <button
             type="button"
             onClick={() => copyTo("text")}
@@ -1133,13 +1133,12 @@ function MessageNode({
           </button>
         </div>
       )}
-      {isUser && (permalink || onRewindHere || onEditResend) && (
+      {isUser && (onRewindHere || onEditResend) && (
         <div
           className={`absolute -bottom-3 left-2 z-10 flex items-center gap-1 rounded-full border border-border bg-surface px-1 py-0.5 shadow-sm transition-opacity group-hover/node:opacity-100 ${
             revealActions ? "opacity-100" : "opacity-0"
           }`}
         >
-          {permalink && <CopyMessageLink path={permalink} />}
           {onRewindHere && (
             <button
               type="button"

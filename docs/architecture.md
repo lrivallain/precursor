@@ -124,6 +124,19 @@ controller. The event's archived `link_id` is distinct from its prompt-only
 SDK `event_id`; historical archive rows receive deterministic link identities
 when hydrated. Unavailable messages show a notice rather than a different row.
 
+Model history hydration adds a `[Message reference: /…#message=…]` prefix to
+linkable user/assistant turns, after the compaction boundary and without
+changing persisted content or tool-call pairing. Skill prompt overrides retain
+their reference. The shared turn engine instructs models to cite supplied URLs
+using descriptive Markdown links, never fabricated IDs.
+
+Agent SDK sessions use `on_user_prompt_submitted.additionalContext` for a fresh,
+bounded reference index (50 messages, 240-character excerpts) from the current
+execution only. This avoids changing the visible prompt or mixing concurrent
+runs. Precursor MCP transcript tools expose the same instance-relative links.
+Markdown message references navigate within the SPA and can jump again to an
+already-open target without a reload.
+
 ## Request flow: streamed chat
 
 1. `POST /api/topics/{topic_id}/messages/stream` with the user prompt.

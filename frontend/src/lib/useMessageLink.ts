@@ -43,6 +43,12 @@ export function useMessageJump({
   unpin: () => void;
 }): string | null {
   const [error, setError] = useState<{ target: string; key: string; message: string } | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    const jump = () => setAttempt((value) => value + 1);
+    window.addEventListener("precursor:message-jump", jump);
+    return () => window.removeEventListener("precursor:message-jump", jump);
+  }, []);
   const callbacks = useRef({ prepare, unpin });
   callbacks.current = { prepare, unpin };
   useEffect(() => {
@@ -92,6 +98,6 @@ export function useMessageJump({
       }
     })();
     return () => abort.abort();
-  }, [target, ready, resetKey, scrollRef]);
+  }, [target, ready, resetKey, scrollRef, attempt]);
   return error?.target === target && error.key === resetKey ? error.message : null;
 }

@@ -17,6 +17,67 @@ async function focused(page, id) {
   return message;
 }
 
+async function streamedLinks(page, kind, container, messages) {
+  const makeMessage = (offset, role, content) => ({
+    ...messages.at(-1), id: 20000 + offset, public_id: randomUUID(),
+    role, content, tool_calls: null, created_at: new Date().toISOString(),
+  });
+  const prompt = makeMessage(0, "user", "Reference an earlier reply.");
+  const intermediate = makeMessage(1, "assistant", "Checking the previous explanation.");
+  const answer = makeMessage(3, "assistant", "Here is the referenced reply.");
+  const calls = [{ id: "reference-read", name: "test__read", arguments: "{}" }];
+  intermediate.tool_calls = JSON.stringify(calls.map((call) => ({
+    id: call.id, type: "function", function: { name: call.name, arguments: call.arguments },
+  })));
+  const tool = makeMessage(2, "tool", "Found the earlier reply.");
+  tool.tool_calls = JSON.stringify({ tool_call_id: calls[0].id, name: calls[0].name, arguments: "{}" });
+  await page.evaluate((path) => {
+    const originalFetch = window.fetch;
+    window.restoreMessageLinkFetch = () => { window.fetch = originalFetch; };
+    window.fetch = (input, init) => {
+      if (!String(input).endsWith(path)) return originalFetch(input, init);
+      const body = new ReadableStream({
+        start(controller) {
+          window.pushMessageLinkFrame = (event, data) =>
+            controller.enqueue(new TextEncoder().encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+          window.closeMessageLinkStream = () => controller.close();
+        },
+      });
+      return Promise.resolve(new Response(body, { headers: { "Content-Type": "text/event-stream" } }));
+    };
+  }, `/api/${kind}/${container.id}/messages/stream`);
+  try {
+    await page.locator("textarea").last().fill(prompt.content);
+    await page.getByRole("button", { name: "Send", exact: true }).click();
+    await page.waitForFunction(() => typeof window.pushMessageLinkFrame === "function");
+    await page.evaluate(({ prompt, intermediate, calls }) => {
+      window.pushMessageLinkFrame("user_message", { id: prompt.id, public_id: prompt.public_id, content: prompt.content });
+      window.pushMessageLinkFrame("delta", { content: intermediate.content });
+      window.pushMessageLinkFrame("tool_calls", { assistant_id: intermediate.id, public_id: intermediate.public_id, calls });
+    }, { prompt, intermediate, calls });
+    // Neither message has been returned by the transcript API: only SSE
+    // supplied their persisted identities while generation is still in flight.
+    for (const message of [prompt, intermediate]) {
+      const row = page.locator(`[data-message-link="${message.public_id}"]`);
+      await row.getByRole("button", { name: "Copy link to message", exact: true }).click();
+      assert.equal(await page.evaluate(() => navigator.clipboard.readText()),
+        `${BASE}/${kind}/id/${container.public_id}#message=${message.public_id}`);
+    }
+    messages.push(prompt, intermediate, tool, answer);
+    await page.evaluate(({ answer, tool }) => {
+      window.pushMessageLinkFrame("tool_result", { message_id: tool.id, tool_call_id: "reference-read", name: "test__read", content: tool.content });
+      window.pushMessageLinkFrame("delta", { content: answer.content });
+      window.pushMessageLinkFrame("done", { id: answer.id, public_id: answer.public_id, content: answer.content });
+      window.closeMessageLinkStream();
+    }, { answer, tool });
+    await page.locator(`[data-message-link="${answer.public_id}"]`)
+      .getByRole("button", { name: "Copy link to message", exact: true }).waitFor();
+    await page.getByRole("button", { name: "Send", exact: true }).waitFor();
+  } finally {
+    await page.evaluate(() => window.restoreMessageLinkFetch());
+  }
+}
+
 async function run() {
   const browser = await chromium.launch();
   try {
@@ -34,6 +95,10 @@ async function run() {
     assert.ok(topics.length && chats.length && agents.length, "Seed the demo first.");
     const topic = topics.find((item) => item.slug === "onboarding-checklist") ?? topics[0];
     const chat = chats[0];
+    const crossTopic = topics.find((item) => item.slug === "release-2026-8") ?? topic;
+    const topicMessages = await (await page.request.get(`${BASE}/api/topics/${crossTopic.id}/messages`)).json();
+    const topicMessage = topicMessages.at(-1);
+    assert.ok(topicMessage?.public_id, "Seed a topic message for cross-discussion links.");
 
     for (const [kind, container] of [["topics", topic], ["chats", chat]]) {
       const messages = Array.from({ length: 242 }, (_, i) => ({
@@ -68,13 +133,37 @@ async function run() {
 
       const target = messages[3];
       const link = `${BASE}/${kind}/id/${container.public_id}#message=${target.public_id}`;
+      const relativeLink = new URL(link).pathname + new URL(link).hash;
+      messages.at(-1).content += `\n\nSee [the previous reply](${relativeLink}).`;
+      messages.at(-1).content += `\n\n[Same-origin reference](${link}).`;
+      messages.at(-1).content += "\n\n[External reference](https://example.com/topics/id/external#message=example).";
+      if (kind === "chats") {
+        messages.at(-1).content += `\n\n[Go to topic message](/topics/id/${crossTopic.public_id}#message=${topicMessage.public_id}).`;
+      }
       await page.goto(link);
       const message = await focused(page, target.public_id);
+      assert.equal(await message.getByRole("button", { name: "Copy link to message", exact: true })
+        .evaluate((button) => {
+          for (let node = button; node; node = node.parentElement) {
+            if (getComputedStyle(node).opacity === "0") return false;
+          }
+          return true;
+        }), true, "The copy-link icon is visible without hovering.");
       assert.ok(earlierReads > 0, "An old target must load earlier pages.");
       assert.ok(page.url().endsWith(`#message=${target.public_id}`), "Canonicalization retains the target.");
       await message.hover();
       await message.getByRole("button", { name: "Copy link to message", exact: true }).click();
       assert.equal(await page.evaluate(() => navigator.clipboard.readText()), link);
+      await page.evaluate(() => { window.messageLinkNavigationSentinel = "no reload"; });
+      for (let attempt = 0; attempt < 2; attempt++) {
+        await page.getByRole("link", { name: "the previous reply", exact: true }).click();
+        await focused(page, target.public_id);
+        assert.equal(await page.evaluate(() => window.messageLinkNavigationSentinel), "no reload");
+      }
+      await page.getByRole("link", { name: "Same-origin reference", exact: true }).click();
+      await focused(page, target.public_id);
+      assert.equal(await page.evaluate(() => window.messageLinkNavigationSentinel), "no reload");
+      assert.equal(await page.getByRole("link", { name: "External reference", exact: true }).getAttribute("target"), "_blank");
 
       // Same-discussion fragment changes, Back/Forward, and a cold reload.
       const second = messages[13];
@@ -114,6 +203,13 @@ async function run() {
       failEarlier = false;
       await page.reload();
       await focused(page, target.public_id);
+      await streamedLinks(page, kind, container, messages);
+      if (kind === "chats") {
+        await page.evaluate(() => { window.messageLinkNavigationSentinel = "no reload"; });
+        await page.getByRole("link", { name: "Go to topic message", exact: true }).click();
+        await focused(page, topicMessage.public_id);
+        assert.equal(await page.evaluate(() => window.messageLinkNavigationSentinel), "no reload");
+      }
       console.log(`${kind}: exact old reply, canonical copy, reload, search and history.`);
       await page.unroute(`**${path}**`);
     }
@@ -156,11 +252,16 @@ async function run() {
     })));
     const event = events[5];
     const agentLink = `${BASE}/agents/${agent.public_id}#event=${event.link_id}`;
+    events.at(-2).text += `\n\nSee [the previous agent reply](${new URL(agentLink).pathname + new URL(agentLink).hash}).`;
     await page.goto(agentLink);
     const eventNode = await focused(page, event.link_id);
     await eventNode.hover();
     await eventNode.getByRole("button", { name: "Copy link to message", exact: true }).click();
     assert.equal(await page.evaluate(() => navigator.clipboard.readText()), agentLink);
+    await page.evaluate(() => { window.messageLinkNavigationSentinel = "no reload"; });
+    await page.getByRole("link", { name: "the previous agent reply", exact: true }).click();
+    await focused(page, event.link_id);
+    assert.equal(await page.evaluate(() => window.messageLinkNavigationSentinel), "no reload");
     await page.reload();
     await focused(page, event.link_id);
     await page.locator('button[data-tooltip="Fold these steps"]').click();

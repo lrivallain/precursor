@@ -34,6 +34,12 @@ Built-in servers ship in-tree:
 | `workiq-excel` | Excel via Agent 365 — create a workbook, read its content, comment on it. |
 | `precursor` | Precursor's *own* data (see below). |
 
+Precursor's `list_messages` and `list_chat_messages` tools return an
+instance-relative `permalink` for each user/assistant message, alongside its
+immutable `public_id`. Models can cite a particular message with
+`[Previous reply](permalink)` instead of guessing its address. System notices
+and tool results have no user-facing message permalink.
+
 You can also add **your own** servers (stdio or streamable-HTTP). A
 host-dependency **preflight** gates enabling a server — `cmd-runner` needs Docker
 when its jail is on, and `playwright` needs Node.js (`npx`) on PATH.

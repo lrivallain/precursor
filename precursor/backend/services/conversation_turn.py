@@ -32,7 +32,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute, selectinload
 
 from precursor.backend.db import SessionLocal
-from precursor.backend.models import MESSAGE_KIND_COMPACTION, Attachment, Message, MessageRole
+from precursor.backend.models import (
+    MESSAGE_KIND_COMPACTION,
+    Attachment,
+    Chat,
+    Message,
+    MessageRole,
+    Topic,
+)
 from precursor.backend.models.tool_approval import APPROVAL_APPROVED, APPROVAL_KIND_INTENT
 from precursor.backend.schemas import ChatRequest
 from precursor.backend.services import approvals as approval_service
@@ -53,6 +60,7 @@ from precursor.backend.services.github_auth import resolve_github_token
 from precursor.backend.services.llm import get_llm_provider
 from precursor.backend.services.llm.base import ChatMessage, LLMProvider, ToolCallRequest
 from precursor.backend.services.mcp.client import AUTH_PAUSE_TIMEOUT_SECONDS, get_mcp_client_manager
+from precursor.backend.services.message_links import discussion_path
 from precursor.backend.services.message_paging import list_message_window
 from precursor.backend.services.model_fallbacks import (
     resolve_model_category,
@@ -268,6 +276,7 @@ def user_echo(
     fk = "topic_id" if kind == "topic" else "chat_id"
     return {
         "id": user_msg.id,
+        "public_id": user_msg.public_id,
         "content": user_msg.content,
         "attachments": [
             {
@@ -309,6 +318,11 @@ async def load_model_history(
 ) -> list[ChatMessage]:
     """The container's transcript hydrated for the model, before any elision."""
     rows = await load_container_rows(session, kind, container_id)
+    container = (
+        await session.get(Topic, container_id)
+        if kind == "topic"
+        else await session.get(Chat, container_id)
+    )
     # Parsing a large PDF is slow and blocking: fill the on-disk text cache in a
     # worker thread so hydration below only reads cached text.
     docs = [(att.sha256, att.mime) for m in rows for att in m.attachments]
@@ -318,6 +332,7 @@ async def load_model_history(
         rows,
         attachment_max_chars=await resolve_llm_max_attachment_chars(session),
         prompt_override=prompt_override,
+        discussion_path=discussion_path(kind, container.public_id) if container else None,
     )
 
 

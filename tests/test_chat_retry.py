@@ -45,7 +45,10 @@ class _EchoProvider:
     async def stream_chat_with_tools(self, *, model, messages, tools, reasoning_effort=None):
         _ = model, tools, reasoning_effort
         last_user = next((m for m in reversed(messages) if m.role == "user"), None)
-        yield TextDeltaEvent(content=f"answered: {last_user.content if last_user else ''}")
+        content = last_user.content if last_user else ""
+        if content.startswith("[Message reference: "):
+            content = content.split("\n\n", 1)[1]
+        yield TextDeltaEvent(content=f"answered: {content}")
         yield UsageEvent(prompt_tokens=1, completion_tokens=1, total_tokens=2)
         yield TurnDoneEvent(finish_reason="stop")
 

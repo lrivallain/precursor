@@ -113,7 +113,8 @@ Only the title changes; auto-naming does not change the chat's slug.
 
 ### Message links
 
-Hover a prompt or reply and choose **Copy link to message**:
+Choose the always-visible **Copy link to message** icon beside a prompt or reply's
+role label:
 
 ```text
 /chats/id/<chat-uuid>#message=<message-uuid>
@@ -129,6 +130,11 @@ focus and a brief highlight. Reload and Back/Forward retain the target.
 If the message was deleted or rewound, the discussion reports that it is no
 longer available. Links belong to the same Precursor instance, not a public
 sharing service. Promoting or deleting the chat removes its old chat address.
+
+Models receive these links alongside their available conversation history and
+can include clickable references to a particular earlier reply. Following one
+opens the target in place without reloading the app; the model-only reference
+metadata does not change the saved transcript.
 
 ### `/suggest-name`
 

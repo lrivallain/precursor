@@ -4,9 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import json
+from collections.abc import AsyncIterator, Sequence
 from types import SimpleNamespace
-from uuid import UUID
+from typing import Any
+from unittest.mock import AsyncMock
+from uuid import UUID, uuid4
 
+import pytest
 import sqlalchemy as sa
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
@@ -14,9 +19,219 @@ from fastapi.testclient import TestClient
 
 from precursor.backend.db import SessionLocal
 from precursor.backend.main import create_app
-from precursor.backend.models import AgentEventRecord, AgentSession, Message, MessageRole
+from precursor.backend.models import (
+    MESSAGE_KIND_COMPACTION,
+    AgentEventRecord,
+    AgentRun,
+    AgentSession,
+    Message,
+    MessageRole,
+)
 from precursor.backend.schemas.agent import AgentEvent
+from precursor.backend.services import conversation_turn
+from precursor.backend.services.agents import prompting
+from precursor.backend.services.agents.manager import AgentManager
 from precursor.backend.services.agents.timeline import Timeline, archive_event
+from precursor.backend.services.llm.base import ChatMessage
+from precursor.backend.services.llm.mock import MockProvider
+from precursor.backend.services.mcp import precursor_server
+from precursor.backend.services.message_links import (
+    MESSAGE_LINK_INSTRUCTION,
+    discussion_path,
+    message_path,
+)
+from precursor.backend.services.turn_engine import hydrate_history
+
+
+@pytest.mark.parametrize("kind", ["topics", "chats"])
+def test_model_can_reference_a_previous_reply_and_streams_immediate_link_ids(
+    kind: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: list[ChatMessage] = []
+
+    async def stream(
+        _self: MockProvider,
+        *,
+        model: str,
+        messages: Sequence[ChatMessage],
+        reasoning_effort: str | None = None,
+    ) -> AsyncIterator[str]:
+        captured.extend(messages)
+        previous = next(m for m in messages if m.role == "assistant")
+        link = previous.content.split("[Message reference: ", 1)[1].split("]", 1)[0]
+        yield f"As explained in [the previous reply]({link}), use the stable link."
+
+    async def provider(_session: Any) -> MockProvider:
+        return MockProvider()
+
+    monkeypatch.setattr(MockProvider, "stream_chat", stream)
+    monkeypatch.setattr(conversation_turn, "get_llm_provider", provider)
+    monkeypatch.setattr(precursor_server, "_section_enabled", AsyncMock(return_value=True))
+    with TestClient(create_app()) as client:
+        container = client.post(f"/api/{kind}", json={"title": "Citable replies"}).json()
+        path = f"/api/{kind}/{container['id']}/messages"
+
+        async def seed() -> None:
+            async with SessionLocal() as session:
+                session.add_all(
+                    Message(role=role, content=text, **{f"{kind[:-1]}_id": container["id"]})
+                    for role, text in [
+                        (MessageRole.USER, "How do links work?"),
+                        (MessageRole.ASSISTANT, "They use immutable UUIDs."),
+                    ]
+                )
+                await session.commit()
+
+        asyncio.run(seed())
+        previous = client.get(path).json()[-1]
+        link = f"/{kind}/id/{container['public_id']}#message={previous['public_id']}"
+        response = client.post(
+            f"{path}/stream", json={"content": "Point back to your previous reply."}
+        )
+        assert response.status_code == 200
+        assert MESSAGE_LINK_INSTRUCTION in captured[0].content
+        assistant = next(m for m in captured if m.role == "assistant")
+        assert assistant.content == f"[Message reference: {link}]\n\nThey use immutable UUIDs."
+        rows = client.get(path).json()
+        assert rows[1]["content"] == "They use immutable UUIDs."
+        assert rows[-2]["content"] == "Point back to your previous reply."
+        assert f"[the previous reply]({link})" in rows[-1]["content"]
+        frames = [
+            json.loads(line.removeprefix("data: "))
+            for line in response.text.splitlines()
+            if line.startswith("data: ")
+        ]
+        assert any(frame.get("public_id") == rows[-2]["public_id"] for frame in frames)
+        assert any(frame.get("public_id") == rows[-1]["public_id"] for frame in frames)
+
+        async def transcript() -> dict[str, Any]:
+            return await (
+                precursor_server.list_messages(container["id"])
+                if kind == "topics"
+                else precursor_server.list_chat_messages(container["id"])
+            )
+
+        listed = asyncio.run(transcript())
+        assert listed["messages"][1]["public_id"] == previous["public_id"]
+        assert listed["messages"][1]["permalink"] == link
+
+
+def test_message_references_preserve_compaction_skill_overrides_and_tool_pairing() -> None:
+    def row(role: MessageRole, content: str, **kwargs: Any) -> Message:
+        return Message(role=role, content=content, public_id=str(uuid4()), attachments=[], **kwargs)
+
+    old = row(MessageRole.USER, "Old prompt")
+    summary = row(MessageRole.SYSTEM, "Earlier discussion", kind=MESSAGE_KIND_COMPACTION)
+    user = row(MessageRole.USER, "/to-en bravo")
+    call = row(
+        MessageRole.ASSISTANT,
+        "",
+        tool_calls=json.dumps([{"id": "call", "type": "function", "function": {"name": "read"}}]),
+    )
+    tool = row(MessageRole.TOOL, "Tool result", tool_calls='{"tool_call_id":"call","name":"read"}')
+    reply = row(MessageRole.ASSISTANT, "Translated reply")
+    path = discussion_path("topic", str(uuid4()))
+    history = hydrate_history(
+        [old, summary, user, call, tool, reply],
+        discussion_path=path,
+        prompt_override="Translate: bravo",
+    )
+    assert [m.role for m in history] == ["user", "assistant", "tool", "assistant"]
+    assert "Earlier discussion" in history[0].content
+    assert message_path(path, old.public_id) not in history[0].content
+    assert message_path(path, user.public_id) in history[0].content
+    assert history[0].content.endswith("Translate: bravo")
+    assert history[1].content == ""
+    assert history[1].tool_calls[0]["id"] == history[2].tool_call_id == "call"
+    assert history[2].content == "Tool result"
+    assert message_path(path, reply.public_id) in history[3].content
+    assert user.content == "/to-en bravo"
+
+
+def test_agent_reference_context_is_bounded_and_isolated_to_its_execution() -> None:
+    agent = AgentSession(public_id=str(uuid4()), autonomy_enabled=True)
+    events = [
+        AgentEvent(
+            kind="assistant_message",
+            text=f"Reply {i}: " + "x" * 300,
+            agent_run_id=1,
+            link_id=str(uuid4()),
+        )
+        for i in range(55)
+    ]
+    events.extend(
+        [
+            AgentEvent(
+                kind="assistant_message",
+                text="Other execution",
+                agent_run_id=2,
+                link_id=str(uuid4()),
+            ),
+            AgentEvent(kind="assistant_delta", text="Not persisted", agent_run_id=1),
+            AgentEvent(
+                kind="assistant_message", text="PROGRESS: 50", agent_run_id=1, link_id=str(uuid4())
+            ),
+            AgentEvent(
+                kind="UserMessageData", text="Human follow-up", agent_run_id=1, link_id=str(uuid4())
+            ),
+        ]
+    )
+    context = prompting.message_references(agent, events, 1)
+    references = json.loads(context.split("\n", 2)[2])
+    assert len(references) == 50
+    assert references[0]["excerpt"].startswith("Reply 6:")
+    assert all(len(reference["excerpt"]) <= 240 for reference in references)
+    assert references[-1]["role"] == "user"
+    assert references[-1]["href"] == message_path(
+        discussion_path("agent", agent.public_id), events[-1].link_id, agent=True
+    )
+    assert "Other execution" not in context and "PROGRESS:" not in context
+    assert prompting.message_references(agent, [], 1) == ""
+
+
+def test_agent_hook_supplies_fresh_links_without_modifying_the_prompt() -> None:
+    with TestClient(create_app()):
+
+        async def check() -> None:
+            async with SessionLocal() as session:
+                agent = AgentSession(title="References", task_prompt="Link replies")
+                session.add(agent)
+                await session.flush()
+                run = AgentRun(agent_id=agent.id, model="auto", use_mcp=False)
+                session.add(run)
+                await session.commit()
+            manager = AgentManager()
+            captured: dict[str, Any] = {}
+
+            class Stop(Exception):
+                pass
+
+            class Client:
+                async def create_session(self, **kwargs: Any) -> None:
+                    captured.update(kwargs)
+                    raise Stop
+
+            manager._client = Client()  # type: ignore[assignment]
+            with pytest.raises(Stop):
+                await manager._ensure_live_locked(agent, run)
+            assert MESSAGE_LINK_INSTRUCTION in captured["system_message"]["content"]
+            hook = captured["hooks"]["on_user_prompt_submitted"]
+            request = {"prompt": "Refer to an earlier reply."}
+            assert await hook(request, {}) is None
+            event = AgentEvent(
+                kind="assistant_message", text="An archived answer.", agent_run_id=run.id
+            )
+            await manager._record(agent.id, event)
+            context = await hook(request, {})
+            assert set(context) == {"additionalContext"}
+            assert (
+                message_path(discussion_path("agent", agent.public_id), event.link_id, agent=True)
+                in context["additionalContext"]
+            )
+            assert request == {"prompt": "Refer to an earlier reply."}
+            assert event.text == "An archived answer."
+
+        asyncio.run(check())
 
 
 def test_chat_permalink_survives_slug_changes_and_archiving() -> None:

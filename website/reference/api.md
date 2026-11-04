@@ -67,6 +67,16 @@ payload; historical events derive deterministic links from their archive
 identity. Transient streaming frames and pending approval cards have no
 message permalink. These links do not change authentication or access.
 
+Chat/topic SSE `user_message`, `tool_calls` and `done` payloads also carry
+`public_id`, allowing the copy-link icon to appear as soon as the message is
+persisted, without waiting for a transcript refresh. `tool_calls.public_id`
+identifies the assistant message alongside its existing numeric `assistant_id`.
+
+The Precursor MCP `list_messages` and `list_chat_messages` tools include each
+row's `public_id` and a `permalink` for user/assistant messages (`null` for
+UI notices and tool results). The link is instance-relative and ready for
+Markdown citations. MCP chat metadata also includes `public_id`.
+
 ### Conversation model selection
 
 Chat/topic create, read and update schemas include nullable `llm_selection`.
