@@ -15,6 +15,9 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Changed
 
+- **Workspaces: refresh the displayed file.** A **Refresh file** button
+  reloads the file from disk, including image and PDF previews, while keeping
+  the current edit/preview mode. Unsaved changes require confirmation.
 - **Attachment previews stay in the app.** Message, composer, and notes
   attachments open in a modal viewer with image/text zoom, fit/reset controls,
   embedded PDFs, and an optional **Open in new tab** link. Unsupported formats

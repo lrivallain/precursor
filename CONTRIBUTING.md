@@ -116,6 +116,17 @@ This covers desktop/mobile previews, zoom limits, keyboard/focus behavior,
 optional new tabs, inert text, PDF embedding, error/unsupported states, and
 composer/notes uploads without invoking a model.
 
+For workspace file refresh, use the same anonymous demo:
+
+```bash
+NODE_PATH=.demo/node_modules node scripts/test_workspace_refresh.js
+```
+
+This covers local/git workspaces on desktop/mobile, keeping edit/preview mode,
+unsaved-edit confirmation and cancellation, read failures and retries, loading
+controls, git status, and cache-busted image, PDF and HTML previews. File reads
+are mocked and refresh is checked to perform no writes.
+
 For conversation provider selection, use the same anonymous demo:
 
 ```bash

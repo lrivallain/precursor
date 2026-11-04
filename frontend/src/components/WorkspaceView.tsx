@@ -231,10 +231,11 @@ export function WorkspaceView({
   );
   const [content, setContent] = useState("");
   const [savedContent, setSavedContent] = useState("");
-  // Bumped on every save, so views of the file on disk (the definition check) refresh.
+  // Bumped on save/reload so the definition check follows the file on disk.
   const [savedVersion, setSavedVersion] = useState(0);
   const [mode, setMode] = useState<"edit" | "preview">("preview");
   const [loadingFile, setLoadingFile] = useState(false);
+  const fileLoadId = useRef(0);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<GitStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -259,10 +260,9 @@ export function WorkspaceView({
   // A pull or push git couldn't do on its own.
   const [conflict, setConflict] = useState<{ detail: string; path: string } | null>(null);
   const [gutter, setGutter] = useState<LineChange[]>([]);
-  // Bumped when the branch changes: the editor starts afresh, so no undo step
-  // can bring the other branch's text back into the buffer.
+  // A branch switch or explicit reload starts with a fresh undo stack.
   const [editorGeneration, setEditorGeneration] = useState(0);
-  // Busts the browser cache of an image/PDF preview after git rewrote it.
+  // Busts the browser cache of a raw preview after a reload.
   const [mediaVersion, setMediaVersion] = useState(0);
   // Inline create-in-tree state (VS Code style): an input row appears at the
   // target parent ("" = root) until the user confirms or cancels. No modal.
@@ -439,16 +439,20 @@ export function WorkspaceView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [files, initialPath]);
 
-  async function openFile(path: string): Promise<void> {
+  async function openFile(path: string, refresh = false): Promise<void> {
+    if (refresh && (loadingFile || saving)) return;
     if (
       dirty &&
       !(await confirmAction({
-        message: "Discard unsaved changes?",
+        message: refresh
+          ? "Discard unsaved changes and refresh this file from disk?"
+          : "Discard unsaved changes?",
         confirmLabel: "Discard changes",
         variant: "warning",
       }))
     )
       return;
+    const loadId = ++fileLoadId.current;
     setLoadingFile(true);
     setError(null);
     try {
@@ -456,27 +460,37 @@ export function WorkspaceView({
       const text = isEditable(path)
         ? (await api.workspaces.readFile(area.id, path)).content
         : "";
+      if (loadId !== fileLoadId.current) return;
       cursorRef.current = null;
       setDiff(null);
       setActivePath(path);
       onPathChange(path);
       setContent(text);
       setSavedContent(text);
-      // A file with conflict markers opens where they can be resolved.
-      const inRepo = subdir ? `${subdir}/${path}` : path;
-      const conflictedFile = !!status?.files.some((f) => f.path === inRepo && f.conflicted);
-      setMode(hasPreview(path) && !conflictedFile ? "preview" : "edit");
+      if (refresh) {
+        setSavedVersion((v) => v + 1);
+        setMediaVersion((v) => v + 1);
+        setEditorGeneration((g) => g + 1);
+        await refreshStatus();
+      } else {
+        // A file with conflict markers opens where they can be resolved.
+        const inRepo = subdir ? `${subdir}/${path}` : path;
+        const conflictedFile = !!status?.files.some((f) => f.path === inRepo && f.conflicted);
+        setMode(hasPreview(path) && !conflictedFile ? "preview" : "edit");
+      }
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (loadId === fileLoadId.current) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
     } finally {
-      setLoadingFile(false);
+      if (loadId === fileLoadId.current) setLoadingFile(false);
     }
   }
 
   // `text` is the editor's buffer on Cmd/Ctrl+S, which may be a keystroke
   // ahead of `content`.
   async function save(text: string = content): Promise<void> {
-    if (!activePath || saving || text === savedContent) return;
+    if (!activePath || saving || loadingFile || text === savedContent) return;
     setSaving(true);
     setError(null);
     try {
@@ -1165,7 +1179,7 @@ export function WorkspaceView({
                 {isEditable(activePath) && (
                   <button
                     className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-accent text-white text-xs disabled:opacity-50"
-                    disabled={!dirty || saving}
+                    disabled={!dirty || saving || loadingFile}
                     onClick={() => void save()}
                   >
                     {saving ? (
@@ -1191,6 +1205,16 @@ export function WorkspaceView({
                   </button>
                 )}
                 {showPreview && isDrawio(activePath) && <DrawioThemeToggle />}
+                <button
+                  type="button"
+                  className="p-1 rounded text-muted hover:text-text hover:bg-surface disabled:opacity-50"
+                  aria-label="Refresh file"
+                  data-tooltip="Refresh file from disk"
+                  disabled={loadingFile || saving}
+                  onClick={() => void openFile(activePath, true)}
+                >
+                  <RefreshCw size={15} className={loadingFile ? "animate-spin" : undefined} />
+                </button>
                 {isGit && (
                   <button
                     className="p-1 rounded text-muted hover:text-text hover:bg-surface"
@@ -1282,14 +1306,16 @@ export function WorkspaceView({
                       </Markdown>
                     ) : showPreview && isDrawio(activePath) ? (
                       <DrawioEditor
+                        key={`${activePath}#${mediaVersion}`}
                         path={activePath}
                         xml={content}
                         onChange={setContent}
                       />
                     ) : showPreview && isHtml(activePath) ? (
                       <iframe
+                        key={`${activePath}#${mediaVersion}`}
                         title={activePath}
-                        src={workspaceRawUrl(area.slug, activePath)}
+                        src={`${workspaceRawUrl(area.slug, activePath)}?v=${mediaVersion}`}
                         sandbox="allow-scripts allow-same-origin"
                         className="w-full h-full border-0 bg-white"
                       />
