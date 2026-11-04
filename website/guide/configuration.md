@@ -10,6 +10,11 @@ built-in default, so the app runs fine with **no `.env` file at all**. The
 handful of process-level knobs (host, port, database URL, backup scheduling)
 live in `.env`; see the [configuration reference](/reference/configuration).
 
+**Save** applies your changes and keeps Settings open on the current category,
+with a **Settings saved.** confirmation. Close the panel when you're finished;
+only changes made since the last successful save trigger the discard warning.
+If saving fails, the panel stays open with an error so you can retry.
+
 ## Connecting a model
 
 Open **Settings → Model → Configure provider** to enter each provider's credentials.

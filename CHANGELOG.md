@@ -15,6 +15,9 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Changed
 
+- **Settings: save without closing.** Saving keeps the panel open on the current
+  category with a confirmation. Closing only warns about edits made since the
+  last successful save; failed saves keep your changes available to retry.
 - **Link directly to a discussion message.** Topics, chats and agents offer
   **Copy link to message** on prompts and replies. Long-form topic/chat
   permalinks use immutable UUIDs; opening a message link loads older history
