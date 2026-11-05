@@ -128,6 +128,7 @@ export function WorkingView({
       >
         <StepTree
           planId={plan.id}
+          rootTitle={plan.title}
           roots={roots}
           selectedId={typeof selected === "number" ? selected : null}
           onSelect={onSelect}
