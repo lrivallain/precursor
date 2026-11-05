@@ -44,6 +44,12 @@ def _live(plan: StepPlan) -> bool:
     return plan.auto_state == AUTO_RUNNING and plan.status in (PLAN_ACTIVE, PLAN_CONSOLIDATING)
 
 
+_NO_QUESTIONS = (
+    "Do not ask questions or offer options: write the deliverable now, marked as a "
+    "deliverable, from the plan's ask and what is already known."
+)
+
+
 async def _set_state(plan_id: int, state: str) -> None:
     async with SessionLocal() as session:
         plan = await svc.get_plan(session, plan_id)
@@ -113,6 +119,12 @@ async def _run(plan_id: int) -> None:
             await publish_step_plan_changed(plan_id)
             async with SessionLocal() as session:
                 draft = await llm.generate_artifact(session, step_id)
+            if draft.outcome == "discussion":
+                await _note(plan_id, _outcome_note(title, draft) + " Asking once more.")
+                async with SessionLocal() as session:
+                    draft = await llm.generate_artifact(
+                        session, step_id, instructions=_NO_QUESTIONS
+                    )
             svc.CURRENT_STEP.pop(plan_id, None)
             await _note(plan_id, _outcome_note(title, draft))
             await publish_step_plan_changed(plan_id)
@@ -142,6 +154,19 @@ async def _finish(plan_id: int) -> None:
     async with SessionLocal() as session:
         plan = await svc.get_plan(session, plan_id)
         steps = await svc.plan_steps(session, plan_id)
+        empty = [
+            s.title
+            for s in svc.working_leaves(steps)
+            if not s.artifact.strip() and s.status != STEP_VALIDATED
+        ]
+        if empty:
+            await _note(
+                plan_id,
+                "Paused: no draft for " + ", ".join(f"«{t}»" for t in empty) + ". Answer in "
+                "the step's discussion or write it, then resume.",
+            )
+            await _set_state(plan_id, AUTO_PAUSED)
+            return
         has_work = any(s.artifact.strip() for s in svc.working_leaves(steps))
         if has_work and not (plan.final_output or "").strip():
             outcome = (await llm.generate_final(session, plan_id, force=True)).outcome

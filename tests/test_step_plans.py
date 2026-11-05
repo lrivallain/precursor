@@ -1766,3 +1766,20 @@ def test_a_plan_mode_topic_only_drafts_until_the_user_launches(
         assert launched.status_code == 200
         done = _await_run(client, made["plan_id"])
         assert done["delegation_policy"] == "plan" and done["final_provisional"] is False
+
+
+def test_a_step_answered_with_questions_is_retried_then_pauses_the_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_llm(monkeypatch, ASSESS_REPLIES)
+    TURN_REPLIES["step"] = "Which tone do you prefer?"
+    with TestClient(create_app()) as client:
+        plan = _plan(client)
+        pid = client.post(f"/api/step-plans/{plan['id']}/start", json={}).json()["id"]
+        _mode(client, pid, "auto")
+        client.post(f"/api/step-plans/{pid}/auto/start")
+        done = _await_run(client, pid)
+        assert done["auto_state"] == "paused" and done["final_provisional"] is not None
+        asked = [t for t in TURNS if "Do not ask questions" in (t["llm_prompt"] or "")]
+        assert asked, "the step was not asked a second time"
+        assert not (done.get("final_output") or "").strip()

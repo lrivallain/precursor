@@ -33,6 +33,10 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Changed
 
+- **Automated step runs no longer skip a step silently.** A step the model answers
+  with questions instead of a draft is asked once more to write it; if it still
+  has none, the run pauses and says which step needs you, instead of building the
+  final output without it.
 - **Settings: save without closing.** Saving keeps the panel open on the current
   category with a confirmation. Closing only warns about edits made since the
   last successful save; failed saves keep your changes available to retry.
