@@ -2143,8 +2143,14 @@ async def create_step_plan(
         if failure is not None:
             warning = failure["error"]
     summary = await _plan_summary(plan_id)
+    if run:
+        summary["run_started"] = warning is None
     if warning:
         summary["warning"] = warning
+        summary["next"] = (
+            "Do not do the plan's work yourself. Tell the user what failed, then retry "
+            "run_step_plan or let them press Run in Step by step."
+        )
     return summary
 
 
