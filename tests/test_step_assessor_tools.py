@@ -164,6 +164,19 @@ def test_a_workspace_deep_link_is_read_as_the_workspaces_file(
     assert gone.cap is not None
 
 
+def test_an_html_page_with_sections_is_not_called_a_deck(tmp_path: Path) -> None:
+    page = tmp_path / "brief.html"
+    page.write_text(
+        "<html><body><section><h2>One</h2><p>a</p></section>"
+        "<section><h2>Two</h2><p>b</p></section></body></html>"
+    )
+    labels = [
+        c.label for c in step_evidence.inspect_file(str(page), produced=True, asked=None).checks
+    ]
+    assert "The page holds 2 section(s)" in labels
+    assert not any("deck" in label or "Slide" in label for label in labels)
+
+
 def _plan() -> Any:
     return SimpleNamespace(source_topic_id=None, llm_selection=None)
 

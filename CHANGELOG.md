@@ -29,7 +29,8 @@ are the per-version history; releasing does not rewrite this file.
 - **A weak final output is held back.** An automated balanced or autonomous run no longer files a
   final output that scores under 50/100 against the ask in the topic. The run stops with a note, so
   you review it and send it yourself. A `/ws/<workspace>/<file>` link in a step's result is now
-  read as that workspace's file instead of failing the file check.
+  read as that workspace's file instead of failing the file check. An HTML page made of sections is
+  reported as sections, not as a deck of slides.
 - **Assessments verify file deliverables.** When a step's result is a file, the assessor gets
   measured facts (the file exists, slide count against the ask, parseable content, an excerpt) and
   a digest of the tool calls the draft ran, instead of a bare path. They show as **Verified by the

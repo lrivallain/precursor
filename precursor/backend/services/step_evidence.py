@@ -167,13 +167,16 @@ def _inspect_html(path: Path, ev: Evidence, asked: int | None) -> None:
         ev.fail("The HTML file could not be parsed", CAP_BROKEN)
         return
     count = page.slides or page.sections
+    unit = "slide" if page.slides else "section"
     if count:
-        ev.checks.append(Check(f"The deck holds {count} slide(s)", True))
+        what = "The deck holds" if page.slides else "The page holds"
+        ev.checks.append(Check(f"{what} {count} {unit}(s)", True))
         # A cover slide is furniture, so "4 slides" may be a cover plus 4.
         if asked is not None and asked not in (count, count - page.covers):
-            ev.fail(f"The ask wants {asked} slide(s) but the file holds {count}", CAP_COUNT)
+            ev.fail(f"The ask wants {asked} {unit}(s) but the file holds {count}", CAP_COUNT)
     if page.titles:
-        ev.checks.append(Check("Slide titles: " + "; ".join(page.titles[:10]), True))
+        label = "Slide titles" if page.slides else "Section titles"
+        ev.checks.append(Check(label + ": " + "; ".join(page.titles[:10]), True))
     body = " ".join(page.text)
     if not body:
         ev.fail("The HTML file has no visible text", CAP_BROKEN)
