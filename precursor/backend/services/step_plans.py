@@ -1400,7 +1400,10 @@ async def build_step_context(session: AsyncSession, chat: Chat) -> str:
             "diff or an excerpt): the app saves exactly that as a new, unvalidated "
             "version of the step's artifact right away. Don't use the markers for "
             "anything else; questions, alternatives, explanations and notes stay "
-            "outside them, and a reply without markers leaves the artifact untouched."
+            "outside them, and a reply without markers leaves the artifact untouched. "
+            "When the step's result is a file you built with a tool, the artifact is "
+            "its absolute path, one line on what it is and how to open it: mark that, "
+            "so the step records the file."
             + (
                 " This step is validated: a marked artifact still applies, as a new "
                 "version that reopens the step for the user's validation."
