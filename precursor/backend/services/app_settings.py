@@ -950,7 +950,7 @@ DEFAULT_AGENTS_SYSTEM_PROMPT = ""
 DEFAULT_AGENTS_WATCHDOG_TIMEOUT_SECONDS = 600
 
 
-CONVERSATION_APPROVAL_POLICIES = ("manual", "balanced", "autonomous")
+CONVERSATION_APPROVAL_POLICIES = ("manual", "balanced", "autonomous", "plan")
 # Autonomous keeps chats and topics behaving as they did before approvals
 # existed; a conversation (or this default) opts in to prompting.
 DEFAULT_CONVERSATION_APPROVAL_POLICY = "autonomous"

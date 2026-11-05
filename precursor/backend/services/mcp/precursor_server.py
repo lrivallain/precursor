@@ -2117,7 +2117,8 @@ async def create_step_plan(
     nobody; when the run ends the drafts are validated, the output is filed in
     the topic and you are asked to review it. *balanced*, the drafts are
     validated and the user does one final review of the output. *manual*, the
-    user validates every step. For the last two you are woken in the topic once
+    user validates every step. *plan*, nothing runs: the plan is only drafted
+    (``run`` is ignored) and the user starts it, then does one final review. For the last two you are woken in the topic once
     the user files the output, and then carry on by yourself.
 
     Follow up with ``get_step_plan`` (use ``wait_seconds`` to wait for progress)
@@ -2138,6 +2139,8 @@ async def create_step_plan(
     try:
         async with SessionLocal() as session:
             policy = await _topic_policy(session, topic_id)
+            if policy == "plan":
+                run = False
             plan = await svc.create_plan(
                 session,
                 StepPlanCreate(
@@ -2165,6 +2168,12 @@ async def create_step_plan(
         if failure is not None:
             warning = failure["error"]
     summary = await _plan_summary(plan_id)
+    if policy == "plan":
+        summary["next"] = (
+            "This topic is in Plan mode: the plan is only drafted. Do not start it. Tell the "
+            "user to review the steps and press Start the run on the plan; amend the steps "
+            "with edit_step_plan if they ask."
+        )
     if run:
         summary["run_started"] = warning is None
     if warning:
@@ -2315,6 +2324,17 @@ async def run_step_plan(plan_id: int) -> dict[str, Any]:
         return {"error": _GATED.format(section="step_plans")}
     from fastapi import HTTPException
 
+    from precursor.backend.services import step_plans as svc
+
+    try:
+        async with SessionLocal() as session:
+            if (await svc.get_plan(session, plan_id)).delegation_policy == "plan":
+                return {
+                    "error": "This plan was made in Plan mode: only the user can start it, "
+                    "from the plan card or Step by step."
+                }
+    except HTTPException as exc:
+        return {"error": _http_detail(exc)}
     failure = await _launch_run(plan_id)
     if failure is not None:
         return failure

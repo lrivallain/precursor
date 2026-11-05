@@ -15,7 +15,7 @@ StepStatus = Literal["proposed", "open", "in_progress", "to_validate", "validate
 SettableStepStatus = Literal["open", "in_progress", "to_validate", "validated", "cancelled"]
 Author = Literal["user", "model"]
 AutomationMode = Literal["manual", "assisted", "auto"]
-DelegationPolicy = Literal["manual", "balanced", "autonomous"]
+DelegationPolicy = Literal["manual", "balanced", "autonomous", "plan"]
 AutoState = Literal["idle", "running", "paused"]
 PromptSource = Literal["submitted", "topic_message"]
 

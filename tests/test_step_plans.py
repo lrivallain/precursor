@@ -1735,3 +1735,34 @@ def test_mcp_step_plan_tools_create_edit_and_read(monkeypatch: pytest.MonkeyPatc
     assert out["got"]["steps"], out["got"]
     assert "error" not in out["edited"], out["edited"]
     assert any(p["plan_id"] == out["made"]["plan_id"] for p in out["listed"]["plans"])
+
+
+def test_a_plan_mode_topic_only_drafts_until_the_user_launches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AppSetting
+    from precursor.backend.services.mcp import precursor_server as ps
+
+    _fake_llm(monkeypatch, ASSESS_REPLIES)
+
+    async def _scenario(topic_id: int) -> tuple[dict[str, Any], dict[str, Any]]:
+        async with SessionLocal() as session:
+            row = await session.get(AppSetting, "mcp_expose")
+            if row is None:
+                session.add(AppSetting(key="mcp_expose", value='{"step_plans": true}'))
+            else:
+                row.value = '{"step_plans": true}'
+            await session.commit()
+        made = await ps.create_step_plan(ASK, topic_id=topic_id, run=True)
+        return made, await ps.run_step_plan(made["plan_id"])
+
+    with TestClient(create_app()) as client:
+        topic = client.post("/api/topics", json={"title": "Mail", "approval_policy": "plan"}).json()
+        made, refused = _run(lambda: _scenario(topic["id"]))
+        assert made["status"] == "drafting" and "Plan mode" in made["next"]
+        assert "only the user" in refused["error"]
+        launched = client.post(f"/api/step-plans/{made['plan_id']}/launch")
+        assert launched.status_code == 200
+        done = _await_run(client, made["plan_id"])
+        assert done["delegation_policy"] == "plan" and done["final_provisional"] is False

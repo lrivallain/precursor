@@ -185,6 +185,7 @@ autonomy** (the *Autonomous / Balanced / Manual* chip) decides who reviews:
 | Topic autonomy | What happens |
 | --- | --- |
 | **Autonomous** | Nobody. When the run ends the drafts are validated, the final output is filed in the topic and the plan is done; the topic's model then reviews it. |
+| **Plan** | Nothing runs. The model only drafts and amends the plan; you review it and press **Start the run** on the card, then do one final review (like Balanced). |
 | **Balanced** | The drafts are validated, you do one final review of the output and send it to the topic. |
 | **Manual** | You validate every step, then send the output to the topic. |
 

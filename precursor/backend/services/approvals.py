@@ -68,6 +68,9 @@ REQUEST_APPROVAL_TOOL = "request_approval"
 POLICY_MANUAL = "manual"
 POLICY_BALANCED = "balanced"
 POLICY_AUTONOMOUS = "autonomous"
+# Tools gate like ``balanced``; the difference is in step plans, which a model
+# may draft and amend but only the user starts.
+POLICY_PLAN = "plan"
 
 # Built-in servers are audited by hand: the tools listed here change something
 # (workspace files, notes, schedules, memories, state, outbound requests, shell);
@@ -143,7 +146,9 @@ class ApprovalGate:
             return GateDecision(f"An approval rule asks before this call{why}.", rule.id)
         if self.policy == POLICY_MANUAL:
             return GateDecision("Manual policy: every tool call needs your approval.")
-        if self.policy == POLICY_BALANCED and not is_read_only(server, raw_name, tool):
+        if self.policy in (POLICY_BALANCED, POLICY_PLAN) and not is_read_only(
+            server, raw_name, tool
+        ):
             return GateDecision("This tool may change data, so the balanced policy asks first.")
         return GateDecision()
 

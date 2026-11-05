@@ -832,6 +832,8 @@ export const api = {
       }),
     startAuto: (id: number) =>
       request<StepPlan>(`/api/step-plans/${id}/auto/start`, { method: "POST" }),
+    launch: (id: number) =>
+      request<StepPlan>(`/api/step-plans/${id}/launch`, { method: "POST" }),
     pauseAuto: (id: number) =>
       request<StepPlan>(`/api/step-plans/${id}/auto/pause`, { method: "POST" }),
     assessPlan: (id: number) =>

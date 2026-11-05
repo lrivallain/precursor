@@ -15,6 +15,9 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **Plan autonomy mode.** A fourth topic/chat autonomy option: tools ask like
+  Balanced, and a model delegating a long job only drafts and amends the step
+  plan. `run_step_plan` is refused until you press **Start the run** on the card.
 - **Delegated step plans follow the topic's autonomy.** Autonomous: the drafts
   are validated, the output is filed in the topic and the topic's model reviews
   it. Balanced: one final review by you. Manual: you validate each step. In the

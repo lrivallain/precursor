@@ -1510,7 +1510,7 @@ export interface NoteDraftAttachment {
 export type AgentApprovalPolicy = "manual" | "balanced" | "autonomous";
 
 /** Per-conversation tool approval policy (mirrors backend `ApprovalPolicy`). */
-export type ConversationApprovalPolicy = AgentApprovalPolicy;
+export type ConversationApprovalPolicy = AgentApprovalPolicy | "plan";
 
 /** A tool call (or the model's own intent) waiting on, or settled by, the user. */
 export interface ToolApproval {
@@ -3078,7 +3078,7 @@ export interface StepPlan {
   /** The final output was written before every step was validated. */
   final_provisional: boolean;
   automation_mode: AutomationMode;
-  delegation_policy: "manual" | "balanced" | "autonomous" | null;
+  delegation_policy: "manual" | "balanced" | "autonomous" | "plan" | null;
   auto_state: AutoState;
   /** The step being drafted right now, only while the run is going. */
   auto_step_id: number | null;

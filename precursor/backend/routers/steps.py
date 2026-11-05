@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.db import get_session
-from precursor.backend.models.step_plan import AUTHOR_USER, AUTOMATION_AUTO
+from precursor.backend.models.step_plan import AUTHOR_USER, AUTOMATION_AUTO, PLAN_DRAFTING
 from precursor.backend.schemas.chat import ChatRead
 from precursor.backend.schemas.message import MessageRead
 from precursor.backend.schemas.step_plan import (
@@ -162,6 +162,19 @@ async def start_auto(plan_id: int, session: AsyncSession = Depends(get_session))
     return await _plan(session, plan_id)
 
 
+@router.post("/{plan_id}/launch", response_model=StepPlanRead)
+async def launch(plan_id: int, session: AsyncSession = Depends(get_session)) -> StepPlanRead:
+    """Confirm a plan drafted by a model: accept its steps and start the automated run."""
+    plan = await svc.get_plan(session, plan_id)
+    if plan.automation_mode != AUTOMATION_AUTO:
+        await svc.update_plan(session, plan_id, StepPlanUpdate(automation_mode="auto"))
+    if plan.status == PLAN_DRAFTING:
+        await svc.start_plan(session, plan_id, accept_proposed=True)
+    await runner.start(session, plan_id)
+    await publish_step_plan_changed(plan_id)
+    return await _plan(session, plan_id)
+
+
 @router.post("/{plan_id}/auto/pause", response_model=StepPlanRead)
 async def pause_auto(plan_id: int, session: AsyncSession = Depends(get_session)) -> StepPlanRead:
     """Stop the run once the step in flight is done."""
@@ -266,7 +279,10 @@ async def send_to_topic(
         payload.text if payload else None,
         force=payload.force if payload else False,
     )
-    if plan.delegation_policy in ("manual", "balanced") and plan.source_topic_id is not None:
+    if (
+        plan.delegation_policy in ("manual", "balanced", "plan")
+        and plan.source_topic_id is not None
+    ):
         from precursor.backend.services import step_plan_runner
 
         step_plan_runner.hand_back(plan.source_topic_id, plan.title, reviewed_by_user=True)

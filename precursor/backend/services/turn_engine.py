@@ -132,7 +132,8 @@ async def build_system_context(
             "autonomy decides who reviews: autonomous, nobody (the result is filed back here "
             "and you review it); balanced, the user does one final review; manual, the user "
             "validates every step. In the last two you are woken here once they file the "
-            "result: then carry on by yourself. Do not use it for "
+            "result: then carry on by yourself. In plan mode, nothing runs: the plan is only "
+            "drafted, you may amend it with edit_step_plan, and the user starts it. Do not use it for "
             "short or single-answer requests. If the plan or its run fails to start, say so "
             "and retry run_step_plan; never carry out the plan's steps yourself."
         )

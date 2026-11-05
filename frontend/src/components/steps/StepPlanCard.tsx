@@ -75,6 +75,20 @@ export function StepPlanCard({ planId }: { planId: number }) {
         ? "Final output"
         : "Working";
 
+  const awaitingGo =
+    plan.delegation_policy === "plan" && plan.status === "drafting" && plan.auto_state !== "running";
+
+  const launch = async () => {
+    setBusy(true);
+    try {
+      setPlan(await api.stepPlans.launch(plan.id));
+    } catch {
+      // the plan's activity feed reports why a run could not start
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const toggleRun = async () => {
     setBusy(true);
     try {
@@ -102,6 +116,17 @@ export function StepPlanCard({ planId }: { planId: number }) {
         <span className="text-xs tabular-nums text-muted">
           {done}/{total} approved · {stageLabel}
         </span>
+        {awaitingGo && (
+          <button
+            type="button"
+            onClick={() => void launch()}
+            disabled={busy}
+            className="ml-auto inline-flex items-center gap-1 rounded-md bg-accent px-2 py-0.5 text-xs font-medium text-white hover:opacity-90 disabled:opacity-50"
+          >
+            <Play size={12} aria-hidden />
+            Start the run
+          </button>
+        )}
         {(running || paused) && (
           <button
             type="button"
@@ -119,6 +144,11 @@ export function StepPlanCard({ planId }: { planId: number }) {
         <p className="mt-1.5 flex items-center gap-1.5 text-xs text-sky-700 dark:text-sky-300" role="status">
           <Loader2 size={12} className="animate-spin" aria-hidden />
           {current ? `Drafting “${current.title}”…` : "Automated run in progress…"}
+        </p>
+      )}
+      {awaitingGo && (
+        <p className="mt-1.5 text-xs text-amber-700 dark:text-amber-300" role="status">
+          Plan ready: nothing runs until you start it. Review or amend the steps first.
         </p>
       )}
       {paused && (

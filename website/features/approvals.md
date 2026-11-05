@@ -13,6 +13,7 @@ topics, one for chats) live in **Settings → Chat**.
 | --- | --- |
 | **Manual** | Every MCP tool call and every Precursor write. |
 | **Balanced** | Anything that changes something, or isn't known to be read-only. |
+| **Plan** | Tools ask like Balanced. Long jobs are only *planned*: a model drafts a [step-by-step](/features/step-by-step) plan and nothing runs until you press **Start the run**. |
 | **Autonomous** | Nothing. This is the default, so existing conversations behave as before. |
 
 An MCP tool counts as read-only when its server says so (the `readOnlyHint`

@@ -156,6 +156,8 @@ async def _finish(plan_id: int) -> None:
             await llm.assess_plan(session, plan_id)
     async with SessionLocal() as session:
         policy = (await svc.get_plan(session, plan_id)).delegation_policy
+    if policy == "plan":
+        policy = "balanced"
     if policy in ("balanced", "autonomous") and await _review(plan_id, policy):
         await _set_state(plan_id, AUTO_IDLE)
         return
