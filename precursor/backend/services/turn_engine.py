@@ -33,7 +33,10 @@ from precursor.backend.services import approvals as approval_service
 from precursor.backend.services import memories as memory_service
 from precursor.backend.services import side_chats, step_plans
 from precursor.backend.services import skills as skills_service
-from precursor.backend.services.app_settings import DEFAULT_LLM_MAX_ATTACHMENT_CHARS
+from precursor.backend.services.app_settings import (
+    DEFAULT_LLM_MAX_ATTACHMENT_CHARS,
+    resolve_mcp_expose,
+)
 from precursor.backend.services.artifacts import artifacts_prompt, record_written_file
 from precursor.backend.services.attachment_extraction import (
     attachments_to_image_urls,
@@ -120,6 +123,14 @@ async def build_system_context(
         parts.append(f"Topic description: {topic.description}")
     if topic.seed_content:
         parts.append(side_chats.seed_prompt(topic.seed_content, "topic"))
+    if (await resolve_mcp_expose(session)).get("step_plans"):
+        parts.append(
+            "If the create_step_plan tool is available and the user's ask is long and "
+            "multi-part (about three or more deliverables, or too long for one reply), "
+            f"delegate it with create_step_plan(topic_id={topic.id}) instead of answering "
+            "in one go, then tell the user where to follow the plan. Do not use it for "
+            "short or single-answer requests."
+        )
 
     repo = await resolve_topic_github_repo(session, topic)
     token = await resolve_github_token(session)

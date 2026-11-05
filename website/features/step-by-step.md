@@ -171,6 +171,23 @@ shows a spinner in the tree and its name in the plan bar, and an **Activity** li
 it runs) follows each step; the page also refreshes by itself. Everything the run does is traced
 in the plan's discussion, where you can talk to the model. You can add, split or reopen steps and edit instructions at any time.
 
+### Delegation by the model
+
+A model can start and follow a plan itself when the **Step-by-step plans** section is
+exposed in *Settings → MCP exposure* (off by default). It then has `create_step_plan`
+(pass the current `topic_id` so the plan is traced in the discussion), `list_step_plans`,
+`get_step_plan` (with `wait_seconds` to follow a run instead of polling),
+`edit_step_plan` (add, update, delete, skip, accept all), `run_step_plan` and
+`pause_step_plan`. The system prompt tells the model to delegate only long, multi-part
+asks. The guardrails are the same as above: it can never approve a step.
+
+### The plan in the discussion
+
+The topic that started a plan shows a live **Tasks** card under the receipt: each step with
+its status, score chip and a spinner on the one being drafted, an approved count, and
+**Pause**/**Resume** for automated plans. It collapses once the plan is done; the steps
+themselves are still worked in the plan.
+
 ### Assessments
 
 The model **self-assesses** each draft and the whole result: a 0–100 score with what the

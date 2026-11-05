@@ -2,6 +2,7 @@ import { useId, useState } from "react";
 import { ListChecks } from "lucide-react";
 import { parseStepPlanTrace } from "../../lib/stepPlans";
 import { Markdown } from "../Markdown";
+import { StepPlanCard } from "./StepPlanCard";
 import { StepPlanLink } from "./StepPlanNoteHeader";
 
 /** Creation snapshots are plain text: prompt syntax must never become metadata or markup. */
@@ -54,6 +55,7 @@ export function StepPlanTrace({ content }: { content: string }) {
               </p>
             )}
           </div>
+          <StepPlanCard planId={trace.planId} />
         </div>
       </div>
     );

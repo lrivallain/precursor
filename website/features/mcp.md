@@ -525,6 +525,12 @@ carries its in-app URL. It has its own write toggle, `side_chats`. `get_topic`
 lists the topic's side chats only when `chats` is exposed too, since their
 titles disclose chat content.
 
+**Step-by-step plans.** The `step_plans` section (write-capable, off by default) lets a
+model delegate a long, multi-part ask to [Step by step](/features/step-by-step):
+`create_step_plan`, `list_step_plans`, `get_step_plan`, `edit_step_plan`,
+`run_step_plan` and `pause_step_plan`. The run happens inside the Precursor app and never
+approves a step; the topic shows a live task card for it.
+
 **Topics come back with their tree position resolved.** Every topic payload
 carries a `path` — the ancestor slugs joined root-first with `/` — so a caller
 never has to walk `parent_id` upward with a chain of `get_topic` round trips.

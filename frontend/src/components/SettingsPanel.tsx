@@ -2319,6 +2319,12 @@ const EXPOSE_SECTIONS: ReadonlyArray<{
     danger: true,
   },
   {
+    key: "step_plans",
+    label: "Step-by-step plans",
+    hint: "Let callers split a long job into a plan, run it and follow it (never approves steps).",
+    danger: true,
+  },
+  {
     key: "schedules",
     label: "Scheduled tasks",
     hint: "List, create, pause and trigger recurring automations.",

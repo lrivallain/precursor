@@ -1620,3 +1620,55 @@ def test_deleting_a_plan_removes_its_final_versions(monkeypatch: pytest.MonkeyPa
                 )
 
         assert _run(_count) == 0
+
+
+def test_mcp_step_plan_tools_are_gated_until_exposed() -> None:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AppSetting
+    from precursor.backend.services.mcp import precursor_server as ps
+
+    async def _off() -> None:
+        async with SessionLocal() as session:
+            row = await session.get(AppSetting, "mcp_expose")
+            if row is None:
+                session.add(AppSetting(key="mcp_expose", value="{}"))
+            else:
+                row.value = "{}"
+            await session.commit()
+
+    with TestClient(create_app()):
+        _run(_off)
+        out = _run(lambda: ps.create_step_plan(ASK))
+        assert "not exposed" in out["error"]
+        assert "not exposed" in _run(lambda: ps.list_step_plans())["error"]
+
+
+def test_mcp_step_plan_tools_create_edit_and_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AppSetting
+    from precursor.backend.services.mcp import precursor_server as ps
+
+    _fake_llm(monkeypatch)
+
+    async def _scenario() -> dict[str, Any]:
+        async with SessionLocal() as session:
+            row = await session.get(AppSetting, "mcp_expose")
+            if row is None:
+                session.add(AppSetting(key="mcp_expose", value='{"step_plans": true}'))
+            else:
+                row.value = '{"step_plans": true}'
+            await session.commit()
+        made = await ps.create_step_plan(ASK, title="Migration")
+        got = await ps.get_step_plan(made["plan_id"])
+        edited = await ps.edit_step_plan(
+            made["plan_id"], [{"op": "add", "title": "Extra", "instruction": "One more"}]
+        )
+        listed = await ps.list_step_plans()
+        return {"made": made, "got": got, "edited": edited, "listed": listed}
+
+    with TestClient(create_app()):
+        out = _run(_scenario)
+    assert out["made"]["plan_id"] == out["got"]["plan_id"]
+    assert out["got"]["steps"], out["got"]
+    assert "error" not in out["edited"], out["edited"]
+    assert any(p["plan_id"] == out["made"]["plan_id"] for p in out["listed"]["plans"])

@@ -80,6 +80,9 @@ MCP_EXPOSE_SECTIONS: tuple[str, ...] = (
     "notes",
     "post_message",
     "side_chats",
+    # Delegating a long job to Step by step: creates plans and starts runs that
+    # spend the provider's quota, so it is a write toggle.
+    "step_plans",
     "schedules",
     "reminders",
     # Sandboxed file access to workspace working trees; writes (and creating a

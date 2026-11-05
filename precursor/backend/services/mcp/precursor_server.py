@@ -35,6 +35,10 @@ Sections → tools:
 - ``notes``       → append_note (write — persists text verbatim, no LLM turn)
 - ``post_message`` → post_message (write — runs a full assistant turn)
 - ``side_chats``   → create_side_chat (write — starts a chat linked to a topic)
+- ``step_plans``   → create_step_plan, list_step_plans, get_step_plan,
+                     edit_step_plan, run_step_plan, pause_step_plan (write —
+                     delegates a long job to Step by step; a model never
+                     approves a step)
 - ``schedules``    → list_schedules, get_schedule, create_schedule,
                      set_schedule_enabled, run_schedule_now
 - ``reminders``    → list_reminders, get_reminder, set_reminder,
@@ -418,6 +422,13 @@ async def precursor_info() -> dict[str, Any]:
         "version": __version__,
         "sections": dict(expose),
         "all_sections": list(MCP_EXPOSE_SECTIONS),
+        "guidance": {
+            "step_plans": (
+                "For long, multi-part asks (three or more deliverables, or an answer "
+                "too long for one reply) call create_step_plan instead of answering "
+                "in one go, then follow it with get_step_plan."
+            ),
+        },
     }
 
 
@@ -1951,6 +1962,362 @@ async def create_workspace_folder(workspace_id: int, path: str) -> dict[str, Any
     except FileExistsError:
         return {"error": f"Path already exists: {path}"}
     return {"path": path, "created": True}
+
+
+# --------------------------------------------------------------------------
+# step-by-step plans (read/write)
+# --------------------------------------------------------------------------
+_MAX_PLAN_WAIT_SECONDS = 120
+
+
+def _http_detail(exc: Exception) -> str:
+    detail = getattr(exc, "detail", None)
+    return str(detail if detail is not None else exc)
+
+
+def _plan_url(plan_id: int) -> str:
+    return f"{app_base_url()}/steps/{plan_id}"
+
+
+async def _app_post(path: str) -> dict[str, Any] | None:
+    """POST to the app's REST API; the error dict on failure, else ``None``.
+
+    A stdio MCP child is not the process that owns the automated run (it lives in
+    the app's event loop), so run control is delegated to the app over loopback.
+    """
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(f"{app_base_url()}{path}")
+    except httpx.HTTPError as exc:
+        return {"error": f"The Precursor app is not reachable to run the plan: {exc}"}
+    if resp.status_code >= 400:
+        try:
+            detail = resp.json().get("detail", resp.text)
+        except ValueError:
+            detail = resp.text
+        return {"error": str(detail)}
+    return None
+
+
+async def _plan_summary(plan_id: int, *, include_artifacts: bool = False) -> dict[str, Any]:
+    from precursor.backend.services import step_plans as svc
+    from precursor.backend.services.events import is_app_process
+
+    async with SessionLocal() as session:
+        plan = await svc.get_plan(session, plan_id)
+        read = await svc.to_plan_read(session, plan)
+        raw_state = plan.auto_state
+    parents = {s.parent_step_id for s in read.steps if s.parent_step_id is not None}
+    leaves = [
+        s for s in read.steps if s.id not in parents and s.status not in ("proposed", "cancelled")
+    ]
+    steps = []
+    for s in read.steps:
+        item: dict[str, Any] = {
+            "id": s.id,
+            "parent_step_id": s.parent_step_id,
+            "title": s.title,
+            "instruction": s.instruction,
+            "status": s.effective_status,
+            "score": s.assessment.score if s.assessment else None,
+            "has_artifact": bool(s.artifact.strip()),
+        }
+        if include_artifacts:
+            item["artifact"] = s.artifact
+        steps.append(item)
+    return {
+        "plan_id": plan_id,
+        "title": read.title,
+        "url": _plan_url(plan_id),
+        "status": read.status,
+        "automation": read.automation_mode,
+        # Only the app process knows whether a run is really alive; a child trusts the row.
+        "run_state": read.auto_state if is_app_process() else raw_state,
+        "progress": {
+            "validated": sum(1 for s in leaves if s.effective_status == "validated"),
+            "to_validate": sum(1 for s in leaves if s.effective_status == "to_validate"),
+            "total": len(leaves),
+        },
+        "final_output": {
+            "exists": bool((read.final_output or "").strip()),
+            "provisional": read.final_provisional,
+            "text": read.final_output if include_artifacts else None,
+        },
+        "assessment_score": read.assessment.score if read.assessment else None,
+        "steps": steps,
+        "note": "Drafts wait for the user's approval; a model never approves steps.",
+    }
+
+
+async def _launch_run(plan_id: int) -> dict[str, Any] | None:
+    """Make the plan automated and active, then start its run (error dict on failure)."""
+    from fastapi import HTTPException
+
+    from precursor.backend.models.step_plan import AUTOMATION_AUTO, PLAN_DRAFTING
+    from precursor.backend.schemas.step_plan import StepPlanUpdate
+    from precursor.backend.services import step_plan_runner as runner
+    from precursor.backend.services import step_plans as svc
+    from precursor.backend.services.events import is_app_process, publish_step_plan_changed
+
+    try:
+        async with SessionLocal() as session:
+            plan = await svc.get_plan(session, plan_id)
+            if plan.automation_mode != AUTOMATION_AUTO:
+                await svc.update_plan(session, plan_id, StepPlanUpdate(automation_mode="auto"))
+            if plan.status == PLAN_DRAFTING:
+                await svc.start_plan(session, plan_id, accept_proposed=True)
+            if is_app_process():
+                await runner.start(session, plan_id)
+    except HTTPException as exc:
+        return {"error": _http_detail(exc)}
+    await publish_step_plan_changed(plan_id)
+    if not is_app_process():
+        return await _app_post(f"/api/step-plans/{plan_id}/auto/start")
+    return None
+
+
+@mcp.tool()
+async def create_step_plan(
+    ask: str,
+    topic_id: int | None = None,
+    title: str | None = None,
+    run: bool = False,
+) -> dict[str, Any]:
+    """Delegate a long, multi-part job to *Step by step* instead of answering in one reply.
+
+    Use this when an ask has about three or more distinct deliverables, would
+    need a very long answer, or is better reviewed piece by piece (a customer
+    email with several questions, a brief with a dozen items, a report with
+    sections). Short or single-answer requests do not need a plan.
+
+    The ask is split into a tree of steps (proposed by the model). With
+    ``run=False`` (default) the plan waits for the user to review the steps and
+    press Start. With ``run=True`` the steps are accepted and an automated run
+    drafts every step, scores them and writes a provisional final output in the
+    background — nothing is ever approved by a model; the user reviews each
+    draft. Pass ``topic_id`` (the topic you are working in) so the plan shows
+    up, live, in that topic's discussion and its final output can be filed back.
+
+    Follow up with ``get_step_plan`` (use ``wait_seconds`` to wait for progress)
+    and ``edit_step_plan``. Report the returned ``url`` and the plan's ``title``
+    to the user rather than the numeric id.
+    """
+    if not await _section_enabled("step_plans"):
+        return {"error": _GATED.format(section="step_plans")}
+    if not ask.strip():
+        return {"error": "ask must not be empty"}
+    from fastapi import HTTPException
+
+    from precursor.backend.schemas.step_plan import StepPlanCreate
+    from precursor.backend.services import step_plan_llm as llm
+    from precursor.backend.services import step_plans as svc
+    from precursor.backend.services.events import publish_step_plan_changed
+
+    try:
+        async with SessionLocal() as session:
+            plan = await svc.create_plan(
+                session,
+                StepPlanCreate(
+                    title=title,
+                    topic_id=topic_id,
+                    source_text=ask,
+                    propose=False,
+                    automation_mode="assisted",
+                ),
+            )
+            plan_id = plan.id
+    except HTTPException as exc:
+        return {"error": _http_detail(exc)}
+    await publish_step_plan_changed(plan_id)
+    warning: str | None = None
+    try:
+        async with SessionLocal() as session:
+            await llm.suggest_steps(session, plan_id, mode="initial")
+    except HTTPException as exc:
+        warning = f"The plan was created but the steps could not be proposed: {_http_detail(exc)}"
+    await publish_step_plan_changed(plan_id)
+    if run and warning is None:
+        failure = await _launch_run(plan_id)
+        if failure is not None:
+            warning = failure["error"]
+    summary = await _plan_summary(plan_id)
+    if warning:
+        summary["warning"] = warning
+    return summary
+
+
+@mcp.tool()
+async def list_step_plans(topic_id: int | None = None) -> dict[str, Any]:
+    """List step-by-step plans (optionally those of one topic) with their progress."""
+    if not await _section_enabled("step_plans"):
+        return {"error": _GATED.format(section="step_plans")}
+    from precursor.backend.services import step_plans as svc
+
+    async with SessionLocal() as session:
+        items = await svc.list_plans(session, topic_id)
+    return {
+        "plans": [
+            {
+                "plan_id": p.id,
+                "title": p.title,
+                "status": p.status,
+                "topic_id": p.source_topic_id,
+                "steps": p.step_count,
+                "validated": p.validated_count,
+                "url": _plan_url(p.id),
+            }
+            for p in items
+        ]
+    }
+
+
+@mcp.tool()
+async def get_step_plan(
+    plan_id: int, wait_seconds: int = 0, include_artifacts: bool = False
+) -> dict[str, Any]:
+    """Read a plan: its status, run state, progress and the tree of steps.
+
+    ``run_state`` is ``running`` while the automated run is alive. Set
+    ``wait_seconds`` (max 120) to block until the run stops or the delay
+    elapses, instead of polling. ``include_artifacts`` adds each step's draft
+    and the final output text (can be large). Steps have a ``status`` of
+    ``open``, ``to_validate`` (a draft waits for the user), ``validated``,
+    ``cancelled`` (skipped) or ``proposed``.
+    """
+    if not await _section_enabled("step_plans"):
+        return {"error": _GATED.format(section="step_plans")}
+    import asyncio
+
+    from fastapi import HTTPException
+
+    deadline = min(max(wait_seconds, 0), _MAX_PLAN_WAIT_SECONDS)
+    waited = 0
+    try:
+        while True:
+            summary = await _plan_summary(plan_id, include_artifacts=include_artifacts)
+            if summary["run_state"] != "running" or waited >= deadline:
+                return summary
+            await asyncio.sleep(2)
+            waited += 2
+    except HTTPException as exc:
+        return {"error": _http_detail(exc)}
+
+
+@mcp.tool()
+async def edit_step_plan(plan_id: int, operations: list[dict[str, Any]]) -> dict[str, Any]:
+    """Change a plan's steps. Each operation is an object with an ``op`` key:
+
+    - ``{"op": "add", "title": …, "instruction": …, "parent_step_id": …?}``
+    - ``{"op": "update", "step_id": …, "title": …?, "instruction": …?}``
+    - ``{"op": "delete", "step_id": …}``
+    - ``{"op": "skip", "step_id": …}`` (leave a step out of the final output)
+    - ``{"op": "accept_all"}`` (turn every suggested step into real work)
+
+    Step ids come from ``get_step_plan``. Operations apply in order and stop at
+    the first failure. Approving a step's result is not available: it stays
+    with the user.
+    """
+    if not await _section_enabled("step_plans"):
+        return {"error": _GATED.format(section="step_plans")}
+    from fastapi import HTTPException
+    from pydantic import ValidationError
+
+    from precursor.backend.schemas.step_plan import StepCreate, StepUpdate
+    from precursor.backend.services import step_plans as svc
+    from precursor.backend.services.events import publish_step_plan_changed
+
+    applied = 0
+    try:
+        for op in operations:
+            kind = op.get("op")
+            async with SessionLocal() as session:
+                plan = await svc.get_plan(session, plan_id)
+                if kind == "add":
+                    await svc.create_step(
+                        session,
+                        plan,
+                        StepCreate(
+                            title=op.get("title", ""),
+                            instruction=op.get("instruction", ""),
+                            parent_step_id=op.get("parent_step_id"),
+                        ),
+                        author="model",
+                    )
+                elif kind in ("update", "delete", "skip"):
+                    step = await svc.get_step(session, int(op.get("step_id", 0)))
+                    if step.plan_id != plan_id:
+                        return {"error": f"Step {step.id} is not part of plan {plan_id}"}
+                    if kind == "update":
+                        await svc.update_step(
+                            session,
+                            step.id,
+                            StepUpdate(title=op.get("title"), instruction=op.get("instruction")),
+                        )
+                    elif kind == "delete":
+                        await svc.delete_step(session, step.id)
+                    else:
+                        await svc.set_step_status(session, step.id, "cancelled")
+                elif kind == "accept_all":
+                    await svc.accept_all_proposed(session, plan)
+                    await session.commit()
+                else:
+                    return {"error": f"Unknown operation {kind!r} (after {applied} applied)"}
+            applied += 1
+    except HTTPException as exc:
+        return {"error": f"{_http_detail(exc)} (after {applied} applied)"}
+    except (ValidationError, ValueError, TypeError) as exc:
+        return {"error": f"Invalid operation: {exc} (after {applied} applied)"}
+    await publish_step_plan_changed(plan_id)
+    return await _plan_summary(plan_id)
+
+
+@mcp.tool()
+async def run_step_plan(plan_id: int) -> dict[str, Any]:
+    """Start (or resume) the automated run of a plan.
+
+    Accepts the suggested steps if the plan has not started, switches it to
+    fully automated, then drafts every step with no artifact, scores the
+    drafts and writes a provisional final output in the background. Returns
+    immediately; use ``get_step_plan`` with ``wait_seconds`` to follow it. The
+    run never approves anything and pauses on tool approvals.
+    """
+    if not await _section_enabled("step_plans"):
+        return {"error": _GATED.format(section="step_plans")}
+    from fastapi import HTTPException
+
+    failure = await _launch_run(plan_id)
+    if failure is not None:
+        return failure
+    try:
+        return await _plan_summary(plan_id)
+    except HTTPException as exc:
+        return {"error": _http_detail(exc)}
+
+
+@mcp.tool()
+async def pause_step_plan(plan_id: int) -> dict[str, Any]:
+    """Pause a plan's automated run once the step in flight is done."""
+    if not await _section_enabled("step_plans"):
+        return {"error": _GATED.format(section="step_plans")}
+    from fastapi import HTTPException
+
+    from precursor.backend.services import step_plan_runner as runner
+    from precursor.backend.services.events import is_app_process, publish_step_plan_changed
+
+    try:
+        if is_app_process():
+            async with SessionLocal() as session:
+                await runner.pause(session, plan_id)
+        else:
+            failure = await _app_post(f"/api/step-plans/{plan_id}/auto/pause")
+            if failure is not None:
+                return failure
+        await publish_step_plan_changed(plan_id)
+        return await _plan_summary(plan_id)
+    except HTTPException as exc:
+        return {"error": _http_detail(exc)}
 
 
 # --------------------------------------------------------------------------

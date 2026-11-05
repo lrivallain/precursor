@@ -13,6 +13,17 @@ are the per-version history; releasing does not rewrite this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Models can delegate long asks to Step by step.** A new opt-in `step_plans`
+  MCP section (Settings → MCP exposure, off by default) adds `create_step_plan`,
+  `list_step_plans`, `get_step_plan` (optionally waiting for the run),
+  `edit_step_plan`, `run_step_plan` and `pause_step_plan`, and the system prompt
+  tells the model when to use them. The model never approves steps.
+- **Live plan card in the discussion.** A topic that started a step plan now
+  shows its tasks (status, scores, spinner on the step being drafted, progress)
+  under the plan receipt, updating as the plan runs.
+
 ### Changed
 
 - **Settings: save without closing.** Saving keeps the panel open on the current
