@@ -102,11 +102,11 @@ export function StepPlanCard({ planId }: { planId: number }) {
         <span className="text-xs tabular-nums text-muted">
           {done}/{total} approved · {stageLabel}
         </span>
-        {plan.automation_mode === "auto" && plan.status !== "drafting" && !finished && (
+        {(running || paused) && (
           <button
             type="button"
             onClick={() => void toggleRun()}
-            disabled={busy || (!running && !paused && next === null)}
+            disabled={busy}
             className="ml-auto inline-flex items-center gap-1 rounded-md border border-border px-2 py-0.5 text-xs text-fg hover:bg-surface disabled:opacity-50"
           >
             {running ? <Pause size={12} aria-hidden /> : <Play size={12} aria-hidden />}
