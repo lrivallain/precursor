@@ -2103,7 +2103,11 @@ async def create_step_plan(
     Use this when an ask has about three or more distinct deliverables, would
     need a very long answer, or is better reviewed piece by piece (a customer
     email with several questions, a brief with a dozen items, a report with
-    sections). Short or single-answer requests do not need a plan.
+    sections). Short or single-answer requests do not need a plan, except a job
+    that needs a skill or a tool-built file (a deck, a document): delegate it
+    here and name the skill in ``ask``. Do not load the skill or run the tools
+    yourself: the plan's step does, and its result (often a file path) comes back
+    to the topic.
 
     The ask is split into a tree of steps (proposed by the model). With
     ``run=False`` (default) the plan waits for the user to review the steps and

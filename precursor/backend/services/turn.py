@@ -61,6 +61,8 @@ from precursor.backend.services.turn_engine import (
 from precursor.backend.services.unattended_approvals import announce_parked
 from precursor.backend.services.workspaces import WORKSPACE_READ_TOOLS, WORKSPACE_WRITE_TOOLS
 
+SKILL_READ_TOOLS = frozenset({"list_skills", "get_skill"})
+
 logger = logging.getLogger(__name__)
 
 
@@ -188,7 +190,11 @@ async def _run(
         # re-expose Precursor's own MCP server to itself — that would let a
         # post_message-triggered turn recursively call post_message. Only the
         # workspace file tools stay, as they did when they were a separate server.
-        active.restrict_server_tools("precursor", WORKSPACE_READ_TOOLS | WORKSPACE_WRITE_TOOLS)
+        allowed = WORKSPACE_READ_TOOLS | WORKSPACE_WRITE_TOOLS
+        if isinstance(container, Chat) and (container.step_id or container.step_plan_id):
+            # A step draft must be able to load the skill its step names.
+            allowed |= SKILL_READ_TOOLS
+        active.restrict_server_tools("precursor", allowed)
         for server_name, err in active.unavailable:
             logger.warning("Headless run: MCP server %s unavailable: %s", server_name, err)
 

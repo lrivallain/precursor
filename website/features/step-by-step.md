@@ -131,6 +131,10 @@ or instructions ("use the deckforge skill", or `/deckforge`) is called out as re
 mentions in the instructions are expanded. When a step produces a file, the artifact is the file's
 path plus how to open it, not its content.
 
+A model that delegates such a job to a plan does not load the skill or run the commands itself: it
+names the skill in the ask, the step's draft loads and runs it, and the result comes back as the
+file's path, which is handed over (not pasted) in the final output.
+
 ### The discussion changes the artifact
 
 A reply is a conversation, so it can hold questions or alternatives. When you ask in the

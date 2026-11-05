@@ -15,6 +15,10 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **Skill jobs are delegated to Step by step.** A topic whose ask needs a skill or a
+  tool-built file (a deck, a report) hands it to a plan naming the skill instead of loading it
+  itself. Step drafts can now call `list_skills` / `get_skill`, and a file result is filed back as
+  its path with how to open it.
 - **Plan autonomy mode.** A fourth topic/chat autonomy option: tools ask like
   Balanced, and a model delegating a long job only drafts and amends the step
   plan. `run_step_plan` is refused until you press **Start the run** on the card.

@@ -70,7 +70,9 @@ Rules:
 usually 3 to 12 top-level steps.
 - "title": a short label, at most 80 characters.
 - "instruction": what the step must produce, keeping the specifics (names, \
-figures, constraints) from the ask. Never invent requests that aren't there.
+figures, constraints) from the ask. Never invent requests that aren't there. \
+When the ask names a skill or tool ("use the deckforge skill"), keep that name \
+in the instruction of the step that must use it: the step will load and run it.
 - Only add "children" when a request clearly splits into independent parts \
 that deserve their own step; otherwise leave it empty.
 - {_LANGUAGE}"""
@@ -197,6 +199,8 @@ keep their decisions, numbers, names and commitments verbatim.
 isn't supported by the artifacts, and never drop an artifact's substance.
 - Follow the requested output (format, tone, length) when one is given; \
 otherwise write a clear, well-structured Markdown answer.
+- When an artifact is the path of a file a step built, hand that path over (with \
+how to open it) in the deliverable; never open the file or paste its content.
 - If artifacts contradict each other, keep the later step's version and list \
 the conflict at the end under "Points to check".
 - Put the complete deliverable between a line `{svc.ARTIFACT_OPEN}` and a line \

@@ -1813,3 +1813,28 @@ def test_a_step_naming_a_skill_is_told_to_load_it() -> None:
     assert "names the skill(s) deckforge" in block and "rewrite:" in block
     assert "names the skill" not in skills_prompt(skills, context="write a rewrite-free deck")
     assert skills_prompt([], context="deckforge") == ""
+
+
+def test_a_topic_delegates_skill_jobs_instead_of_loading_the_skill() -> None:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import AppSetting, Topic
+    from precursor.backend.services.turn_engine import build_system_context
+
+    async def _prompt(topic_id: int) -> str:
+        async with SessionLocal() as session:
+            row = await session.get(AppSetting, "mcp_expose")
+            value = '{"step_plans": true, "skills": true}'
+            if row is None:
+                session.add(AppSetting(key="mcp_expose", value=value))
+            else:
+                row.value = value
+            await session.commit()
+            topic = await session.get(Topic, topic_id)
+            assert topic is not None
+            return await build_system_context(session, topic)
+
+    with TestClient(create_app()) as client:
+        topic = client.post("/api/topics", json={"title": "Deck"}).json()
+        prompt = _run(lambda: _prompt(topic["id"]))
+    assert "needs a skill or a tool-built file" in prompt
+    assert "do not call get_skill" not in prompt or "yourself" in prompt

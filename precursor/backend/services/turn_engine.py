@@ -135,8 +135,19 @@ async def build_system_context(
             "result: then carry on by yourself. In plan mode, nothing runs: the plan is only "
             "drafted, you may amend it with edit_step_plan, and the user starts it. Do not use it for "
             "short or single-answer requests. If the plan or its run fails to start, say so "
-            "and retry run_step_plan; never carry out the plan's steps yourself."
+            "and retry run_step_plan; never carry out the plan's steps yourself. Also delegate "
+            "an ask that needs a skill or a tool-built file (a deck, a document, a script's "
+            "output), even if it is a single deliverable: do not load the skill, run commands "
+            "or build it yourself. Put the skill's name in the ask; the plan's step loads "
+            "and runs it, and files the result (often a file path) back here."
         )
+        if (await resolve_mcp_expose(session)).get("skills"):
+            names = [s.name for s in await skills_service.reconcile_and_list(session) if s.active]
+            if names:
+                parts.append(
+                    "Skills a plan's steps can run: " + ", ".join(names[:40]) + ". Name one in "
+                    "the ask when the job calls for it; do not call get_skill for it yourself."
+                )
 
     repo = await resolve_topic_github_repo(session, topic)
     token = await resolve_github_token(session)
