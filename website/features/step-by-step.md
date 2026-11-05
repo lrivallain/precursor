@@ -123,6 +123,14 @@ call: the request and the reply are recorded in the discussion, and the step inh
 chat can do — the plan's model and role, and its tools, with the usual approval prompts. If a
 tool needs your approval, the draft waits for it in the discussion.
 
+### Skills and tools
+
+The step's chat lists your active skills (when the `skills` MCP section is exposed) and tells the
+model to load a matching one with `get_skill` before improvising. A skill named in the step's title
+or instructions ("use the deckforge skill", or `/deckforge`) is called out as required, and `/skill`
+mentions in the instructions are expanded. When a step produces a file, the artifact is the file's
+path plus how to open it, not its content.
+
 ### The discussion changes the artifact
 
 A reply is a conversation, so it can hold questions or alternatives. When you ask in the
@@ -142,7 +150,9 @@ with no reload. Assessments the model runs are announced in the chat too (*Asses
 and a failed one says so. Saving identical content never creates a duplicate version.
 
 Nothing is overwritten silently: your unsaved edits stay in the editor (a banner offers the
-newer version), and an **approved** step is never changed by the discussion — reopen it first.
+newer version). On an **approved** step, a new deliverable from the model is applied as a new
+version and reopens the step for your approval; the approved version stays in its history, and
+only you approve.
 The consolidation discussion works the same way and saves a provisional final output.
 
 ## The plan bar

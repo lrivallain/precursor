@@ -77,6 +77,8 @@ from precursor.backend.schemas.step_plan import (
     StepUpdate,
 )
 from precursor.backend.services import roles as roles_service
+from precursor.backend.services import skills as skills_service
+from precursor.backend.services.app_settings import resolve_mcp_expose
 from precursor.backend.services.conversation_llm import validate_selection
 from precursor.backend.services.events import publish_message_changed
 from precursor.backend.services.slugs import allocate_unique_slug
@@ -1400,8 +1402,8 @@ async def build_step_context(session: AsyncSession, chat: Chat) -> str:
             "anything else; questions, alternatives, explanations and notes stay "
             "outside them, and a reply without markers leaves the artifact untouched."
             + (
-                " This step is validated, so a marked artifact is NOT applied until "
-                "the user reopens the step: say so instead of promising a change."
+                " This step is validated: a marked artifact still applies, as a new "
+                "version that reopens the step for the user's validation."
                 if step.status == STEP_VALIDATED
                 else ""
             ),
@@ -1409,7 +1411,15 @@ async def build_step_context(session: AsyncSession, chat: Chat) -> str:
             f"Current step: {step.title}",
         ]
         if step.instruction:
-            parts.append(f"What this step must produce:\n{step.instruction}")
+            instruction = await skills_service.expand_references(session, step.instruction)
+            parts.append(f"What this step must produce:\n{instruction}")
+        if (await resolve_mcp_expose(session)).get("skills"):
+            skills = await skills_service.reconcile_and_list(session)
+            catalog = skills_service.skills_prompt(
+                skills, context=f"{step.title}\n{step.instruction or ''}"
+            )
+            if catalog:
+                parts.append(catalog)
         if step.artifact.strip():
             parts.append(
                 f"Current artifact (version {step.artifact_version}, status {step.status}):\n"

@@ -104,6 +104,10 @@ facts, figures or commitments.
 - Put the complete artifact between a line `{svc.ARTIFACT_OPEN}` and a line \
 `{svc.ARTIFACT_CLOSE}`: clean Markdown, ready to be reused as is, no preamble \
 and no code fence inside the markers. {_LANGUAGE}
+- If the step needs a tool or a skill (building a file, running a command), use \
+it first: load the named skill with get_skill and follow it. When the result is \
+a file you created, the artifact is its absolute path, one line on what it is \
+and how to open it; never paste the file's content.
 - Anything else (questions you need answered, alternatives, caveats) goes \
 OUTSIDE the markers, briefly. If you can't write a trustworthy artifact yet, \
 ask your questions and leave the markers out."""
@@ -502,8 +506,8 @@ async def apply_chat_reply(chat_id: int, reply: str) -> None:
     saved, so asking the model in the discussion to write or change the
     artifact takes effect without a separate click. Only a marked deliverable
     counts; it lands as a new unvalidated version, so the model still never
-    approves anything, and a validated artifact is left alone (the user
-    reopens the step first). Never raises: the reply is already saved.
+    approves anything; on a validated step the reply reopens it (the validated
+    version stays in its history). Never raises: the reply is already saved.
     """
     deliverable = svc.extract_deliverable(reply)
     if deliverable is None:
@@ -538,16 +542,9 @@ async def _apply_to_step(
     session: AsyncSession, chat_id: int, step_id: int, deliverable: str
 ) -> int | None:
     step = await svc.get_step(session, step_id)
-    if step.status == STEP_VALIDATED:
-        await trace_in_chat(
-            session,
-            chat_id,
-            "Not applied: this step is validated. Reopen it to let the discussion "
-            "change its artifact.",
-        )
-        return None
     if step.status == STEP_CANCELLED:
         return None
+    was_validated = step.status == STEP_VALIDATED
     before = step.artifact_version
     saved = await svc.write_artifact(
         session, step_id, deliverable, author=AUTHOR_MODEL, mark=STEP_TO_VALIDATE
@@ -555,10 +552,15 @@ async def _apply_to_step(
     if saved.artifact_version == before:
         await trace_in_chat(session, chat_id, "This reply matches the current artifact: unchanged.")
         return None
+    reopened = (
+        " The step was validated: it is reopened, and the validated version stays in its history."
+        if was_validated
+        else ""
+    )
     await trace_in_chat(
         session,
         chat_id,
-        f"Applied to the artifact as version {saved.artifact_version}, to validate. "
+        f"Applied to the artifact as version {saved.artifact_version}, to validate.{reopened} "
         "Your unsaved edits in the editor are kept.",
     )
     return saved.plan_id

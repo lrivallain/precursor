@@ -33,6 +33,15 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Changed
 
+- **Step drafts use your skills.** A step's chat and drafts now list the active
+  skills and tell the model to load a named one (`get_skill`) before improvising;
+  `/skill` mentions in a step's instructions are expanded, and the draft and retry
+  prompts no longer push the model to hand-write what a tool or skill should build.
+  A file deliverable is the path plus how to open it.
+- **Redoing a validated step.** A model reply with a new deliverable on a validated
+  step now applies as a new version and reopens it for your validation, instead of
+  being dropped. The validated version stays in the history.
+
 - **A finished delegated plan now says what it is waiting for.** Once every step
   is approved, the discussion card reads *Final output ready, your review* with a
   **Send to the topic** button (or *Final output out of date* with **Regenerate

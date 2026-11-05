@@ -1498,7 +1498,7 @@ def test_asking_in_the_discussion_updates_the_artifact(monkeypatch: pytest.Monke
         assert any("unchanged" in m["content"] for m in msgs)
 
 
-def test_the_discussion_never_overwrites_a_validated_artifact(
+def test_a_discussion_rewrite_reopens_a_validated_step_and_keeps_its_history(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _fake_llm(monkeypatch)
@@ -1508,11 +1508,13 @@ def test_the_discussion_never_overwrites_a_validated_artifact(
         sid = _by_title(plan)["Quote"]["id"]
         _validate(client, sid, "approved text")
         chat = client.post(f"/api/steps/{sid}/chat").json()
-        provider.reply = "<!-- artifact -->\nSneaky rewrite\n<!-- /artifact -->"
+        provider.reply = "<!-- artifact -->\nNew take\n<!-- /artifact -->"
         msgs = _say(client, chat["id"], "rewrite it")
         step = _by_title(_get(client, plan["id"]))["Quote"]
-        assert step["artifact"] == "approved text" and step["status"] == "validated"
-        assert any("Not applied" in m["content"] and "validated" in m["content"] for m in msgs)
+        assert step["artifact"] == "New take" and step["status"] == "to_validate"
+        assert any("reopened" in m["content"] for m in msgs)
+        versions = client.get(f"/api/steps/{sid}/versions").json()
+        assert "approved text" in [v["content"] for v in versions]
 
 
 def test_asking_in_the_consolidation_chat_saves_a_provisional_draft(
@@ -1790,3 +1792,24 @@ def test_a_step_answered_with_questions_is_retried_then_pauses_the_run(
         asked = [t for t in TURNS if "Do not ask questions" in (t["llm_prompt"] or "")]
         assert asked, "the step was not asked a second time"
         assert not (done.get("final_output") or "").strip()
+
+
+def test_a_step_naming_a_skill_is_told_to_load_it() -> None:
+    from precursor.backend.services.skills import ResolvedSkill, skills_prompt
+
+    def skill(name: str, active: bool = True) -> ResolvedSkill:
+        return ResolvedSkill(
+            name=name,
+            description=f"{name} things",
+            instructions="x",
+            enabled=active,
+            legacy=False,
+            active=active,
+        )
+
+    skills = [skill("deckforge"), skill("rewrite"), skill("idle", active=False)]
+    block = skills_prompt(skills, context="Use the DeckForge skill to build an HTML deck")
+    assert "- deckforge: deckforge things" in block and "idle" not in block
+    assert "names the skill(s) deckforge" in block and "rewrite:" in block
+    assert "names the skill" not in skills_prompt(skills, context="write a rewrite-free deck")
+    assert skills_prompt([], context="deckforge") == ""

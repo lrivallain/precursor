@@ -46,7 +46,8 @@ def _live(plan: StepPlan) -> bool:
 
 _NO_QUESTIONS = (
     "Do not ask questions or offer options: write the deliverable now, marked as a "
-    "deliverable, from the plan's ask and what is already known."
+    "deliverable, from the plan's ask and what is already known. Use your tools and "
+    "skills if the step calls for them; do not imitate their output by hand."
 )
 
 
