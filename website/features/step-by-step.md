@@ -241,14 +241,21 @@ output that names a file that doesn't exist, or doesn't give the path of the fil
 (pasting the content instead), is rebuilt once with the real paths. If it is still failing, the plan
 is left for your review and nothing is filed in the topic.
 
-The assessor can also **look for itself**. When the step built a file or ran tool calls, it gets
-three read-only tools: list the files the step built, read one (a Word, PowerPoint, Excel, HTML or
-text file is turned into text, paged for long files), and re-read the full output of a numbered tool
-call. It can only open files a tool of the plan mentioned or that sit in that plan's workspace
-folder, never hidden folders, and it is told that file text is data, not instructions. It has a
-small round budget; if the model doesn't support tools or the loop fails, the assessment falls back
-to the plain judgement. What it opened is listed in the panel under **Checked with tools**, and the
-measured caps above still apply on top of its verdict.
+The assessor can also **look for itself**. When the step built a file or ran tool calls, it can list
+the files the step built, read one (a Word, PowerPoint, Excel, HTML or text file is turned into text,
+paged for long files), and re-read the full output of a numbered tool call. It can only open files a
+tool of the plan mentioned or that sit in that plan's workspace folder, never hidden folders, and it
+is told that file text is data, not instructions.
+
+For work that lives elsewhere, such as a mail draft, a GitHub issue or a web page, it also gets the
+app's MCP tools so it can check at the source. It is a reviewer: calls follow the source topic's
+approval policy, with autonomous treated as balanced. Read-only tools run; any other tool (including
+tools that don't declare a read-only hint) is **declined rather than parked for approval**, and the
+assessor notes it as an assumption, unless an [allow rule](./approvals.md) covers it. It has a
+10-round budget; if the model doesn't support tools or the loop fails, the assessment falls back to
+the plain judgement. What it opened or called is listed in the panel under **Checked with tools**
+(for example "Called workiq__get_draft" or "Declined workiq__send_mail"), and the measured caps above
+still apply on top of its verdict.
 
 A cover slide isn't counted against "N slides", and files the steps write in the app's own
 workspaces are read like any other. A step's artifact gives the file's path plus a short summary of

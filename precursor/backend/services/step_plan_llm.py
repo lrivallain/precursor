@@ -38,6 +38,7 @@ from precursor.backend.models.step_plan import (
 from precursor.backend.schemas.conversation_llm import ConversationLLMSelection
 from precursor.backend.schemas.message import MessageRead
 from precursor.backend.schemas.step_plan import Assessment, AssessmentCheck, StepCreate
+from precursor.backend.services import approvals as approval_service
 from precursor.backend.services import step_assessor_tools, step_evidence
 from precursor.backend.services import step_plans as svc
 from precursor.backend.services.compaction import render_transcript
@@ -680,33 +681,40 @@ async def _assess_or_trace(
 ) -> Assessment:
     """Run an assessment call; a failure closes the "Assessing…" note in the chat.
 
-    With a file or tool output to look at, the assessor gets read-only tools to
-    check it; if that tool-using call fails the plain one-shot judgement still runs.
+    The assessor can check the work itself: the files and tool outputs of the draft,
+    and the same MCP tools a chat has (a mail draft is looked up in the mailbox)
+    under the plan's approval policy. If that tool-using call fails the plain
+    one-shot judgement still runs.
     """
     try:
-        inspector = (
-            step_assessor_tools.Inspector(evidence.files, evidence.outputs)
-            if evidence is not None
-            else None
+        inspector = step_assessor_tools.Inspector(
+            evidence.files if evidence is not None else [],
+            evidence.outputs if evidence is not None else [],
         )
-        if inspector is not None and inspector.useful:
-            try:
-                result = await complete_with_tools(
-                    session,
-                    system=system + step_assessor_tools.TOOLS_NOTE,
-                    user=user,
-                    usage_source=USAGE_SOURCE,
-                    tools=step_assessor_tools.TOOLS,
-                    run_tool=inspector.run,
-                    max_rounds=step_assessor_tools.MAX_ROUNDS,
-                    topic_id=plan.source_topic_id,
-                    **_selection_kwargs(plan),
-                )
-                assessment = parse_assessment(result.text.strip())
-                assessment.inspected = inspector.log
-                return assessment
-            except Exception:
-                log.warning("The assessor's tool call failed; judging without tools", exc_info=True)
+        try:
+            gate = (
+                await approval_service.build_gate(session, "topic", plan.source_topic_id)
+                if plan.source_topic_id is not None
+                else None
+            )
+            async with step_assessor_tools.toolbox(session, inspector, gate) as box:
+                if inspector.useful or box.mcp_tools:
+                    result = await complete_with_tools(
+                        session,
+                        system=system + step_assessor_tools.TOOLS_NOTE,
+                        user=user,
+                        usage_source=USAGE_SOURCE,
+                        tools=box.tools,
+                        run_tool=box.run,
+                        max_rounds=box.max_rounds,
+                        topic_id=plan.source_topic_id,
+                        **_selection_kwargs(plan),
+                    )
+                    assessment = parse_assessment(result.text.strip())
+                    assessment.inspected = inspector.log
+                    return assessment
+        except Exception:
+            log.warning("The assessor's tool call failed; judging without tools", exc_info=True)
         return parse_assessment(await _complete(session, plan, system=system, user=user))
     except Exception:
         await trace_in_chat(session, chat_id, "The assessment didn't complete. Try it again.")
