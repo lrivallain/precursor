@@ -128,39 +128,73 @@ export function StepPlanCard({ planId }: { planId: number }) {
       )}
 
       {expanded && (
-        <ul className="mt-2 space-y-1" aria-label={`Steps of ${plan.title}`}>
-          {nodes.map(({ step, depth }) => {
-            const status = displayStatus(step);
-            const drafting = step.id === plan.auto_step_id && running;
-            return (
-              <li
-                key={step.id}
-                className={`flex min-w-0 items-center gap-2 text-sm ${status === "suggested" ? "opacity-60" : ""}`}
-                style={{ paddingLeft: depth * 16 }}
-                data-status={status}
-              >
-                {drafting ? (
-                  <Loader2 size={14} className="shrink-0 animate-spin text-sky-500" aria-label="Drafting" />
-                ) : status === "approved" ? (
-                  <CheckCircle2 size={14} className="shrink-0 text-emerald-500" aria-label="Approved" />
-                ) : (
-                  <span
-                    className={`mx-[5px] h-[9px] w-[9px] shrink-0 rounded-full ${DISPLAY_STATUS_DOT[status]}`}
-                    role="img"
-                    aria-label={DISPLAY_STATUS_LABEL[status]}
-                  />
-                )}
-                <span
-                  className={`min-w-0 flex-1 truncate ${status === "skipped" ? "text-muted line-through" : "text-fg"}`}
-                  data-tooltip={step.title}
+        <div className="mt-2">
+          <div className="relative flex items-center gap-2 py-0.5 text-sm font-medium text-fg">
+            <span className="absolute bottom-0 left-[7px] top-1/2 w-px bg-border" aria-hidden />
+            <span className="relative mx-[3px] h-[9px] w-[9px] shrink-0 rounded-full border-2 border-accent bg-bg" aria-hidden />
+            <span className="min-w-0 flex-1 truncate" data-tooltip={plan.title}>
+              {plan.title}
+            </span>
+          </div>
+          <ul aria-label={`Steps of ${plan.title}`}>
+            {nodes.map(({ step, depth }, i) => {
+              const status = displayStatus(step);
+              const drafting = step.id === plan.auto_step_id && running;
+              const continues = (level: number) => {
+                for (let j = i + 1; j < nodes.length; j++) {
+                  if (nodes[j].depth < level) return false;
+                  if (nodes[j].depth === level) return true;
+                }
+                return false;
+              };
+              return (
+                <li
+                  key={step.id}
+                  className={`relative flex min-w-0 items-center gap-2 py-0.5 text-sm ${status === "suggested" ? "opacity-60" : ""}`}
+                  style={{ paddingLeft: (depth + 1) * 16 }}
+                  data-status={status}
                 >
-                  {step.title}
-                </span>
-                {step.assessment && <ScoreChip assessment={step.assessment} stale={step.assessment_stale} />}
-              </li>
-            );
-          })}
-        </ul>
+                  {Array.from({ length: depth + 1 }, (_, level) => {
+                    const own = level === depth;
+                    const through = continues(level);
+                    if (!own && !through) return null;
+                    return (
+                      <span
+                        key={level}
+                        className={`absolute left-0 top-0 w-px bg-border ${own && !through ? "h-1/2" : "h-full"}`}
+                        style={{ left: level * 16 + 7 }}
+                        aria-hidden
+                      />
+                    );
+                  })}
+                  <span
+                    className="absolute top-1/2 h-px bg-border"
+                    style={{ left: depth * 16 + 7, width: 9 }}
+                    aria-hidden
+                  />
+                  {drafting ? (
+                    <Loader2 size={14} className="relative shrink-0 animate-spin text-sky-500" aria-label="Drafting" />
+                  ) : status === "approved" ? (
+                    <CheckCircle2 size={14} className="relative shrink-0 rounded-full bg-bg text-emerald-500" aria-label="Approved" />
+                  ) : (
+                    <span
+                      className={`relative mx-[5px] h-[9px] w-[9px] shrink-0 rounded-full ${DISPLAY_STATUS_DOT[status]}`}
+                      role="img"
+                      aria-label={DISPLAY_STATUS_LABEL[status]}
+                    />
+                  )}
+                  <span
+                    className={`min-w-0 flex-1 truncate ${status === "skipped" ? "text-muted line-through" : "text-fg"}`}
+                    data-tooltip={step.title}
+                  >
+                    {step.title}
+                  </span>
+                  {step.assessment && <ScoreChip assessment={step.assessment} stale={step.assessment_stale} />}
+                </li>
+              );
+            })}
+          </ul>
+        </div>
       )}
 
       <div className="mt-2.5 flex items-center justify-between gap-2">
