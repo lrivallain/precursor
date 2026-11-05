@@ -145,6 +145,25 @@ async def test_collect_hands_the_assessor_the_files_and_outputs(tmp_path: Path) 
     assert step_evidence.inspect_file(str(deck), produced=False, asked=None).files == []
 
 
+def test_a_workspace_deep_link_is_read_as_the_workspaces_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from precursor.backend.config import get_settings
+
+    root = tmp_path / "workspaces"
+    (root / "brief").mkdir(parents=True)
+    page = root / "brief" / "brief.html"
+    page.write_text("<html><body><h1>Brief</h1></body></html>")
+    monkeypatch.setitem(get_settings().__dict__, "workspaces_dir", str(root.resolve()))
+    ev = step_evidence.inspect_file("/ws/brief/brief.html", produced=True, asked=None)
+    assert ev.cap is None and ev.files == [str(page.resolve())]
+    assert step_evidence.existing_paths(["Saved to /ws/brief/brief.html"]) == [
+        "/ws/brief/brief.html"
+    ]
+    gone = step_evidence.inspect_file("/ws/brief/nope.html", produced=True, asked=None)
+    assert gone.cap is not None
+
+
 def _plan() -> Any:
     return SimpleNamespace(source_topic_id=None, llm_selection=None)
 

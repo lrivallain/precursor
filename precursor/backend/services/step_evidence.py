@@ -131,6 +131,17 @@ class _Page(HTMLParser):
             self.titles.append(data.strip())
 
 
+def _local_path(raw: str) -> Path:
+    """The file a claimed path names, reading the app's ``/ws/<slug>/<file>`` link as
+    that workspace's file: a step that wrote into a workspace cites the link tools return."""
+    path = Path(raw).expanduser()
+    if raw.startswith("/ws/") and not path.exists():
+        linked = Path(get_settings().workspaces_dir, *Path(raw).parts[2:])
+        if linked.is_file():
+            return linked
+    return path
+
+
 def _visible(path: Path) -> bool:
     # The app's own workspaces live under a data dir that may itself be hidden.
     workspaces = Path(get_settings().workspaces_dir)
@@ -215,7 +226,7 @@ def inspect_file(raw: str, *, produced: bool, asked: int | None, claimed: bool =
     model-supplied path can't make the app send an unrelated file to the provider.
     """
     ev = Evidence()
-    path = Path(raw).expanduser()
+    path = _local_path(raw)
     try:
         info = path.stat() if path.is_file() else None
     except OSError:
@@ -258,7 +269,7 @@ def existing_paths(texts: list[str]) -> list[str]:
     for text in texts:
         for match in PATH_RE.finditer(text):
             raw = match.group(1)
-            if raw not in found and Path(raw).expanduser().is_file():
+            if raw not in found and _local_path(raw).is_file():
                 found.append(raw)
     return found[:_MAX_PATHS]
 
