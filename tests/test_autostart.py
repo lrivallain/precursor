@@ -282,16 +282,20 @@ class _FakeLaunchctl:
         self._linger = linger
         self.calls: list[str] = []
         self.bootstrapped_while_loaded = False
+        self._unloading = False
 
     def run(self, cmd: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
         verb = cmd[1] if cmd[:1] == ["launchctl"] else cmd[0]
         self.calls.append(verb)
         if verb == "bootout":
             # Asks the job to stop, and returns before it has.
+            self._unloading = True
             return subprocess.CompletedProcess(cmd, 0 if self.loaded else 3, stdout="", stderr="")
         if verb == "print":
             if not self.loaded:
                 return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="")
+            if not self._unloading:
+                return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
             if self._linger is None or self._linger > 0:
                 if self._linger is not None:
                     self._linger -= 1
@@ -305,6 +309,7 @@ class _FakeLaunchctl:
                     cmd, 5, stdout="", stderr="Bootstrap failed: 5: Input/output error"
                 )
             self.loaded = True
+            self._unloading = False
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
@@ -316,6 +321,97 @@ def _darwin(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(autostart.os, "getuid", lambda: 501, raising=False)
     monkeypatch.setattr(autostart.time, "sleep", lambda _s: None)
     monkeypatch.setattr(autostart.shutil, "which", lambda name: f"/opt/bin/{name}")
+
+
+@pytest.mark.parametrize("unit", autostart.UNITS, ids=lambda unit: unit.key)
+@pytest.mark.parametrize("fmt", [plistlib.FMT_XML, plistlib.FMT_BINARY])
+def test_install_leaves_an_unchanged_loaded_job_alone(
+    monkeypatch: pytest.MonkeyPatch, _darwin: None, unit: autostart.Unit, fmt: plistlib.PlistFormat
+) -> None:
+    fake = _FakeLaunchctl(loaded=False)
+    monkeypatch.setattr(autostart.subprocess, "run", fake.run)
+    autostart.install(unit)
+    path = autostart._target_path(unit)
+    assert path is not None
+    content = plistlib.dumps(plistlib.loads(path.read_bytes()), fmt=fmt, sort_keys=False)
+    path.write_bytes(content)
+    before = path.stat()
+    fake.calls.clear()
+
+    installed = autostart.install(unit)
+
+    assert installed.installed is True
+    assert installed.unit == unit.key
+    assert installed.kind == "launchd"
+    assert fake.calls == ["print"]
+    assert fake.loaded is True
+    assert path.read_bytes() == content
+    assert path.stat().st_mtime_ns == before.st_mtime_ns
+    assert path.stat().st_ino == before.st_ino
+
+
+@pytest.mark.parametrize("unit", autostart.UNITS, ids=lambda unit: unit.key)
+def test_install_reloads_an_unchanged_but_unloaded_job(
+    monkeypatch: pytest.MonkeyPatch, _darwin: None, unit: autostart.Unit
+) -> None:
+    path = autostart._target_path(unit)
+    assert path is not None
+    autostart._write_launchd(unit, path)
+    before = path.stat()
+    fake = _FakeLaunchctl(loaded=False)
+    monkeypatch.setattr(autostart.subprocess, "run", fake.run)
+
+    assert autostart.install(unit).installed is True
+
+    assert fake.calls[-1] == "bootstrap"
+    assert fake.loaded is True
+    assert path.stat().st_mtime_ns == before.st_mtime_ns
+
+
+@pytest.mark.parametrize("unit", autostart.UNITS, ids=lambda unit: unit.key)
+@pytest.mark.parametrize("change", ["command", "environment", "working-directory"])
+def test_install_replaces_a_changed_loaded_job(
+    monkeypatch: pytest.MonkeyPatch, _darwin: None, unit: autostart.Unit, change: str
+) -> None:
+    path = autostart._target_path(unit)
+    assert path is not None
+    autostart._write_launchd(unit, path)
+    desired = plistlib.loads(path.read_bytes())
+    old = dict(desired)
+    if change == "command":
+        old["ProgramArguments"] = ["/old/bin/precursor-ai", *unit.args]
+    elif change == "environment":
+        old["EnvironmentVariables"] = {"PATH": "/old/bin"}
+    else:
+        old["WorkingDirectory"] = "/old/data"
+    path.write_bytes(plistlib.dumps(old))
+    fake = _FakeLaunchctl(loaded=True, linger=3)
+    monkeypatch.setattr(autostart.subprocess, "run", fake.run)
+
+    assert autostart.install(unit).installed is True
+
+    assert fake.calls[0] == "bootout"
+    assert fake.calls[-1] == "bootstrap"
+    assert fake.bootstrapped_while_loaded is False
+    assert fake.loaded is True
+    assert plistlib.loads(path.read_bytes()) == desired
+
+
+@pytest.mark.parametrize("content", [b"not a plist", b"<plist/>", b"<?xml broken"])
+def test_install_repairs_a_malformed_plist(
+    monkeypatch: pytest.MonkeyPatch, _darwin: None, content: bytes
+) -> None:
+    path = autostart._target_path(autostart.APP)
+    assert path is not None
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(content)
+    fake = _FakeLaunchctl(loaded=False)
+    monkeypatch.setattr(autostart.subprocess, "run", fake.run)
+
+    assert autostart.install().installed is True
+
+    assert plistlib.loads(path.read_bytes())["Label"] == autostart.APP.label
+    assert fake.loaded is True
 
 
 def test_install_waits_for_the_old_job_before_loading_the_new_one(

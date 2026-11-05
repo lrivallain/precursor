@@ -15,6 +15,10 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Changed
 
+- **macOS: idempotent login-item installation.** Repeating `precursor service
+  install` preserves an unchanged plist and leaves an already-loaded app or tray
+  job alone, avoiding unnecessary background-item re-registration notifications.
+  Unloaded jobs are loaded again, and changed configurations are still replaced.
 - **Settings: save without closing.** Saving keeps the panel open on the current
   category with a confirmation. Closing only warns about edits made since the
   last successful save; failed saves keep your changes available to retry.
