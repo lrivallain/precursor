@@ -16,7 +16,7 @@ import asyncio
 import json
 import logging
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -629,6 +629,8 @@ class ToolResultTurn:
     # offer a link to it without parsing ``result_text`` — which for a read
     # embeds the whole file. None for every other tool.
     link: dict[str, Any] | None = None
+    # The approval gate refused the call and the loop answered it instead of parking.
+    declined: bool = False
 
 
 @dataclass(slots=True)
@@ -823,6 +825,10 @@ async def run_tool_loop(
     max_tool_result_tokens: int,
     auth_wait_timeout: float = AUTH_PAUSE_TIMEOUT_SECONDS,
     gate: approval_service.ApprovalGate | None = None,
+    extra_tools: Sequence[ToolDef] = (),
+    run_extra: Callable[[Any], Awaitable[str]] | None = None,
+    decline_note: str | None = None,
+    wrap_up: str | None = None,
 ) -> AsyncIterator[TurnEvent]:
     """Drive the provider + MCP tool loop, yielding semantic turn events.
 
@@ -842,11 +848,22 @@ async def run_tool_loop(
     round's other calls ran, an :class:`ApprovalsRequested` event is yielded and
     the loop ends, leaving the turn parked until the user decides. ``None`` runs
     every call, as workspace chat does.
+
+    The remaining options serve a caller that nobody can answer, such as the step
+    assessor: ``decline_note`` answers a held call with "Not run: <why> <note>"
+    instead of parking the turn (and ``request_approval`` is not offered);
+    ``extra_tools`` are local tools ``run_extra`` executes, shadowing an MCP tool
+    of the same name; ``wrap_up`` is a last instruction sent with the tools
+    withdrawn on the final round, so the model answers instead of hitting the cap.
     """
     tool_to_server = active.tool_to_server  # qualified -> (server, raw_name)
-    provider_tools = mcp_tools_to_provider(active.tools)
+    extra_names = {t.name for t in extra_tools}
+    provider_tools = [
+        *extra_tools,
+        *(t for t in mcp_tools_to_provider(active.tools) if t.name not in extra_names),
+    ]
     tool_defs = {t.qualified_name: t for t in active.tools}
-    if gate is not None and gate.offers_intent:
+    if gate is not None and gate.offers_intent and decline_note is None:
         provider_tools = [*provider_tools, approval_service.REQUEST_APPROVAL_DEF]
         system_prompt = f"{system_prompt}\n\n{approval_service.APPROVAL_PROMPT}"
 
@@ -857,6 +874,9 @@ async def run_tool_loop(
     ]
 
     for _round in range(max_tool_rounds):
+        last_round = wrap_up is not None and _round == max_tool_rounds - 1
+        if last_round:
+            messages.append(ChatMessage(role="user", content=wrap_up or ""))
         text_chunks: list[str] = []
         reasoning_chunks: list[str] = []
         tool_calls: list[Any] = []
@@ -869,7 +889,7 @@ async def run_tool_loop(
                 max_input_tokens=max_input_tokens,
                 per_message_max_tokens=max_tool_result_tokens,
             ),
-            tools=provider_tools,
+            tools=[] if last_round else provider_tools,
             reasoning_effort=reasoning_effort,
         ):
             if isinstance(event, TextDeltaEvent):
@@ -928,7 +948,20 @@ async def run_tool_loop(
         parked: list[approval_service.PendingCall] = []
         for call in tool_calls:
             server_lookup = tool_to_server.get(call.name)
-            if gate is not None and call.name == approval_service.REQUEST_APPROVAL_TOOL:
+            if run_extra is not None and call.name in extra_names:
+                extra_result = await run_extra(call)
+                yield ToolResultTurn(call, extra_result, False, None)
+                messages.append(
+                    ChatMessage(
+                        role="tool", content=extra_result, tool_call_id=call.id, name=call.name
+                    )
+                )
+                continue
+            if (
+                gate is not None
+                and call.name == approval_service.REQUEST_APPROVAL_TOOL
+                and decline_note is None
+            ):
                 if gate.offers_intent:
                     parked.append(approval_service.intent_pending(call.id, call.arguments))
                     continue
@@ -942,6 +975,15 @@ async def run_tool_loop(
                 )
                 if verdict.rule_id is not None:
                     await approval_rules_service.touch_rule(verdict.rule_id)
+                if verdict.reason is not None and decline_note is not None:
+                    declined = f"Not run: {verdict.reason} {decline_note}"
+                    yield ToolResultTurn(call, declined, True, None, declined=True)
+                    messages.append(
+                        ChatMessage(
+                            role="tool", content=declined, tool_call_id=call.id, name=call.name
+                        )
+                    )
+                    continue
                 if verdict.reason is not None:
                     parked.append(
                         approval_service.PendingCall(

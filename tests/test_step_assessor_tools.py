@@ -15,9 +15,21 @@ from fastapi.testclient import TestClient
 from precursor.backend.db import SessionLocal
 from precursor.backend.main import create_app
 from precursor.backend.schemas.step_plan import Assessment
+from precursor.backend.services import (
+    approval_rules,
+    step_assessor_tools,
+    step_evidence,
+    step_plan_llm,
+    turn_engine,
+)
 from precursor.backend.services import approvals as approval_service
-from precursor.backend.services import step_assessor_tools, step_evidence, step_plan_llm
-from precursor.backend.services.llm.base import ToolCallRequest
+from precursor.backend.services.conversation_turn import TurnSettings
+from precursor.backend.services.llm.base import (
+    TextDeltaEvent,
+    ToolCallRequest,
+    ToolCallsEvent,
+    TurnDoneEvent,
+)
 from precursor.backend.services.llm.one_shot import OneShotResult
 from precursor.backend.services.mcp.client import MCPToolDef
 from precursor.backend.services.step_assessor_tools import Inspector
@@ -152,14 +164,45 @@ def _mail_tools() -> list[MCPToolDef]:
     return [
         MCPToolDef("workiq", "get_draft", "Read a draft", schema, read_only=True),
         MCPToolDef("workiq", "send_mail", "Send", schema, read_only=False),
-        MCPToolDef("workiq", "read_file", "Shadow", schema, read_only=True),
     ]
 
 
+class _Script:
+    """A provider that plays one scripted round per call and records what it was given."""
+
+    name = "scripted"
+
+    def __init__(self, rounds: list[list[ToolCallRequest] | str]) -> None:
+        self.rounds = list(rounds)
+        self.tools_seen: list[list[str]] = []
+        self.messages_seen: list[list[Any]] = []
+
+    async def stream_chat(self, **_: Any) -> Any:
+        yield ""
+
+    async def stream_chat_with_tools(self, *, messages: Any, tools: Any, **_: Any) -> Any:
+        self.tools_seen.append([t.name for t in tools])
+        self.messages_seen.append(list(messages))
+        step = self.rounds.pop(0)
+        if isinstance(step, str):
+            yield TextDeltaEvent(content=step)
+        else:
+            yield ToolCallsEvent(calls=step)
+        yield TurnDoneEvent(finish_reason="stop")
+
+    async def list_models(self) -> list[Any]:
+        return []
+
+
 @pytest.fixture
-def mail(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
-    """A fake MCP manager serving a mailbox, recording what actually ran."""
-    seen: dict[str, Any] = {"ran": [], "active": _Active(_mail_tools())}
+def chat(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    """A fake MCP manager serving a mailbox plus the chat settings it runs with."""
+    seen: dict[str, Any] = {
+        "ran": [],
+        "active": _Active(_mail_tools()),
+        "gate": approval_service.ApprovalGate(policy=approval_service.POLICY_BALANCED),
+        "rounds": 6,
+    }
 
     class _Manager:
         @asynccontextmanager
@@ -167,21 +210,43 @@ def mail(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
             seen["servers"] = servers
             yield seen["active"]
 
-    async def _enabled(_session: Any) -> list[str]:
-        return ["workiq"]
-
-    async def _token(_session: Any) -> str:
-        return ""
+    async def _settings(_session: Any, **kwargs: Any) -> TurnSettings:
+        seen["resolved"] = kwargs
+        return TurnSettings(
+            model="m",
+            reasoning_effort="",
+            max_tool_rounds=seen["rounds"],
+            max_input_tokens=100_000,
+            max_tool_result_tokens=10_000,
+            provider=seen["provider"],
+            github_token="",
+            enabled_servers=["workiq"],
+            gate=seen["gate"],
+        )
 
     async def _execute(_active: Any, call: ToolCallRequest, _wait: float) -> Any:
         seen["ran"].append(call.name)
         yield ToolResultTurn(call, "Subject: Q3 plan", False, None)
 
     monkeypatch.setattr(step_assessor_tools, "get_mcp_client_manager", lambda: _Manager())
-    monkeypatch.setattr(step_assessor_tools, "load_enabled_mcp_servers", _enabled)
-    monkeypatch.setattr(step_assessor_tools, "resolve_github_token", _token)
-    monkeypatch.setattr(step_assessor_tools, "execute_tool_call", _execute)
+    monkeypatch.setattr(step_assessor_tools, "resolve_turn_settings", _settings)
+    monkeypatch.setattr(turn_engine, "execute_tool_call", _execute)
     return seen
+
+
+async def _review(
+    inspector: Inspector, *, chat_id: int | None = 7, topic_id: int | None = None
+) -> str | None:
+    async with SessionLocal() as session:
+        return await step_assessor_tools.review_with_chat_tools(
+            session,
+            chat_id=chat_id,
+            topic_id=topic_id,
+            system="SYS",
+            user="usr",
+            inspector=inspector,
+            usage_source="step_assessment",
+        )
 
 
 def test_the_assessor_gate_is_never_looser_than_balanced() -> None:
@@ -193,102 +258,122 @@ def test_the_assessor_gate_is_never_looser_than_balanced() -> None:
     assert step_assessor_tools.assessor_gate(manual) is manual
 
 
-async def test_the_assessor_gets_the_apps_mcp_tools_and_reads_but_never_changes(
-    mail: dict[str, Any],
+async def test_the_assessor_reads_with_a_chats_tools_but_never_changes(
+    chat: dict[str, Any],
 ) -> None:
+    chat["provider"] = provider = _Script(
+        [
+            [
+                ToolCallRequest("1", "workiq__get_draft", "{}"),
+                ToolCallRequest("2", "workiq__send_mail", "{}"),
+            ],
+            _VERDICT,
+        ]
+    )
+    # The plan is "autonomous": the assessor must still treat it as balanced.
+    chat["gate"] = approval_service.ApprovalGate(policy=approval_service.POLICY_AUTONOMOUS)
     inspector = Inspector([], [])
-    async with (
-        SessionLocal() as session,
-        step_assessor_tools.toolbox(session, inspector, None) as box,
-    ):
-        names = [t.name for t in box.tools]
-        assert names[:3] == ["list_files", "read_file", "read_tool_output"]
-        assert "workiq__get_draft" in names and "workiq__send_mail" in names
-        # An MCP tool never shadows one of the file tools.
-        assert names.count("read_file") == 1 and "workiq__read_file" in names
-        assert box.mcp_tools == 3 and box.max_rounds == step_assessor_tools.MAX_ROUNDS_WITH_MCP
+    assert await _review(inspector) == _VERDICT
 
-        read = await box.run(_call("workiq__get_draft"))
-        assert read == "Subject: Q3 plan"
-        sent = await box.run(_call("workiq__send_mail"))
-        assert sent.startswith("Not run:") and "assumptions" in sent
-        assert "Unknown tool" in await box.run(_call("nope"))
-    assert mail["ran"] == ["workiq__get_draft"] and box.declined == ["workiq__send_mail"]
-    assert mail["servers"] == ["workiq"]
-    assert "precursor" in mail["active"].restricted
-    assert "write_file" not in mail["active"].restricted["precursor"]
+    assert chat["ran"] == ["workiq__get_draft"]
+    assert chat["resolved"] == {"chat_id": 7, "topic_id": None}
+    assert chat["servers"] == ["workiq"]
+    assert "precursor" in chat["active"].restricted
+    assert "write_file" not in chat["active"].restricted["precursor"]
+    first = provider.tools_seen[0]
+    assert first[:3] == ["list_files", "read_file", "read_tool_output"]
+    assert "workiq__get_draft" in first and "workiq__send_mail" in first
+    assert approval_service.REQUEST_APPROVAL_TOOL not in first
+    answered = [m.content for m in provider.messages_seen[1] if m.role == "tool"]
+    assert answered[0] == "Subject: Q3 plan" and answered[1].startswith("Not run:")
+    assert "assumptions" in answered[1]
     assert inspector.log == [
         "Called workiq__get_draft (workiq): ok",
         "Declined workiq__send_mail (workiq): needs approval",
     ]
 
 
-async def test_an_allow_rule_lets_the_assessor_run_a_change(mail: dict[str, Any]) -> None:
-    from precursor.backend.services import approval_rules
+async def test_a_topic_without_a_step_chat_resolves_from_the_topic(chat: dict[str, Any]) -> None:
+    chat["provider"] = _Script([_VERDICT])
+    await _review(Inspector([], []), chat_id=None, topic_id=3)
+    assert chat["resolved"] == {"chat_id": None, "topic_id": 3}
 
+
+async def test_an_allow_rule_lets_the_assessor_run_a_change(chat: dict[str, Any]) -> None:
     rule = approval_rules.CompiledRule(
         id=1, effect=approval_service.RULE_ALLOW, server="workiq", tool="send_*"
     )
-    gate = approval_service.ApprovalGate(policy=approval_service.POLICY_AUTONOMOUS, rules=(rule,))
-    async with (
-        SessionLocal() as session,
-        step_assessor_tools.toolbox(session, Inspector([], []), gate) as box,
-    ):
-        assert await box.run(_call("workiq__send_mail")) == "Subject: Q3 plan"
-    assert mail["ran"] == ["workiq__send_mail"]
+    chat["gate"] = approval_service.ApprovalGate(
+        policy=approval_service.POLICY_AUTONOMOUS, rules=(rule,)
+    )
+    chat["provider"] = _Script([[ToolCallRequest("1", "workiq__send_mail", "{}")], _VERDICT])
+    assert await _review(Inspector([], [])) == _VERDICT
+    assert chat["ran"] == ["workiq__send_mail"]
 
 
-async def test_the_assessor_opens_the_file_and_the_panel_lists_what_it_checked(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+async def test_the_assessor_opens_the_file_through_the_loop(
+    chat: dict[str, Any], tmp_path: Path
 ) -> None:
     doc = _docx(tmp_path / "runbook.docx").resolve()
-    seen: dict[str, Any] = {}
-
-    async def _with_tools(
-        _session: Any, *, system: str, run_tool: Any, tools: Any, **_: Any
-    ) -> Any:
-        seen["system"], seen["tools"] = system, [t.name for t in tools]
-        seen["file"] = await run_tool(_call("read_file", path=str(doc)))
-        return OneShotResult(text=_VERDICT, model="m", usage=None)
-
-    monkeypatch.setattr(step_plan_llm, "complete_with_tools", _with_tools)
-    ev = step_evidence.Evidence(files=[str(doc)])
-    async with SessionLocal() as session:
-        a = await step_plan_llm._assess_or_trace(session, _plan(), "SYS", "usr", None, ev)
-    assert a.score == 81 and "Runbook" in seen["file"]
-    assert seen["tools"] == ["list_files", "read_file", "read_tool_output"]
-    assert "never change anything" in seen["system"]
-    assert a.inspected and "runbook.docx" in a.inspected[0]
+    chat["provider"] = provider = _Script(
+        [[ToolCallRequest("1", "read_file", json.dumps({"path": str(doc)}))], _VERDICT]
+    )
+    chat["active"] = _Active([])
+    inspector = Inspector([str(doc)], [])
+    assert await _review(inspector) == _VERDICT
+    tool_msg = next(m.content for m in provider.messages_seen[1] if m.role == "tool")
+    assert "Runbook" in tool_msg
+    assert chat["ran"] == []
 
 
-async def test_a_draft_with_no_file_is_still_checked_with_the_apps_tools(
-    monkeypatch: pytest.MonkeyPatch, mail: dict[str, Any]
+async def test_without_a_file_or_a_server_tool_there_is_nothing_to_review_with(
+    chat: dict[str, Any],
 ) -> None:
-    async def _with_tools(_session: Any, *, run_tool: Any, tools: Any, **_: Any) -> Any:
-        assert "workiq__get_draft" in [t.name for t in tools]
-        await run_tool(_call("workiq__get_draft"))
-        return OneShotResult(text=_VERDICT, model="m", usage=None)
+    chat["provider"] = provider = _Script([])
+    chat["active"] = _Active([])
+    assert await _review(Inspector([], [])) is None
+    assert provider.tools_seen == []
 
-    monkeypatch.setattr(step_plan_llm, "complete_with_tools", _with_tools)
+
+async def test_the_last_round_withdraws_the_tools_so_the_assessor_answers(
+    chat: dict[str, Any],
+) -> None:
+    chat["rounds"] = 2
+    chat["provider"] = provider = _Script(
+        [[ToolCallRequest("1", "workiq__get_draft", "{}")], _VERDICT]
+    )
+    assert await _review(Inspector([], [])) == _VERDICT
+    assert provider.tools_seen[0] and provider.tools_seen[1] == []
+    assert provider.messages_seen[1][-1].content == step_assessor_tools.WRAP_UP
+
+
+async def test_the_assessor_judges_from_the_loops_answer_and_lists_what_it_checked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _loop(_session: Any, *, system: str, inspector: Inspector, **_: Any) -> str:
+        assert "never change anything" in system
+        inspector._note("Called workiq__get_draft (workiq): ok")
+        return _VERDICT
+
+    monkeypatch.setattr(step_assessor_tools, "review_with_chat_tools", _loop)
     async with SessionLocal() as session:
         a = await step_plan_llm._assess_or_trace(
             session, _plan(), "SYS", "usr", None, step_evidence.Evidence()
         )
     assert a.score == 81 and a.inspected == ["Called workiq__get_draft (workiq): ok"]
-    assert mail["ran"] == ["workiq__get_draft"]
 
 
-async def test_without_a_file_or_a_server_the_assessor_stays_tool_less(
+async def test_with_nothing_to_equip_the_assessor_stays_tool_less(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def _boom(*_a: Any, **_k: Any) -> Any:
-        raise AssertionError("no tools expected")
+    async def _loop(*_a: Any, **_k: Any) -> None:
+        return None
 
     async def _once(_session: Any, *, system: str, **_: Any) -> Any:
         assert system == "SYS"
         return OneShotResult(text=_VERDICT, model="m", usage=None)
 
-    monkeypatch.setattr(step_plan_llm, "complete_with_tools", _boom)
+    monkeypatch.setattr(step_assessor_tools, "review_with_chat_tools", _loop)
     monkeypatch.setattr(step_plan_llm, "complete_once", _once)
     async with SessionLocal() as session:
         a = await step_plan_llm._assess_or_trace(
@@ -306,7 +391,7 @@ async def test_a_failing_tool_call_falls_back_to_the_plain_judgement(
     async def _once(_session: Any, **_: Any) -> Any:
         return OneShotResult(text=_VERDICT, model="m", usage=None)
 
-    monkeypatch.setattr(step_plan_llm, "complete_with_tools", _boom)
+    monkeypatch.setattr(step_assessor_tools, "review_with_chat_tools", _boom)
     monkeypatch.setattr(step_plan_llm, "complete_once", _once)
     ev = step_evidence.Evidence(outputs=["tool said hi"])
     async with SessionLocal() as session:

@@ -18,12 +18,14 @@ are the per-version history; releasing does not rewrite this file.
 - **The assessor can inspect the work with tools.** It can list the step's files, read them (docx,
   pptx, xlsx, HTML and text are extracted to text, with paging) and re-read a numbered tool call's
   full output, limited to files the plan produced or its workspace folder, never hidden folders.
-  It also gets the app's own MCP tools (mailbox, GitHub, web, …) to verify the work at the source,
-  such as checking a mail draft through WorkIQ, within a 10-round budget. Calls follow the source
-  topic's approval policy, with autonomous treated as balanced: read-only tools run, anything else
-  is declined (never parked) unless an allow rule covers it, and the assessor reports it as an
-  assumption. Everything it opened or called shows under **Checked with tools**; if tools fail it
-  falls back to the plain judgement, and the measured caps still apply.
+  It runs through the same tool loop as a chat, with the step chat's model, per-run tool-use
+  budget, enabled MCP servers and approval rules, so it has a chat's tools (mailbox, GitHub, web,
+  workspace and skills…) to verify the work at the source, such as checking a mail draft through
+  WorkIQ. Nothing is persisted as a conversation. Autonomous is treated as balanced: read-only
+  tools run, anything else is declined (never parked) unless an allow rule covers it, and the
+  assessor reports it as an assumption. Its last round has the tools withdrawn so it answers.
+  Everything it opened or called shows under **Checked with tools**; if tools fail it falls back
+  to the plain judgement, and the measured caps still apply.
 - **Assessments verify file deliverables.** When a step's result is a file, the assessor gets
   measured facts (the file exists, slide count against the ask, parseable content, an excerpt) and
   a digest of the tool calls the draft ran, instead of a bare path. They show as **Verified by the

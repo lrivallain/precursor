@@ -247,15 +247,17 @@ paged for long files), and re-read the full output of a numbered tool call. It c
 tool of the plan mentioned or that sit in that plan's workspace folder, never hidden folders, and it
 is told that file text is data, not instructions.
 
-For work that lives elsewhere, such as a mail draft, a GitHub issue or a web page, it also gets the
-app's MCP tools so it can check at the source. It is a reviewer: calls follow the source topic's
-approval policy, with autonomous treated as balanced. Read-only tools run; any other tool (including
-tools that don't declare a read-only hint) is **declined rather than parked for approval**, and the
-assessor notes it as an assumption, unless an [allow rule](./approvals.md) covers it. It has a
-10-round budget; if the model doesn't support tools or the loop fails, the assessment falls back to
-the plain judgement. What it opened or called is listed in the panel under **Checked with tools**
-(for example "Called workiq__get_draft" or "Declined workiq__send_mail"), and the measured caps above
-still apply on top of its verdict.
+For work that lives elsewhere, such as a mail draft, a GitHub issue or a web page, it runs through
+the **same tool loop as a chat**, with the step chat's own model, per-run tool-use budget, enabled
+MCP servers and approval rules, so it has the same tools (including the workspace and skill tools)
+and can check at the source. Nothing is saved as a conversation. It is a reviewer: with
+autonomous treated as balanced, read-only tools run; any other tool (including tools that don't
+declare a read-only hint) is **declined rather than parked for approval**, and the assessor notes
+it as an assumption, unless an [allow rule](./approvals.md) covers it. On its last round the tools
+are withdrawn so it answers instead of running out of budget; if the model doesn't support tools or
+the loop fails, the assessment falls back to the plain judgement. What it opened or called is listed
+in the panel under **Checked with tools** (for example "Called workiq__get_draft" or "Declined
+workiq__send_mail"), and the measured caps above still apply on top of its verdict.
 
 A cover slide isn't counted against "N slides", and files the steps write in the app's own
 workspaces are read like any other. A step's artifact gives the file's path plus a short summary of

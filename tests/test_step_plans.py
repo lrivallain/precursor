@@ -59,7 +59,7 @@ def _fake_turns(monkeypatch: pytest.MonkeyPatch) -> None:
 def _fake_llm(monkeypatch: pytest.MonkeyPatch, replies: dict[str, str] | None = None) -> list[dict]:
     """Route ``complete_once`` by which system prompt asked; record every call."""
     _fake_turns(monkeypatch)
-    from precursor.backend.services import step_plan_llm
+    from precursor.backend.services import step_assessor_tools, step_plan_llm
     from precursor.backend.services.llm.base import UsageEvent
     from precursor.backend.services.llm.one_shot import OneShotResult
 
@@ -96,15 +96,17 @@ def _fake_llm(monkeypatch: pytest.MonkeyPatch, replies: dict[str, str] | None = 
             usage=UsageEvent(prompt_tokens=1, completion_tokens=1, total_tokens=2),
         )
 
-    async def _complete_with_tools(_session: Any, *, system: str, user: str, **kwargs: Any) -> Any:
-        # A model that opens nothing: same canned verdict as the tool-less call.
-        kwargs.pop("run_tool", None)
-        kwargs.pop("tools", None)
-        kwargs.pop("max_rounds", None)
-        return await _complete_once(_session, system=system, user=user, **kwargs)
+    async def _review(
+        _session: Any, *, system: str, user: str, inspector: Any, **kwargs: Any
+    ) -> Any:
+        # A model that opens nothing: same canned verdict as the tool-less call, and
+        # no tools at all when there is nothing to open.
+        if not inspector.useful:
+            return None
+        return (await _complete_once(_session, system=system, user=user)).text
 
     monkeypatch.setattr(step_plan_llm, "complete_once", _complete_once)
-    monkeypatch.setattr(step_plan_llm, "complete_with_tools", _complete_with_tools)
+    monkeypatch.setattr(step_assessor_tools, "review_with_chat_tools", _review)
     return calls
 
 

@@ -10,11 +10,12 @@ plan's own tools mentioned (plus the plan's workspace folder), never a hidden
 folder, and every result is bounded. File text is data to judge, never an
 instruction.
 
-On top of those file tools the assessor gets the same MCP tools a chat has (a mail
-draft is checked in the mailbox, an issue on GitHub…), under the plan's approval
-policy with one difference: it is a reviewer, so a call the policy would hold back
-for approval is declined with a message rather than parked, and an "autonomous"
-policy is treated as "balanced" (reads run, changes need an explicit allow rule).
+Beyond those file tools the assessor is run by the chat engine itself, with the step
+chat's settings and tools (a mail draft is checked in the mailbox, an issue on
+GitHub…), under that chat's approval policy with one difference: it is a reviewer, so
+a call the policy would hold back for approval is declined with a message rather than
+parked, and an "autonomous" policy is treated as "balanced" (reads run, changes need
+an explicit allow rule).
 """
 
 from __future__ import annotations
@@ -23,9 +24,6 @@ import json
 import logging
 import re
 import zipfile
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
 from html import unescape
 from pathlib import Path
 from typing import Any
@@ -35,21 +33,27 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from precursor.backend.config import get_settings
 from precursor.backend.services import approvals as approval_service
 from precursor.backend.services import step_evidence
-from precursor.backend.services.github_auth import resolve_github_token
-from precursor.backend.services.llm.base import ToolCallRequest, ToolDef
+from precursor.backend.services.conversation_turn import resolve_turn_settings
+from precursor.backend.services.llm.base import ChatMessage, ToolCallRequest, ToolDef
 from precursor.backend.services.mcp.client import get_mcp_client_manager
 from precursor.backend.services.turn_engine import (
+    AssistantFinalTurn,
+    AssistantToolCallsTurn,
     ToolResultTurn,
-    execute_tool_call,
-    load_enabled_mcp_servers,
     mcp_tools_to_provider,
+    record_round_usage,
+    run_tool_loop,
 )
-from precursor.backend.services.workspaces import WORKSPACE_READ_TOOLS
+from precursor.backend.services.workspaces import WORKSPACE_READ_TOOLS, WORKSPACE_WRITE_TOOLS
 
 log = logging.getLogger(__name__)
 
-MAX_ROUNDS = 6
-MAX_ROUNDS_WITH_MCP = 10
+DECLINE_NOTE = (
+    "A reviewer can't ask for approval, so judge without this call and list it under assumptions."
+)
+WRAP_UP = (
+    "You are out of tool calls. Answer now with the JSON verdict only, from what you verified."
+)
 _INSPECTOR_TOOLS = frozenset({"list_files", "read_file", "read_tool_output"})
 _SKILL_READ_TOOLS = frozenset({"list_skills", "get_skill"})
 _DEFAULT_CHARS = 6000
@@ -275,20 +279,8 @@ class Inspector:
         return f"Unknown tool '{call.name}'."
 
 
-@dataclass(slots=True)
-class Toolbox:
-    """The tool definitions the assessor sees and how a call to one is run."""
-
-    tools: list[ToolDef]
-    inspector: Inspector
-    run: Any
-    max_rounds: int = MAX_ROUNDS
-    mcp_tools: int = 0
-    declined: list[str] = field(default_factory=list)
-
-
 def assessor_gate(gate: approval_service.ApprovalGate | None) -> approval_service.ApprovalGate:
-    """The plan's gate, never looser than "balanced": a reviewer reads, it doesn't change."""
+    """The conversation's gate, never looser than "balanced": a reviewer reads, it doesn't change."""
     if gate is None:
         return approval_service.ApprovalGate(policy=approval_service.POLICY_BALANCED)
     if gate.policy == approval_service.POLICY_AUTONOMOUS:
@@ -298,65 +290,75 @@ def assessor_gate(gate: approval_service.ApprovalGate | None) -> approval_servic
     return gate
 
 
-@asynccontextmanager
-async def toolbox(
-    session: AsyncSession, inspector: Inspector, gate: approval_service.ApprovalGate | None
-) -> AsyncIterator[Toolbox]:
-    """The file tools plus the app's MCP tools, behind the assessor's gate.
+async def review_with_chat_tools(
+    session: AsyncSession,
+    *,
+    chat_id: int | None,
+    topic_id: int | None,
+    system: str,
+    user: str,
+    inspector: Inspector,
+    usage_source: str,
+) -> str | None:
+    """Answer ``user`` through the chat engine, with a chat's tools, and return the text.
 
-    A server that is unavailable just contributes no tools: the assessor still has
-    the file tools, and the caller falls back to a plain judgement if even that fails.
+    This is the step chat's own turn loop (``run_tool_loop``) with that chat's model,
+    round budget, result limits, enabled servers, approval policy and rules, and the
+    same tool set (the app's MCP servers plus the workspace and skill tools). Only
+    what a reviewer can't do differs: nothing is persisted, a call the gate holds is
+    declined instead of parked, and an "autonomous" policy counts as "balanced".
+    The file tools of the :class:`Inspector` ride along. ``None`` means there was
+    nothing to equip the assessor with, or it never gave an answer; the caller then
+    judges without tools.
     """
-    gate = assessor_gate(gate)
-    servers = await load_enabled_mcp_servers(session)
-    token = await resolve_github_token(session)
+    settings = await resolve_turn_settings(
+        session, chat_id=chat_id, topic_id=None if chat_id is not None else topic_id
+    )
+    gate = assessor_gate(settings.gate)
+    text: str | None = None
     async with get_mcp_client_manager().acquired(
-        servers, github_token=token, advertise_cached=True
+        settings.enabled_servers, github_token=settings.github_token, advertise_cached=True
     ) as active:
-        active.restrict_server_tools("precursor", WORKSPACE_READ_TOOLS | _SKILL_READ_TOOLS)
-        # The file tools keep their names, so an MCP tool can't shadow one.
-        mcp = [t for t in mcp_tools_to_provider(active.tools) if t.name not in _INSPECTOR_TOOLS]
-        defs = {t.qualified_name: t for t in active.tools}
-        box = Toolbox(
-            tools=[*TOOLS, *mcp],
-            inspector=inspector,
-            run=None,
-            max_rounds=MAX_ROUNDS_WITH_MCP if mcp else MAX_ROUNDS,
-            mcp_tools=len(mcp),
+        active.restrict_server_tools(
+            "precursor", WORKSPACE_READ_TOOLS | WORKSPACE_WRITE_TOOLS | _SKILL_READ_TOOLS
         )
-
-        async def run(call: ToolCallRequest) -> str:
-            if call.name in _INSPECTOR_TOOLS:
-                return await inspector.run(call)
-            lookup = active.tool_to_server.get(call.name)
-            if lookup is None:
-                return f"Unknown tool '{call.name}'."
-            server, raw = lookup
-            verdict = gate.check(
-                call.name, server, raw, defs.get(call.name), call.arguments or "{}"
-            )
-            if verdict.reason is not None:
-                box.declined.append(call.name)
-                inspector._note(f"Declined {call.name} ({server}): needs approval")
-                return (
-                    f"Not run: {verdict.reason} A reviewer can't ask for approval, so judge "
-                    "without this call and list it under assumptions."
+        if not inspector.useful and not any(
+            t.name not in _INSPECTOR_TOOLS for t in mcp_tools_to_provider(active.tools)
+        ):
+            return None
+        async for ev in run_tool_loop(
+            active=active,
+            provider=settings.provider,
+            model=settings.model,
+            reasoning_effort=settings.reasoning_effort,
+            system_prompt=system,
+            history=[ChatMessage(role="user", content=user)],
+            max_tool_rounds=settings.max_tool_rounds,
+            max_input_tokens=settings.max_input_tokens,
+            max_tool_result_tokens=settings.max_tool_result_tokens,
+            # Nobody is there to complete a sign-in, so a call that needs one fails fast.
+            auth_wait_timeout=0.0,
+            gate=gate,
+            extra_tools=TOOLS,
+            run_extra=inspector.run,
+            decline_note=DECLINE_NOTE,
+            wrap_up=WRAP_UP,
+        ):
+            if isinstance(ev, AssistantToolCallsTurn | AssistantFinalTurn):
+                await record_round_usage(
+                    ev.usage,
+                    model=ev.model or settings.model,
+                    source=usage_source,
+                    kind="topic" if topic_id is not None else None,
+                    container_id=topic_id,
                 )
-            outcome: ToolResultTurn | None = None
-            try:
-                # Nobody is there to complete a sign-in, so it fails fast.
-                async for step in execute_tool_call(active, call, 0.0):
-                    if isinstance(step, ToolResultTurn):
-                        outcome = step
-            except Exception as exc:
-                log.warning("Assessor tool %s failed", call.name, exc_info=True)
-                inspector._note(f"Called {call.name} ({server}): failed")
-                return f"The call failed: {exc}"
-            if outcome is None:
-                return "The call returned nothing."
-            state = "failed" if outcome.is_error else "ok"
-            inspector._note(f"Called {call.name} ({server}): {state}")
-            return outcome.result_text[:_MAX_CHARS]
-
-        box.run = run
-        yield box
+            if isinstance(ev, ToolResultTurn) and ev.call.name not in _INSPECTOR_TOOLS:
+                server = active.tool_to_server.get(ev.call.name, ("?", ""))[0]
+                if ev.declined:
+                    inspector._note(f"Declined {ev.call.name} ({server}): needs approval")
+                else:
+                    state = "failed" if ev.is_error else "ok"
+                    inspector._note(f"Called {ev.call.name} ({server}): {state}")
+            elif isinstance(ev, AssistantFinalTurn):
+                text = ev.text
+    return text
