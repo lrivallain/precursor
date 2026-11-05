@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Any
 
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -38,6 +39,34 @@ from precursor.backend.services.events import publish_step_plan_changed, set_cur
 log = logging.getLogger(__name__)
 
 _TASKS: dict[int, asyncio.Task[None]] = {}
+
+_ATTEMPTS = 3
+_RETRY_DELAY = 5.0
+
+
+async def _retried(
+    plan_id: int, call: Any, session: AsyncSession, *args: Any, **kwargs: Any
+) -> Any:
+    """Run a model call, retrying transient failures (a timeout, a 5xx) so one
+    flaky request doesn't stop an unattended run."""
+    for attempt in range(1, _ATTEMPTS + 1):
+        try:
+            return await call(session, *args, **kwargs)
+        except asyncio.CancelledError:
+            raise
+        except HTTPException as exc:
+            if exc.status_code < 500 or attempt == _ATTEMPTS:
+                raise
+            detail = exc.detail
+        except Exception as exc:
+            if attempt == _ATTEMPTS:
+                raise
+            detail = str(exc) or type(exc).__name__
+        await session.rollback()
+        await _note(
+            plan_id, f"The model call failed ({detail}). Retrying ({attempt}/{_ATTEMPTS - 1})…"
+        )
+        await asyncio.sleep(_RETRY_DELAY * attempt)
 
 
 def _live(plan: StepPlan) -> bool:
@@ -107,10 +136,14 @@ async def _run(plan_id: int) -> None:
     # window, the one that pressed Start included.
     set_current_client_id(None)
     try:
+        async with SessionLocal() as session:
+            policy = (await svc.get_plan(session, plan_id)).delegation_policy
+        tail = {
+            "autonomous": "Checked steps are validated automatically.",
+            "balanced": "Checked steps are validated automatically; you review the final output.",
+        }.get(policy or "", "It validates nothing: every draft waits for your review.")
         await _note(
-            plan_id,
-            "Automated run started: the model drafts and scores the steps. "
-            "It validates nothing: every draft waits for your review.",
+            plan_id, f"Automated run started: the model drafts and scores the steps. {tail}"
         )
         while (step_id := await _next_step(plan_id, done)) is not None:
             done.add(step_id)
@@ -119,12 +152,12 @@ async def _run(plan_id: int) -> None:
             await _note(plan_id, f"Drafting «{title}»…")
             await publish_step_plan_changed(plan_id)
             async with SessionLocal() as session:
-                draft = await llm.generate_artifact(session, step_id)
+                draft = await _retried(plan_id, llm.generate_artifact, session, step_id)
             if draft.outcome == "discussion":
                 await _note(plan_id, _outcome_note(title, draft) + " Asking once more.")
                 async with SessionLocal() as session:
-                    draft = await llm.generate_artifact(
-                        session, step_id, instructions=_NO_QUESTIONS
+                    draft = await _retried(
+                        plan_id, llm.generate_artifact, session, step_id, instructions=_NO_QUESTIONS
                     )
             svc.CURRENT_STEP.pop(plan_id, None)
             await _note(plan_id, _outcome_note(title, draft))
@@ -170,7 +203,9 @@ async def _finish(plan_id: int) -> None:
             return
         has_work = any(s.artifact.strip() for s in svc.working_leaves(steps))
         if has_work and not (plan.final_output or "").strip():
-            outcome = (await llm.generate_final(session, plan_id, force=True)).outcome
+            outcome = (
+                await _retried(plan_id, llm.generate_final, session, plan_id, force=True)
+            ).outcome
             await publish_step_plan_changed(plan_id)
             if outcome == "awaiting_approval":
                 await _note(
@@ -179,7 +214,7 @@ async def _finish(plan_id: int) -> None:
                 await _set_state(plan_id, AUTO_PAUSED)
                 return
         elif has_work:
-            await llm.assess_plan(session, plan_id)
+            await _retried(plan_id, llm.assess_plan, session, plan_id)
     async with SessionLocal() as session:
         policy = (await svc.get_plan(session, plan_id)).delegation_policy
     if policy == "plan":
@@ -189,8 +224,7 @@ async def _finish(plan_id: int) -> None:
         return
     await _note(
         plan_id,
-        "Automated run finished. Drafts and the provisional output are waiting for "
-        "your review.",
+        "Automated run finished. Drafts and the provisional output are waiting for your review.",
     )
     await _set_state(plan_id, AUTO_IDLE)
 
@@ -230,9 +264,15 @@ _FIX_FILE = (
     "The app checked the file you gave and found: {problems}. Fix it (rebuild the file with "
     "your tools if needed), then give its absolute path again as the artifact."
 )
+_FIX_WEAK = (
+    "The step was scored {score}/100. The reviewer's gaps: {gaps}. Close them using your tools "
+    "(read the file back if needed) and give the improved artifact."
+)
+_WEAK_BELOW = 60
+_HOLD_BELOW = 50
 _FIX_FINAL_PATH = (
     " The app checked the paths in your previous final output and found: {problems}. "
-    "The files the steps really built are: {built}. Use exactly those paths."
+    "The files the steps really built are: {built}. Give exactly those paths, with a short summary and how to open them; do not paste or rewrite the file's content."
 )
 
 
@@ -261,7 +301,9 @@ async def _review(plan_id: int, policy: str) -> bool:
                         f"«{step.title}» failed a check ({'; '.join(problems)}). Redrafting once.",
                     )
                     step = (
-                        await llm.generate_artifact(
+                        await _retried(
+                            plan_id,
+                            llm.generate_artifact,
                             session,
                             step.id,
                             instructions=_FIX_FILE.format(problems="; ".join(problems)),
@@ -276,21 +318,54 @@ async def _review(plan_id: int, policy: str) -> bool:
                             + ". Please review the step yourself.",
                         )
                         return False
+                weak = llm.step_weakness(step)
+                if weak and weak[0] < _WEAK_BELOW:
+                    await _note(
+                        plan_id,
+                        f"«{step.title}» scored {weak[0]}/100. Redrafting once to close its gaps.",
+                    )
+                    step = (
+                        await _retried(
+                            plan_id,
+                            llm.generate_artifact,
+                            session,
+                            step.id,
+                            instructions=_FIX_WEAK.format(
+                                score=weak[0], gaps="; ".join(weak[1][:5]) or "none listed"
+                            ),
+                        )
+                    ).step
+                    weak = llm.step_weakness(step)
+                    if step.status != STEP_TO_VALIDATE or (weak and weak[0] < _HOLD_BELOW):
+                        await _note(
+                            plan_id,
+                            f"«{step.title}» is still weak"
+                            + (f" ({weak[0]}/100)" if weak else "")
+                            + ". Please review the step yourself.",
+                        )
+                        return False
                 await svc.set_step_status(session, step.id, STEP_VALIDATED)
-            final = await llm.generate_final(session, plan_id, force=True)
+            final = await _retried(plan_id, llm.generate_final, session, plan_id, force=True)
             if final.outcome == "discussion":
-                final = await llm.generate_final(
-                    session, plan_id, force=True, instructions=_NO_QUESTIONS
+                final = await _retried(
+                    plan_id,
+                    llm.generate_final,
+                    session,
+                    plan_id,
+                    force=True,
+                    instructions=_NO_QUESTIONS,
                 )
             if final.outcome == "published":
                 problems, built = await llm.final_file_problems(session, plan_id)
                 if problems:
                     await _note(
                         plan_id,
-                        f"The final output names a file that doesn't exist ({'; '.join(problems)}). "
+                        f"The final output has a file problem ({'; '.join(problems)}). "
                         "Rebuilding it once.",
                     )
-                    final = await llm.generate_final(
+                    final = await _retried(
+                        plan_id,
+                        llm.generate_final,
                         session,
                         plan_id,
                         force=True,
@@ -303,7 +378,7 @@ async def _review(plan_id: int, policy: str) -> bool:
                     if problems:
                         await _note(
                             plan_id,
-                            "The final output still names a file that doesn't exist. It was "
+                            "The final output still has a file problem. It was "
                             "not filed in the topic: review it, then send it yourself.",
                         )
                         return False

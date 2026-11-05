@@ -1933,7 +1933,7 @@ def test_an_autonomous_run_does_not_file_a_final_output_naming_a_missing_file(
     with TestClient(create_app()) as client:
         done, turns = _autonomous_run(client, monkeypatch)
         assert not turns and done["status"] != "done"
-        assert any("names a file that doesn't exist" in n["text"] for n in done["activity"])
+        assert any("has a file problem" in n["text"] for n in done["activity"])
     assert any(str(deck) in (t["llm_prompt"] or "") for t in TURNS)
 
 
@@ -1946,3 +1946,66 @@ def test_a_path_mentioned_in_prose_is_not_a_missing_deliverable() -> None:
         "/docs/guide/page.html", produced=False, asked=None, claimed=False
     )
     assert ev.cap is None and not ev.checks
+
+
+def test_a_cover_slide_does_not_count_against_the_asked_slides(tmp_path: Any) -> None:
+    from precursor.backend.services import step_evidence
+
+    slides = ['<section class="slide" data-template="cover" data-title="Cover">Hello</section>']
+    slides += [f'<section class="slide" data-title="S{i}">Body {i}</section>' for i in range(4)]
+    deck = tmp_path / "deck.html"
+    deck.write_text("<html><body>" + "".join(slides) + "</body></html>")
+    ok = step_evidence.inspect_file(str(deck), produced=True, asked=4)
+    assert ok.cap is None
+    assert step_evidence.inspect_file(str(deck), produced=True, asked=3).cap is not None
+
+
+def test_an_autonomous_run_does_not_file_a_final_output_that_omits_the_built_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    _fake_llm(monkeypatch, ASSESS_REPLIES)
+    deck = tmp_path / "deck.html"
+    deck.write_text(_DECK)
+    TURN_REPLIES["step"] = f"<!-- artifact -->\n{deck}\nThe deck.\n<!-- /artifact -->"
+    TURN_REPLIES["final"] = "<!-- artifact -->\n<html>pasted deck</html>\n<!-- /artifact -->"
+    with TestClient(create_app()) as client:
+        done, turns = _autonomous_run(client, monkeypatch)
+        assert not turns and done["status"] != "done"
+        assert any("path of the file" in n["text"] for n in done["activity"])
+
+
+def test_an_autonomous_run_redrafts_a_weak_step_once_then_holds_it_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    weak = json.dumps({"score": 30, "summary": "Thin.", "gaps": ["no figures"]})
+    _fake_llm(monkeypatch, {**ASSESS_REPLIES, "ONE step's artifact": weak})
+    with TestClient(create_app()) as client:
+        done, turns = _autonomous_run(client, monkeypatch)
+        assert not turns and done["status"] != "done"
+        notes = [n["text"] for n in done["activity"]]
+        assert any("Redrafting once to close its gaps" in n for n in notes)
+        assert any("still weak" in n for n in notes)
+    assert any("no figures" in (t["llm_prompt"] or "") for t in TURNS)
+
+
+def test_an_autonomous_run_retries_a_transient_model_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from precursor.backend.services import step_plan_llm, step_plan_runner
+
+    _fake_llm(monkeypatch, ASSESS_REPLIES)
+    monkeypatch.setattr(step_plan_runner, "_RETRY_DELAY", 0)
+    real = step_plan_llm.generate_artifact
+    failed: list[int] = []
+
+    async def flaky(session: Any, step_id: int, **kwargs: Any) -> Any:
+        if not failed:
+            failed.append(step_id)
+            raise TimeoutError("Request timed out.")
+        return await real(session, step_id, **kwargs)
+
+    monkeypatch.setattr(step_plan_llm, "generate_artifact", flaky)
+    with TestClient(create_app()) as client:
+        done, _ = _autonomous_run(client, monkeypatch)
+        assert done["status"] == "done"
+        assert any("Retrying (1/2)" in n["text"] for n in done["activity"])

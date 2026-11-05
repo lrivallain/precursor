@@ -23,9 +23,10 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from precursor.backend.config import get_settings
 from precursor.backend.models import Message, MessageRole
 
-_PATH_RE = re.compile(r"(?<![\w./:~-])(~?/(?:[\w.@+%-]+/)*[\w.@+%-]+\.[A-Za-z0-9]{1,6})(?![\w/])")
+PATH_RE = re.compile(r"(?<![\w./:~-])(~?/(?:[\w.@+%-]+/)*[\w.@+%-]+\.[A-Za-z0-9]{1,6})(?![\w/])")
 _MAX_PATHS = 4
 _MAX_READ = 400_000
 _EXCERPT_CHARS = 2500
@@ -92,6 +93,7 @@ class _Page(HTMLParser):
         super().__init__()
         self.slides = 0
         self.sections = 0
+        self.covers = 0
         self.titles: list[str] = []
         self.text: list[str] = []
         self._skip = 0
@@ -105,6 +107,8 @@ class _Page(HTMLParser):
             self.sections += 1
         if "slide" in a.get("class", "").split():
             self.slides += 1
+            if a.get("data-template") in ("cover", "title"):
+                self.covers += 1
             if a.get("data-title"):
                 self.titles.append(a["data-title"])
         self._heading = tag in ("h1", "h2") and not self.titles
@@ -124,6 +128,10 @@ class _Page(HTMLParser):
 
 
 def _visible(path: Path) -> bool:
+    # The app's own workspaces live under a data dir that may itself be hidden.
+    workspaces = Path(get_settings().workspaces_dir)
+    if path.is_relative_to(workspaces):
+        path = Path("/", *path.relative_to(workspaces).parts)
     return not any(part.startswith(".") for part in path.parts[1:])
 
 
@@ -146,7 +154,8 @@ def _inspect_html(path: Path, ev: Evidence, asked: int | None) -> None:
     count = page.slides or page.sections
     if count:
         ev.checks.append(Check(f"The deck holds {count} slide(s)", True))
-        if asked is not None and asked != count:
+        # A cover slide is furniture, so "4 slides" may be a cover plus 4.
+        if asked is not None and asked not in (count, count - page.covers):
             ev.fail(f"The ask wants {asked} slide(s) but the file holds {count}", CAP_COUNT)
     if page.titles:
         ev.checks.append(Check("Slide titles: " + "; ".join(page.titles[:10]), True))
@@ -242,7 +251,7 @@ def existing_paths(texts: list[str]) -> list[str]:
     """The files named in ``texts`` that exist on this machine."""
     found: list[str] = []
     for text in texts:
-        for match in _PATH_RE.finditer(text):
+        for match in PATH_RE.finditer(text):
             raw = match.group(1)
             if raw not in found and Path(raw).expanduser().is_file():
                 found.append(raw)
@@ -305,7 +314,7 @@ async def collect(
     asked = _asked_count(ask)
     seen: list[str] = []
     for text in texts:
-        for match in _PATH_RE.finditer(text):
+        for match in PATH_RE.finditer(text):
             if match.group(1) not in seen:
                 seen.append(match.group(1))
     for raw in seen[:_MAX_PATHS]:
@@ -313,7 +322,7 @@ async def collect(
             raw,
             produced=raw in corpus,
             asked=asked,
-            claimed=expect_files or any(_first_line(t) == raw for t in texts),
+            claimed=expect_files or raw in corpus or any(_first_line(t) == raw for t in texts),
         )
         ev.checks.extend(one.checks)
         ev.excerpts.extend(one.excerpts)

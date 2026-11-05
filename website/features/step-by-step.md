@@ -235,9 +235,16 @@ caps the score (missing or empty file 25, unreadable file 40, wrong count 60). A
 only read when a tool of the plan mentioned its path, and never for hidden folders.
 
 In **Autonomous** and **Balanced** runs a failed check is acted on, not just shown: the step is
-redrafted once with the failures as instructions before it can be validated, and a final output that
-names a file that doesn't exist is rebuilt once with the real paths. If it is still failing, the plan
+redrafted once with the failures as instructions before it can be validated. A step scoring under
+60 is also redrafted once with its gaps, and held for your review if it is still under 50. A final
+output that names a file that doesn't exist, or doesn't give the path of the file the steps built
+(pasting the content instead), is rebuilt once with the real paths. If it is still failing, the plan
 is left for your review and nothing is filed in the topic.
+
+A cover slide isn't counted against "N slides", and files the steps write in the app's own
+workspaces are read like any other. A step's artifact gives the file's path plus a short summary of
+what the step put in it. A transient model failure (a timeout or a 5xx) is retried twice with a
+short pause, and noted in the activity, rather than pausing the whole run.
 
 An assessment is tied to the work it saw. When the artifact, the instruction or the ask
 changes, it is shown as **Out of date** (and the overall one as soon as any step changes)

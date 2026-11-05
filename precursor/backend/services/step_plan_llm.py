@@ -15,6 +15,7 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import HTTPException, status
@@ -109,8 +110,9 @@ facts, figures or commitments.
 and no code fence inside the markers. {_LANGUAGE}
 - If the step needs a tool or a skill (building a file, running a command), use \
 it first: load the named skill with get_skill and follow it. When the result is \
-a file you created, the artifact is its absolute path, one line on what it is \
-and how to open it; never paste the file's content.
+a file you created or edited, the artifact starts with its absolute path on \
+its own line, then says in a few lines what this step put in it (titles, key \
+points, figures) and how to open it; never paste the whole file.
 - Anything else (questions you need answered, alternatives, caveats) goes \
 OUTSIDE the markers, briefly. If you can't write a trustworthy artifact yet, \
 ask your questions and leave the markers out."""
@@ -695,7 +697,7 @@ async def assess_step(session: AsyncSession, step_id: int) -> Step:
         session,
         texts=[step.artifact],
         chat_ids=[chat_id],
-        ask=f"{plan.source_text}\n{step.title}\n{step.instruction}",
+        ask=f"{step.title}\n{step.instruction}",
     )
     user = (
         f"{svc.plan_header(plan)}\n\nPlan outline:\n{svc.render_outline(steps, mark=step.id)}"
@@ -744,7 +746,18 @@ async def final_file_problems(session: AsyncSession, plan_id: int) -> tuple[list
         with_trace=False,
         expect_files=True,
     )
-    return evidence.failures, built
+    failures = list(evidence.failures)
+    final = plan.final_output or ""
+    named = {Path(m.group(1)).expanduser().resolve() for m in step_evidence.PATH_RE.finditer(final)}
+    if not any(Path(b).expanduser().resolve() in named for b in built):
+        failures.append("it doesn't give the path of the file the steps built")
+    return failures, built
+
+
+def step_weakness(step: Step) -> tuple[int, list[str]] | None:
+    """The score of a step's last assessment and the gaps the assessor named."""
+    assessment = svc.parse_assessment(step.assessment_json)
+    return (assessment.score, assessment.gaps) if assessment else None
 
 
 def step_check_failures(step: Step) -> list[str]:
