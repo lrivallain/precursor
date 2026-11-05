@@ -195,7 +195,7 @@ def _inspect_office(path: Path, ev: Evidence, asked: int | None) -> None:
             ev.fail(f"The ask wants {asked} slide(s) but the file holds {count}", CAP_COUNT)
 
 
-def inspect_file(raw: str, *, produced: bool, asked: int | None) -> Evidence:
+def inspect_file(raw: str, *, produced: bool, asked: int | None, claimed: bool = True) -> Evidence:
     """What can be checked about one file named in an artifact.
 
     Contents are only read for a visible path a tool of this plan mentioned, so a
@@ -208,7 +208,10 @@ def inspect_file(raw: str, *, produced: bool, asked: int | None) -> Evidence:
     except OSError:
         info = None
     if info is None:
-        ev.fail(f"File not found: {raw}", CAP_MISSING)
+        # A URL-like path in prose isn't a file claim: it needs a tool that touched it,
+        # a deliverable position, or a folder that exists.
+        if produced or claimed or path.parent.is_dir():
+            ev.fail(f"File not found: {raw}", CAP_MISSING)
         return ev
     when = datetime.fromtimestamp(info.st_mtime).strftime("%Y-%m-%d %H:%M")
     ev.checks.append(Check(f"File exists: {raw} ({_size(info.st_size)}, modified {when})", True))
@@ -226,6 +229,24 @@ def inspect_file(raw: str, *, produced: bool, asked: int | None) -> Evidence:
     except OSError:
         ev.checks.append(Check(f"{path.name} could not be read", False))
     return ev
+
+
+def _first_line(text: str) -> str:
+    for line in text.splitlines():
+        if line.strip():
+            return line.strip().strip("`*").strip()
+    return ""
+
+
+def existing_paths(texts: list[str]) -> list[str]:
+    """The files named in ``texts`` that exist on this machine."""
+    found: list[str] = []
+    for text in texts:
+        for match in _PATH_RE.finditer(text):
+            raw = match.group(1)
+            if raw not in found and Path(raw).expanduser().is_file():
+                found.append(raw)
+    return found[:_MAX_PATHS]
 
 
 def _digest(meta: dict[str, Any], result: str) -> str:
@@ -250,8 +271,13 @@ async def collect(
     chat_ids: list[int | None],
     ask: str,
     with_trace: bool = True,
+    expect_files: bool = False,
 ) -> Evidence:
-    """Verify the files named in ``texts`` and digest what the chats' tools ran."""
+    """Verify the files named in ``texts`` and digest what the chats' tools ran.
+
+    A path counts as a claimed deliverable when it is the first line of a text, or
+    when ``expect_files`` says the work is known to deliver files.
+    """
     ev = Evidence()
     known: list[str] = []
     for chat_id in chat_ids:
@@ -283,7 +309,12 @@ async def collect(
             if match.group(1) not in seen:
                 seen.append(match.group(1))
     for raw in seen[:_MAX_PATHS]:
-        one = inspect_file(raw, produced=raw in corpus, asked=asked)
+        one = inspect_file(
+            raw,
+            produced=raw in corpus,
+            asked=asked,
+            claimed=expect_files or any(_first_line(t) == raw for t in texts),
+        )
         ev.checks.extend(one.checks)
         ev.excerpts.extend(one.excerpts)
         if one.cap is not None:

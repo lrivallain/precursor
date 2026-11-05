@@ -234,6 +234,11 @@ as evidence and appear in the panel under **Verified by the app**; a failed chec
 caps the score (missing or empty file 25, unreadable file 40, wrong count 60). A file's content is
 only read when a tool of the plan mentioned its path, and never for hidden folders.
 
+In **Autonomous** and **Balanced** runs a failed check is acted on, not just shown: the step is
+redrafted once with the failures as instructions before it can be validated, and a final output that
+names a file that doesn't exist is rebuilt once with the real paths. If it is still failing, the plan
+is left for your review and nothing is filed in the topic.
+
 An assessment is tied to the work it saw. When the artifact, the instruction or the ask
 changes, it is shown as **Out of date** (and the overall one as soon as any step changes)
 until you assess again. An assessment is a small chip with its score; click it to read the reasons and to assess again.

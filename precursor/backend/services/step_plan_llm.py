@@ -725,6 +725,34 @@ async def assess_step(session: AsyncSession, step_id: int) -> Step:
     return step
 
 
+async def final_file_problems(session: AsyncSession, plan_id: int) -> tuple[list[str], list[str]]:
+    """Failed file checks on the final output, and the files the steps really built.
+
+    Only a plan whose steps built a file is held to the paths its final output
+    names; for any other plan a path in the text is just text.
+    """
+    plan = await svc.get_plan(session, plan_id)
+    leaves = svc.working_leaves(await svc.plan_steps(session, plan_id))
+    built = step_evidence.existing_paths([s.artifact for s in leaves])
+    if not built:
+        return [], []
+    evidence = await step_evidence.collect(
+        session,
+        texts=[plan.final_output or ""],
+        chat_ids=[await _chat_id(session, step_id=s.id) for s in leaves],
+        ask="",
+        with_trace=False,
+        expect_files=True,
+    )
+    return evidence.failures, built
+
+
+def step_check_failures(step: Step) -> list[str]:
+    """What the app measured wrong about a step's last assessed artifact."""
+    assessment = svc.parse_assessment(step.assessment_json)
+    return [c.label for c in assessment.checks if not c.ok] if assessment else []
+
+
 async def assess_plan(session: AsyncSession, plan_id: int) -> StepPlan:
     """Have the model assess the plan's overall result against the original ask.
 
@@ -769,6 +797,7 @@ async def assess_plan(session: AsyncSession, plan_id: int) -> StepPlan:
         chat_ids=[chat_id, *step_chats],
         ask=f"{plan.source_text}\n{plan.output_instructions or ''}",
         with_trace=False,
+        expect_files=bool(step_evidence.existing_paths([s.artifact for s in leaves])),
     )
     if extra := evidence.prompt():
         user += f"\n\n{extra}"

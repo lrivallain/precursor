@@ -190,7 +190,7 @@ async def _finish(plan_id: int) -> None:
     await _note(
         plan_id,
         "Automated run finished. Drafts and the provisional output are waiting for "
-        "your review; nothing is validated.",
+        "your review.",
     )
     await _set_state(plan_id, AUTO_IDLE)
 
@@ -226,6 +226,16 @@ def hand_back(topic_id: int, title: str, *, reviewed_by_user: bool) -> None:
     task.add_done_callback(_HAND_BACKS.discard)
 
 
+_FIX_FILE = (
+    "The app checked the file you gave and found: {problems}. Fix it (rebuild the file with "
+    "your tools if needed), then give its absolute path again as the artifact."
+)
+_FIX_FINAL_PATH = (
+    " The app checked the paths in your previous final output and found: {problems}. "
+    "The files the steps really built are: {built}. Use exactly those paths."
+)
+
+
 async def _review(plan_id: int, policy: str) -> bool:
     """Close a delegated plan as far as its topic's autonomy allows.
 
@@ -242,13 +252,61 @@ async def _review(plan_id: int, policy: str) -> bool:
                 return False
             steps = await svc.plan_steps(session, plan_id)
             for step in svc.working_leaves(steps):
-                if step.status == STEP_TO_VALIDATE and step.artifact.strip():
-                    await svc.set_step_status(session, step.id, STEP_VALIDATED)
+                if step.status != STEP_TO_VALIDATE or not step.artifact.strip():
+                    continue
+                problems = llm.step_check_failures(step)
+                if problems:
+                    await _note(
+                        plan_id,
+                        f"«{step.title}» failed a check ({'; '.join(problems)}). Redrafting once.",
+                    )
+                    step = (
+                        await llm.generate_artifact(
+                            session,
+                            step.id,
+                            instructions=_FIX_FILE.format(problems="; ".join(problems)),
+                        )
+                    ).step
+                    problems = llm.step_check_failures(step)
+                    if step.status != STEP_TO_VALIDATE or problems:
+                        await _note(
+                            plan_id,
+                            f"«{step.title}» still fails a check"
+                            + (f" ({'; '.join(problems)})" if problems else "")
+                            + ". Please review the step yourself.",
+                        )
+                        return False
+                await svc.set_step_status(session, step.id, STEP_VALIDATED)
             final = await llm.generate_final(session, plan_id, force=True)
             if final.outcome == "discussion":
                 final = await llm.generate_final(
                     session, plan_id, force=True, instructions=_NO_QUESTIONS
                 )
+            if final.outcome == "published":
+                problems, built = await llm.final_file_problems(session, plan_id)
+                if problems:
+                    await _note(
+                        plan_id,
+                        f"The final output names a file that doesn't exist ({'; '.join(problems)}). "
+                        "Rebuilding it once.",
+                    )
+                    final = await llm.generate_final(
+                        session,
+                        plan_id,
+                        force=True,
+                        instructions=_NO_QUESTIONS
+                        + _FIX_FINAL_PATH.format(
+                            problems="; ".join(problems), built=", ".join(built)
+                        ),
+                    )
+                    problems, _ = await llm.final_file_problems(session, plan_id)
+                    if problems:
+                        await _note(
+                            plan_id,
+                            "The final output still names a file that doesn't exist. It was "
+                            "not filed in the topic: review it, then send it yourself.",
+                        )
+                        return False
             if final.outcome != "published":
                 await _note(
                     plan_id,

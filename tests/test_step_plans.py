@@ -1880,7 +1880,7 @@ def test_a_missing_deliverable_file_caps_the_assessment(monkeypatch: pytest.Monk
         sid = _by_title(plan)["Quote"]["id"]
         client.put(
             f"/api/steps/{sid}/artifact",
-            json={"content": "Deck: /tmp/precursor-no-such-deck/deck.html"},
+            json={"content": "/tmp/precursor-no-such-deck/deck.html\nThe deck."},
         )
         a = client.post(f"/api/steps/{sid}/assess").json()["assessment"]
     assert a["score"] == 25
@@ -1890,3 +1890,59 @@ def test_a_missing_deliverable_file_caps_the_assessment(monkeypatch: pytest.Monk
     assert a["gaps"][0].startswith("Check failed: File not found")
     assert "[FAILED] File not found" in calls[-1]["user"]
     assert "Verified by the app" in calls[-1]["system"]
+
+
+def _autonomous_run(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> tuple[dict, list]:
+    turns: list[tuple[int, str]] = []
+
+    async def _turn(topic_id: int, prompt: str, **_: Any) -> None:
+        turns.append((topic_id, prompt))
+
+    monkeypatch.setattr("precursor.backend.services.turn.run_topic_turn", _turn)
+    topic = client.post("/api/topics", json={"title": "Deck"}).json()
+    plan = _plan(client, topic_id=topic["id"], delegation_policy="autonomous")
+    pid = client.post(f"/api/step-plans/{plan['id']}/start", json={}).json()["id"]
+    _mode(client, pid, "auto")
+    assert client.post(f"/api/step-plans/{pid}/auto/start").status_code == 200
+    return _await_run(client, pid), turns
+
+
+def test_an_autonomous_run_redrafts_a_step_whose_file_check_failed_then_stops(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_llm(monkeypatch, ASSESS_REPLIES)
+    TURN_REPLIES["step"] = (
+        "<!-- artifact -->\n/tmp/precursor-no-such-dir/deck.html\n<!-- /artifact -->"
+    )
+    with TestClient(create_app()) as client:
+        done, turns = _autonomous_run(client, monkeypatch)
+        assert not turns and done["status"] != "done"
+        assert any(s["status"] == "to_validate" for s in done["steps"])
+        assert any("Redrafting once" in n["text"] for n in done["activity"])
+    assert any("File not found" in (t["llm_prompt"] or "") for t in TURNS)
+
+
+def test_an_autonomous_run_does_not_file_a_final_output_naming_a_missing_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    _fake_llm(monkeypatch, ASSESS_REPLIES)
+    deck = tmp_path / "deck.html"
+    deck.write_text(_DECK)
+    TURN_REPLIES["step"] = f"<!-- artifact -->\n{deck}\n<!-- /artifact -->"
+    TURN_REPLIES["final"] = "<!-- artifact -->\nDeck: `/sre-deck/deck.html`\n<!-- /artifact -->"
+    with TestClient(create_app()) as client:
+        done, turns = _autonomous_run(client, monkeypatch)
+        assert not turns and done["status"] != "done"
+        assert any("names a file that doesn't exist" in n["text"] for n in done["activity"])
+    assert any(str(deck) in (t["llm_prompt"] or "") for t in TURNS)
+
+
+def test_a_path_mentioned_in_prose_is_not_a_missing_deliverable() -> None:
+    from precursor.backend.services import step_evidence
+
+    prose = "See /docs/guide/page.html for details"
+    assert step_evidence.existing_paths([prose]) == []
+    ev = step_evidence.inspect_file(
+        "/docs/guide/page.html", produced=False, asked=None, claimed=False
+    )
+    assert ev.cap is None and not ev.checks

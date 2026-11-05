@@ -19,6 +19,9 @@ are the per-version history; releasing does not rewrite this file.
   measured facts (the file exists, slide count against the ask, parseable content, an excerpt) and
   a digest of the tool calls the draft ran, instead of a bare path. They show as **Verified by the
   app** in the assessment panel, and a failed check caps the score.
+  In autonomous and balanced runs a step with a failed check is redrafted once before it can be
+  validated, and a final output naming a file that doesn't exist is rebuilt once; if it is still
+  wrong, nothing is filed in the topic and the plan waits for you.
 - **Skill jobs are delegated to Step by step.** A topic whose ask needs a skill or a
   tool-built file (a deck, a report) hands it to a plan naming the skill instead of loading it
   itself. Step drafts can now call `list_skills` / `get_skill`, and a file result is filed back as
