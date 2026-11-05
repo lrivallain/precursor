@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { CheckCircle2, ChevronDown, ChevronRight, Loader2, Pause, Play } from "lucide-react";
+import { CheckCircle2, ChevronDown, ChevronRight, Loader2, Pause, Play, Send } from "lucide-react";
 import { api } from "../../lib/api";
 import { eventBus } from "../../lib/events";
 import {
@@ -67,13 +67,22 @@ export function StepPlanCard({ planId }: { planId: number }) {
   const expanded = open ?? !finished;
   const next = planNext(plan);
   const current = plan.steps.find((s) => s.id === plan.auto_step_id);
+  const allApproved = total > 0 && done === total;
+  const awaitingReview =
+    !finished && !running && !paused && allApproved && next?.target === "final" && plan.status !== "drafting";
+  const finalReady = awaitingReview && !plan.final_stale && !plan.final_provisional;
+  const canSend = finalReady && plan.source_topic_id != null;
   const stageLabel = finished
     ? "Done"
     : plan.status === "drafting"
       ? "Suggested steps"
-      : plan.status === "consolidating"
-        ? "Final output"
-        : "Working";
+      : awaitingReview
+        ? finalReady
+          ? "Final output ready, your review"
+          : "Final output out of date"
+        : plan.status === "consolidating"
+          ? "Final output"
+          : "Working";
 
   const awaitingGo =
     plan.delegation_policy === "plan" && plan.status === "drafting" && plan.auto_state !== "running";
@@ -84,6 +93,30 @@ export function StepPlanCard({ planId }: { planId: number }) {
       setPlan(await api.stepPlans.launch(plan.id));
     } catch {
       // the plan's activity feed reports why a run could not start
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const sendFinal = async () => {
+    setBusy(true);
+    try {
+      await api.stepPlans.sendToTopic(plan.id);
+      setPlan(await api.stepPlans.get(plan.id));
+    } catch {
+      // the plan's activity feed reports why it could not be sent
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const regenerateFinal = async () => {
+    setBusy(true);
+    try {
+      await api.stepPlans.generateFinal(plan.id, { force: true });
+      setPlan(await api.stepPlans.get(plan.id));
+    } catch {
+      // the plan's activity feed reports why it could not be written
     } finally {
       setBusy(false);
     }
@@ -127,6 +160,27 @@ export function StepPlanCard({ planId }: { planId: number }) {
             Start the run
           </button>
         )}
+        {canSend && (
+          <button
+            type="button"
+            onClick={() => void sendFinal()}
+            disabled={busy}
+            className="ml-auto inline-flex items-center gap-1 rounded-md bg-accent px-2 py-0.5 text-xs font-medium text-white hover:opacity-90 disabled:opacity-50"
+          >
+            <Send size={12} aria-hidden />
+            Send to the topic
+          </button>
+        )}
+        {awaitingReview && !finalReady && (
+          <button
+            type="button"
+            onClick={() => void regenerateFinal()}
+            disabled={busy}
+            className="ml-auto inline-flex items-center gap-1 rounded-md border border-border px-2 py-0.5 text-xs text-fg hover:bg-surface disabled:opacity-50"
+          >
+            Regenerate the final output
+          </button>
+        )}
         {(running || paused) && (
           <button
             type="button"
@@ -149,6 +203,11 @@ export function StepPlanCard({ planId }: { planId: number }) {
       {awaitingGo && (
         <p className="mt-1.5 text-xs text-amber-700 dark:text-amber-300" role="status">
           Plan ready: nothing runs until you start it. Review or amend the steps first.
+        </p>
+      )}
+      {finalReady && (
+        <p className="mt-1.5 text-xs text-amber-700 dark:text-amber-300" role="status">
+          All steps are approved and the final output is written. {canSend ? "Send it to the topic to complete the plan." : "Open the plan to review it."}
         </p>
       )}
       {paused && (
@@ -227,6 +286,7 @@ export function StepPlanCard({ planId }: { planId: number }) {
       )}
 
       <div className="mt-2.5 flex items-center justify-between gap-2">
+        {canSend || (awaitingReview && !finalReady) ? null : (
         <button
           type="button"
           onClick={() => openStepPlan(plan.id)}
@@ -234,6 +294,7 @@ export function StepPlanCard({ planId }: { planId: number }) {
         >
           {finished ? "Open the plan" : (next?.label ?? "Open the plan")}
         </button>
+        )}
       </div>
     </div>
   );

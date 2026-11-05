@@ -243,7 +243,18 @@ async def _review(plan_id: int, policy: str) -> bool:
             for step in svc.working_leaves(steps):
                 if step.status == STEP_TO_VALIDATE and step.artifact.strip():
                     await svc.set_step_status(session, step.id, STEP_VALIDATED)
-            await llm.generate_final(session, plan_id, force=True)
+            final = await llm.generate_final(session, plan_id, force=True)
+            if final.outcome == "discussion":
+                final = await llm.generate_final(
+                    session, plan_id, force=True, instructions=_NO_QUESTIONS
+                )
+            if final.outcome != "published":
+                await _note(
+                    plan_id,
+                    "The model did not write the final output. Regenerate it from the plan, "
+                    "then send it to the topic.",
+                )
+                return False
             if policy == "autonomous":
                 plan, _ = await llm.send_to_topic(session, plan_id, None)
             title = plan.title

@@ -222,12 +222,15 @@ async def generate_final(
     payload: ConsolidateRequest | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> FinalDraftResult:
+    plan = await svc.get_plan(session, plan_id)
+    # A delegated plan finishes when its final output reaches the topic, so the model is woken.
+    delegated = plan.delegation_policy is not None and plan.source_topic_id is not None
     draft = await llm.generate_final(
         session,
         plan_id,
         instructions=payload.instructions if payload else None,
         force=payload.force if payload else False,
-        complete=True,
+        complete=not delegated,
     )
     await publish_step_plan_changed(plan_id)
     return FinalDraftResult(plan=await _plan(session, plan_id), outcome=draft.outcome)

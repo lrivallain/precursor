@@ -33,6 +33,13 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Changed
 
+- **A finished delegated plan now says what it is waiting for.** Once every step
+  is approved, the discussion card reads *Final output ready, your review* with a
+  **Send to the topic** button (or *Final output out of date* with **Regenerate
+  the final output** after a step edit) instead of a bare "Working". Regenerating
+  no longer completes a plan delegated from a topic: sending it does, so the
+  topic's model is always woken. A final output the model fails to write is
+  retried once, then the run pauses with a note.
 - **Automated step runs no longer skip a step silently.** A step the model answers
   with questions instead of a draft is asked once more to write it; if it still
   has none, the run pauses and says which step needs you, instead of building the

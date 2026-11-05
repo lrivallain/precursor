@@ -1766,6 +1766,13 @@ def test_a_plan_mode_topic_only_drafts_until_the_user_launches(
         assert launched.status_code == 200
         done = _await_run(client, made["plan_id"])
         assert done["delegation_policy"] == "plan" and done["final_provisional"] is False
+        assert done["status"] != "done"
+        regenerated = client.post(
+            f"/api/step-plans/{made['plan_id']}/consolidate/generate", json={"force": True}
+        ).json()["plan"]
+        assert regenerated["status"] == "consolidating"
+        client.post(f"/api/step-plans/{made['plan_id']}/send-to-topic", json={})
+        assert client.get(f"/api/step-plans/{made['plan_id']}").json()["status"] == "done"
 
 
 def test_a_step_answered_with_questions_is_retried_then_pauses_the_run(

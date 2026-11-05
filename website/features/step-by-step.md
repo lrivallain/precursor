@@ -196,7 +196,7 @@ itself. If an automatic review fails, the plan stays in *Consolidating* with a n
 
 The topic that started a plan shows a live **Tasks** card under the receipt: each step with
 its status, score chip and a spinner on the one being drafted, an approved count, and
-**Pause**/**Resume** for automated plans. It collapses once the plan is done; the steps
+**Pause**/**Resume** for automated plans. When every step is approved and only you are missing, it says *Final output ready, your review* and offers **Send to the topic** (or **Regenerate the final output** if a step changed since). Regenerating a delegated plan does not complete it; sending does. It collapses once the plan is done; the steps
 themselves are still worked in the plan.
 
 ### Assessments
