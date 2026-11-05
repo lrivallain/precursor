@@ -1025,6 +1025,13 @@ ASSESS_REPLIES = {
     "READINESS of a step-by-step plan": PLAN_ASSESSMENT,
     "FINAL DELIVERABLE of a step-by-step plan": FINAL_ASSESSMENT,
 }
+# An automated run files a final output only when it scores well enough.
+GOOD_FINAL_REPLIES = {
+    **ASSESS_REPLIES,
+    "FINAL DELIVERABLE of a step-by-step plan": FINAL_ASSESSMENT.replace(
+        '"score": 44', '"score": 85'
+    ),
+}
 
 
 def _mode(client: TestClient, plan_id: int, mode: str) -> dict[str, Any]:
@@ -1253,7 +1260,7 @@ def test_the_run_drafts_empty_steps_scores_them_and_validates_nothing(
 def test_an_autonomous_delegation_files_its_output_and_hands_back_to_the_topic(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _fake_llm(monkeypatch, ASSESS_REPLIES)
+    _fake_llm(monkeypatch, GOOD_FINAL_REPLIES)
     turns: list[tuple[int, str]] = []
 
     async def _turn(topic_id: int, prompt: str, **_: Any) -> None:
@@ -1274,10 +1281,34 @@ def test_an_autonomous_delegation_files_its_output_and_hands_back_to_the_topic(
         assert any("FINAL ANSWER" in m["content"] for m in posted)
 
 
-def test_a_balanced_delegation_leaves_the_final_review_then_wakes_the_topic(
+def test_a_weak_final_output_is_held_back_instead_of_filed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _fake_llm(monkeypatch, ASSESS_REPLIES)
+    turns: list[tuple[int, str]] = []
+
+    async def _turn(topic_id: int, prompt: str, **_: Any) -> None:
+        turns.append((topic_id, prompt))
+
+    monkeypatch.setattr("precursor.backend.services.turn.run_topic_turn", _turn)
+    with TestClient(create_app()) as client:
+        topic = client.post("/api/topics", json={"title": "Mail"}).json()
+        plan = _plan(client, topic_id=topic["id"], delegation_policy="autonomous")
+        pid = client.post(f"/api/step-plans/{plan['id']}/start", json={}).json()["id"]
+        _mode(client, pid, "auto")
+        client.post(f"/api/step-plans/{pid}/auto/start")
+        done = _await_run(client, pid)
+        assert done["status"] != "done" and done["final_output"]
+        assert any("scored 44/100" in n["text"] for n in done["activity"])
+        assert not turns
+        posted = client.get(f"/api/topics/{topic['id']}/messages").json()
+        assert not any("FINAL ANSWER" in m["content"] for m in posted)
+
+
+def test_a_balanced_delegation_leaves_the_final_review_then_wakes_the_topic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_llm(monkeypatch, GOOD_FINAL_REPLIES)
     turns: list[tuple[int, str]] = []
 
     async def _turn(topic_id: int, prompt: str, **_: Any) -> None:
@@ -2003,7 +2034,7 @@ def test_an_autonomous_run_retries_a_transient_model_failure(
 ) -> None:
     from precursor.backend.services import step_plan_llm, step_plan_runner
 
-    _fake_llm(monkeypatch, ASSESS_REPLIES)
+    _fake_llm(monkeypatch, GOOD_FINAL_REPLIES)
     monkeypatch.setattr(step_plan_runner, "_RETRY_DELAY", 0)
     real = step_plan_llm.generate_artifact
     failed: list[int] = []

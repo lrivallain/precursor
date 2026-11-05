@@ -389,6 +389,17 @@ async def _review(plan_id: int, policy: str) -> bool:
                     "then send it to the topic.",
                 )
                 return False
+            plan = await svc.get_plan(session, plan_id)
+            await session.refresh(plan)
+            verdict = svc.parse_assessment(plan.assessment_json)
+            if verdict is not None and verdict.score < _HOLD_BELOW:
+                await _note(
+                    plan_id,
+                    f"The final output scored {verdict.score}/100 against the ask "
+                    f"({'; '.join(verdict.gaps[:3]) or 'no gaps listed'}). It was not filed "
+                    "in the topic: review it, then send it yourself.",
+                )
+                return False
             if policy == "autonomous":
                 plan, _ = await llm.send_to_topic(session, plan_id, None)
             title = plan.title

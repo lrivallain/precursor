@@ -259,6 +259,10 @@ the loop fails, the assessment falls back to the plain judgement. What it opened
 in the panel under **Checked with tools** (for example "Called workiq__get_draft" or "Declined
 workiq__send_mail"), and the measured caps above still apply on top of its verdict.
 
+An automated run also judges the **final output**: when it scores under 50/100 it is not filed in
+the topic. The run stops with a note and you review it, then send it yourself. A `/ws/<workspace>/<file>`
+link is read as that workspace's file.
+
 A cover slide isn't counted against "N slides", and files the steps write in the app's own
 workspaces are read like any other. A step's artifact gives the file's path plus a short summary of
 what the step put in it. A transient model failure (a timeout or a 5xx) is retried twice with a
