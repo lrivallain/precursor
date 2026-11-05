@@ -306,7 +306,7 @@ export function StepTree({
       ) : (
         <div>
           {rootTitle && (
-            <div className="relative flex items-center gap-2 px-1.5 py-1 text-sm font-medium">
+            <div className="relative flex items-center gap-2 py-1 text-sm font-medium">
               <span className="absolute bottom-0 left-[7px] top-1/2 w-px bg-border" aria-hidden />
               <span className="relative mx-[3px] h-[9px] w-[9px] shrink-0 rounded-full border-2 border-accent bg-bg" aria-hidden />
               <span className="min-w-0 flex-1 truncate" data-tooltip={rootTitle}>
