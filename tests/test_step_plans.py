@@ -1838,3 +1838,55 @@ def test_a_topic_delegates_skill_jobs_instead_of_loading_the_skill() -> None:
         prompt = _run(lambda: _prompt(topic["id"]))
     assert "needs a skill or a tool-built file" in prompt
     assert "do not call get_skill" not in prompt or "yourself" in prompt
+
+
+_DECK = "<html><body>{}</body></html>".format(
+    "".join(
+        f'<section class="slide" data-title="Slide {i}"><h1>Title {i}</h1></section>'
+        for i in range(4)
+    )
+)
+
+
+def test_a_file_is_verified_before_it_is_assessed(tmp_path: Any) -> None:
+    from precursor.backend.services.step_evidence import inspect_file
+
+    deck = tmp_path / "deck.html"
+    deck.write_text(_DECK)
+    ev = inspect_file(str(deck), produced=True, asked=4)
+    assert ev.cap is None and not ev.failures
+    assert any("4 slide" in c.label for c in ev.checks)
+    assert "Title 2" in ev.prompt()
+
+    off = inspect_file(str(deck), produced=True, asked=5)
+    assert off.cap == 60 and "5 slide" in off.failures[0]
+
+    # A path no tool of the plan mentioned is only stat'ed: its content stays private.
+    unknown = inspect_file(str(deck), produced=False, asked=4)
+    assert unknown.excerpts == [] and [c.ok for c in unknown.checks] == [True]
+
+    gone = inspect_file(str(tmp_path / "nope.html"), produced=True, asked=None)
+    assert gone.cap == 25 and gone.failures
+
+    empty = tmp_path / "empty.html"
+    empty.write_text("")
+    assert inspect_file(str(empty), produced=True, asked=None).cap == 25
+
+
+def test_a_missing_deliverable_file_caps_the_assessment(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _fake_llm(monkeypatch, ASSESS_REPLIES)
+    with TestClient(create_app()) as client:
+        plan = _started(client)
+        sid = _by_title(plan)["Quote"]["id"]
+        client.put(
+            f"/api/steps/{sid}/artifact",
+            json={"content": "Deck: /tmp/precursor-no-such-deck/deck.html"},
+        )
+        a = client.post(f"/api/steps/{sid}/assess").json()["assessment"]
+    assert a["score"] == 25
+    assert a["checks"] == [
+        {"label": "File not found: /tmp/precursor-no-such-deck/deck.html", "ok": False}
+    ]
+    assert a["gaps"][0].startswith("Check failed: File not found")
+    assert "[FAILED] File not found" in calls[-1]["user"]
+    assert "Verified by the app" in calls[-1]["system"]

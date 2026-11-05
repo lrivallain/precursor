@@ -31,6 +31,13 @@ class StepPlanTraceData(BaseModel):
     source: PromptSource
 
 
+class AssessmentCheck(BaseModel):
+    """One fact the app measured itself (a file exists, a slide count) for an assessment."""
+
+    label: str
+    ok: bool
+
+
 class Assessment(BaseModel):
     """A model's self-assessment of a result. Not a calibrated probability."""
 
@@ -49,6 +56,9 @@ class Assessment(BaseModel):
     # Plan level only: what was read. "steps" is the readiness of the plan's
     # artifacts (no final output existed); "final" is the final output's own text.
     scope: Literal["steps", "final"] = "steps"
+    # Measured by the app, not claimed by the model: file checks for a deliverable
+    # that is a file. A failed one caps the score.
+    checks: list[AssessmentCheck] = Field(default_factory=list)
 
 
 class ActivityNote(BaseModel):

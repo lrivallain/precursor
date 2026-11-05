@@ -226,6 +226,14 @@ reads that text against the ask, the output instructions and the approved artifa
 titled **Final output assessment**. Editing the final output makes that assessment out of date,
 and a readiness score from before the final existed is labelled as steps-only until you assess again.
 
+When the deliverable is a **file** (a deck, a report) the assessor doesn't judge the bare path. The
+app first verifies what it can: the file exists and isn't empty, an HTML or PowerPoint deck's slide
+count (compared with a count in the ask, such as "4 slides"), JSON that parses, and a bounded
+excerpt of the content. It also digests the tool calls the draft ran. Those facts go to the assessor
+as evidence and appear in the panel under **Verified by the app**; a failed check adds a gap and
+caps the score (missing or empty file 25, unreadable file 40, wrong count 60). A file's content is
+only read when a tool of the plan mentioned its path, and never for hidden folders.
+
 An assessment is tied to the work it saw. When the artifact, the instruction or the ask
 changes, it is shown as **Out of date** (and the overall one as soon as any step changes)
 until you assess again. An assessment is a small chip with its score; click it to read the reasons and to assess again.

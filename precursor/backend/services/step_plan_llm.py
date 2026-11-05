@@ -36,7 +36,8 @@ from precursor.backend.models.step_plan import (
 )
 from precursor.backend.schemas.conversation_llm import ConversationLLMSelection
 from precursor.backend.schemas.message import MessageRead
-from precursor.backend.schemas.step_plan import Assessment, StepCreate
+from precursor.backend.schemas.step_plan import Assessment, AssessmentCheck, StepCreate
+from precursor.backend.services import step_evidence
 from precursor.backend.services import step_plans as svc
 from precursor.backend.services.compaction import render_transcript
 from precursor.backend.services.conversation_turn import load_model_history
@@ -133,7 +134,13 @@ Be a strict, honest reviewer of the work, not its cheerleader. Your score is a \
 self-assessment, not a measured probability: 90+ only when every requirement is \
 clearly covered and supported; below 50 when something essential is missing or \
 unsupported. Never reward length or confident tone. Facts that appear in neither \
-the ask nor the material are assumptions, not evidence."""
+the ask nor the material are assumptions, not evidence.
+
+The input can also hold "Verified by the app" checks, the content of a file the \
+artifact points to, and the tool calls the draft ran. Those are measured, so \
+they count as evidence: a bare file path proves nothing, but a verified file \
+whose content matches the ask is supported, and what the checks and the content \
+show must not be listed as an assumption or a gap. A FAILED check is a gap."""
 
 _ASSESS_STEP_SYSTEM = f"""\
 You assess how well ONE step's artifact answers what that step asked for, in the \
@@ -648,6 +655,19 @@ async def trace_in_chat(session: AsyncSession, chat_id: int | None, text: str) -
         await publish_message_changed_chat(chat_id)
 
 
+def _apply_evidence(assessment: Assessment, ev: step_evidence.Evidence) -> None:
+    """Attach the measured checks; a failed one caps a score the model gave too freely."""
+    assessment.checks = [AssessmentCheck(label=c.label[:300], ok=c.ok) for c in ev.checks[:12]]
+    if ev.cap is not None:
+        failures = ev.failures
+        if assessment.score > ev.cap:
+            assessment.score = ev.cap
+        assessment.gaps = [f"Check failed: {f}"[:300] for f in failures] + [
+            g for g in assessment.gaps if not g.startswith("Check failed: ")
+        ]
+        assessment.gaps = assessment.gaps[:_LIST_CAP]
+
+
 async def _assess_or_trace(
     session: AsyncSession, plan: StepPlan, system: str, user: str, chat_id: int | None
 ) -> Assessment:
@@ -670,21 +690,29 @@ async def assess_step(session: AsyncSession, step_id: int) -> Step:
         raise HTTPException(
             status.HTTP_409_CONFLICT, "This step is split into sub-steps; assess those instead."
         )
+    chat_id = await _chat_id(session, step_id=step.id)
+    evidence = await step_evidence.collect(
+        session,
+        texts=[step.artifact],
+        chat_ids=[chat_id],
+        ask=f"{plan.source_text}\n{step.title}\n{step.instruction}",
+    )
     user = (
         f"{svc.plan_header(plan)}\n\nPlan outline:\n{svc.render_outline(steps, mark=step.id)}"
         f"\n\nStep: {step.title}\nWhat it must produce:\n{step.instruction or '(no instruction)'}"
         f"\n\nIts artifact:\n<<<ARTIFACT\n{step.artifact}\nARTIFACT>>>"
     )
+    if extra := evidence.prompt():
+        user += f"\n\n{extra}"
     sig = svc.step_signature(plan, step)
     await trace_in_chat(
         session,
-        await _chat_id(session, step_id=step.id),
+        chat_id,
         f"Assessing «{step.title}» (version {step.artifact_version}): the model checks the "
         "artifact against what this step must produce…",
     )
-    assessment = await _assess_or_trace(
-        session, plan, _ASSESS_STEP_SYSTEM, user, await _chat_id(session, step_id=step.id)
-    )
+    assessment = await _assess_or_trace(session, plan, _ASSESS_STEP_SYSTEM, user, chat_id)
+    _apply_evidence(assessment, evidence)
     step = await svc.get_step(session, step_id)
     step.assessment_json = assessment.model_dump_json()
     step.assessed_sig = sig
@@ -734,8 +762,19 @@ async def assess_plan(session: AsyncSession, plan_id: int) -> StepPlan:
         )
     sig = svc.plan_signature(plan, steps)
     chat_id = await _chat_id(session, plan_id=plan.id)
+    step_chats = [await _chat_id(session, step_id=s.id) for s in leaves]
+    evidence = await step_evidence.collect(
+        session,
+        texts=[plan.final_output or ""] if scope == "final" else [s.artifact for s in leaves],
+        chat_ids=[chat_id, *step_chats],
+        ask=f"{plan.source_text}\n{plan.output_instructions or ''}",
+        with_trace=False,
+    )
+    if extra := evidence.prompt():
+        user += f"\n\n{extra}"
     await trace_in_chat(session, chat_id, intro)
     assessment = await _assess_or_trace(session, plan, system, user, chat_id)
+    _apply_evidence(assessment, evidence)
     assessment.scope = scope
     plan = await svc.get_plan(session, plan_id)
     plan.assessment_json = assessment.model_dump_json()

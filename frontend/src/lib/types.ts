@@ -3007,6 +3007,12 @@ export type SettableStepStatus = Exclude<StepStatus, "proposed">;
 export type AutomationMode = "manual" | "assisted" | "auto";
 export type AutoState = "idle" | "running" | "paused";
 
+/** One fact the app measured itself for an assessment (a file exists, a slide count). */
+export interface AssessmentCheck {
+  label: string;
+  ok: boolean;
+}
+
 /** A model's self-assessment of a result. Not a calibrated probability. */
 export interface Assessment {
   /** 0-100: how well the result seems to answer what it was asked. */
@@ -3024,6 +3030,8 @@ export interface Assessment {
    * is the final output's text against the ask.
    */
   scope?: "steps" | "final";
+  /** Measured by the app for a file deliverable; a failed one caps the score. */
+  checks?: AssessmentCheck[];
 }
 
 export interface Step {
