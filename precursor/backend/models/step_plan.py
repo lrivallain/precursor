@@ -104,6 +104,11 @@ class StepPlan(Base, TimestampMixin):
     auto_state: Mapped[str] = mapped_column(
         String(12), nullable=False, default=AUTO_IDLE, server_default=AUTO_IDLE
     )
+    # A model delegated the plan: when the run ends, its drafts are validated, the
+    # final output is filed in the topic and the topic's model reviews it itself.
+    self_review: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
     # The model's self-assessment of the whole result (JSON), and the signature
     # of the inputs it looked at: when they change the assessment is stale.
     assessment_json: Mapped[str | None] = mapped_column(Text, nullable=True)

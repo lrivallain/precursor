@@ -27,6 +27,7 @@ from precursor.backend.models.step_plan import (
     AUTOMATION_AUTO,
     PLAN_ACTIVE,
     PLAN_CONSOLIDATING,
+    STEP_TO_VALIDATE,
     STEP_VALIDATED,
     StepPlan,
 )
@@ -153,12 +154,60 @@ async def _finish(plan_id: int) -> None:
                 return
         elif has_work:
             await llm.assess_plan(session, plan_id)
+    async with SessionLocal() as session:
+        self_review = (await svc.get_plan(session, plan_id)).self_review
+    if self_review and await _self_review(plan_id):
+        await _set_state(plan_id, AUTO_IDLE)
+        return
     await _note(
         plan_id,
         "Automated run finished. Drafts and the provisional output are waiting for "
         "your review; nothing is validated.",
     )
     await _set_state(plan_id, AUTO_IDLE)
+
+
+async def _self_review(plan_id: int) -> bool:
+    """Close a delegated plan without waiting for a person: validate, file, hand back.
+
+    The model that delegated the plan reviews the result in its topic, so the
+    drafts are validated here, the final output is rebuilt (no longer provisional),
+    filed into the topic and a turn is run for the topic's model to check it.
+    ``False`` leaves the plan for a person to review.
+    """
+    from precursor.backend.services.turn import run_topic_turn
+
+    try:
+        async with SessionLocal() as session:
+            plan = await svc.get_plan(session, plan_id)
+            topic_id = plan.source_topic_id
+            if topic_id is None:
+                return False
+            steps = await svc.plan_steps(session, plan_id)
+            for step in svc.working_leaves(steps):
+                if step.status == STEP_TO_VALIDATE and step.artifact.strip():
+                    await svc.set_step_status(session, step.id, STEP_VALIDATED)
+            await llm.generate_final(session, plan_id, force=True)
+            plan, _ = await llm.send_to_topic(session, plan_id, None)
+            title = plan.title
+        await publish_step_plan_changed(plan_id)
+        await _note(
+            plan_id,
+            "Self-review: drafts validated and the final output filed in the topic, "
+            "which now reviews it.",
+        )
+        await run_topic_turn(
+            topic_id,
+            f"The step-by-step plan «{title}» you delegated is finished and its final "
+            "output was filed above. Review it against the user's original ask: say "
+            "what was delivered, flag anything weak or missing, and propose next steps.",
+        )
+    except Exception as exc:
+        detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
+        log.exception("Self-review of step plan %s failed", plan_id)
+        await _note(plan_id, f"Self-review stopped, please review the plan yourself: {detail}")
+        return False
+    return True
 
 
 async def start(session: AsyncSession, plan_id: int) -> StepPlan:

@@ -115,6 +115,7 @@ class StepPlanRead(ConversationLLMFields):
     automation_mode: AutomationMode = "manual"
     # ``running`` only while the run is alive in this process.
     auto_state: AutoState = "idle"
+    self_review: bool = False
     # The step being drafted right now, while the run is alive.
     auto_step_id: int | None = None
     # The latest traces of the model and the run, oldest first.
@@ -157,6 +158,7 @@ class StepPlanCreate(ConversationLLMFields):
     # Have the model propose the first steps right away.
     propose: bool = True
     automation_mode: AutomationMode = "manual"
+    self_review: bool = False
 
 
 class StepPlanUpdate(ConversationLLMFields):

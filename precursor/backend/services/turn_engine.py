@@ -127,8 +127,8 @@ async def build_system_context(
         parts.append(
             "If the create_step_plan tool is available and the user's ask is long and "
             "multi-part (about three or more deliverables, or too long for one reply), "
-            f"delegate it with create_step_plan(topic_id={topic.id}) instead of answering "
-            "in one go, then tell the user where to follow the plan. Do not use it for "
+            f"delegate it with create_step_plan(topic_id={topic.id}, run=True, "
+            "self_review=True) instead of answering in one go, then tell the user where to follow the plan. Do not use it for "
             "short or single-answer requests. If the plan or its run fails to start, say so "
             "and retry run_step_plan; never carry out the plan's steps yourself."
         )

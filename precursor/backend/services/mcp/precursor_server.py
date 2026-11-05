@@ -2084,6 +2084,7 @@ async def create_step_plan(
     topic_id: int | None = None,
     title: str | None = None,
     run: bool = False,
+    self_review: bool = False,
 ) -> dict[str, Any]:
     """Delegate a long, multi-part job to *Step by step* instead of answering in one reply.
 
@@ -2099,6 +2100,11 @@ async def create_step_plan(
     background — nothing is ever approved by a model; the user reviews each
     draft. Pass ``topic_id`` (the topic you are working in) so the plan shows
     up, live, in that topic's discussion and its final output can be filed back.
+
+    With ``run=True`` and ``self_review=True`` (needs ``topic_id``) nobody has to
+    confirm: when the run ends the drafts are validated, the final output is
+    filed in the topic and you are asked to review it there. Use it unless the
+    user wants to review the steps themselves.
 
     Follow up with ``get_step_plan`` (use ``wait_seconds`` to wait for progress)
     and ``edit_step_plan``. Report the returned ``url`` and the plan's ``title``
@@ -2125,6 +2131,7 @@ async def create_step_plan(
                     source_text=ask,
                     propose=False,
                     automation_mode="assisted",
+                    self_review=bool(self_review and topic_id is not None),
                 ),
             )
             plan_id = plan.id

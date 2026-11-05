@@ -3078,6 +3078,7 @@ export interface StepPlan {
   /** The final output was written before every step was validated. */
   final_provisional: boolean;
   automation_mode: AutomationMode;
+  self_review: boolean;
   auto_state: AutoState;
   /** The step being drafted right now, only while the run is going. */
   auto_step_id: number | null;

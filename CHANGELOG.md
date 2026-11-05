@@ -15,6 +15,10 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **Delegated step plans close themselves.** `create_step_plan(run=true,
+  self_review=true)` validates the drafts when the run ends, files the final
+  output in the topic and runs a turn so the topic's model reviews it, instead
+  of waiting in *Consolidating* for a person.
 - **Models can delegate long asks to Step by step.** A new opt-in `step_plans`
   MCP section (Settings → MCP exposure, off by default) adds `create_step_plan`,
   `list_step_plans`, `get_step_plan` (optionally waiting for the run),

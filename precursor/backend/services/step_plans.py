@@ -519,6 +519,7 @@ async def create_plan(session: AsyncSession, payload: StepPlanCreate) -> StepPla
         source_text=text,
         status=PLAN_DRAFTING,
         automation_mode=payload.automation_mode,
+        self_review=payload.self_review,
         source_topic_id=topic.id if topic else None,
         role=role,
         llm_selection=(
