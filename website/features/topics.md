@@ -111,10 +111,11 @@ Back/Forward and reload keep the target. Deleted or rewound messages show
 Links open on the same Precursor instance; they do not publish the discussion
 or grant access to it.
 
-The model also receives the stable link for each message in its available
-history, so it can write references such as **the previous reply** as clickable
-Markdown links. These open the exact message in place, without reloading the app.
-The reference metadata is model-only; it is not added to your saved message text.
+The model also receives a separate reference index for up to 50 recent messages
+in its available history, so it can write references such as **the previous
+reply** as clickable Markdown links. These open the exact message in place,
+without reloading the app. Navigation metadata is kept out of the conversation
+text sent to the model, so it is not presented as a reply header to reproduce.
 
 The same action works in [chats](/features/chats#message-links) and
 [agents](/features/agents-mode/running#message-links).

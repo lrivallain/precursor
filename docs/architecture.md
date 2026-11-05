@@ -124,11 +124,13 @@ controller. The event's archived `link_id` is distinct from its prompt-only
 SDK `event_id`; historical archive rows receive deterministic link identities
 when hydrated. Unavailable messages show a notice rather than a different row.
 
-Model history hydration adds a `[Message reference: /…#message=…]` prefix to
-linkable user/assistant turns, after the compaction boundary and without
-changing persisted content or tool-call pairing. Skill prompt overrides retain
-their reference. The shared turn engine instructs models to cite supplied URLs
-using descriptive Markdown links, never fabricated IDs.
+Model history hydration carries links as internal metadata on linkable
+user/assistant turns after the compaction boundary, without prefixing their
+authored text or changing tool-call pairing. Skill prompt overrides retain
+their reference. The shared turn engine supplies a separate system-context
+index (the latest 50 non-empty messages, 240-character excerpts) and instructs
+models to cite supplied URLs only when referring to earlier messages, using
+descriptive Markdown links, never reference headers or fabricated IDs.
 
 Agent SDK sessions use `on_user_prompt_submitted.additionalContext` for a fresh,
 bounded reference index (50 messages, 240-character excerpts) from the current

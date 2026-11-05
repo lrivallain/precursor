@@ -25,6 +25,7 @@ from precursor.backend.models import (
     AgentEventRecord,
     AgentRun,
     AgentSession,
+    Chat,
     Message,
     MessageRole,
 )
@@ -40,8 +41,9 @@ from precursor.backend.services.message_links import (
     MESSAGE_LINK_INSTRUCTION,
     discussion_path,
     message_path,
+    message_reference_context,
 )
-from precursor.backend.services.turn_engine import hydrate_history
+from precursor.backend.services.turn_engine import apply_chat_system_prompt, hydrate_history
 
 
 @pytest.mark.parametrize("kind", ["topics", "chats"])
@@ -58,8 +60,12 @@ def test_model_can_reference_a_previous_reply_and_streams_immediate_link_ids(
         reasoning_effort: str | None = None,
     ) -> AsyncIterator[str]:
         captured.extend(messages)
-        previous = next(m for m in messages if m.role == "assistant")
-        link = previous.content.split("[Message reference: ", 1)[1].split("]", 1)[0]
+        references = json.loads(
+            messages[0]
+            .content.split("## Recent conversation message references\n", 1)[1]
+            .split("\n", 1)[1]
+        )
+        link = next(r["href"] for r in references if r["role"] == "assistant")
         yield f"As explained in [the previous reply]({link}), use the stable link."
 
     async def provider(_session: Any) -> MockProvider:
@@ -98,7 +104,13 @@ def test_model_can_reference_a_previous_reply_and_streams_immediate_link_ids(
         assert response.status_code == 200
         assert MESSAGE_LINK_INSTRUCTION in captured[0].content
         assistant = next(m for m in captured if m.role == "assistant")
-        assert assistant.content == f"[Message reference: {link}]\n\nThey use immutable UUIDs."
+        assert assistant.content == "They use immutable UUIDs."
+        assert assistant.permalink == link
+        assert [m.content for m in captured if m.role == "user"] == [
+            "How do links work?",
+            "Point back to your previous reply.",
+        ]
+        assert all("[Message reference:" not in m.content for m in captured)
         rows = client.get(path).json()
         assert rows[1]["content"] == "They use immutable UUIDs."
         assert rows[-2]["content"] == "Point back to your previous reply."
@@ -146,14 +158,95 @@ def test_message_references_preserve_compaction_skill_overrides_and_tool_pairing
     )
     assert [m.role for m in history] == ["user", "assistant", "tool", "assistant"]
     assert "Earlier discussion" in history[0].content
-    assert message_path(path, old.public_id) not in history[0].content
-    assert message_path(path, user.public_id) in history[0].content
+    assert history[0].permalink == message_path(path, user.public_id)
     assert history[0].content.endswith("Translate: bravo")
     assert history[1].content == ""
     assert history[1].tool_calls[0]["id"] == history[2].tool_call_id == "call"
     assert history[2].content == "Tool result"
-    assert message_path(path, reply.public_id) in history[3].content
+    assert history[3].content == "Translated reply"
+    assert history[3].permalink == message_path(path, reply.public_id)
+    references = message_reference_context(history)
+    assert message_path(path, old.public_id) not in references
+    assert message_path(path, user.public_id) in references
+    assert message_path(path, reply.public_id) in references
     assert user.content == "/to-en bravo"
+
+
+def test_reference_index_is_bounded_and_leaves_message_text_untouched() -> None:
+    history = [
+        ChatMessage(
+            role="assistant",
+            content=f"Reply {i}: " + "x" * 300,
+            permalink=f"/topics/id/topic#message={i}",
+        )
+        for i in range(55)
+    ]
+    history.extend(
+        [
+            ChatMessage(role="assistant", content="", permalink="/empty"),
+            ChatMessage(role="tool", content="Tool output", permalink="/tool"),
+            ChatMessage(role="user", content="No reference"),
+        ]
+    )
+    context = message_reference_context(history)
+    references = json.loads(context.split("\n", 2)[2])
+    assert len(references) == 50
+    assert references[0]["excerpt"].startswith("Reply 5:")
+    assert references[-1]["href"] == "/topics/id/topic#message=54"
+    assert all(len(r["excerpt"]) <= 240 for r in references)
+    assert history[0].content == "Reply 0: " + "x" * 300
+    assert message_reference_context([]) == ""
+    assert message_reference_context([ChatMessage(role="user", content="Hello")]) == ""
+
+
+def test_chat_system_instruction_keeps_navigation_metadata_separate() -> None:
+    chat = Chat(description="Answer in French", description_as_system_prompt=True)
+    original = ChatMessage(
+        role="user",
+        content="Hello",
+        image_urls=["data:image/png;base64,abc"],
+        permalink="/chats/id/chat#message=prompt",
+    )
+    history = apply_chat_system_prompt(chat, [original])
+    assert history[0].content.endswith("\n\nHello")
+    assert original.permalink not in history[0].content
+    assert history[0].permalink == original.permalink
+    assert history[0].image_urls == original.image_urls
+    assert original.content == "Hello"
+    assert original.permalink in message_reference_context(history)
+
+
+@pytest.mark.parametrize("kind", ["topics", "chats"])
+def test_echoing_provider_does_not_receive_a_reference_header(
+    kind: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def stream(
+        _self: MockProvider,
+        *,
+        model: str,
+        messages: Sequence[ChatMessage],
+        reasoning_effort: str | None = None,
+    ) -> AsyncIterator[str]:
+        yield next(m.content for m in reversed(messages) if m.role == "user")
+
+    async def provider(_session: Any) -> MockProvider:
+        return MockProvider()
+
+    monkeypatch.setattr(MockProvider, "stream_chat", stream)
+    monkeypatch.setattr(conversation_turn, "get_llm_provider", provider)
+    with TestClient(create_app()) as client:
+        container = client.post(f"/api/{kind}", json={"title": "No reference headers"}).json()
+        path = f"/api/{kind}/{container['id']}/messages"
+        for content in ("First prompt", "Another prompt"):
+            response = client.post(f"{path}/stream", json={"content": content})
+            assert response.status_code == 200
+            assert "[Message reference:" not in response.text
+        assert [m["content"] for m in client.get(path).json()] == [
+            "First prompt",
+            "First prompt",
+            "Another prompt",
+            "Another prompt",
+        ]
 
 
 def test_agent_reference_context_is_bounded_and_isolated_to_its_execution() -> None:
