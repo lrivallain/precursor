@@ -38,7 +38,7 @@ from precursor.backend.models.step_plan import (
 from precursor.backend.schemas.conversation_llm import ConversationLLMSelection
 from precursor.backend.schemas.message import MessageRead
 from precursor.backend.schemas.step_plan import Assessment, AssessmentCheck, StepCreate
-from precursor.backend.services import step_evidence
+from precursor.backend.services import step_assessor_tools, step_evidence
 from precursor.backend.services import step_plans as svc
 from precursor.backend.services.compaction import render_transcript
 from precursor.backend.services.conversation_turn import load_model_history
@@ -48,7 +48,7 @@ from precursor.backend.services.events import (
     publish_message_changed_chat,
     publish_step_plan_changed,
 )
-from precursor.backend.services.llm.one_shot import complete_once
+from precursor.backend.services.llm.one_shot import complete_once, complete_with_tools
 from precursor.backend.services.turn import run_chat_turn
 
 from sqlalchemy import select  # isort: skip
@@ -671,10 +671,42 @@ def _apply_evidence(assessment: Assessment, ev: step_evidence.Evidence) -> None:
 
 
 async def _assess_or_trace(
-    session: AsyncSession, plan: StepPlan, system: str, user: str, chat_id: int | None
+    session: AsyncSession,
+    plan: StepPlan,
+    system: str,
+    user: str,
+    chat_id: int | None,
+    evidence: step_evidence.Evidence | None = None,
 ) -> Assessment:
-    """Run an assessment call; a failure closes the "Assessing…" note in the chat."""
+    """Run an assessment call; a failure closes the "Assessing…" note in the chat.
+
+    With a file or tool output to look at, the assessor gets read-only tools to
+    check it; if that tool-using call fails the plain one-shot judgement still runs.
+    """
     try:
+        inspector = (
+            step_assessor_tools.Inspector(evidence.files, evidence.outputs)
+            if evidence is not None
+            else None
+        )
+        if inspector is not None and inspector.useful:
+            try:
+                result = await complete_with_tools(
+                    session,
+                    system=system + step_assessor_tools.TOOLS_NOTE,
+                    user=user,
+                    usage_source=USAGE_SOURCE,
+                    tools=step_assessor_tools.TOOLS,
+                    run_tool=inspector.run,
+                    max_rounds=step_assessor_tools.MAX_ROUNDS,
+                    topic_id=plan.source_topic_id,
+                    **_selection_kwargs(plan),
+                )
+                assessment = parse_assessment(result.text.strip())
+                assessment.inspected = inspector.log
+                return assessment
+            except Exception:
+                log.warning("The assessor's tool call failed; judging without tools", exc_info=True)
         return parse_assessment(await _complete(session, plan, system=system, user=user))
     except Exception:
         await trace_in_chat(session, chat_id, "The assessment didn't complete. Try it again.")
@@ -713,7 +745,7 @@ async def assess_step(session: AsyncSession, step_id: int) -> Step:
         f"Assessing «{step.title}» (version {step.artifact_version}): the model checks the "
         "artifact against what this step must produce…",
     )
-    assessment = await _assess_or_trace(session, plan, _ASSESS_STEP_SYSTEM, user, chat_id)
+    assessment = await _assess_or_trace(session, plan, _ASSESS_STEP_SYSTEM, user, chat_id, evidence)
     _apply_evidence(assessment, evidence)
     step = await svc.get_step(session, step_id)
     step.assessment_json = assessment.model_dump_json()
@@ -815,7 +847,7 @@ async def assess_plan(session: AsyncSession, plan_id: int) -> StepPlan:
     if extra := evidence.prompt():
         user += f"\n\n{extra}"
     await trace_in_chat(session, chat_id, intro)
-    assessment = await _assess_or_trace(session, plan, system, user, chat_id)
+    assessment = await _assess_or_trace(session, plan, system, user, chat_id, evidence)
     _apply_evidence(assessment, evidence)
     assessment.scope = scope
     plan = await svc.get_plan(session, plan_id)

@@ -96,7 +96,15 @@ def _fake_llm(monkeypatch: pytest.MonkeyPatch, replies: dict[str, str] | None = 
             usage=UsageEvent(prompt_tokens=1, completion_tokens=1, total_tokens=2),
         )
 
+    async def _complete_with_tools(_session: Any, *, system: str, user: str, **kwargs: Any) -> Any:
+        # A model that opens nothing: same canned verdict as the tool-less call.
+        kwargs.pop("run_tool", None)
+        kwargs.pop("tools", None)
+        kwargs.pop("max_rounds", None)
+        return await _complete_once(_session, system=system, user=user, **kwargs)
+
     monkeypatch.setattr(step_plan_llm, "complete_once", _complete_once)
+    monkeypatch.setattr(step_plan_llm, "complete_with_tools", _complete_with_tools)
     return calls
 
 

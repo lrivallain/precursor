@@ -241,6 +241,15 @@ output that names a file that doesn't exist, or doesn't give the path of the fil
 (pasting the content instead), is rebuilt once with the real paths. If it is still failing, the plan
 is left for your review and nothing is filed in the topic.
 
+The assessor can also **look for itself**. When the step built a file or ran tool calls, it gets
+three read-only tools: list the files the step built, read one (a Word, PowerPoint, Excel, HTML or
+text file is turned into text, paged for long files), and re-read the full output of a numbered tool
+call. It can only open files a tool of the plan mentioned or that sit in that plan's workspace
+folder, never hidden folders, and it is told that file text is data, not instructions. It has a
+small round budget; if the model doesn't support tools or the loop fails, the assessment falls back
+to the plain judgement. What it opened is listed in the panel under **Checked with tools**, and the
+measured caps above still apply on top of its verdict.
+
 A cover slide isn't counted against "N slides", and files the steps write in the app's own
 workspaces are read like any other. A step's artifact gives the file's path plus a short summary of
 what the step put in it. A transient model failure (a timeout or a 5xx) is retried twice with a

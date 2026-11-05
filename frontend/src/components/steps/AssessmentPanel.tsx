@@ -153,6 +153,7 @@ export function AssessmentPanel({
           <div className={`space-y-2 ${stale ? "opacity-70" : ""}`}>
             {assessment.summary && <p className="text-sm">{assessment.summary}</p>}
             <Checks checks={assessment.checks ?? []} />
+            <Section label="Checked with tools" items={assessment.inspected ?? []} />
             <Section label="Covered" items={assessment.covered} />
             <Section label="Evidence" items={assessment.evidence} />
             <Section label="Assumptions" items={assessment.assumptions} />

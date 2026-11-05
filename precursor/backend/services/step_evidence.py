@@ -58,6 +58,10 @@ class Evidence:
     checks: list[Check] = field(default_factory=list)
     excerpts: list[str] = field(default_factory=list)
     trace: list[str] = field(default_factory=list)
+    # Readable files (resolved) and the full output of each traced call, for the
+    # assessor's read-only tools.
+    files: list[str] = field(default_factory=list)
+    outputs: list[str] = field(default_factory=list)
     cap: int | None = None
 
     def fail(self, label: str, cap: int) -> None:
@@ -229,6 +233,7 @@ def inspect_file(raw: str, *, produced: bool, asked: int | None, claimed: bool =
         return ev
     if not (produced and _visible(path.resolve())):
         return ev
+    ev.files.append(str(path.resolve()))
     suffix = path.suffix.lower()
     try:
         if suffix in _TEXT_SUFFIXES:
@@ -301,6 +306,7 @@ async def collect(
             )
         ).scalars()
         lines = []
+        outputs = []
         for row in rows:
             try:
                 meta = json.loads(row.tool_calls) if row.tool_calls else {}
@@ -308,8 +314,10 @@ async def collect(
                 meta = {}
             known.append(f"{row.tool_calls or ''}\n{row.content or ''}")
             lines.append(_digest(meta, row.content or ""))
+            outputs.append(row.content or "")
         if with_trace:
             ev.trace.extend(reversed(lines))
+            ev.outputs.extend(reversed(outputs))
     corpus = "\n".join(known)
     asked = _asked_count(ask)
     seen: list[str] = []
@@ -326,6 +334,7 @@ async def collect(
         )
         ev.checks.extend(one.checks)
         ev.excerpts.extend(one.excerpts)
+        ev.files.extend(f for f in one.files if f not in ev.files)
         if one.cap is not None:
             ev.cap = one.cap if ev.cap is None else min(ev.cap, one.cap)
     return ev

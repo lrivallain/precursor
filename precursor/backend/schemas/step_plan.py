@@ -59,6 +59,8 @@ class Assessment(BaseModel):
     # Measured by the app, not claimed by the model: file checks for a deliverable
     # that is a file. A failed one caps the score.
     checks: list[AssessmentCheck] = Field(default_factory=list)
+    # What the assessor opened with its read-only tools (a file, a tool's output).
+    inspected: list[str] = Field(default_factory=list)
 
 
 class ActivityNote(BaseModel):

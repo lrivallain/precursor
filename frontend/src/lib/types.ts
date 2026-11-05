@@ -3032,6 +3032,8 @@ export interface Assessment {
   scope?: "steps" | "final";
   /** Measured by the app for a file deliverable; a failed one caps the score. */
   checks?: AssessmentCheck[];
+  /** What the assessor opened with its read-only tools (a file, a tool's output). */
+  inspected?: string[];
 }
 
 export interface Step {

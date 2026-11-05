@@ -15,6 +15,12 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **The assessor can inspect the work with read-only tools.** When a step built a file or ran tool
+  calls, the assessor can list the step's files, read them (docx, pptx, xlsx, HTML and text are
+  extracted to text, with paging) and re-read a numbered tool call's full output, within a small
+  round budget. It is limited to files the plan produced or its workspace folder, never hidden
+  folders. What it opened shows under **Checked with tools** in the assessment panel; if tools
+  aren't supported it falls back to the plain judgement, and the measured caps still apply.
 - **Assessments verify file deliverables.** When a step's result is a file, the assessor gets
   measured facts (the file exists, slide count against the ask, parseable content, an excerpt) and
   a digest of the tool calls the draft ran, instead of a bare path. They show as **Verified by the
