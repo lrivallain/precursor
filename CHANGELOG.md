@@ -15,6 +15,10 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Fixed
 
+- **Message links: stop teaching replies to repeat navigation headers.** Topic
+  and chat models now receive a separate reference index instead of
+  `[Message reference: ...]` prefixes on prompts and replies. Earlier messages
+  remain citable, without presenting the metadata as authored conversation text.
 - **Playwright MCP: survive stale package-mirror tags.** Pin the verified
   `@playwright/mcp@0.0.83` release instead of `latest`, which some mirrors resolve
   to a March 2025 alpha. That alpha rejects the persistent-profile flag and exits

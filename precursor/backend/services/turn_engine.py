@@ -75,7 +75,8 @@ from precursor.backend.services.mcp.workspace_links import link_from_result
 from precursor.backend.services.meeting_analysis import live_chat_grounding
 from precursor.backend.services.message_links import (
     MESSAGE_LINK_INSTRUCTION,
-    with_message_reference,
+    message_path,
+    message_reference_context,
 )
 from precursor.backend.services.roles import resolve_role_prompt
 from precursor.backend.services.suggestions import SUGGESTIONS_INSTRUCTION, split_suggestions
@@ -232,7 +233,14 @@ def apply_chat_system_prompt(
     for m in history:
         if m.role == "user":
             prefixed = f"{instruction}\n\n{m.content}" if m.content else instruction
-            out.append(ChatMessage(role="user", content=prefixed, image_urls=m.image_urls))
+            out.append(
+                ChatMessage(
+                    role="user",
+                    content=prefixed,
+                    image_urls=m.image_urls,
+                    permalink=m.permalink,
+                )
+            )
         else:
             out.append(m)
     return out
@@ -275,12 +283,9 @@ def hydrate_history(
             if out[idx].role == "user":
                 out[idx] = ChatMessage(
                     role="user",
-                    content=with_message_reference(
-                        prompt_override,
-                        discussion_path,
-                        next(m.public_id for m in reversed(rows) if m.role == MessageRole.USER),
-                    ),
+                    content=prompt_override,
                     image_urls=out[idx].image_urls,
+                    permalink=out[idx].permalink,
                 )
                 break
     if summary:
@@ -305,7 +310,12 @@ def _with_compaction_summary(history: list[ChatMessage], summary: str) -> list[C
         first = history[0]
         merged = f"{prefix}\n\n{first.content}" if first.content else prefix
         return [
-            ChatMessage(role="user", content=merged, image_urls=first.image_urls),
+            ChatMessage(
+                role="user",
+                content=merged,
+                image_urls=first.image_urls,
+                permalink=first.permalink,
+            ),
             *history[1:],
         ]
     return [ChatMessage(role="user", content=prefix), *history]
@@ -356,10 +366,11 @@ def _hydrate_rows(
                 out.append(
                     ChatMessage(
                         role="assistant",
-                        content=with_message_reference(m.content, discussion_path, m.public_id)
-                        if m.content
-                        else "",
+                        content=m.content,
                         tool_calls=calls,
+                        permalink=message_path(discussion_path, m.public_id)
+                        if discussion_path and m.public_id
+                        else None,
                     )
                 )
                 out.extend(tool_msgs)
@@ -397,8 +408,11 @@ def _hydrate_rows(
         out.append(
             ChatMessage(
                 role=role,
-                content=with_message_reference(content, discussion_path, m.public_id),
+                content=content,
                 image_urls=image_urls,
+                permalink=message_path(discussion_path, m.public_id)
+                if discussion_path and m.public_id
+                else None,
             )
         )
         i += 1
@@ -823,6 +837,9 @@ async def run_tool_loop(
         system_prompt = f"{system_prompt}\n\n{approval_service.APPROVAL_PROMPT}"
 
     system_prompt = f"{system_prompt}\n\n{MESSAGE_LINK_INSTRUCTION}"
+    references = message_reference_context(history)
+    if references:
+        system_prompt = f"{system_prompt}\n\n{references}"
     messages: list[ChatMessage] = [
         ChatMessage(role="system", content=system_prompt),
         *history,

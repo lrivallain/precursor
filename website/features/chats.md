@@ -131,7 +131,8 @@ If the message was deleted or rewound, the discussion reports that it is no
 longer available. Links belong to the same Precursor instance, not a public
 sharing service. Promoting or deleting the chat removes its old chat address.
 
-Models receive these links alongside their available conversation history and
+Models receive these links in a separate reference index for up to 50 recent
+messages, not as headers in their conversation history, and
 can include clickable references to a particular earlier reply. Following one
 opens the target in place without reloading the app; the model-only reference
 metadata does not change the saved transcript.
