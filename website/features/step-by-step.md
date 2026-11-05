@@ -241,6 +241,17 @@ output that names a file that doesn't exist, or doesn't give the path of the fil
 (pasting the content instead), is rebuilt once with the real paths. If it is still failing, the plan
 is left for your review and nothing is filed in the topic.
 
+Automatic runs now apply the check to each step **before starting the next one**, so later work
+doesn't quietly depend on a failed or very weak draft. If a failed check remains after its retry,
+or the score is still under 50, the run pauses at that step; resuming will continue to hold there
+until a person reviews it. A score from 50 to 59 is allowed after the retry, matching the final
+review threshold. The whole ask and sibling work remain available as context, but each step is
+explicitly told to prioritize its own result. It may still do useful work from a later step when
+that makes sense or the ask calls for it, provided it identifies the extra work rather than
+substituting it for the current result. Existing files are not meant to be overwritten when their
+ownership is unclear; the draft is told to choose a fresh path or ask. Assessor tool notes include
+the exact workspace file path or a source URL without query parameters.
+
 The assessor can also **look for itself**. When the step built a file or ran tool calls, it can list
 the files the step built, read one (a Word, PowerPoint, Excel, HTML or text file is turned into text,
 paged for long files), and re-read the full output of a numbered tool call. It can only open files a

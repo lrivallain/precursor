@@ -362,6 +362,9 @@ def test_the_model_drafts_an_artifact_in_the_step_discussion(
         # The visible turn is short; the rules go to the model only.
         assert turn["prompt"] == "Draft the artifact for this step.\n\nkeep it short"
         assert "<!-- artifact -->" in turn["llm_prompt"] and "keep it short" in turn["llm_prompt"]
+        assert "don't silently replace this step's result" in turn["llm_prompt"]
+        assert "the current step's instruction defines its primary result" in turn["context"]
+        assert "Don't overwrite work from another task or plan" in turn["llm_prompt"]
         assert ASK in turn["context"] and "Quote the migration" in turn["context"]
         versions = client.get(f"/api/steps/{sid}/versions").json()
         assert versions[0]["author"] == "model"
@@ -2024,9 +2027,43 @@ def test_an_autonomous_run_redrafts_a_weak_step_once_then_holds_it_back(
         done, turns = _autonomous_run(client, monkeypatch)
         assert not turns and done["status"] != "done"
         notes = [n["text"] for n in done["activity"]]
-        assert any("Redrafting once to close its gaps" in n for n in notes)
+        assert any("Redrafting once before later steps rely on it" in n for n in notes)
         assert any("still weak" in n for n in notes)
+        # A step that remains weak is held before the runner can draft its siblings.
+        assert len(TURNS) == 2
+        pid = done["id"]
+        assert client.post(f"/api/step-plans/{pid}/auto/start").status_code == 200
+        resumed = _await_run(client, pid)
+        assert len(TURNS) == 2
+        assert any("still scores 30/100" in n["text"] for n in resumed["activity"])
     assert any("no figures" in (t["llm_prompt"] or "") for t in TURNS)
+
+
+def test_an_autonomous_run_repairs_a_weak_step_before_drafting_its_siblings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from precursor.backend.services import step_plan_llm
+
+    _fake_llm(monkeypatch, GOOD_FINAL_REPLIES)
+    real = step_plan_llm.step_weakness
+    weak_checks: set[int] = set()
+
+    def weak_once(step: Any) -> tuple[int, list[str]] | None:
+        if step.title == "Quote" and step.id not in weak_checks:
+            weak_checks.add(step.id)
+            return 35, ["missing source evidence"]
+        return real(step)
+
+    monkeypatch.setattr(step_plan_llm, "step_weakness", weak_once)
+    with TestClient(create_app()) as client:
+        done, _ = _autonomous_run(client, monkeypatch)
+        assert done["status"] == "done", [n["text"] for n in done["activity"]]
+        assert len(done["steps"]) > 1
+        assert TURNS[0]["chat_id"] == TURNS[1]["chat_id"]
+        assert TURNS[2]["chat_id"] != TURNS[1]["chat_id"]
+        notes = [n["text"] for n in done["activity"]]
+        assert any("Redrafting once before later steps rely on it" in n for n in notes)
+        assert all(s["status"] == "validated" for s in done["steps"] if s["artifact"].strip())
 
 
 def test_an_autonomous_run_retries_a_transient_model_failure(

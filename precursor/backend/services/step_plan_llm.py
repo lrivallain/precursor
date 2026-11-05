@@ -101,10 +101,19 @@ Draft the result (the "artifact") of this step now, or revise the current one. \
 It will be reviewed by the user and later combined with the other steps' \
 artifacts into one deliverable.
 
+- The original ask and other steps are context, not permission to skip this \
+step's result. Make this step's requested result the artifact. You may also do \
+useful work from another step when the ask or the work itself warrants it; \
+briefly identify that extra work and its evidence, and don't silently replace \
+this step's result with it.
 - Use this discussion as the source of truth for decisions and wording: what \
 the user and you settled on wins over your own preferences.
 - Ground everything in the original ask and the discussion; never invent \
 facts, figures or commitments.
+- Before creating or writing a file, check whether it already exists. Don't \
+overwrite work from another task or plan; choose a fresh path or ask when \
+ownership is unclear. Updating a file created earlier in this same plan is \
+fine when the ask calls for it.
 - Put the complete artifact between a line `{svc.ARTIFACT_OPEN}` and a line \
 `{svc.ARTIFACT_CLOSE}`: clean Markdown, ready to be reused as is, no preamble \
 and no code fence inside the markers. {_LANGUAGE}

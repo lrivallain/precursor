@@ -27,6 +27,7 @@ import zipfile
 from html import unescape
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -226,6 +227,8 @@ class Inspector:
             except OSError:
                 continue
         self._note("Listed the files the step built")
+        if lines:
+            self._note("Files listed: " + ", ".join(line.rsplit(" (", 1)[0] for line in lines[:5]))
         return "\n".join(lines) or "No readable file."
 
     def read_file(self, path: str, offset: int = 0, length: int = _DEFAULT_CHARS) -> str:
@@ -245,7 +248,7 @@ class Inspector:
         offset = max(0, offset)
         length = max(1, min(length, _MAX_CHARS))
         end = min(len(text), offset + length)
-        self._note(f"Read {resolved.name} (characters {offset}-{end} of {len(text)})")
+        self._note(f"Read {resolved} (characters {offset}-{end} of {len(text)})")
         more = f"\n[more: call again with offset={end}]" if end < len(text) else ""
         return f"{text[offset:end]}{more}" or "(empty)"
 
@@ -288,6 +291,33 @@ def assessor_gate(gate: approval_service.ApprovalGate | None) -> approval_servic
             policy=approval_service.POLICY_BALANCED, rules=gate.rules
         )
     return gate
+
+
+def _tool_target(call: ToolCallRequest) -> str:
+    """Keep useful read provenance without logging arbitrary arguments or URL queries."""
+    try:
+        args = json.loads(call.arguments or "{}")
+    except ValueError:
+        return ""
+    if not isinstance(args, dict):
+        return ""
+    if call.name in {"precursor__read_workspace_file", "precursor__list_workspace_files"}:
+        fields = [f"{key}={args[key]}" for key in ("workspace_id", "path") if args.get(key)]
+        return " (" + ", ".join(fields) + ")" if fields else ""
+    if call.name == "fetch__http_get" and isinstance(args.get("url"), str):
+        parsed = urlsplit(args["url"])
+        host = parsed.hostname or ""
+        if ":" in host:
+            host = f"[{host}]"
+        try:
+            port = parsed.port
+        except ValueError:
+            return ""
+        if port is not None:
+            host = f"{host}:{port}"
+        safe_url = urlunsplit((parsed.scheme, host, parsed.path, "", ""))
+        return f" ({safe_url[:200]})"
+    return ""
 
 
 async def review_with_chat_tools(
@@ -358,7 +388,9 @@ async def review_with_chat_tools(
                     inspector._note(f"Declined {ev.call.name} ({server}): needs approval")
                 else:
                     state = "failed" if ev.is_error else "ok"
-                    inspector._note(f"Called {ev.call.name} ({server}): {state}")
+                    inspector._note(
+                        f"Called {ev.call.name} ({server}){_tool_target(ev.call)}: {state}"
+                    )
             elif isinstance(ev, AssistantFinalTurn):
                 text = ev.text
     return text

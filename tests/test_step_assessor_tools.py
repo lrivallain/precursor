@@ -74,9 +74,28 @@ async def test_office_files_are_read_as_text_in_slide_order(tmp_path: Path) -> N
     inspector = Inspector([str(docx), str(pptx)], [])
     text = await _run(inspector, "read_file", path=str(docx))
     assert "Runbook" in text and "Fail over & verify" in text
+    assert any(str(docx) in line for line in inspector.log)
     deck = await _run(inspector, "read_file", path=str(pptx))
     assert deck.index("Slide text 1") < deck.index("Slide text 2") < deck.index("Slide text 10")
     assert any("a.docx" in line for line in inspector.log)
+
+
+def test_assessor_tool_log_keeps_workspace_paths_and_sanitizes_fetch_urls() -> None:
+    workspace_call = _call(
+        "precursor__read_workspace_file",
+        workspace_id=6,
+        path="azure-container-apps-brief.html",
+    )
+    assert step_assessor_tools._tool_target(workspace_call) == (
+        " (workspace_id=6, path=azure-container-apps-brief.html)"
+    )
+    fetch_call = _call(
+        "fetch__http_get",
+        url="https://learn.microsoft.com/en-us/azure/container-apps/overview?token=secret",
+    )
+    target = step_assessor_tools._tool_target(fetch_call)
+    assert target == " (https://learn.microsoft.com/en-us/azure/container-apps/overview)"
+    assert "secret" not in target
 
 
 async def test_only_files_the_plan_produced_can_be_read(tmp_path: Path) -> None:

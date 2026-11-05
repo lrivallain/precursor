@@ -1,8 +1,10 @@
 """Automated run of a step-by-step plan.
 
 The run drafts the steps that still have nothing, scores each draft, then drafts
-a provisional final output and scores the whole. It never validates anything:
-approval stays with the user. It also never touches a validated step, a step
+a provisional final output and scores the whole. Under balanced, autonomous and
+plan delegation policies, each checked step is repaired and validated before the
+next one starts; unresolved weak work pauses for the user. Other policies leave
+approval with the user. The run never touches a validated step, a step
 that already has an artifact, or an existing final output, so resuming a run
 (or running it on a plan the user has been working in) can't overwrite work.
 
@@ -99,14 +101,15 @@ async def _step_title(step_id: int) -> str:
         return (await svc.get_step(session, step_id)).title
 
 
-def _outcome_note(title: str, draft: llm.ArtifactDraft) -> str:
+def _outcome_note(title: str, draft: llm.ArtifactDraft, *, automatic_review: bool = False) -> str:
     if draft.outcome == "published":
         step = draft.step
         score = svc.parse_assessment(step.assessment_json)
         scored = f", scored {score.score}/100" if score else ""
-        return (
-            f"Drafted «{title}» (version {step.artifact_version}{scored}). Waiting for your review."
+        next_action = (
+            " Ready for the automatic check." if automatic_review else " Waiting for review."
         )
+        return f"Drafted «{title}» (version {step.artifact_version}{scored}).{next_action}"
     if draft.outcome == "discussion":
         return f"«{title}»: the model answered in the discussion without a deliverable."
     return f"«{title}»: waiting for a tool approval."
@@ -145,7 +148,19 @@ async def _run(plan_id: int) -> None:
         await _note(
             plan_id, f"Automated run started: the model drafts and scores the steps. {tail}"
         )
-        while (step_id := await _next_step(plan_id, done)) is not None:
+        while True:
+            step_id = await _next_step(plan_id, done)
+            if step_id is None:
+                break
+            unresolved = await _unresolved_step(plan_id, before_step=step_id)
+            if unresolved is not None:
+                await _note(
+                    plan_id,
+                    f"«{unresolved[0]}» {unresolved[1]}. Pausing before later steps rely on it; "
+                    "review this step, then resume.",
+                )
+                await _set_state(plan_id, AUTO_PAUSED)
+                return
             done.add(step_id)
             title = await _step_title(step_id)
             svc.CURRENT_STEP[plan_id] = step_id
@@ -154,16 +169,38 @@ async def _run(plan_id: int) -> None:
             async with SessionLocal() as session:
                 draft = await _retried(plan_id, llm.generate_artifact, session, step_id)
             if draft.outcome == "discussion":
-                await _note(plan_id, _outcome_note(title, draft) + " Asking once more.")
+                await _note(
+                    plan_id,
+                    _outcome_note(
+                        title, draft, automatic_review=policy in ("balanced", "autonomous", "plan")
+                    )
+                    + " Asking once more.",
+                )
                 async with SessionLocal() as session:
                     draft = await _retried(
                         plan_id, llm.generate_artifact, session, step_id, instructions=_NO_QUESTIONS
                     )
             svc.CURRENT_STEP.pop(plan_id, None)
-            await _note(plan_id, _outcome_note(title, draft))
+            await _note(
+                plan_id,
+                _outcome_note(
+                    title, draft, automatic_review=policy in ("balanced", "autonomous", "plan")
+                ),
+            )
             await publish_step_plan_changed(plan_id)
             if draft.outcome == "awaiting_approval":
                 await _note(plan_id, "Paused: a tool call in a step needs your approval.")
+                await _set_state(plan_id, AUTO_PAUSED)
+                return
+            if draft.outcome == "discussion":
+                await _note(
+                    plan_id,
+                    f"«{title}» has no artifact after the follow-up. Pausing before later steps "
+                    "rely on it; finish this step, then resume.",
+                )
+                await _set_state(plan_id, AUTO_PAUSED)
+                return
+            if not await _review_step_before_dependents(plan_id, step_id):
                 await _set_state(plan_id, AUTO_PAUSED)
                 return
         if not await _still_running(plan_id):
@@ -274,6 +311,87 @@ _FIX_FINAL_PATH = (
     " The app checked the paths in your previous final output and found: {problems}. "
     "The files the steps really built are: {built}. Give exactly those paths, with a short summary and how to open them; do not paste or rewrite the file's content."
 )
+
+
+async def _unresolved_step(plan_id: int, *, before_step: int) -> tuple[str, str] | None:
+    """Find a preceding weak draft that must not be used by the next step."""
+    async with SessionLocal() as session:
+        plan = await svc.get_plan(session, plan_id)
+        if plan.delegation_policy not in ("balanced", "autonomous", "plan"):
+            return None
+        for step in svc.working_leaves(await svc.plan_steps(session, plan_id)):
+            if step.id == before_step:
+                break
+            if step.status != STEP_TO_VALIDATE or not step.artifact.strip():
+                continue
+            problems = llm.step_check_failures(step)
+            weak = llm.step_weakness(step)
+            if problems:
+                return step.title, "failed a deliverable check: " + "; ".join(problems[:3])
+            if weak and weak[0] < _HOLD_BELOW:
+                return step.title, f"still scores {weak[0]}/100"
+    return None
+
+
+async def _review_step_before_dependents(plan_id: int, step_id: int) -> bool:
+    """Repair and validate an automatic draft before later steps can rely on it."""
+    async with SessionLocal() as session:
+        plan = await svc.get_plan(session, plan_id)
+        if plan.delegation_policy not in ("balanced", "autonomous", "plan"):
+            return True
+        step = await svc.get_step(session, step_id)
+        if not step.artifact.strip() or step.status != STEP_TO_VALIDATE:
+            return False
+        title = step.title
+        problems = llm.step_check_failures(step)
+        weak = llm.step_weakness(step)
+        if problems or (weak and weak[0] < _WEAK_BELOW):
+            reasons: list[str] = []
+            instructions: list[str] = []
+            if problems:
+                reasons.append("failed a check")
+                instructions.append(_FIX_FILE.format(problems="; ".join(problems)))
+            if weak and weak[0] < _WEAK_BELOW:
+                reasons.append(f"scored {weak[0]}/100")
+                instructions.append(
+                    _FIX_WEAK.format(score=weak[0], gaps="; ".join(weak[1][:5]) or "none listed")
+                )
+            await _note(
+                plan_id,
+                f"«{title}» {' and '.join(reasons)}. Redrafting once before later steps rely on it.",
+            )
+            draft = await _retried(
+                plan_id,
+                llm.generate_artifact,
+                session,
+                step_id,
+                instructions="\n\n".join(instructions),
+            )
+            if draft.outcome != "published" or not draft.step.artifact.strip():
+                await _note(
+                    plan_id,
+                    f"«{title}» has no improved artifact. Pausing before drafting later steps; "
+                    "review this step, then resume.",
+                )
+                return False
+            step = await svc.get_step(session, step_id)
+            problems = llm.step_check_failures(step)
+            weak = llm.step_weakness(step)
+            if problems or (weak and weak[0] < _HOLD_BELOW):
+                if problems:
+                    reason = "failed a check: " + "; ".join(problems[:3])
+                else:
+                    reason = f"still scores {weak[0] if weak else 0}/100"
+                await _note(
+                    plan_id,
+                    f"«{title}» is still weak ({reason}). Pausing before later steps rely on it; "
+                    "review this step, then resume.",
+                )
+                return False
+        await svc.set_step_status(session, step_id, STEP_VALIDATED)
+        await _note(plan_id, f"«{title}» is validated before the next step starts.")
+    await publish_step_plan_changed(plan_id)
+    return True
 
 
 async def _review(plan_id: int, policy: str) -> bool:

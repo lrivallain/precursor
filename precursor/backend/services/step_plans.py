@@ -1360,7 +1360,13 @@ async def step_grounding(
     session: AsyncSession, plan: StepPlan, steps: list[Step], step: Step
 ) -> list[str]:
     """The plan-wide context blocks shared by a step's chat and its drafting."""
-    parts = [plan_header(plan)]
+    parts = [
+        plan_header(plan),
+        "Step scope: the original ask and sibling artifacts provide context; "
+        "the current step's instruction defines its primary result. Complete that "
+        "result even if you also make useful progress on another step. If work "
+        "overlaps, explain what you completed and what remains for the other step.",
+    ]
     if plan.output_instructions:
         parts.append(f"The final deliverable will be:\n{plan.output_instructions}")
     background = await topic_background(session, plan)

@@ -26,6 +26,14 @@ are the per-version history; releasing does not rewrite this file.
   assessor reports it as an assumption. Its last round has the tools withdrawn so it answers.
   Everything it opened or called shows under **Checked with tools**; if tools fail it falls back
   to the plain judgement, and the measured caps still apply.
+- **Automatic runs keep each step on scope and review it before continuing.** The whole ask and
+  sibling artifacts remain available as context, while the current step's requested result is
+  explicitly prioritized; useful work beyond that scope remains allowed and should be identified.
+  Balanced, autonomous and plan-policy runs check and validate each draft before starting the next
+  step, retrying failed checks or scores under 60 once. If a check still fails or a score remains
+  under 50, the run pauses before later steps can rely on it. Resuming also holds on an unresolved
+  weak draft until a person reviews it. Assessor tool notes now include the file path or safe source
+  URL it actually checked.
 - **A weak final output is held back.** An automated balanced or autonomous run no longer files a
   final output that scores under 50/100 against the ask in the topic. The run stops with a note, so
   you review it and send it yourself. A `/ws/<workspace>/<file>` link in a step's result is now
