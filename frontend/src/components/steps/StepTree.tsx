@@ -150,7 +150,7 @@ export function StepTree({
             />
             {!isLast && (
               <span
-                className="pointer-events-none absolute -bottom-0.5 -left-[9px] top-[18px] w-px bg-border"
+                className="pointer-events-none absolute -bottom-0.5 -left-[9px] top-0 w-px bg-border"
                 aria-hidden
               />
             )}

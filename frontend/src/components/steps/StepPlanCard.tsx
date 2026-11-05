@@ -155,13 +155,12 @@ export function StepPlanCard({ planId }: { planId: number }) {
                   data-status={status}
                 >
                   {Array.from({ length: depth + 1 }, (_, level) => {
-                    const own = level === depth;
                     const through = continues(level);
                     if (!through) return null;
                     return (
                       <span
                         key={level}
-                        className={`absolute w-px bg-border ${own ? "bottom-0 top-1/2" : "inset-y-0"}`}
+                        className={`absolute w-px bg-border inset-y-0`}
                         style={{ left: level * 16 + 7 }}
                         aria-hidden
                       />
