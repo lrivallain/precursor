@@ -2078,13 +2078,25 @@ async def _launch_run(plan_id: int) -> dict[str, Any] | None:
     return None
 
 
+async def _topic_policy(session: Any, topic_id: int | None) -> str | None:
+    """The topic's tool-approval policy, which sets how much of a plan runs unattended."""
+    if topic_id is None:
+        return None
+    from precursor.backend.models.topic import Topic
+    from precursor.backend.services.app_settings import resolve_topic_approval_policy
+
+    topic = await session.get(Topic, topic_id)
+    if topic is None:
+        return None
+    return topic.approval_policy or await resolve_topic_approval_policy(session)
+
+
 @mcp.tool()
 async def create_step_plan(
     ask: str,
     topic_id: int | None = None,
     title: str | None = None,
     run: bool = False,
-    self_review: bool = False,
 ) -> dict[str, Any]:
     """Delegate a long, multi-part job to *Step by step* instead of answering in one reply.
 
@@ -2101,10 +2113,12 @@ async def create_step_plan(
     draft. Pass ``topic_id`` (the topic you are working in) so the plan shows
     up, live, in that topic's discussion and its final output can be filed back.
 
-    With ``run=True`` and ``self_review=True`` (needs ``topic_id``) nobody has to
-    confirm: when the run ends the drafts are validated, the final output is
-    filed in the topic and you are asked to review it there. Use it unless the
-    user wants to review the steps themselves.
+    Who reviews follows the topic's autonomy (pass ``topic_id``): *autonomous*,
+    nobody; when the run ends the drafts are validated, the output is filed in
+    the topic and you are asked to review it. *balanced*, the drafts are
+    validated and the user does one final review of the output. *manual*, the
+    user validates every step. For the last two you are woken in the topic once
+    the user files the output, and then carry on by yourself.
 
     Follow up with ``get_step_plan`` (use ``wait_seconds`` to wait for progress)
     and ``edit_step_plan``. Report the returned ``url`` and the plan's ``title``
@@ -2123,6 +2137,7 @@ async def create_step_plan(
 
     try:
         async with SessionLocal() as session:
+            policy = await _topic_policy(session, topic_id)
             plan = await svc.create_plan(
                 session,
                 StepPlanCreate(
@@ -2131,7 +2146,7 @@ async def create_step_plan(
                     source_text=ask,
                     propose=False,
                     automation_mode="assisted",
-                    self_review=bool(self_review and topic_id is not None),
+                    delegation_policy=policy,
                 ),
             )
             plan_id = plan.id

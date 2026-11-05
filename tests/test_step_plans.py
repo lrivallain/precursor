@@ -1240,7 +1240,7 @@ def test_the_run_drafts_empty_steps_scores_them_and_validates_nothing(
         assert done["auto_step_id"] is None
 
 
-def test_a_self_reviewed_run_files_its_output_and_hands_back_to_the_topic(
+def test_an_autonomous_delegation_files_its_output_and_hands_back_to_the_topic(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _fake_llm(monkeypatch, ASSESS_REPLIES)
@@ -1252,7 +1252,7 @@ def test_a_self_reviewed_run_files_its_output_and_hands_back_to_the_topic(
     monkeypatch.setattr("precursor.backend.services.turn.run_topic_turn", _turn)
     with TestClient(create_app()) as client:
         topic = client.post("/api/topics", json={"title": "Mail"}).json()
-        plan = _plan(client, topic_id=topic["id"], self_review=True)
+        plan = _plan(client, topic_id=topic["id"], delegation_policy="autonomous")
         pid = client.post(f"/api/step-plans/{plan['id']}/start", json={}).json()["id"]
         _mode(client, pid, "auto")
         assert client.post(f"/api/step-plans/{pid}/auto/start").status_code == 200
@@ -1264,7 +1264,32 @@ def test_a_self_reviewed_run_files_its_output_and_hands_back_to_the_topic(
         assert any("FINAL ANSWER" in m["content"] for m in posted)
 
 
-def test_a_plain_run_without_self_review_still_approves_nothing(
+def test_a_balanced_delegation_leaves_the_final_review_then_wakes_the_topic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_llm(monkeypatch, ASSESS_REPLIES)
+    turns: list[tuple[int, str]] = []
+
+    async def _turn(topic_id: int, prompt: str, **_: Any) -> None:
+        turns.append((topic_id, prompt))
+
+    monkeypatch.setattr("precursor.backend.services.turn.run_topic_turn", _turn)
+    with TestClient(create_app()) as client:
+        topic = client.post("/api/topics", json={"title": "Mail"}).json()
+        plan = _plan(client, topic_id=topic["id"], delegation_policy="balanced")
+        pid = client.post(f"/api/step-plans/{plan['id']}/start", json={}).json()["id"]
+        _mode(client, pid, "auto")
+        client.post(f"/api/step-plans/{pid}/auto/start")
+        done = _await_run(client, pid)
+        assert done["status"] != "done" and done["final_provisional"] is False
+        assert not turns
+        assert client.post(f"/api/step-plans/{pid}/send-to-topic", json={}).status_code == 200
+        assert client.portal is not None
+        client.portal.call(asyncio.sleep, 0.2)
+        assert turns and turns[0][0] == topic["id"] and "reviewing" in turns[0][1]
+
+
+def test_a_plain_run_still_approves_nothing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _fake_llm(monkeypatch, ASSESS_REPLIES)

@@ -528,8 +528,9 @@ titles disclose chat content.
 **Step-by-step plans.** The `step_plans` section (write-capable, off by default) lets a
 model delegate a long, multi-part ask to [Step by step](/features/step-by-step):
 `create_step_plan`, `list_step_plans`, `get_step_plan`, `edit_step_plan`,
-`run_step_plan` and `pause_step_plan`. The run happens inside the Precursor app and only approves
-steps when the model opts into `self_review` (then the output is filed and reviewed in the topic); the topic shows a live task card for it.
+`run_step_plan` and `pause_step_plan`. The run happens inside the Precursor app and follows the
+topic's autonomy: autonomous topics close the plan by themselves, balanced ones ask for one final
+review, manual ones for every step, and the model is woken once the output is filed; the topic shows a live task card for it.
 
 **Topics come back with their tree position resolved.** Every topic payload
 carries a `path` — the ancestor slugs joined root-first with `/` — so a caller

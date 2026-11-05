@@ -15,6 +15,7 @@ StepStatus = Literal["proposed", "open", "in_progress", "to_validate", "validate
 SettableStepStatus = Literal["open", "in_progress", "to_validate", "validated", "cancelled"]
 Author = Literal["user", "model"]
 AutomationMode = Literal["manual", "assisted", "auto"]
+DelegationPolicy = Literal["manual", "balanced", "autonomous"]
 AutoState = Literal["idle", "running", "paused"]
 PromptSource = Literal["submitted", "topic_message"]
 
@@ -115,7 +116,7 @@ class StepPlanRead(ConversationLLMFields):
     automation_mode: AutomationMode = "manual"
     # ``running`` only while the run is alive in this process.
     auto_state: AutoState = "idle"
-    self_review: bool = False
+    delegation_policy: DelegationPolicy | None = None
     # The step being drafted right now, while the run is alive.
     auto_step_id: int | None = None
     # The latest traces of the model and the run, oldest first.
@@ -158,7 +159,7 @@ class StepPlanCreate(ConversationLLMFields):
     # Have the model propose the first steps right away.
     propose: bool = True
     automation_mode: AutomationMode = "manual"
-    self_review: bool = False
+    delegation_policy: DelegationPolicy | None = None
 
 
 class StepPlanUpdate(ConversationLLMFields):

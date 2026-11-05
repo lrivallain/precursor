@@ -179,11 +179,17 @@ exposed in *Settings → MCP exposure* (off by default). It then has `create_ste
 `get_step_plan` (with `wait_seconds` to follow a run instead of polling),
 `edit_step_plan` (add, update, delete, skip, accept all), `run_step_plan` and
 `pause_step_plan`. The system prompt tells the model to delegate only long, multi-part
-asks. By default it can never approve a step. With `self_review=true` (plus `run=true` and a
-`topic_id`; the prompt tells the model to use it) nobody has to confirm: when the run ends the
-drafts are validated, the final output is rebuilt, filed in the topic and the plan is done, then
-a turn runs so the topic's model reviews the result. If any of that fails the plan stays in
-*Consolidating* with a note, for you to review.
+asks. By default it can never approve a step. When a model delegates a plan, the **topic's
+autonomy** (the *Autonomous / Balanced / Manual* chip) decides who reviews:
+
+| Topic autonomy | What happens |
+| --- | --- |
+| **Autonomous** | Nobody. When the run ends the drafts are validated, the final output is filed in the topic and the plan is done; the topic's model then reviews it. |
+| **Balanced** | The drafts are validated, you do one final review of the output and send it to the topic. |
+| **Manual** | You validate every step, then send the output to the topic. |
+
+In the last two cases the topic's model is woken as soon as you send the output, and carries on by
+itself. If an automatic review fails, the plan stays in *Consolidating* with a note.
 
 ### The plan in the discussion
 

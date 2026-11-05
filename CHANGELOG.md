@@ -15,15 +15,15 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
-- **Delegated step plans close themselves.** `create_step_plan(run=true,
-  self_review=true)` validates the drafts when the run ends, files the final
-  output in the topic and runs a turn so the topic's model reviews it, instead
-  of waiting in *Consolidating* for a person.
+- **Delegated step plans follow the topic's autonomy.** Autonomous: the drafts
+  are validated, the output is filed in the topic and the topic's model reviews
+  it. Balanced: one final review by you. Manual: you validate each step. In the
+  last two the topic's model is woken once you send the output, and carries on.
 - **Models can delegate long asks to Step by step.** A new opt-in `step_plans`
   MCP section (Settings → MCP exposure, off by default) adds `create_step_plan`,
   `list_step_plans`, `get_step_plan` (optionally waiting for the run),
   `edit_step_plan`, `run_step_plan` and `pause_step_plan`, and the system prompt
-  tells the model when to use them. The model never approves steps.
+  tells the model when to use them. Approval follows the topic's autonomy.
 - **Live plan card in the discussion.** A topic that started a step plan now
   shows its tasks (status, scores, spinner on the step being drafted, progress)
   under the plan receipt, updating as the plan runs.

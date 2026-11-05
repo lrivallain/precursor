@@ -260,12 +260,16 @@ async def send_to_topic(
     payload: SendToTopicRequest | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> MessageRead:
-    _, message = await llm.send_to_topic(
+    plan, message = await llm.send_to_topic(
         session,
         plan_id,
         payload.text if payload else None,
         force=payload.force if payload else False,
     )
+    if plan.delegation_policy in ("manual", "balanced") and plan.source_topic_id is not None:
+        from precursor.backend.services import step_plan_runner
+
+        step_plan_runner.hand_back(plan.source_topic_id, plan.title, reviewed_by_user=True)
     await publish_step_plan_changed(plan_id)
     return message
 

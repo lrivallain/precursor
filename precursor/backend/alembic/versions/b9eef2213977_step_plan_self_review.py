@@ -1,4 +1,4 @@
-"""step plan self review
+"""step plan delegation policy
 
 Revision ID: b9eef2213977
 Revises: 5fa65fad981a
@@ -21,9 +21,9 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     with op.batch_alter_table("step_plans") as batch:
-        batch.add_column(sa.Column("self_review", sa.Boolean(), server_default="0", nullable=False))
+        batch.add_column(sa.Column("delegation_policy", sa.String(length=16), nullable=True))
 
 
 def downgrade() -> None:
     with op.batch_alter_table("step_plans") as batch:
-        batch.drop_column("self_review")
+        batch.drop_column("delegation_policy")

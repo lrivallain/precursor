@@ -155,8 +155,8 @@ async def _finish(plan_id: int) -> None:
         elif has_work:
             await llm.assess_plan(session, plan_id)
     async with SessionLocal() as session:
-        self_review = (await svc.get_plan(session, plan_id)).self_review
-    if self_review and await _self_review(plan_id):
+        policy = (await svc.get_plan(session, plan_id)).delegation_policy
+    if policy in ("balanced", "autonomous") and await _review(plan_id, policy):
         await _set_state(plan_id, AUTO_IDLE)
         return
     await _note(
@@ -167,16 +167,45 @@ async def _finish(plan_id: int) -> None:
     await _set_state(plan_id, AUTO_IDLE)
 
 
-async def _self_review(plan_id: int) -> bool:
-    """Close a delegated plan without waiting for a person: validate, file, hand back.
+_HAND_BACKS: set[asyncio.Task[None]] = set()
 
-    The model that delegated the plan reviews the result in its topic, so the
-    drafts are validated here, the final output is rebuilt (no longer provisional),
-    filed into the topic and a turn is run for the topic's model to check it.
-    ``False`` leaves the plan for a person to review.
-    """
+
+def hand_back(topic_id: int, title: str, *, reviewed_by_user: bool) -> None:
+    """Wake the topic's model once the plan's output is filed there, without blocking."""
     from precursor.backend.services.turn import run_topic_turn
 
+    if reviewed_by_user:
+        prompt = (
+            f"The user finished reviewing the step-by-step plan «{title}» you delegated and "
+            "its final output was filed above. Carry on by yourself: check it against the "
+            "original ask, act on it, and say what you do next. Do not wait for the user."
+        )
+    else:
+        prompt = (
+            f"The step-by-step plan «{title}» you delegated is finished and its final "
+            "output was filed above. Review it against the user's original ask: say "
+            "what was delivered, flag anything weak or missing, and propose next steps."
+        )
+
+    async def _go() -> None:
+        try:
+            await run_topic_turn(topic_id, prompt)
+        except Exception:
+            log.exception("Hand-back to topic %s failed", topic_id)
+
+    task = asyncio.create_task(_go())
+    _HAND_BACKS.add(task)
+    task.add_done_callback(_HAND_BACKS.discard)
+
+
+async def _review(plan_id: int, policy: str) -> bool:
+    """Close a delegated plan as far as its topic's autonomy allows.
+
+    Both policies validate the drafts and rebuild the final output (no longer
+    provisional). ``autonomous`` also files it in the topic and wakes the topic's
+    model; ``balanced`` leaves that last review to the user. ``False`` leaves the
+    plan for a person to review.
+    """
     try:
         async with SessionLocal() as session:
             plan = await svc.get_plan(session, plan_id)
@@ -188,24 +217,26 @@ async def _self_review(plan_id: int) -> bool:
                 if step.status == STEP_TO_VALIDATE and step.artifact.strip():
                     await svc.set_step_status(session, step.id, STEP_VALIDATED)
             await llm.generate_final(session, plan_id, force=True)
-            plan, _ = await llm.send_to_topic(session, plan_id, None)
+            if policy == "autonomous":
+                plan, _ = await llm.send_to_topic(session, plan_id, None)
             title = plan.title
         await publish_step_plan_changed(plan_id)
-        await _note(
-            plan_id,
-            "Self-review: drafts validated and the final output filed in the topic, "
-            "which now reviews it.",
-        )
-        await run_topic_turn(
-            topic_id,
-            f"The step-by-step plan «{title}» you delegated is finished and its final "
-            "output was filed above. Review it against the user's original ask: say "
-            "what was delivered, flag anything weak or missing, and propose next steps.",
-        )
+        if policy == "autonomous":
+            await _note(
+                plan_id,
+                "Drafts validated and the final output filed in the topic, which now reviews it.",
+            )
+            hand_back(topic_id, title, reviewed_by_user=False)
+        else:
+            await _note(
+                plan_id,
+                "Drafts validated. The final output is ready: review it, then send it to "
+                "the topic.",
+            )
     except Exception as exc:
         detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
-        log.exception("Self-review of step plan %s failed", plan_id)
-        await _note(plan_id, f"Self-review stopped, please review the plan yourself: {detail}")
+        log.exception("Review of step plan %s failed", plan_id)
+        await _note(plan_id, f"Automatic review stopped, please review the plan yourself: {detail}")
         return False
     return True
 
