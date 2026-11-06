@@ -117,6 +117,33 @@ deployment, so Claude deployments need no special setup. Without an explicit
 **API version**, Responses calls on a classic endpoint use `2025-04-01-preview`
 and Chat Completions keep `2024-10-21`; a version you set applies to both.
 
+**Rate limits and retries.** The SDK retries transient HTTP failures up to twice,
+honouring supported retry-delay headers. If those attempts fail, Precursor does
+not try the other API for rate limits (`429`), timeouts (`408`), conflicts (`409`),
+server errors, or authentication failures. A different API uses the same quota,
+so switching would only multiply requests. The error appears on the failed turn;
+wait before using **Retry**. Already-streamed output is never replayed through
+the other API. This does not add a quota queue or reduce prompt size.
+
+**Prompt caching.** Support depends on the deployed model and API, not just the
+Foundry endpoint. For Claude, Microsoft documents 5-minute and 1-hour caching
+through the native Anthropic Messages API. Automatic caching is opt-in with
+`"cache_control": {"type": "ephemeral"}`; it is not automatic merely because the
+model is hosted on Foundry. Precursor currently uses the OpenAI-compatible Chat
+Completions / Responses APIs and does not send Claude cache controls or report
+cache-read/write usage, so do not assume Claude caching is enabled here.
+Supporting the documented Claude path requires a native Messages adapter.
+Keep tool definitions and stable instructions identical at the start of the
+prompt to enable reuse without disabling MCP servers. For most Claude models,
+cache reads do not count toward the uncached-input quota, but initial cache
+writes do: caching cannot bootstrap a prompt that already exceeds that quota.
+See [Claude caching support](https://learn.microsoft.com/azure/foundry/foundry-models/concepts/claude-models#capabilities-and-advanced-features),
+[cache controls](https://platform.claude.com/docs/en/build-with-claude/prompt-caching),
+and [quota accounting](https://learn.microsoft.com/azure/foundry/foundry-models/concepts/claude-models-quotas-limits).
+Azure OpenAI models have their own
+[prompt-caching rules](https://learn.microsoft.com/azure/foundry/openai/how-to/prompt-caching);
+those controls should not be assumed to work for Claude.
+
 <Screenshot src="/screenshots/foundry-models.png" alt="Azure AI Foundry settings with removable model bubbles and an Add model input" caption="Add deployment names individually, then apply the configuration to populate the model picker." />
 
 Precursor pins **no** model id of its own. Until you choose one in

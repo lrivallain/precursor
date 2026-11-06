@@ -33,7 +33,7 @@ import time
 from collections.abc import AsyncIterator, Mapping, Sequence
 from typing import Any, Literal
 
-from openai import AsyncAzureOpenAI, AsyncOpenAI
+from openai import APIStatusError, AsyncAzureOpenAI, AsyncOpenAI
 
 from precursor.backend.services.llm._openai_compat import (
     embed_openai,
@@ -224,9 +224,15 @@ class AzureFoundryProvider:
                     yielded = True
                     yield event
             except LLMError as exc:
-                # Auth failures repeat identically on the other API, and output
-                # already streamed can't be replayed.
-                if yielded or isinstance(exc, AzureCliError) or "credentials" in str(exc):
+                # The SDK already retries transient HTTP failures. Changing API
+                # surfaces would multiply those attempts against the same quota.
+                cause = exc.__cause__
+                if (
+                    yielded
+                    or isinstance(exc, AzureCliError)
+                    or "credentials" in str(exc)
+                    or (isinstance(cause, APIStatusError) and cause.status_code not in (400, 404))
+                ):
                     raise
                 first_error = first_error or exc
                 continue
