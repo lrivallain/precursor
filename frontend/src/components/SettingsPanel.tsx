@@ -292,6 +292,7 @@ export function SettingsPanel({ onClose: closeNow, initialCategory, onCollection
   >({ state: "idle" });
   const [ttlMinutes, setTtlMinutes] = useState(60);
   const [showChatStats, setShowChatStats] = useState(true);
+  const [showQuickActions, setShowQuickActions] = useState(true);
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
   const [completionSoundEnabled, setCompletionSoundEnabled] = useState(false);
   const [maxToolRounds, setMaxToolRounds] = useState(15);
@@ -435,6 +436,7 @@ export function SettingsPanel({ onClose: closeNow, initialCategory, onCollection
       setRepo(s.github_repo);
       setTtlMinutes(s.issue_context_ttl_minutes);
       setShowChatStats(s.show_chat_stats);
+      setShowQuickActions(s.show_quick_actions ?? true);
       setNotificationsEnabled(s.notifications_enabled);
       setCompletionSoundEnabled(s.completion_sound_enabled);
       setMaxToolRounds(s.max_tool_rounds);
@@ -537,6 +539,7 @@ export function SettingsPanel({ onClose: closeNow, initialCategory, onCollection
         model_fallbacks: modelFallbacks,
         issue_context_ttl_minutes: ttlMinutes,
         show_chat_stats: showChatStats,
+        show_quick_actions: showQuickActions,
         notifications_enabled: notificationsEnabled,
         completion_sound_enabled: completionSoundEnabled,
         max_tool_rounds: maxToolRounds,
@@ -766,7 +769,7 @@ export function SettingsPanel({ onClose: closeNow, initialCategory, onCollection
   ): string {
     return JSON.stringify([
       theme, font, defaultProvider, model, mockEnabled, modelFallbacks, llmConfig,
-      repo, githubSecret, azureSecret, azureEndpoint, azureLanguage, ttlMinutes, showChatStats,
+      repo, githubSecret, azureSecret, azureEndpoint, azureLanguage, ttlMinutes, showChatStats, showQuickActions,
       notificationsEnabled, completionSoundEnabled, maxToolRounds, topicApprovalPolicy, chatApprovalPolicy, scheduledApprovalTimeout, issueAssociationsEnabled,
       liveFastModel, liveReasoningEffort, liveEnabled, liveTranscriptRetentionDays,
       chatAutonameEnabled, chatAutonameModel, expose, httpEnabled, workiqTenant,
@@ -898,6 +901,30 @@ export function SettingsPanel({ onClose: closeNow, initialCategory, onCollection
                     </label>
                   ))}
                 </div>
+              </section>
+            )}
+
+            {category === "appearance" && (
+              <section>
+                <h3 className="text-sm font-medium mb-2">Quick actions</h3>
+                <label className="flex items-start gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={showQuickActions}
+                    onChange={(e) => setShowQuickActions(e.target.checked)}
+                    className="mt-0.5 accent-accent"
+                  />
+                  <span>
+                    <span className="block text-sm">
+                      Show the floating quick-actions button
+                    </span>
+                    <span className="block text-[11px] text-muted">
+                      The draggable Precursor button that creates chats,
+                      topics, agents, plans and more from any screen. Hiding it
+                      leaves the usual creation buttons in each section.
+                    </span>
+                  </span>
+                </label>
               </section>
             )}
 

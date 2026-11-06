@@ -1627,6 +1627,7 @@ export interface Settings {
   github_repo: string;
   issue_context_ttl_minutes: number;
   show_chat_stats: boolean;
+  show_quick_actions: boolean;
   notifications_enabled: boolean;
   completion_sound_enabled: boolean;
   max_tool_rounds: number;
@@ -1754,6 +1755,7 @@ export interface SettingsUpdate {
   github_repo?: string;
   issue_context_ttl_minutes?: number;
   show_chat_stats?: boolean;
+  show_quick_actions?: boolean;
   notifications_enabled?: boolean;
   completion_sound_enabled?: boolean;
   max_tool_rounds?: number;

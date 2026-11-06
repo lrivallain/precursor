@@ -51,7 +51,8 @@ does the same. The dock
 opens above the button when space allows, or below it near the top of the
 screen, and tiles grow away from the nearest edge. On short screens, the list
 scrolls without magnification. Its animation respects reduced-motion
-preferences.
+preferences. To hide the button, turn off **Show the floating quick-actions
+button** in **Settings → Appearance**; it is shown by default.
 
 Drag the button to a comfortable spot; its position is remembered in this
 browser and stays within the window when you resize it. With the button focused,

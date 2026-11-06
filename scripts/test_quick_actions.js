@@ -193,8 +193,14 @@ async function run() {
     await menu.waitFor();
     assert.deepEqual(await menu.getByRole("menuitem").evaluateAll((buttons) => buttons.map((button) => button.getAttribute("aria-label"))),
       ["New workspace", "New plan", "New topic", "New chat"]);
+
+    await page.unroute("**/api/settings");
+    await page.route("**/api/settings", (route) => route.fulfill({ json: { ...settings, show_quick_actions: false } }));
+    await page.goto(BASE, { waitUntil: "networkidle" });
+    await page.locator("main").first().waitFor();
+    assert.equal(await trigger.count(), 0, "The Appearance setting hides the launcher");
     assert.deepEqual(errors, []);
-    console.log("Touch toggling/selection and feature availability passed; no browser errors.");
+    console.log("Touch toggling/selection, feature availability and the hide setting passed; no browser errors.");
     await page.unrouteAll({ behavior: "ignoreErrors" });
     await context.close();
   } finally {

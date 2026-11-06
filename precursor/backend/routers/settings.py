@@ -134,6 +134,7 @@ def _as_read(
             "issue_context_ttl_minutes", DEFAULT_ISSUE_CONTEXT_TTL_MINUTES
         ),
         show_chat_stats=bool(data.get("show_chat_stats", True)),
+        show_quick_actions=bool(data.get("show_quick_actions", True)),
         notifications_enabled=bool(data.get("notifications_enabled", False)),
         completion_sound_enabled=bool(data.get("completion_sound_enabled", False)),
         max_tool_rounds=_clamp_max_tool_rounds(
