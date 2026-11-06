@@ -342,7 +342,9 @@ def test_unconfigured_selection_and_catalogue_fail_without_mock(
     client: TestClient,
     providers: dict[str, RecordingProvider],
 ) -> None:
-    client.put("/api/settings", json={"llm_providers": {"azure_foundry": {"key": "", "endpoint": ""}}})
+    client.put(
+        "/api/settings", json={"llm_providers": {"azure_foundry": {"key": "", "endpoint": ""}}}
+    )
     chat = client.post(
         "/api/chats",
         json={

@@ -10,6 +10,10 @@ Azure doesn't expose a uniform per-key model catalog here, so ``list_models``
 returns the configured deployment names (comma-separated, if multiple) and the
 UI falls back to manual deployment-name entry.
 
+An endpoint ending in ``/openai/v1`` (the Foundry "v1" API) is called with the
+plain ``AsyncOpenAI`` client instead, since the Azure client would append its
+own ``/openai/deployments/…`` path to it and 404.
+
 Authentication is an API key when one is configured; otherwise the provider
 signs in through the Azure CLI (``az login``), optionally against a specific
 tenant, and hands the SDK a refreshable Entra ID token.
@@ -24,7 +28,7 @@ import time
 from collections.abc import AsyncIterator, Mapping, Sequence
 from typing import Any
 
-from openai import AsyncAzureOpenAI
+from openai import AsyncAzureOpenAI, AsyncOpenAI
 
 from precursor.backend.services.llm._openai_compat import (
     embed_openai,
@@ -45,6 +49,7 @@ TOKEN_RESOURCE = "https://cognitiveservices.azure.com"
 _TOKEN_TIMEOUT_SECONDS = 30.0
 _REFRESH_MARGIN_SECONDS = 300.0
 _FALLBACK_TTL_SECONDS = 300.0
+_V1_ENDPOINT_RE = re.compile(r"/openai/v1/?$", re.IGNORECASE)
 _TENANT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
@@ -129,16 +134,23 @@ class AzureFoundryProvider:
             )
         )
         self._deployment = self._deployments[0] if self._deployments else ""
-        auth: dict[str, Any] = (
-            {"api_key": api_key}
-            if api_key
-            else {"azure_ad_token_provider": AzureCliTokenProvider(tenant)}
-        )
-        self._client = AsyncAzureOpenAI(
-            azure_endpoint=endpoint.rstrip("/"),
-            api_version=api_version or DEFAULT_API_VERSION,
-            **auth,
-        )
+        endpoint = endpoint.strip().rstrip("/")
+        credential: Any = api_key or AzureCliTokenProvider(tenant)
+        self._client: AsyncOpenAI
+        if _V1_ENDPOINT_RE.search(endpoint):
+            self._client = AsyncOpenAI(base_url=endpoint + "/", api_key=credential)
+        elif api_key:
+            self._client = AsyncAzureOpenAI(
+                azure_endpoint=endpoint,
+                api_key=api_key,
+                api_version=api_version or DEFAULT_API_VERSION,
+            )
+        else:
+            self._client = AsyncAzureOpenAI(
+                azure_endpoint=endpoint,
+                azure_ad_token_provider=credential,
+                api_version=api_version or DEFAULT_API_VERSION,
+            )
 
     async def stream_chat(
         self,

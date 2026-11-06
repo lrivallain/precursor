@@ -207,3 +207,18 @@ def test_client_auth_follows_api_key_presence(monkeypatch: pytest.MonkeyPatch) -
     assert "azure_ad_token_provider" not in seen[0]
     assert "api_key" not in seen[1]
     assert isinstance(seen[1]["azure_ad_token_provider"], azure_foundry.AzureCliTokenProvider)
+
+
+@pytest.mark.parametrize("suffix", ["/openai/v1", "/openai/v1/"])
+def test_v1_endpoint_uses_plain_openai_client(suffix: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        azure_foundry, "AsyncOpenAI", lambda **kw: seen.append(kw) or SimpleNamespace()
+    )
+    monkeypatch.setattr(azure_foundry, "AsyncAzureOpenAI", lambda **_: pytest.fail("azure client"))
+    base = "https://example.openai.azure.com"
+    PROVIDERS["azure_foundry"].build({"endpoint": base + suffix, "key": "secret"}, "")
+    PROVIDERS["azure_foundry"].build({"endpoint": base + suffix}, "")
+    assert seen[0] == {"base_url": base + "/openai/v1/", "api_key": "secret"}
+    assert seen[1]["base_url"] == base + "/openai/v1/"
+    assert isinstance(seen[1]["api_key"], azure_foundry.AzureCliTokenProvider)
