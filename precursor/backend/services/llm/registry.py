@@ -60,6 +60,7 @@ def _build_azure(cfg: dict[str, str], _token: str) -> LLMProvider:
         api_key=cfg.get("key", ""),
         api_version=cfg.get("api_version", ""),
         deployment=cfg.get("deployment", ""),
+        tenant=cfg.get("tenant", ""),
     )
 
 
@@ -118,7 +119,21 @@ PROVIDERS: dict[str, ProviderSpec] = {
                 label="API version (optional)",
                 placeholder="2024-10-21",
             ),
-            ProviderField(name="key", label="API key", secret=True, required=True),
+            ProviderField(
+                name="key",
+                label="API key (optional)",
+                secret=True,
+                help=(
+                    "Leave empty to sign in with the Azure CLI (`az login`) instead; "
+                    "the CLI's default tenant is used unless you set one below."
+                ),
+            ),
+            ProviderField(
+                name="tenant",
+                label="Tenant ID (optional)",
+                placeholder="CLI default tenant",
+                help="Only used with Azure CLI sign-in (no API key).",
+            ),
         ),
         build=_build_azure,
         discovers_models=False,

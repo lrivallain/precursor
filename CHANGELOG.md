@@ -15,6 +15,12 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **Azure CLI sign-in for Azure AI Foundry.** Leave the API key empty to
+  authenticate with `az login`, optionally against a custom **Tenant ID**
+  (otherwise the CLI's default tenant). The API key is no longer required.
+  Foundry `/openai/v1` endpoints are now supported instead of failing with a
+  404, and both Chat Completions and Responses are tried on any endpoint style
+  (falling back to the other), so Claude deployments work.
 - **Floating quick actions.** A draggable **Precursor** button opens a vertical,
   macOS-style dock of creation shortcuts for chats, topics, agents, live
   sessions, plans, workflows and workspaces: a column of colour-coded tiles with

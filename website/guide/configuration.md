@@ -97,6 +97,25 @@ names, not underlying model catalogue names: Precursor does not discover or
 verify them against Azure, and incorrect names fail when used. Manual model-id
 entry remains available.
 
+**Authentication.** Enter an **API key**, or leave it empty to sign in with the
+Azure CLI instead: run `az login` once, and Precursor requests Entra ID tokens
+from `az account get-access-token` (cached and refreshed automatically). Set
+**Tenant ID** to use a specific tenant; if it is empty, the Azure CLI's default
+tenant is used. The tenant is ignored when an API key is set. The `az` command
+must be on the `PATH` of the machine running Precursor, and your identity needs
+an Azure OpenAI data-plane role (for example *Cognitive Services OpenAI User*)
+on the resource.
+
+**Endpoint styles.** Both Azure OpenAI endpoints
+(`https://<resource>.openai.azure.com`) and Foundry "v1" endpoints
+(`https://<resource>.openai.azure.com/openai/v1`) work, and both the Chat
+Completions and Responses APIs are available on either. Precursor tries one
+(Responses first on a v1 endpoint, Chat Completions first otherwise), falls back
+to the other if the deployment doesn't serve it, and remembers what worked per
+deployment, so Claude deployments need no special setup. Without an explicit
+**API version**, Responses calls on a classic endpoint use `2025-04-01-preview`
+and Chat Completions keep `2024-10-21`; a version you set applies to both.
+
 <Screenshot src="/screenshots/foundry-models.png" alt="Azure AI Foundry settings with removable model bubbles and an Add model input" caption="Add deployment names individually, then apply the configuration to populate the model picker." />
 
 Precursor pins **no** model id of its own. Until you choose one in
