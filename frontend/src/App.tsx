@@ -9,6 +9,7 @@ import {
 import { resolveSections } from "./lib/plugins";
 import { usePluginDescriptors } from "./lib/pluginStore";
 import { CommandPalette } from "./components/CommandPalette";
+import { QuickActions } from "./components/QuickActions";
 import { IQMain, IQSidebar } from "./components/IQMain";
 import type { IQSeed } from "./components/IQMain";
 import { McpAuthBanner } from "./components/McpAuthBanner";
@@ -704,6 +705,17 @@ export default function App() {
     >
       <TooltipProvider />
       <DetachedDraftHost />
+      <QuickActions
+        agentsEnabled={agentsEnabled}
+        liveEnabled={liveEnabled}
+        onCreate={(mode) => {
+          void confirmLeaveRecording().then((allowed) => {
+            if (!allowed) return;
+            closeMobileNav();
+            startNewFromHome(mode);
+          });
+        }}
+      />
       {paletteOpen && (
         <CommandPalette
           onClose={() => setPaletteOpen(false)}

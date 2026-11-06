@@ -267,7 +267,9 @@ _WORKIQ_STDIO_ARGS: tuple[str, ...] = ("-y", "@microsoft/workiq@latest", "mcp")
 _PLAYWRIGHT_STDIO_COMMAND = "npx"
 _PLAYWRIGHT_STDIO_ARGS: tuple[str, ...] = (
     "-y",
-    "@playwright/mcp@latest",
+    # Some registry mirrors tag the incompatible March 2025 alpha as "latest".
+    # Pin a verified release so browser/profile flags survive tag regressions.
+    "@playwright/mcp@0.0.83",
 )
 
 

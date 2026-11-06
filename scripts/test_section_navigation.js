@@ -256,16 +256,17 @@ async function run() {
     await membership(agentList, "Workflow agents").waitFor();
     await row(agentList, agent.title).click();
     await page.waitForURL(`${BASE}/agents/${agent.public_id}`);
-    assert.equal(await page.locator("[inert]").count(), 1);
+    assert.equal(await page.locator("[inert]").filter({ has: page.locator("aside") }).count(), 1);
     await page.getByRole("button", { name: "Open navigation", exact: true }).click();
     await enter("Workflows");
     await page.getByRole("button", { name: "Open navigation", exact: true }).click();
     await row(workflowList, workflow.name).click();
-    await current(workflowList, workflow.name);
-    assert.equal(await page.locator("[inert]").count(), 1);
+    await page.locator('nav[aria-label="Workflows list"] button[aria-current="page"]')
+      .filter({ hasText: workflow.name }).waitFor({ state: "attached" });
+    assert.equal(await page.locator("[inert]").filter({ has: page.locator("aside") }).count(), 1);
     await page.getByRole("button", { name: "Open navigation", exact: true }).click();
     await overview(workflowList).click();
-    assert.equal(await page.locator("[inert]").count(), 1);
+    assert.equal(await page.locator("[inert]").filter({ has: page.locator("aside") }).count(), 1);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     console.log("Mobile list/overview selections close the drawer without page overflow.");
     assert.deepEqual(errors, [], "Browser runtime errors");

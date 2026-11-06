@@ -263,6 +263,22 @@ const OPENAI_ENDPOINT_MODELS = [
 ].map(([id, name, publisher]) => ({ id, name, publisher, summary: "", tags: [] }));
 
 const scenes = {
+  "quick-actions": {
+    viewport: { width: 1440, height: 1200 },
+    async go(page) {
+      await page.goto(`${BASE}/chats`, { waitUntil: "networkidle" });
+      await page.getByRole("button", { name: "Quick actions", exact: true }).hover();
+      await page.getByRole("menu", { name: "Create new", exact: true }).waitFor();
+      await page.getByRole("menuitem", { name: "New live session", exact: true }).hover();
+      await sleep(300);
+      const menu = await page.getByRole("menu", { name: "Create new", exact: true }).boundingBox();
+      const trigger = await page.getByRole("button", { name: "Quick actions", exact: true }).boundingBox();
+      const x = Math.floor(Math.min(menu.x, trigger.x) - 16);
+      const y = Math.floor(menu.y - 16);
+      return { x, y, width: 1440 - x, height: 1200 - y };
+    },
+  },
+
   "attachment-preview": {
     viewport: { width: 1440, height: 1000 },
     async go(page) {

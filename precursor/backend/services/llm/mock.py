@@ -69,7 +69,6 @@ class MockProvider:
             (m.content for m in reversed(messages) if m.role == "user"),
             "(no user message)",
         )
-        last_user = re.sub(r"(?m)^\[Message reference: [^\n]+\]\n\n", "", last_user)
         reply = (
             f"**[mock:{model}]** I received: _{last_user.strip()[:200]}_. "
             "Configure `GITHUB_TOKEN` to enable real GitHub Copilot responses."

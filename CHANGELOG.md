@@ -15,6 +15,11 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **Floating quick actions.** A draggable **Precursor** button opens an animated,
+  icon-only arc of creation
+  shortcuts for chats, topics, agents, live sessions, plans, workflows and
+  workspaces. The menu adapts to available space, supports touch and keyboard
+  navigation, respects reduced motion, and remembers the button's position.
 - **Plan prompt provenance.** Step-by-step discussions distinguish user-requested drafts
   from automation prompts. Review feedback is no longer labelled as user guidance, and older
   prompts with no recorded origin are treated as uncertain rather than silently attributed
@@ -124,8 +129,24 @@ are the per-version history; releasing does not rewrite this file.
   under the plan receipt, updating as the plan runs. A running card also refreshes
   periodically if an event is missed, and displays refresh failures.
 
+### Fixed
+
+- **Message links: stop teaching replies to repeat navigation headers.** Topic
+  and chat models now receive a separate reference index instead of
+  `[Message reference: ...]` prefixes on prompts and replies. Earlier messages
+  remain citable, without presenting the metadata as authored conversation text.
+- **Playwright MCP: survive stale package-mirror tags.** Pin the verified
+  `@playwright/mcp@0.0.83` release instead of `latest`, which some mirrors resolve
+  to a March 2025 alpha. That alpha rejects the persistent-profile flag and exits
+  with **Connection closed**, even after app restarts. Browser selection and
+  existing profile paths are preserved.
+
 ### Changed
 
+- **macOS: idempotent login-item installation.** Repeating `precursor service
+  install` preserves an unchanged plist and leaves an already-loaded app or tray
+  job alone, avoiding unnecessary background-item re-registration notifications.
+  Unloaded jobs are loaded again, and changed configurations are still replaced.
 - **Delegated discussions inherit source approvals.** Step and final-output discussions
   now default to the plan's recorded autonomy and use source-conversation rules as well
   as their own and global rules. A discussion's explicit policy and rules still take

@@ -128,6 +128,13 @@ HTML), and take **screenshots**. This is what `fetch` can't do — it does raw H
 with no browser and no session, so a JS-rendered or login-gated page comes back
 empty or as a sign-in redirect.
 
+Precursor launches the verified **`@playwright/mcp@0.0.83`** release rather than
+the registry's `latest` tag. Some package mirrors point `latest` at an old alpha
+that rejects `--browser` and `--user-data-dir`, exits immediately, and leaves
+only **Connection closed** on the server card. Pinning the release preserves
+browser selection and the persistent profile even when that tag is stale;
+restarting the app alone cannot fix a bad registry tag.
+
 Two things make **authenticated** endpoints reachable:
 
 - **Microsoft Edge is the default channel**, so the browser can ride the

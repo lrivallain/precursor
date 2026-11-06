@@ -82,6 +82,13 @@ with whatever the platform provides:
 | Linux | a systemd *user* unit in `~/.config/systemd/user` | systemd restarts it |
 | Windows | a `Run` entry under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` | it stays stopped until **Start** (tray or CLI) |
 
+On macOS, repeating `precursor service install` leaves an unchanged, already-loaded
+login item alone: it neither rewrites its plist nor unregisters and registers the
+job again. This avoids unnecessary background-item registration notifications
+from macOS. An unloaded job is loaded again; a changed configuration is written
+and re-registered. This applies to both the app and the tray. macOS may still
+notify you when a login item is first installed or genuinely changes.
+
 On Windows there is no per-user service manager to hand the process to, so the
 entry is a launcher: at login it runs `precursor service start` — exactly what
 typing it would do — through `pythonw`, the windowless Python, so no console

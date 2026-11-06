@@ -20,6 +20,8 @@ class ChatMessage:
     # For user turns: image data URLs to deliver alongside the text. Providers
     # that understand vision content-parts translate these; others ignore them.
     image_urls: list[str] = field(default_factory=list)
+    # Internal navigation metadata, rendered separately from authored content.
+    permalink: str | None = None
 
 
 @dataclass(slots=True)

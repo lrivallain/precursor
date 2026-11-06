@@ -35,6 +35,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from xml.parsers.expat import ExpatError
 
 from precursor.backend import winproc
 from precursor.backend.supervisor import working_dir
@@ -349,7 +350,7 @@ def info_all() -> list[AutostartInfo]:
     return [info(unit) for unit in UNITS]
 
 
-def _write_launchd(unit: Unit, path: Path) -> None:
+def _write_launchd(unit: Unit, path: Path) -> bool:
     from precursor.backend.config import get_settings
 
     logs = Path(get_settings().logs_dir)
@@ -372,9 +373,19 @@ def _write_launchd(unit: Unit, path: Path) -> None:
         # the GitHub token lookup both shell out to tools in the user's prefix.
         "EnvironmentVariables": {"PATH": os.environ.get("PATH", "/usr/bin:/bin")},
     }
+    try:
+        with path.open("rb") as handle:
+            if plistlib.load(handle) == plist:
+                return False
+    except FileNotFoundError:
+        pass
+    except (plistlib.InvalidFileException, ValueError, ExpatError):
+        # A malformed existing plist needs replacing, just like an outdated one.
+        pass
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("wb") as handle:
         plistlib.dump(plist, handle)
+    return True
 
 
 def _write_systemd(unit: Unit, path: Path) -> None:
@@ -464,7 +475,9 @@ def install(unit: Unit = APP) -> AutostartInfo:
     if path is None:
         raise AutostartError(f"Autostart is not supported on {sys.platform}.")
     if sys.platform == "darwin":
-        _write_launchd(unit, path)
+        changed = _write_launchd(unit, path)
+        if not changed and _macos_loaded(unit.label):
+            return info(unit)
         # `bootstrap` is idempotent-hostile: it errors if already loaded, so
         # unload first — and wait for it, or the two race (see _macos_bootout).
         _macos_bootout(unit)

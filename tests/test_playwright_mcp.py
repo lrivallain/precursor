@@ -47,6 +47,24 @@ def test_playwright_reuses_shared_profile_by_default() -> None:
     assert "--user-data-dir" not in entry.args
 
 
+def test_playwright_launcher_pins_verified_release(tmp_path) -> None:
+    manager = mcp_client.MCPClientManager()
+    entry = manager.get("playwright")
+    assert entry is not None
+    assert entry.args[:2] == ["-y", "@playwright/mcp@0.0.83"]
+
+    profile_dir = str(tmp_path / "Edge profile")
+    manager.configure_playwright(browser="msedge", profile_dir=profile_dir)
+    assert entry.args == [
+        "-y",
+        "@playwright/mcp@0.0.83",
+        "--browser",
+        "msedge",
+        "--user-data-dir",
+        profile_dir,
+    ]
+
+
 def test_playwright_pins_profile_and_channel_when_overridden(monkeypatch, tmp_path) -> None:
     from types import SimpleNamespace
 
