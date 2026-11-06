@@ -37,6 +37,8 @@ class SettingsPayload(BaseModel):
     # When true, the per-conversation stats sidebar is rendered in the UI.
     # Token usage is collected and persisted regardless.
     show_chat_stats: bool | None = None
+    # When true, the floating quick-actions launcher is shown on every screen.
+    show_quick_actions: bool | None = None
     # When true, the SPA shows a browser notification on turn completion while
     # the window is unfocused (requires the user to grant browser permission).
     notifications_enabled: bool | None = None
@@ -159,6 +161,7 @@ class SettingsRead(BaseModel):
     github_repo: str = ""
     issue_context_ttl_minutes: int = 60
     show_chat_stats: bool = True
+    show_quick_actions: bool = True
     notifications_enabled: bool = False
     completion_sound_enabled: bool = False
     max_tool_rounds: int = 15

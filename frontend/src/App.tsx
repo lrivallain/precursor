@@ -705,17 +705,20 @@ export default function App() {
     >
       <TooltipProvider />
       <DetachedDraftHost />
-      <QuickActions
-        agentsEnabled={agentsEnabled}
-        liveEnabled={liveEnabled}
-        onCreate={(mode) => {
-          void confirmLeaveRecording().then((allowed) => {
-            if (!allowed) return;
-            closeMobileNav();
-            startNewFromHome(mode);
-          });
-        }}
-      />
+      {(settings?.show_quick_actions ?? true) && (
+        <QuickActions
+          agentsEnabled={agentsEnabled}
+          liveEnabled={liveEnabled}
+          current={atHome ? null : sidebarMode}
+          onCreate={(mode) => {
+            void confirmLeaveRecording().then((allowed) => {
+              if (!allowed) return;
+              closeMobileNav();
+              startNewFromHome(mode);
+            });
+          }}
+        />
+      )}
       {paletteOpen && (
         <CommandPalette
           onClose={() => setPaletteOpen(false)}

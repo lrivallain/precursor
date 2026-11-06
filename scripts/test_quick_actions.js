@@ -28,20 +28,26 @@ async function run() {
     await menu.getByRole("menuitem", { name: "New chat", exact: true }).hover();
     assert.equal(await menu.isVisible(), true, "The pointer can cross the gap to the menu");
     const chatAction = menu.getByRole("menuitem", { name: "New chat", exact: true });
+    const tip = page.locator('.quick-actions-tip[data-open="true"]');
     await page.waitForFunction(() => {
-      const label = document.querySelector('[role="menuitem"][aria-label="New chat"] .quick-actions-label');
-      return label && getComputedStyle(label).opacity === "1";
+      const label = document.querySelector('.quick-actions-tip[data-open="true"]');
+      return label && label.getAnimations({ subtree: true }).length === 0;
     });
-    assert.ok((await chatAction.boundingBox()).width > 44, "Hover magnifies the icon");
-    const compactPill = await chatAction.locator(".quick-actions-pill").boundingBox();
-    assert.ok(compactPill.width < 150, "Short labels do not reserve an oversized empty pill");
-    assert.equal(await chatAction.locator(".quick-actions-label").textContent(), "New chat");
+    assert.equal(await tip.textContent(), "New chat");
+    assert.ok((await tip.boundingBox()).width < 170, "Short labels do not reserve an oversized empty pill");
+    assert.ok((await chatAction.boundingBox()).width > 52, "Hover magnifies the icon");
+    const sizes = await menu.getByRole("menuitem").evaluateAll((buttons) =>
+      buttons.map((button) => button.getBoundingClientRect().width));
+    assert.ok(sizes.at(-2) > 40 && sizes.at(-2) < sizes.at(-1), "Neighbours magnify less, like the macOS Dock");
+    assert.equal(sizes[0], 40, "Distant tiles keep their resting size");
+    const edges = await menu.getByRole("menuitem").evaluateAll((buttons) =>
+      buttons.map((button) => Math.round(button.getBoundingClientRect().right)));
+    assert.ok(edges.every((edge) => edge === edges[0]), "Tiles stay aligned to the screen edge and grow inward");
+    const chatBox = await chatAction.boundingBox();
+    const tipBox = await tip.boundingBox();
+    assert.ok(Math.abs(tipBox.x + tipBox.width - (chatBox.x + chatBox.width)) <= 1 && tipBox.x < chatBox.x,
+      "The label pill grows out of the tile, away from the edge");
     assert.equal(await chatAction.getAttribute("title"), null);
-    const arc = await menu.getByRole("menuitem").evaluateAll((buttons) =>
-      buttons.map((button) => Number.parseFloat(button.style.right)));
-    assert.ok(arc.every((offset, index) => index === 0 || offset < arc[index - 1]),
-      "The shallow arc continues outward from the main button, without bending back");
-    assert.ok(arc[0] === 24 && arc.at(-1) < 1, "The nearest shortcut aligns with the main button");
     await page.mouse.move(400, 200);
     await menu.waitFor({ state: "hidden" });
 
@@ -79,7 +85,9 @@ async function run() {
     await menu.waitFor();
     assert.equal(await panel.getAttribute("data-side"), "bottom");
     const leftMenu = await menu.boundingBox();
-    assert.ok(leftMenu.x >= 16 && leftMenu.y > moved.y);
+    assert.ok(leftMenu.x >= 10 && leftMenu.y > moved.y, "Near the top-left corner the dock opens downward");
+    assert.equal(await menu.getByRole("menuitem").first().getAttribute("aria-label"), "New chat",
+      "New chat stays next to the launcher when the dock opens downward");
     await page.mouse.move(400, 200);
     await menu.waitFor({ state: "hidden" });
 
@@ -116,7 +124,7 @@ async function run() {
       const action = menu.getByRole("menuitem", { name: label, exact: true });
       if (label === "New chat") {
         await action.hover();
-        await action.locator(".quick-actions-label").click();
+        await page.locator('.quick-actions-tip[data-open="true"] .quick-actions-label').click();
       } else {
         await action.click();
       }
@@ -185,8 +193,14 @@ async function run() {
     await menu.waitFor();
     assert.deepEqual(await menu.getByRole("menuitem").evaluateAll((buttons) => buttons.map((button) => button.getAttribute("aria-label"))),
       ["New workspace", "New plan", "New topic", "New chat"]);
+
+    await page.unroute("**/api/settings");
+    await page.route("**/api/settings", (route) => route.fulfill({ json: { ...settings, show_quick_actions: false } }));
+    await page.goto(BASE, { waitUntil: "networkidle" });
+    await page.locator("main").first().waitFor();
+    assert.equal(await trigger.count(), 0, "The Appearance setting hides the launcher");
     assert.deepEqual(errors, []);
-    console.log("Touch toggling/selection and feature availability passed; no browser errors.");
+    console.log("Touch toggling/selection, feature availability and the hide setting passed; no browser errors.");
     await page.unrouteAll({ behavior: "ignoreErrors" });
     await context.close();
   } finally {
