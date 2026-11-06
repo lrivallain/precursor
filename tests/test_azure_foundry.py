@@ -67,7 +67,14 @@ async def test_plain_chat_routes_to_selected_deployment(
     model: str, expected: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async def chunks() -> AsyncIterator[SimpleNamespace]:
-        yield SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content="reply"))])
+        yield SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    delta=SimpleNamespace(content="reply", tool_calls=None), finish_reason=None
+                )
+            ],
+            usage=None,
+        )
 
     create = AsyncMock(return_value=chunks())
     client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
@@ -203,10 +210,19 @@ def test_client_auth_follows_api_key_presence(monkeypatch: pytest.MonkeyPatch) -
     cfg = {"endpoint": "https://example.openai.azure.com", "tenant": "t1"}
     PROVIDERS["azure_foundry"].build({**cfg, "key": "secret"}, "")
     PROVIDERS["azure_foundry"].build(cfg, "")
-    assert seen[0]["api_key"] == "secret"
-    assert "azure_ad_token_provider" not in seen[0]
-    assert "api_key" not in seen[1]
-    assert isinstance(seen[1]["azure_ad_token_provider"], azure_foundry.AzureCliTokenProvider)
+    keyed, signed_in = seen[:2], seen[2:]
+    assert all(kw["api_key"] == "secret" for kw in keyed)
+    assert all("azure_ad_token_provider" not in kw for kw in keyed)
+    assert all("api_key" not in kw for kw in signed_in)
+    assert all(
+        isinstance(kw["azure_ad_token_provider"], azure_foundry.AzureCliTokenProvider)
+        for kw in signed_in
+    )
+    # Default chat version predates Responses, so that client gets a newer one.
+    assert [kw["api_version"] for kw in keyed] == [
+        azure_foundry.DEFAULT_API_VERSION,
+        azure_foundry.RESPONSES_API_VERSION,
+    ]
 
 
 @pytest.mark.parametrize("suffix", ["/openai/v1", "/openai/v1/"])
@@ -231,50 +247,72 @@ def _v1_provider(monkeypatch: pytest.MonkeyPatch) -> azure_foundry.AzureFoundryP
     )
 
 
-async def test_v1_endpoint_streams_through_responses(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[str] = []
-
-    async def responses(**kwargs: object) -> AsyncIterator[TextDeltaEvent]:
-        calls.append(str(kwargs["model"]))
-        yield TextDeltaEvent(content="hi")
-
-    chat = AsyncMock()
-    monkeypatch.setattr(azure_foundry, "stream_responses_tools", responses)
-    monkeypatch.setattr(azure_foundry, "stream_openai_tools", chat)
-    provider = _v1_provider(monkeypatch)
-    assert [c async for c in provider.stream_chat(model="", messages=[])] == ["hi"]
-    assert calls == ["claude"]
-    chat.assert_not_called()
+def _classic_provider(monkeypatch: pytest.MonkeyPatch) -> azure_foundry.AzureFoundryProvider:
+    monkeypatch.setattr(azure_foundry, "AsyncAzureOpenAI", lambda **_: SimpleNamespace())
+    return azure_foundry.AzureFoundryProvider(
+        endpoint="https://example.openai.azure.com", api_key="k", deployment="claude"
+    )
 
 
-async def test_v1_endpoint_falls_back_to_chat_and_remembers(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def _surfaces(monkeypatch: pytest.MonkeyPatch, *, working: str, calls: list[str]) -> None:
     from precursor.backend.services.llm.base import LLMError
 
-    attempts = 0
+    def make(name: str):  # type: ignore[no-untyped-def]
+        async def run(**_: object) -> AsyncIterator[TextDeltaEvent]:
+            calls.append(name)
+            if name != working:
+                raise LLMError("Requested API is currently not supported")
+            yield TextDeltaEvent(content=name)
 
-    async def responses(**_: object) -> AsyncIterator[TextDeltaEvent]:
-        nonlocal attempts
-        attempts += 1
-        raise LLMError("Requested API is currently not supported")
+        return run
+
+    monkeypatch.setattr(azure_foundry, "stream_responses_tools", make("responses"))
+    monkeypatch.setattr(azure_foundry, "stream_openai_tools", make("chat"))
+
+
+async def _turn(provider: azure_foundry.AzureFoundryProvider, model: str = "m") -> list[object]:
+    return [e async for e in provider.stream_chat_with_tools(model=model, messages=[], tools=[])]
+
+
+@pytest.mark.parametrize(
+    ("style", "working", "expected_calls"),
+    [
+        ("v1", "responses", ["responses"]),
+        ("v1", "chat", ["responses", "chat"]),
+        ("classic", "chat", ["chat"]),
+        ("classic", "responses", ["chat", "responses"]),
+    ],
+)
+async def test_both_apis_are_tried_whatever_the_endpoint_style(
+    style: str, working: str, expected_calls: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[str] = []
+    _surfaces(monkeypatch, working=working, calls=calls)
+    provider = (_v1_provider if style == "v1" else _classic_provider)(monkeypatch)
+    assert await _turn(provider) == [TextDeltaEvent(content=working)]
+    assert calls == expected_calls
+    calls.clear()
+    # The working API is remembered, so the next turn goes straight to it.
+    assert await _turn(provider) == [TextDeltaEvent(content=working)]
+    assert calls == [working]
+
+
+async def test_both_failing_raises_the_first_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    from precursor.backend.services.llm.base import LLMError
+
+    async def fail(**_: object) -> AsyncIterator[TextDeltaEvent]:
+        raise LLMError("boom")
         yield  # pragma: no cover
 
-    async def chat(**_: object) -> AsyncIterator[TextDeltaEvent]:
-        yield TextDeltaEvent(content="chat")
-
-    monkeypatch.setattr(azure_foundry, "stream_responses_tools", responses)
-    monkeypatch.setattr(azure_foundry, "stream_openai_tools", chat)
-    provider = _v1_provider(monkeypatch)
-    for _ in range(2):
-        events = [
-            e async for e in provider.stream_chat_with_tools(model="m", messages=[], tools=[])
-        ]
-        assert events == [TextDeltaEvent(content="chat")]
-    assert attempts == 1
+    monkeypatch.setattr(azure_foundry, "stream_responses_tools", fail)
+    monkeypatch.setattr(azure_foundry, "stream_openai_tools", fail)
+    with pytest.raises(LLMError, match="boom"):
+        await _turn(_v1_provider(monkeypatch))
 
 
-async def test_v1_endpoint_does_not_retry_auth_failures(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_auth_failures_are_not_retried_on_the_other_api(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     async def responses(**_: object) -> AsyncIterator[TextDeltaEvent]:
         raise azure_foundry.AzureCliError("run az login")
         yield  # pragma: no cover
@@ -286,3 +324,32 @@ async def test_v1_endpoint_does_not_retry_auth_failures(monkeypatch: pytest.Monk
     with pytest.raises(azure_foundry.AzureCliError):
         [e async for e in provider.stream_chat_with_tools(model="m", messages=[], tools=[])]
     chat.assert_not_called()
+
+
+async def test_responses_call_uses_the_responses_capable_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clients: list[object] = []
+    monkeypatch.setattr(
+        azure_foundry, "AsyncAzureOpenAI", lambda **kw: clients.append(kw) or SimpleNamespace(**kw)
+    )
+    used: dict[str, object] = {}
+
+    async def responses(**kw: object) -> AsyncIterator[TextDeltaEvent]:
+        used["client"] = kw["client"]
+        yield TextDeltaEvent(content="r")
+
+    monkeypatch.setattr(azure_foundry, "stream_responses_tools", responses)
+    monkeypatch.setattr(azure_foundry, "stream_openai_tools", _refuse)
+    provider = azure_foundry.AzureFoundryProvider(
+        endpoint="https://e.openai.azure.com", api_key="k"
+    )
+    assert await _turn(provider) == [TextDeltaEvent(content="r")]
+    assert used["client"].api_version == azure_foundry.RESPONSES_API_VERSION  # type: ignore[attr-defined]
+
+
+async def _refuse(**_: object) -> AsyncIterator[TextDeltaEvent]:
+    from precursor.backend.services.llm.base import LLMError
+
+    raise LLMError("not supported")
+    yield  # pragma: no cover

@@ -107,11 +107,14 @@ an Azure OpenAI data-plane role (for example *Cognitive Services OpenAI User*)
 on the resource.
 
 **Endpoint styles.** Both Azure OpenAI endpoints
-(`https://<resource>.openai.azure.com`, using the classic deployments API) and
-Foundry "v1" endpoints (`https://<resource>.openai.azure.com/openai/v1`) work.
-A v1 endpoint is called through the Responses API, which is how Claude
-deployments are served, and falls back to chat completions for models that
-don't offer it.
+(`https://<resource>.openai.azure.com`) and Foundry "v1" endpoints
+(`https://<resource>.openai.azure.com/openai/v1`) work, and both the Chat
+Completions and Responses APIs are available on either. Precursor tries one
+(Responses first on a v1 endpoint, Chat Completions first otherwise), falls back
+to the other if the deployment doesn't serve it, and remembers what worked per
+deployment, so Claude deployments need no special setup. Without an explicit
+**API version**, Responses calls on a classic endpoint use `2025-04-01-preview`
+and Chat Completions keep `2024-10-21`; a version you set applies to both.
 
 <Screenshot src="/screenshots/foundry-models.png" alt="Azure AI Foundry settings with removable model bubbles and an Add model input" caption="Add deployment names individually, then apply the configuration to populate the model picker." />
 

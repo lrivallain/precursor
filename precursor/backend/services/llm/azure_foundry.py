@@ -12,10 +12,12 @@ UI falls back to manual deployment-name entry.
 
 An endpoint ending in ``/openai/v1`` (the Foundry "v1" API) is called with the
 plain ``AsyncOpenAI`` client instead, since the Azure client would append its
-own ``/openai/deployments/…`` path to it and 404. That surface serves some
-models (Claude, for one) only through the Responses API, so a v1 endpoint is
-driven through Responses first and falls back to chat-completions for models
-that don't offer it.
+own ``/openai/deployments/…`` path to it and 404.
+
+Chat-completions and the Responses API are both tried whatever the endpoint
+style: some deployments (Claude, for one) answer only the Responses API. A v1
+endpoint tries Responses first and a classic one chat-completions first; if the
+first is refused the other is tried, and the one that works is remembered.
 
 Authentication is an API key when one is configured; otherwise the provider
 signs in through the Azure CLI (``az login``), optionally against a specific
@@ -29,14 +31,13 @@ import json
 import re
 import time
 from collections.abc import AsyncIterator, Mapping, Sequence
-from typing import Any
+from typing import Any, Literal
 
 from openai import AsyncAzureOpenAI, AsyncOpenAI
 
 from precursor.backend.services.llm._openai_compat import (
     embed_openai,
     stream_openai_tools,
-    to_openai_messages,
 )
 from precursor.backend.services.llm._responses_compat import stream_responses_tools
 from precursor.backend.services.llm.base import (
@@ -50,12 +51,20 @@ from precursor.backend.services.llm.base import (
 )
 
 DEFAULT_API_VERSION = "2024-10-21"
+RESPONSES_API_VERSION = "2025-04-01-preview"
 TOKEN_RESOURCE = "https://cognitiveservices.azure.com"
 _TOKEN_TIMEOUT_SECONDS = 30.0
 _REFRESH_MARGIN_SECONDS = 300.0
 _FALLBACK_TTL_SECONDS = 300.0
 _V1_ENDPOINT_RE = re.compile(r"/openai/v1/?$", re.IGNORECASE)
 _TENANT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+Surface = Literal["chat", "responses"]
+_SURFACES: dict[Surface, tuple[Surface, Surface]] = {
+    "chat": ("chat", "responses"),
+    "responses": ("responses", "chat"),
+}
 
 
 class AzureCliError(LLMError):
@@ -133,7 +142,7 @@ class AzureFoundryProvider:
         *,
         endpoint: str,
         api_key: str = "",
-        api_version: str = DEFAULT_API_VERSION,
+        api_version: str = "",
         deployment: str = "",
         tenant: str = "",
     ) -> None:
@@ -145,23 +154,33 @@ class AzureFoundryProvider:
         self._deployment = self._deployments[0] if self._deployments else ""
         endpoint = endpoint.strip().rstrip("/")
         credential: Any = api_key or AzureCliTokenProvider(tenant)
+        v1 = bool(_V1_ENDPOINT_RE.search(endpoint))
+        # Either API may serve a deployment whatever the URL style, so the other
+        # one is the fallback; the surface that last worked is remembered per model.
+        self._default_surface: Surface = "responses" if v1 else "chat"
+        self._surface: dict[str, Surface] = {}
+
+        def azure_client(version: str) -> AsyncOpenAI:
+            if api_key:
+                return AsyncAzureOpenAI(
+                    azure_endpoint=endpoint, api_key=api_key, api_version=version
+                )
+            return AsyncAzureOpenAI(
+                azure_endpoint=endpoint, azure_ad_token_provider=credential, api_version=version
+            )
+
         self._client: AsyncOpenAI
-        self._v1 = bool(_V1_ENDPOINT_RE.search(endpoint))
-        # Models whose Responses call was refused: skip straight to chat-completions.
-        self._chat_only: set[str] = set()
-        if self._v1:
-            self._client = AsyncOpenAI(base_url=endpoint + "/", api_key=credential)
-        elif api_key:
-            self._client = AsyncAzureOpenAI(
-                azure_endpoint=endpoint,
-                api_key=api_key,
-                api_version=api_version or DEFAULT_API_VERSION,
+        self._responses_client: AsyncOpenAI
+        if v1:
+            self._client = self._responses_client = AsyncOpenAI(
+                base_url=endpoint + "/", api_key=credential
             )
         else:
-            self._client = AsyncAzureOpenAI(
-                azure_endpoint=endpoint,
-                azure_ad_token_provider=credential,
-                api_version=api_version or DEFAULT_API_VERSION,
+            self._client = azure_client(api_version or DEFAULT_API_VERSION)
+            # The default chat version predates the Responses API; an explicitly
+            # configured version is the user's call and is used for both.
+            self._responses_client = (
+                azure_client(api_version) if api_version else azure_client(RESPONSES_API_VERSION)
             )
 
     async def stream_chat(
@@ -171,27 +190,11 @@ class AzureFoundryProvider:
         messages: Sequence[ChatMessage],
         reasoning_effort: str | None = None,
     ) -> AsyncIterator[str]:
-        if self._v1:
-            async for event in self.stream_chat_with_tools(
-                model=model, messages=messages, tools=(), reasoning_effort=reasoning_effort
-            ):
-                if isinstance(event, TextDeltaEvent) and event.content:
-                    yield event.content
-            return
-        kwargs: dict[str, Any] = {
-            "model": model or self._deployment,
-            "messages": to_openai_messages(messages),
-            "stream": True,
-        }
-        if reasoning_effort:
-            kwargs["reasoning_effort"] = reasoning_effort
-        stream = await self._client.chat.completions.create(**kwargs)
-        async for chunk in stream:
-            if not chunk.choices:
-                continue
-            delta = chunk.choices[0].delta
-            if delta and delta.content:
-                yield delta.content
+        async for event in self.stream_chat_with_tools(
+            model=model, messages=messages, tools=(), reasoning_effort=reasoning_effort
+        ):
+            if isinstance(event, TextDeltaEvent) and event.content:
+                yield event.content
 
     async def stream_chat_with_tools(
         self,
@@ -203,11 +206,15 @@ class AzureFoundryProvider:
         request_options: Mapping[str, Any] | None = None,
     ) -> AsyncIterator[ProviderEvent]:
         model = model or self._deployment
-        if self._v1 and model not in self._chat_only:
+        surfaces = _SURFACES[self._surface.get(model, self._default_surface)]
+        first_error: LLMError | None = None
+        for surface in surfaces:
+            run = stream_responses_tools if surface == "responses" else stream_openai_tools
+            client = self._responses_client if surface == "responses" else self._client
             yielded = False
             try:
-                async for event in stream_responses_tools(
-                    client=self._client,
+                async for event in run(
+                    client=client,
                     model=model,
                     messages=messages,
                     tools=tools,
@@ -216,22 +223,17 @@ class AzureFoundryProvider:
                 ):
                     yielded = True
                     yield event
-                return
             except LLMError as exc:
-                # Auth failures hit chat-completions identically; anything
+                # Auth failures repeat identically on the other API, and output
                 # already streamed can't be replayed.
                 if yielded or isinstance(exc, AzureCliError) or "credentials" in str(exc):
                     raise
-                self._chat_only.add(model)
-        async for event in stream_openai_tools(
-            client=self._client,
-            model=model,
-            messages=messages,
-            tools=tools,
-            reasoning_effort=reasoning_effort,
-            request_options=request_options,
-        ):
-            yield event
+                first_error = first_error or exc
+                continue
+            self._surface[model] = surface
+            return
+        assert first_error is not None  # both surfaces ran and failed
+        raise first_error
 
     async def embed(
         self, texts: Sequence[str], *, model: str, dimensions: int | None = None
