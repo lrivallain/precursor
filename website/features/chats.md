@@ -53,6 +53,9 @@ Chats share the same conversation experience as topics:
 - **Failed turns** surface as a red error notice with a **Retry** button on the
   prompt that failed — see
   [when a turn fails](/features/topics#when-a-turn-fails).
+  Azure AI Foundry keeps bounded SDK retries but does not repeat rate-limit or
+  server failures through the other API; see
+  [Foundry retry behaviour](/guide/configuration#which-model-gets-used).
 - **`/compact`** summarises a long chat to free the model's context window —
   see [context compression](/features/context-compression).
 - **Optional model alternatives** recover missing-model or rejected-effort/context

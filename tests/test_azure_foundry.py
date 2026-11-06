@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from functools import partial
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
+from openai import APIStatusError
 
 from precursor.backend.routers import llm as llm_router
 from precursor.backend.services.llm import azure_foundry
-from precursor.backend.services.llm.base import TextDeltaEvent
+from precursor.backend.services.llm.base import LLMError, TextDeltaEvent
 from precursor.backend.services.llm.registry import PROVIDERS
 
 
@@ -324,6 +327,82 @@ async def test_auth_failures_are_not_retried_on_the_other_api(
     with pytest.raises(azure_foundry.AzureCliError):
         [e async for e in provider.stream_chat_with_tools(model="m", messages=[], tools=[])]
     chat.assert_not_called()
+
+
+@pytest.mark.parametrize("style", ["v1", "classic"])
+@pytest.mark.parametrize("wrong_surface_first", [False, True])
+@pytest.mark.parametrize("status", [401, 403, 408, 409, 429, 500, 503])
+async def test_http_failures_keep_sdk_retries_without_switching_surfaces(
+    style: str,
+    wrong_surface_first: bool,
+    status: int,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths: list[str] = []
+    initial_surface = "responses" if style == "v1" else "chat/completions"
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        if wrong_surface_first and request.url.path.endswith(initial_surface):
+            return httpx.Response(
+                400,
+                json={"error": {"code": "unsupported_api_for_model", "message": "wrong API"}},
+            )
+        return httpx.Response(
+            status,
+            headers={"retry-after-ms": "1", "x-request-id": "quota-request"},
+            json={"error": {"code": "rate_limit_exceeded", "message": "provider refused"}},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http_client:
+        client_name = "AsyncOpenAI" if style == "v1" else "AsyncAzureOpenAI"
+        monkeypatch.setattr(
+            azure_foundry,
+            client_name,
+            partial(getattr(azure_foundry, client_name), http_client=http_client),
+        )
+        endpoint = "https://example.openai.azure.com"
+        if style == "v1":
+            endpoint += "/openai/v1"
+        provider = azure_foundry.AzureFoundryProvider(endpoint=endpoint, api_key="test")
+        message = "credentials" if status in (401, 403) else "provider refused"
+        with pytest.raises(LLMError, match=message) as caught:
+            await _turn(provider)
+
+    cause = caught.value.__cause__
+    assert isinstance(cause, APIStatusError)
+    assert cause.status_code == status
+    assert cause.response.headers["retry-after-ms"] == "1"
+    assert cause.response.headers["x-request-id"] == "quota-request"
+    sdk_attempts = 1 if status in (401, 403) else 3
+    assert len(paths) == sdk_attempts + int(wrong_surface_first)
+    if wrong_surface_first:
+        assert paths[0].endswith(initial_surface)
+        assert not paths[1].endswith(initial_surface)
+    assert len(set(paths[int(wrong_surface_first) :])) == 1
+    assert provider._surface == {}
+
+
+@pytest.mark.parametrize("style", ["v1", "classic"])
+async def test_partial_output_is_never_replayed_on_the_other_api(
+    style: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[str] = []
+
+    async def stream(**_: object) -> AsyncIterator[TextDeltaEvent]:
+        calls.append("stream")
+        yield TextDeltaEvent(content="partial")
+        raise LLMError("stream interrupted")
+
+    monkeypatch.setattr(azure_foundry, "stream_responses_tools", stream)
+    monkeypatch.setattr(azure_foundry, "stream_openai_tools", stream)
+    provider = (_v1_provider if style == "v1" else _classic_provider)(monkeypatch)
+    events: list[object] = []
+    with pytest.raises(LLMError, match="stream interrupted"):
+        async for event in provider.stream_chat_with_tools(model="m", messages=[], tools=[]):
+            events.append(event)
+    assert events == [TextDeltaEvent(content="partial")]
+    assert calls == ["stream"]
 
 
 async def test_responses_call_uses_the_responses_capable_client(

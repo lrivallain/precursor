@@ -13,6 +13,13 @@ are the per-version history; releasing does not rewrite this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Bounded Azure AI Foundry retries.** Rate limits, timeouts, conflicts, server
+  errors and authentication failures no longer trigger another batch of requests
+  through the other API surface after SDK retries. API compatibility fallback
+  remains available for `400`/`404` failures, without replaying streamed output.
+
 ### Added
 
 - **Remove a saved provider key.** Secret fields in **Settings → Model** now have a
