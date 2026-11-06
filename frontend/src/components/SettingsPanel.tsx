@@ -273,6 +273,9 @@ export function SettingsPanel({ onClose: closeNow, initialCategory, onCollection
   const [providerConfig, setProviderConfig] = useState<
     Record<string, Record<string, string>>
   >({});
+  // Stored provider secrets ("provider.field") queued for removal on save. The
+  // server never returns secrets, so an empty input alone can't mean "clear".
+  const [clearedSecrets, setClearedSecrets] = useState<string[]>([]);
   const [repo, setRepo] = useState("");
   const [githubToken, setGithubToken] = useState("");
   const [azureEndpoint, setAzureEndpoint] = useState("");
@@ -501,6 +504,10 @@ export function SettingsPanel({ onClose: closeNow, initialCategory, onCollection
         if (secretFields[pid]?.has(k) && v === "") continue;
         entry[k] = v;
       }
+      for (const marker of clearedSecrets) {
+        const [cleared, field] = marker.split(".");
+        if (cleared === pid && !entry[field]) entry[field] = "";
+      }
       if (Object.keys(entry).length > 0) out[pid] = entry;
     }
     return out;
@@ -517,6 +524,7 @@ export function SettingsPanel({ onClose: closeNow, initialCategory, onCollection
       });
       setSettings(updated);
       setProviderConfig(updated.llm_providers ?? {});
+      setClearedSecrets([]);
       settingsStore.set(updated);
       await loadModels(provider, { share: true });
       modelsStore.applySettings(updated);
@@ -596,6 +604,7 @@ export function SettingsPanel({ onClose: closeNow, initialCategory, onCollection
       setAzureKey((current) => current === azureKey ? "" : current);
       const savedProviderConfig = updated.llm_providers ?? {};
       setProviderConfig((current) => current === providerConfig ? savedProviderConfig : current);
+      setClearedSecrets((current) => current === clearedSecrets ? [] : current);
       const savedDefaultModel = updated.llm_model_category ? "" : updated.llm_model;
       setDefaultModel((current) => current === defaultModel ? savedDefaultModel : current);
       setTheme(theme);
@@ -768,7 +777,7 @@ export function SettingsPanel({ onClose: closeNow, initialCategory, onCollection
     model = defaultModel,
   ): string {
     return JSON.stringify([
-      theme, font, defaultProvider, model, mockEnabled, modelFallbacks, llmConfig,
+      theme, font, defaultProvider, model, mockEnabled, modelFallbacks, llmConfig, clearedSecrets,
       repo, githubSecret, azureSecret, azureEndpoint, azureLanguage, ttlMinutes, showChatStats, showQuickActions,
       notificationsEnabled, completionSoundEnabled, maxToolRounds, topicApprovalPolicy, chatApprovalPolicy, scheduledApprovalTimeout, issueAssociationsEnabled,
       liveFastModel, liveReasoningEffort, liveEnabled, liveTranscriptRetentionDays,
@@ -1245,21 +1254,51 @@ export function SettingsPanel({ onClose: closeNow, initialCategory, onCollection
                               <label className="block text-xs text-muted mb-1">
                                 {f.label}
                                 {f.secret && present[f.name] && (
-                                  <span className="text-green-500"> (configured)</span>
+                                  clearedSecrets.includes(`${provider}.${f.name}`) ? (
+                                    <span className="text-amber-500"> (will be removed on save)</span>
+                                  ) : (
+                                    <span className="text-green-500"> (configured)</span>
+                                  )
+                                )}
+                                {f.secret && present[f.name] && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setClearedSecrets((prev) => {
+                                        const marker = `${provider}.${f.name}`;
+                                        return prev.includes(marker)
+                                          ? prev.filter((m) => m !== marker)
+                                          : [...prev, marker];
+                                      })
+                                    }
+                                    className="ml-2 underline hover:text-fg"
+                                    aria-label={`${clearedSecrets.includes(`${provider}.${f.name}`) ? "Keep" : "Remove"} saved ${f.label.replace(/ \(optional\)$/, "")}`}
+                                    data-tooltip={
+                                      clearedSecrets.includes(`${provider}.${f.name}`)
+                                        ? "Keep the stored value"
+                                        : "Delete the stored value when you save"
+                                    }
+                                  >
+                                    {clearedSecrets.includes(`${provider}.${f.name}`) ? "Undo" : "Remove"}
+                                  </button>
                                 )}
                               </label>
                               <input
                                 type={f.secret ? "password" : "text"}
                                 value={cfg[f.name] ?? ""}
-                                onChange={(e) =>
+                                onChange={(e) => {
+                                  const marker = `${provider}.${f.name}`;
+                                  if (e.target.value) {
+                                    setClearedSecrets((prev) => prev.filter((m) => m !== marker));
+                                  }
                                   setProviderConfig((prev) => ({
                                     ...prev,
                                     [provider]: {
                                       ...(prev[provider] ?? {}),
                                       [f.name]: e.target.value,
                                     },
-                                  }))
-                                }
+                                  }));
+                                }}
                                 placeholder={
                                   f.secret && present[f.name]
                                     ? "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022"

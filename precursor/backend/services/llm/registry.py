@@ -124,7 +124,7 @@ PROVIDERS: dict[str, ProviderSpec] = {
                 label="API key (optional)",
                 secret=True,
                 help=(
-                    "Leave empty to sign in with the Azure CLI (`az login`) instead; "
+                    "Remove a saved key to sign in with the Azure CLI (`az login`) instead; "
                     "the CLI's default tenant is used unless you set one below."
                 ),
             ),

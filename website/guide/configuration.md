@@ -98,7 +98,8 @@ verify them against Azure, and incorrect names fail when used. Manual model-id
 entry remains available.
 
 **Authentication.** Enter an **API key**, or leave it empty to sign in with the
-Azure CLI instead: run `az login` once, and Precursor requests Entra ID tokens
+Azure CLI instead (to switch an already-saved key over, click **Remove** next to
+its *(configured)* label, then **Save**): run `az login` once, and Precursor requests Entra ID tokens
 from `az account get-access-token` (cached and refreshed automatically). Set
 **Tenant ID** to use a specific tenant; if it is empty, the Azure CLI's default
 tenant is used. The tenant is ignored when an API key is set. The `az` command
