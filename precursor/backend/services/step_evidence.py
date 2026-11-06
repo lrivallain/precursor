@@ -18,7 +18,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from precursor.backend.config import get_settings
 from precursor.backend.models import Message, MessageRole
 
-PATH_RE = re.compile(r"(?<![\w./:~-])(~?/(?:[\w.@+%-]+/)*[\w.@+%-]+\.[A-Za-z0-9]{1,6})(?![\w/])")
+# POSIX (``/a/b.html``, ``~/b.html``) or Windows drive (``C:\a\b.html``, ``C:/a/b.html``).
+PATH_RE = re.compile(
+    r"(?<![\w./\\:~-])("
+    r"~?/(?:[\w.@+%-]+/)*[\w.@+%-]+\.[A-Za-z0-9]{1,6}"
+    r"|[A-Za-z]:[\\/](?:[\w.@+%-]+[\\/])*[\w.@+%-]+\.[A-Za-z0-9]{1,6}"
+    r")(?![\w/\\])"
+)
 _MAX_PATHS = 4
 _MAX_READ = 400_000
 _EXCERPT_CHARS = 2500

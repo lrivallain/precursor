@@ -3598,6 +3598,18 @@ def test_a_path_mentioned_in_prose_is_not_a_missing_deliverable() -> None:
     assert ev.cap is None and not ev.checks
 
 
+def test_windows_drive_paths_are_recognised_as_file_claims() -> None:
+    from precursor.backend.services import step_evidence
+
+    def found(text: str) -> list[str]:
+        return [m.group(1) for m in step_evidence.PATH_RE.finditer(text)]
+
+    assert found(r"Saved to C:\Users\me\out\deck.html.") == [r"C:\Users\me\out\deck.html"]
+    assert found("Saved to C:/Users/me/deck.html") == ["C:/Users/me/deck.html"]
+    assert found("See /docs/guide/page.html") == ["/docs/guide/page.html"]
+    assert found(r"not a driveXC:\a\b.html") == []
+
+
 def test_a_cover_slide_does_not_count_against_the_asked_slides(tmp_path: Any) -> None:
     from precursor.backend.services import step_evidence
 
