@@ -32,6 +32,29 @@ type.
 | **↑** / **↓** | Recall earlier messages. |
 | **Esc** | Stop the reply that is streaming. |
 
+## Floating quick actions
+
+<Screenshot src="/screenshots/quick-actions.png" alt="Floating quick actions menu with creation shortcuts" caption="Create from anywhere; drag the button to keep it within reach." />
+
+The floating **Precursor** button in the bottom-right corner opens creation
+shortcuts from any section: **New chat**, **New topic**, **New agent**, **New live session**,
+**New plan**, **New workflow**, and **New workspace**. Disabled features are
+hidden. Each shortcut opens its usual creation form without creating an empty
+item or interrupting a recording without confirmation.
+
+Hover over the button to reveal an icon-only arc, or click/tap to toggle it.
+Hover or focus an icon to magnify it and reveal its action name in an expanding
+pill beside it. The gentle arc starts at the main button, bends inward away
+from the nearest edge, and opens above the button when space allows or below
+it near the top of the screen. On short screens, the list scrolls. Its animation
+respects reduced-motion preferences.
+
+Drag the button to a comfortable spot; its position is remembered in this
+browser and stays within the window when you resize it. With the button focused,
+use **Alt + arrow keys** to move it (**Shift** for smaller steps), or **Alt + Home**
+to restore the bottom-right position. **Up/Down**, **Home/End** navigate the menu,
+**Enter/Space** select an action, and **Esc** dismisses it.
+
 ## Why these keys
 
 None of them collide with a browser shortcut: the app avoids **⌘/Ctrl** + **N**,

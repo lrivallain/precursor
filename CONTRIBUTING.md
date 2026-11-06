@@ -106,6 +106,16 @@ This covers Agents/Workflows overviews, item selection, history, deep links,
 search, shared progress, empty/error states and the mobile drawer. It requires
 the anonymous demo on port 8899; it does not execute agents or pipelines.
 
+For floating quick actions, use the same anonymous demo:
+
+```bash
+NODE_PATH=.demo/node_modules node scripts/test_quick_actions.js
+```
+
+This covers creation routing without writes, hover, touch, keyboard navigation,
+dragging, remembered position, viewport placement, scrolling, feature visibility
+and reduced motion. Set `DEMO_PORT` on the server and command to use another port.
+
 For attachment previews, use the same anonymous demo:
 
 ```bash
