@@ -15,6 +15,9 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **Azure CLI sign-in for Azure AI Foundry.** Leave the API key empty to
+  authenticate with `az login`, optionally against a custom **Tenant ID**
+  (otherwise the CLI's default tenant). The API key is no longer required.
 - **Floating quick actions.** A draggable **Precursor** button opens an animated,
   icon-only arc of creation
   shortcuts for chats, topics, agents, live sessions, plans, workflows and
