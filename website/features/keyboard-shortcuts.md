@@ -42,12 +42,17 @@ shortcuts from any section: **New chat**, **New topic**, **New agent**, **New li
 hidden. Each shortcut opens its usual creation form without creating an empty
 item or interrupting a recording without confirmation.
 
-Hover over the button to reveal an icon-only arc, or click/tap to toggle it.
-Hover or focus an icon to magnify it and reveal its action name in an expanding
-pill beside it. The gentle arc starts at the main button, bends inward away
-from the nearest edge, and opens above the button when space allows or below
-it near the top of the screen. On short screens, the list scrolls. Its animation
-respects reduced-motion preferences.
+Hover over the button to open a vertical dock, in the style of the macOS Dock,
+or click/tap to toggle it. A column of round tiles, one colour-coded icon per
+shortcut, rises from the button; the section on screen is marked with a small
+dot. Point at a tile to magnify it and its neighbours while
+its name unrolls in a pill beside it (click the name or the icon); keyboard focus
+does the same. The dock
+opens above the button when space allows, or below it near the top of the
+screen, and tiles grow away from the nearest edge. On short screens, the list
+scrolls without magnification. Its animation respects reduced-motion
+preferences. To hide the button, turn off **Show the floating quick-actions
+button** in **Settings → Appearance**; it is shown by default.
 
 Drag the button to a comfortable spot; its position is remembered in this
 browser and stays within the window when you resize it. With the button focused,

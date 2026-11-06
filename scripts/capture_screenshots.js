@@ -273,7 +273,8 @@ const scenes = {
       await sleep(300);
       const menu = await page.getByRole("menu", { name: "Create new", exact: true }).boundingBox();
       const trigger = await page.getByRole("button", { name: "Quick actions", exact: true }).boundingBox();
-      const x = Math.floor(Math.min(menu.x, trigger.x) - 16);
+      const label = await page.locator(".quick-actions-tip").boundingBox();
+      const x = Math.floor(Math.min(menu.x, trigger.x, label.x) - 16);
       const y = Math.floor(menu.y - 16);
       return { x, y, width: 1440 - x, height: 1200 - y };
     },
