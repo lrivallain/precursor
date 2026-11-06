@@ -15,10 +15,10 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
-- **Floating quick actions.** A draggable **Precursor** button opens an animated,
-  icon-only arc of creation
-  shortcuts for chats, topics, agents, live sessions, plans, workflows and
-  workspaces. The menu adapts to available space, supports touch and keyboard
+- **Floating quick actions.** A draggable **Precursor** button opens a vertical,
+  macOS-style dock of creation shortcuts for chats, topics, agents, live
+  sessions, plans, workflows and workspaces: a column of colour-coded tiles with
+  Dock-like magnification and labels. The menu adapts to available space, supports touch and keyboard
   navigation, respects reduced motion, and remembers the button's position.
 - **Plan prompt provenance.** Step-by-step discussions distinguish user-requested drafts
   from automation prompts. Review feedback is no longer labelled as user guidance, and older

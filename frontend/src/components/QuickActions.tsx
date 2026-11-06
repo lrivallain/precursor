@@ -1,10 +1,9 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
-import type { KeyboardEvent, PointerEvent } from "react";
+import type { CSSProperties, KeyboardEvent, PointerEvent } from "react";
 import { Bot, FolderGit2, ListChecks, MessageSquare, MessagesSquare, Plus, Radio, Workflow } from "lucide-react";
 import type { CoreSidebarMode } from "./Sidebar";
 import { Z_INDEX } from "../lib/constants";
 import { beginDrag } from "../lib/dragGuard";
-import { sectionColor } from "../lib/sections";
 
 type CreateSection = Exclude<CoreSidebarMode, "iq">;
 type Position = { right: number; bottom: number };
@@ -12,18 +11,29 @@ type Position = { right: number; bottom: number };
 const STORAGE_KEY = "precursor.quickActions.position";
 const SIZE = 52;
 const MARGIN = 16;
-const GAP = 12;
-const ARC_DEPTH = 24;
+// Dock geometry: a column of tiles centred on the launcher, a small gap away from it.
+const TILE = 40;
+const ITEM_GAP = 8;
+const PAD = 8;
+const COLUMN = 64;
+const INSET = (COLUMN - SIZE) / 2;
+const LAUNCHER_GAP = 12;
+// Fisheye magnification, as in the macOS Dock: neighbours grow too, and the dock lengthens.
+const MAGNIFY = 1.45;
+const RANGE = 110;
+const BULGE = Math.ceil(TILE * (MAGNIFY - 1));
+const MAX_GROWTH = 56;
 const DEFAULT_POSITION: Position = { right: 24, bottom: 24 };
+// Listed from the far end of the dock to the launcher. Glyph colours are the section's 400 (dark) / 600 (light) shades.
 const ACTIONS = [
-  { section: "workspaces", label: "New workspace", icon: FolderGit2 },
-  { section: "workflows", label: "New workflow", icon: Workflow },
-  { section: "steps", label: "New plan", icon: ListChecks },
-  { section: "live", label: "New live session", icon: Radio },
-  { section: "agents", label: "New agent", icon: Bot },
-  { section: "topics", label: "New topic", icon: MessagesSquare },
-  { section: "chats", label: "New chat", icon: MessageSquare },
-] satisfies { section: CreateSection; label: string; icon: typeof Plus }[];
+  { section: "workspaces", label: "New workspace", icon: FolderGit2, colors: ["#fbbf24", "#d97706"] },
+  { section: "workflows", label: "New workflow", icon: Workflow, colors: ["#818cf8", "#4f46e5"] },
+  { section: "steps", label: "New plan", icon: ListChecks, colors: ["#2dd4bf", "#0d9488"] },
+  { section: "live", label: "New live session", icon: Radio, colors: ["#fb7185", "#e11d48"] },
+  { section: "agents", label: "New agent", icon: Bot, colors: ["#a78bfa", "#7c3aed"] },
+  { section: "topics", label: "New topic", icon: MessagesSquare, colors: ["#38bdf8", "#0284c7"] },
+  { section: "chats", label: "New chat", icon: MessageSquare, colors: ["#34d399", "#059669"] },
+] satisfies { section: CreateSection; label: string; icon: typeof Plus; colors: [string, string] }[];
 
 function clampPosition(position: Position): Position {
   return {
@@ -57,20 +67,54 @@ function savePosition(position: Position): void {
   }
 }
 
+/**
+ * Tile scales, indexed outward from the launcher, for a pointer `offset` px from
+ * the dock's launcher-side edge. Scales are solved in un-magnified space so the
+ * tile under the pointer stays under it as its neighbours grow, without jitter.
+ * `exact` treats the offset as already un-magnified (keyboard focus).
+ */
+function fisheye(offset: number, count: number, exact = false): number[] {
+  const scalesAt = (point: number) => Array.from({ length: count }, (_, index) => {
+    const distance = Math.abs(point - (PAD + index * (TILE + ITEM_GAP) + TILE / 2)) / RANGE;
+    return distance >= 1 ? 1 : 1 + (MAGNIFY - 1) * (Math.cos(distance * Math.PI) + 1) / 2;
+  });
+  if (exact) return scalesAt(offset);
+  const project = (point: number, scales: number[]): number => {
+    let actual = PAD;
+    for (let index = 0; index < count; index++) {
+      const start = PAD + index * (TILE + ITEM_GAP);
+      if (point < start) return actual - (start - point);
+      if (point <= start + TILE) return actual + (point - start) * scales[index];
+      actual += TILE * scales[index] + ITEM_GAP;
+    }
+    return actual + point - (PAD + count * (TILE + ITEM_GAP));
+  };
+  let point = offset;
+  for (let step = 0; step < 4; step++) point -= project(point, scalesAt(point)) - offset;
+  return scalesAt(point);
+}
+
 interface Props {
   agentsEnabled: boolean;
   liveEnabled: boolean;
+  /** The section on screen, marked with a Dock-style dot; null at home. */
+  current?: string | null;
   onCreate: (section: CreateSection) => void;
 }
 
-export function QuickActions({ agentsEnabled, liveEnabled, onCreate }: Props) {
+export function QuickActions({ agentsEnabled, liveEnabled, current = null, onCreate }: Props) {
   const [position, setPosition] = useState(readPosition);
   const [open, setOpen] = useState(false);
   const [dragging, setDragging] = useState(false);
-  const [layout, setLayout] = useState({ above: true, height: 360, left: -188, width: 240, bendsLeft: true });
+  const [layout, setLayout] = useState({ above: true, height: 360, bendsLeft: true });
+  const [scales, setScales] = useState<number[] | null>(null);
+  const [active, setActive] = useState<number | null>(null);
+  const [scrollTop, setScrollTop] = useState(0);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const labelsRef = useRef<HTMLSpanElement>(null);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const drag = useRef<{ x: number; y: number; position: Position; current: Position; moved: boolean } | null>(null);
   const endDrag = useRef<(() => void) | null>(null);
@@ -78,33 +122,60 @@ export function QuickActions({ agentsEnabled, liveEnabled, onCreate }: Props) {
   const pendingFocus = useRef<number | null>(null);
   const menuId = useId();
   const helpId = useId();
-  const actions = ACTIONS.filter(({ section }) =>
+  const available = ACTIONS.filter(({ section }) =>
     (liveEnabled || section !== "live")
     && (agentsEnabled || !["agents", "workflows"].includes(section)),
   );
+  // Visual (and keyboard) order runs top to bottom; the launcher end is always "New chat".
+  const actions = layout.above ? available : [...available].reverse();
+  const outward = (index: number) => (layout.above ? actions.length - 1 - index : index);
+  const baseHeight = actions.length * TILE + (actions.length - 1) * ITEM_GAP + 2 * PAD;
+  const canMagnify = baseHeight + MAX_GROWTH <= layout.height;
 
   function cancelClose(): void {
     if (closeTimer.current) clearTimeout(closeTimer.current);
     closeTimer.current = null;
   }
 
+  function resetMagnification(): void {
+    setScales(null);
+    setActive(null);
+  }
+
   useLayoutEffect(() => {
-    const above = Math.max(0, window.innerHeight - position.bottom - SIZE - GAP - MARGIN);
-    const below = Math.max(0, position.bottom - GAP - MARGIN);
+    const above = Math.max(0, window.innerHeight - position.bottom - SIZE - LAUNCHER_GAP - MARGIN);
+    const below = Math.max(0, position.bottom - LAUNCHER_GAP - MARGIN);
     const fitsAbove = (menuRef.current?.scrollHeight ?? 0) <= above;
     const opensAbove = fitsAbove || above >= below;
     const buttonLeft = window.innerWidth - position.right - SIZE;
     const bendsLeft = buttonLeft > (window.innerWidth - SIZE) / 2;
-    const width = Math.min(240, bendsLeft ? buttonLeft + SIZE - MARGIN : window.innerWidth - buttonLeft - MARGIN);
-    const left = bendsLeft ? SIZE - width : 0;
-    setLayout({ above: opensAbove, height: opensAbove ? above : below, left, width, bendsLeft });
-  }, [position, open, actions.length]);
+    setLayout({ above: opensAbove, height: opensAbove ? above : below, bendsLeft });
+  }, [position, open, available.length]);
 
   useLayoutEffect(() => {
     if (!open || pendingFocus.current === null) return;
     menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')[pendingFocus.current]?.focus();
     pendingFocus.current = null;
   }, [open]);
+
+  useLayoutEffect(() => {
+    if (!open) resetMagnification();
+  }, [open]);
+
+  function leaveLabel(event: PointerEvent<HTMLElement>): void {
+    // Moving between a tile and its label pill keeps both active.
+    const next = event.relatedTarget;
+    if (next instanceof Node && (menuRef.current?.contains(next) || labelsRef.current?.contains(next))) return;
+    resetMagnification();
+  }
+
+  function magnifyAt(event: PointerEvent<HTMLDivElement>): void {
+    const menu = menuRef.current;
+    if (!menu || event.pointerType !== "mouse" || !canMagnify) return;
+    const box = menu.getBoundingClientRect();
+    const offset = layout.above ? box.bottom - event.clientY : event.clientY - box.top;
+    setScales(fisheye(offset, actions.length));
+  }
 
   useEffect(() => {
     function resize(): void {
@@ -230,48 +301,110 @@ export function QuickActions({ agentsEnabled, liveEnabled, onCreate }: Props) {
       }}
     >
       <div
+        ref={popoverRef}
         className="quick-actions-popover absolute"
         data-side={layout.above ? "top" : "bottom"}
         data-bend={layout.bendsLeft ? "left" : "right"}
         style={{
-          left: layout.left,
-          width: layout.width,
-          ...(layout.above ? { bottom: "100%", paddingBottom: GAP } : { top: "100%", paddingTop: GAP }),
+          left: layout.bendsLeft ? -INSET - BULGE : -INSET,
+          width: COLUMN + BULGE,
+          ...(layout.above
+            ? { bottom: -INSET, paddingBottom: INSET + SIZE + LAUNCHER_GAP }
+            : { top: -INSET, paddingTop: INSET + SIZE + LAUNCHER_GAP }),
         }}
         inert={!open}
         aria-hidden={!open}
       >
-        <div ref={menuRef} id={menuId} role="menu" aria-label="Create new" className="quick-actions-menu" style={{ maxHeight: layout.height }}>
-          {actions.map(({ section, label, icon: Icon }, index) => {
-            const distance = (layout.above ? actions.length - index : index + 1) * 50 + 14;
-            const curve = ARC_DEPTH * (distance / (actions.length * 50 + 14)) ** 2;
+        <div
+          ref={menuRef}
+          id={menuId}
+          role="menu"
+          aria-label="Create new"
+          className="quick-actions-menu"
+          style={{
+            maxHeight: layout.height,
+            padding: `${PAD}px ${layout.bendsLeft ? (COLUMN - TILE) / 2 : (COLUMN - TILE) / 2 + BULGE}px ${PAD}px ${layout.bendsLeft ? (COLUMN - TILE) / 2 + BULGE : (COLUMN - TILE) / 2}px`,
+          }}
+          onPointerMove={magnifyAt}
+          onPointerLeave={leaveLabel}
+          onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+        >
+          {actions.map(({ section, label, icon: Icon, colors }, index) => {
+            const scale = scales?.[outward(index)] ?? 1;
             return (
-              <div
+              <button
                 key={section}
-                role="none"
-                className="quick-actions-slot"
-                style={{ transitionDelay: open ? `${(layout.above ? actions.length - 1 - index : index) * 22}ms` : "0ms" }}
+                role="menuitem"
+                type="button"
+                aria-label={label}
+                className="quick-actions-item"
+                data-active={active === index}
+                style={{
+                  width: TILE * scale,
+                  height: TILE * scale,
+                  "--qa-from": colors[0],
+                  "--qa-to": colors[1],
+                  "--qa-delay": open ? `${outward(index) * 24}ms` : "0ms",
+                } as CSSProperties}
+                onPointerEnter={() => setActive(index)}
+                onFocus={(event) => {
+                  setActive(index);
+                  if (canMagnify && event.currentTarget.matches(":focus-visible")) {
+                    setScales(fisheye(PAD + outward(index) * (TILE + ITEM_GAP) + TILE / 2, actions.length, true));
+                  }
+                }}
+                onBlur={(event) => {
+                  const next = event.relatedTarget;
+                  if (!(next instanceof Element && next.matches('[role="menuitem"]'))) resetMagnification();
+                }}
+                onClick={() => {
+                  setOpen(false);
+                  onCreate(section);
+                }}
               >
-                <button
-                  role="menuitem"
-                  type="button"
-                  aria-label={label}
-                  className={`quick-actions-item ${sectionColor(section).accentText}`}
-                  style={layout.bendsLeft ? { right: curve } : { left: curve }}
-                  onClick={() => {
-                    setOpen(false);
-                    onCreate(section);
-                  }}
-                >
-                  <span className="quick-actions-pill" style={{ maxWidth: layout.width - curve - 8 }} aria-hidden="true">
-                    <span className="quick-actions-label">{label}</span>
-                  </span>
-                  <span className="quick-actions-icon"><Icon size={19} strokeWidth={1.8} aria-hidden="true" /></span>
-                </button>
-              </div>
+                <span className="quick-actions-tile" aria-hidden="true"><Icon strokeWidth={1.9} /></span>
+                {section === current && <span className="quick-actions-dot" aria-hidden="true" />}
+              </button>
             );
           })}
         </div>
+        {/* One pill per tile, outside the scrolling list so it is never clipped. Each sits behind its
+            tile, at the tile's target size and position, and rolls out of it (or back in) with the
+            same timing as the magnification, so the icon grows while its name unrolls. */}
+        <span ref={labelsRef} className="quick-actions-labels">
+          {actions.map(({ section, label, colors }, index) => {
+            const sizes = actions.map((_, other) => TILE * (scales?.[outward(other)] ?? 1));
+            const size = sizes[index];
+            const top = (layout.above ? 0 : INSET + SIZE + LAUNCHER_GAP) + PAD - scrollTop
+              + sizes.slice(0, index).reduce((sum, other) => sum + other + ITEM_GAP, 0);
+            return (
+              <span
+                key={section}
+                className="quick-actions-tip"
+                data-open={active === index}
+                style={{
+                  top,
+                  height: size,
+                  [layout.bendsLeft ? "right" : "left"]: (COLUMN - TILE) / 2,
+                  [layout.bendsLeft ? "paddingRight" : "paddingLeft"]: size + 2,
+                  "--qa-size": `${size}px`,
+                  "--qa-from": colors[0],
+                  "--qa-to": colors[1],
+                } as CSSProperties}
+                aria-hidden="true"
+                onPointerLeave={leaveLabel}
+                // Keep focus where it is: a blur to <body> would close the menu before the click lands.
+                onPointerDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  setOpen(false);
+                  onCreate(section);
+                }}
+              >
+                <span className="quick-actions-label">{label}</span>
+              </span>
+            );
+          })}
+        </span>
       </div>
       <button
         ref={triggerRef}

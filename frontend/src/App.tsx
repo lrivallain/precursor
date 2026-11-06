@@ -708,6 +708,7 @@ export default function App() {
       <QuickActions
         agentsEnabled={agentsEnabled}
         liveEnabled={liveEnabled}
+        current={atHome ? null : sidebarMode}
         onCreate={(mode) => {
           void confirmLeaveRecording().then((allowed) => {
             if (!allowed) return;

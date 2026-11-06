@@ -98,15 +98,21 @@
   --accent: #60a5fa;
 }
 
-/* A single floating launcher; its popover keeps a pointer-safe bridge to the trigger. */
+/* A floating launcher that opens a vertical, macOS-style dock of round
+   shortcut tiles, with Dock-like magnification and labels. */
+.quick-actions {
+  --qa-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --qa-out: cubic-bezier(0.16, 1, 0.3, 1);
+}
 .quick-actions-trigger {
   position: relative;
+  z-index: 1;
   background: var(--bg);
   color: var(--text);
   border: 1px solid var(--border);
   box-shadow: 0 4px 8px rgb(0 0 0 / 12%), 0 12px 28px rgb(0 0 0 / 16%);
   cursor: grab;
-  transition: transform 200ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 200ms ease;
+  transition: transform 200ms var(--qa-out), box-shadow 200ms ease;
 }
 .quick-actions-badge {
   position: absolute;
@@ -122,7 +128,7 @@
   color: var(--bg);
 }
 .quick-actions-badge > svg {
-  transition: transform 240ms cubic-bezier(0.16, 1, 0.3, 1);
+  transition: transform 240ms var(--qa-out);
 }
 .quick-actions[data-open="true"] .quick-actions-badge > svg {
   transform: rotate(45deg);
@@ -138,144 +144,164 @@
 .quick-actions-popover {
   visibility: hidden;
   opacity: 0;
-  transform: translateY(8px) scale(0.96);
-  transform-origin: bottom;
-  transition: opacity 180ms ease, transform 240ms cubic-bezier(0.16, 1, 0.3, 1), visibility 180ms;
+  transition: opacity 160ms ease, visibility 160ms;
   pointer-events: none;
-}
-.quick-actions-popover[data-side="bottom"] {
-  transform: translateY(-8px) scale(0.96);
-  transform-origin: top;
 }
 .quick-actions[data-open="true"] .quick-actions-popover {
   visibility: visible;
   opacity: 1;
-  transform: translateY(0) scale(1);
   pointer-events: auto;
 }
 .quick-actions-menu {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 4px;
+  align-items: flex-end;
+  gap: 8px;
+  overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
-  scrollbar-width: thin;
+  scrollbar-width: none;
+}
+/* Tiles grow away from the nearest screen edge. */
+.quick-actions-popover[data-bend="right"] .quick-actions-menu {
+  align-items: flex-start;
 }
 .quick-actions-item {
-  position: absolute;
-  display: flex;
-  align-items: center;
-  height: 44px;
-  width: 44px;
-  border-radius: 24px;
-  filter: drop-shadow(0 2px 4px rgb(0 0 0 / 10%));
-  cursor: pointer;
-  transform-origin: left center;
-  transition: transform 220ms cubic-bezier(0.16, 1, 0.3, 1);
-}
-.quick-actions-popover[data-bend="left"] .quick-actions-item {
-  transform-origin: right center;
-}
-.quick-actions-pill {
-  position: absolute;
-  display: flex;
-  align-items: center;
-  left: 0;
-  top: 0;
-  width: max-content;
-  min-width: 44px;
-  height: 44px;
-  padding-left: 44px;
-  padding-right: 14px;
-  border: 1px solid var(--border);
-  border-radius: 24px;
-  background: var(--bg);
-  clip-path: inset(0 calc(100% - 44px) 0 0 round 24px);
-  pointer-events: none;
-  transition: clip-path 240ms cubic-bezier(0.16, 1, 0.3, 1), background 160ms ease;
-}
-.quick-actions-popover[data-bend="left"] .quick-actions-pill {
-  left: auto;
-  right: 0;
-  padding-left: 14px;
-  padding-right: 44px;
-  clip-path: inset(0 0 0 calc(100% - 44px) round 24px);
-}
-.quick-actions-item:is(:hover, :focus-visible) .quick-actions-pill {
-  background: color-mix(in oklab, var(--bg) 94%, currentColor);
-  clip-path: inset(0 0 0 0 round 24px);
-  pointer-events: auto;
-}
-.quick-actions-icon {
   position: relative;
+  flex-shrink: 0;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: width 260ms var(--qa-out), height 260ms var(--qa-out);
+}
+.quick-actions-tile {
+  --qa-glyph: var(--qa-to);
   display: grid;
   place-items: center;
-  width: 44px;
-  height: 44px;
-  flex-shrink: 0;
-  border: 1px solid var(--border);
+  width: 100%;
+  height: 100%;
+  /* Same fill and edge as the label pill, so revealing it never recolours the tile. */
+  border: 1px solid color-mix(in oklab, var(--qa-glyph) 40%, var(--border));
   border-radius: 50%;
-  background: var(--bg);
-  transition: background 160ms ease, border-color 160ms ease;
+  color: var(--qa-glyph);
+  background: color-mix(in oklab, var(--qa-glyph) 10%, var(--bg));
+  box-shadow: 0 1px 2px rgb(0 0 0 / 8%), 0 4px 12px -4px rgb(0 0 0 / 28%);
+  opacity: 0;
+  transform: translateY(20px) scale(0.5);
+  transition: transform 360ms var(--qa-spring), opacity 180ms ease, filter 120ms ease;
 }
-.quick-actions-item:is(:hover, :focus-visible) .quick-actions-icon {
+.dark .quick-actions-tile {
+  --qa-glyph: var(--qa-from);
+}
+/* The active tile merges into the label pill behind it, so the pill's full edge shows. Both share
+   one fill, so the swap is instant and invisible (and follows the same tile as the pill, even
+   while magnification moves tiles under a still pointer). */
+.quick-actions-item:is([data-active="true"], :focus-visible) .quick-actions-tile {
   border-color: transparent;
   background: transparent;
+  box-shadow: none;
+}
+.quick-actions-tile > svg {
+  width: 48%;
+  height: 48%;
+}
+.quick-actions-popover[data-side="bottom"] .quick-actions-tile {
+  transform: translateY(-20px) scale(0.5);
+}
+.quick-actions[data-open="true"] .quick-actions-tile {
+  opacity: 1;
+  transform: none;
+  transition-delay: var(--qa-delay);
+}
+.quick-actions-item:active .quick-actions-tile {
+  filter: brightness(0.85);
+}
+/* The section on screen, like a running app. */
+.quick-actions-dot {
+  position: absolute;
+  top: 50%;
+  width: 4px;
+  height: 4px;
+  margin-top: -2px;
+  border-radius: 50%;
+  background: var(--text);
+  opacity: 0.7;
+}
+.quick-actions-popover[data-bend="left"] .quick-actions-dot { right: -8px; }
+.quick-actions-popover[data-bend="right"] .quick-actions-dot { left: -8px; }
+/* The PR's expanding pill: each tile has one behind it, which unrolls to reveal the action
+   name and rolls back up when the pointer moves on. Size and position share the tiles' timing. */
+.quick-actions-menu {
+  z-index: 1;
+}
+.quick-actions-tip {
+  --qa-glyph: var(--qa-to);
+  --qa-roll: 260ms var(--qa-out);
+  position: absolute;
+  z-index: 0;
+  display: flex;
+  align-items: center;
+  max-width: 260px;
+  border: 1px solid color-mix(in oklab, var(--qa-glyph) 40%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--qa-glyph) 10%, var(--bg));
+  box-shadow: 0 1px 2px rgb(0 0 0 / 8%), 0 4px 12px -4px rgb(0 0 0 / 28%);
+  cursor: pointer;
+  visibility: hidden;
+  pointer-events: none;
+  clip-path: inset(0 calc(100% - var(--qa-size)) 0 0 round 999px);
+  transition: clip-path var(--qa-roll), top var(--qa-roll), height var(--qa-roll), padding var(--qa-roll), visibility 0s linear 260ms;
+}
+.dark .quick-actions-tip {
+  --qa-glyph: var(--qa-from);
+}
+.quick-actions-popover[data-bend="left"] .quick-actions-tip {
+  clip-path: inset(0 0 0 calc(100% - var(--qa-size)) round 999px);
+}
+.quick-actions-popover .quick-actions-tip[data-open="true"] {
+  visibility: visible;
+  pointer-events: auto;
+  clip-path: inset(0 0 0 0 round 999px);
+  transition: clip-path var(--qa-roll), top var(--qa-roll), height var(--qa-roll), padding var(--qa-roll), visibility 0s;
 }
 .quick-actions-label {
   min-width: 0;
   overflow: hidden;
-  opacity: 0;
+  padding: 0 14px;
   color: var(--text);
   font-size: 13px;
   font-weight: 500;
   white-space: nowrap;
   text-overflow: ellipsis;
-  transform: translateX(-8px);
-  pointer-events: none;
-  transition: transform 240ms cubic-bezier(0.16, 1, 0.3, 1), opacity 160ms ease;
-}
-.quick-actions-item:is(:hover, :focus-visible) {
-  transform: scale(1.08);
-}
-.quick-actions-item:is(:hover, :focus-visible) .quick-actions-label {
-  opacity: 1;
-  transform: translateX(0);
-  pointer-events: auto;
-}
-.quick-actions-slot {
-  position: relative;
-  height: 44px;
-  flex-shrink: 0;
   opacity: 0;
-  transform: translateY(16px) scale(0.8);
-  transition: opacity 160ms ease, transform 280ms cubic-bezier(0.16, 1, 0.3, 1);
+  transform: translateX(8px);
+  transition: opacity 160ms ease, transform var(--qa-roll);
 }
-.quick-actions-popover[data-side="bottom"] .quick-actions-slot {
-  transform: translateY(-16px) scale(0.8);
+.quick-actions-popover[data-bend="right"] .quick-actions-label {
+  transform: translateX(-8px);
 }
-.quick-actions[data-open="true"] .quick-actions-slot {
+.quick-actions-popover .quick-actions-tip[data-open="true"] .quick-actions-label {
   opacity: 1;
-  transform: translateY(0) scale(1);
+  transform: none;
 }
-.quick-actions-trigger:focus-visible,
-.quick-actions-item:focus-visible {
+.quick-actions-trigger:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 3px;
 }
 .quick-actions-item:focus-visible {
-  outline-offset: -2px;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 @media (prefers-reduced-motion: reduce) {
   .quick-actions-trigger,
   .quick-actions-badge > svg,
+  .quick-actions-popover,
   .quick-actions-item,
-  .quick-actions-icon,
-  .quick-actions-pill,
-  .quick-actions-label,
-  .quick-actions-slot,
-  .quick-actions-popover {
+  .quick-actions-tile {
+    transition: none !important;
+  }
+  .quick-actions-tip,
+  .quick-actions-label {
     transition: none !important;
   }
 }
