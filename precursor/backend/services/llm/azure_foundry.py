@@ -12,7 +12,10 @@ UI falls back to manual deployment-name entry.
 
 An endpoint ending in ``/openai/v1`` (the Foundry "v1" API) is called with the
 plain ``AsyncOpenAI`` client instead, since the Azure client would append its
-own ``/openai/deployments/…`` path to it and 404.
+own ``/openai/deployments/…`` path to it and 404. That surface serves some
+models (Claude, for one) only through the Responses API, so a v1 endpoint is
+driven through Responses first and falls back to chat-completions for models
+that don't offer it.
 
 Authentication is an API key when one is configured; otherwise the provider
 signs in through the Azure CLI (``az login``), optionally against a specific
@@ -35,12 +38,14 @@ from precursor.backend.services.llm._openai_compat import (
     stream_openai_tools,
     to_openai_messages,
 )
+from precursor.backend.services.llm._responses_compat import stream_responses_tools
 from precursor.backend.services.llm.base import (
     ChatMessage,
     EmbeddingResult,
     LLMError,
     LLMModel,
     ProviderEvent,
+    TextDeltaEvent,
     ToolDef,
 )
 
@@ -51,6 +56,10 @@ _REFRESH_MARGIN_SECONDS = 300.0
 _FALLBACK_TTL_SECONDS = 300.0
 _V1_ENDPOINT_RE = re.compile(r"/openai/v1/?$", re.IGNORECASE)
 _TENANT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+class AzureCliError(LLMError):
+    """The Azure CLI could not supply a token."""
 
 
 class AzureCliTokenProvider:
@@ -89,7 +98,7 @@ class AzureCliTokenProvider:
                 stderr=asyncio.subprocess.PIPE,
             )
         except FileNotFoundError:
-            raise LLMError(
+            raise AzureCliError(
                 "Azure CLI not found. Install it and run `az login`, or set an API key."
             ) from None
         try:
@@ -97,17 +106,17 @@ class AzureCliTokenProvider:
         except TimeoutError:
             proc.kill()
             await proc.wait()
-            raise LLMError("Azure CLI timed out while fetching an access token.") from None
+            raise AzureCliError("Azure CLI timed out while fetching an access token.") from None
         if proc.returncode != 0:
             detail = stderr.decode(errors="replace").strip().splitlines()
             hint = f" ({detail[-1]})" if detail else ""
             where = f" for tenant {self._tenant}" if self._tenant else ""
-            raise LLMError(f"Azure CLI could not get a token{where}; run `az login`.{hint}")
+            raise AzureCliError(f"Azure CLI could not get a token{where}; run `az login`.{hint}")
         try:
             payload = json.loads(stdout)
             token = str(payload["accessToken"])
         except (ValueError, KeyError, TypeError):
-            raise LLMError("Azure CLI returned an unreadable access token response.") from None
+            raise AzureCliError("Azure CLI returned an unreadable access token response.") from None
         expires = payload.get("expires_on")
         try:
             expires_at = float(expires)
@@ -137,7 +146,10 @@ class AzureFoundryProvider:
         endpoint = endpoint.strip().rstrip("/")
         credential: Any = api_key or AzureCliTokenProvider(tenant)
         self._client: AsyncOpenAI
-        if _V1_ENDPOINT_RE.search(endpoint):
+        self._v1 = bool(_V1_ENDPOINT_RE.search(endpoint))
+        # Models whose Responses call was refused: skip straight to chat-completions.
+        self._chat_only: set[str] = set()
+        if self._v1:
             self._client = AsyncOpenAI(base_url=endpoint + "/", api_key=credential)
         elif api_key:
             self._client = AsyncAzureOpenAI(
@@ -159,6 +171,13 @@ class AzureFoundryProvider:
         messages: Sequence[ChatMessage],
         reasoning_effort: str | None = None,
     ) -> AsyncIterator[str]:
+        if self._v1:
+            async for event in self.stream_chat_with_tools(
+                model=model, messages=messages, tools=(), reasoning_effort=reasoning_effort
+            ):
+                if isinstance(event, TextDeltaEvent) and event.content:
+                    yield event.content
+            return
         kwargs: dict[str, Any] = {
             "model": model or self._deployment,
             "messages": to_openai_messages(messages),
@@ -183,9 +202,30 @@ class AzureFoundryProvider:
         reasoning_effort: str | None = None,
         request_options: Mapping[str, Any] | None = None,
     ) -> AsyncIterator[ProviderEvent]:
+        model = model or self._deployment
+        if self._v1 and model not in self._chat_only:
+            yielded = False
+            try:
+                async for event in stream_responses_tools(
+                    client=self._client,
+                    model=model,
+                    messages=messages,
+                    tools=tools,
+                    reasoning_effort=reasoning_effort,
+                    request_options=request_options,
+                ):
+                    yielded = True
+                    yield event
+                return
+            except LLMError as exc:
+                # Auth failures hit chat-completions identically; anything
+                # already streamed can't be replayed.
+                if yielded or isinstance(exc, AzureCliError) or "credentials" in str(exc):
+                    raise
+                self._chat_only.add(model)
         async for event in stream_openai_tools(
             client=self._client,
-            model=model or self._deployment,
+            model=model,
             messages=messages,
             tools=tools,
             reasoning_effort=reasoning_effort,

@@ -222,3 +222,67 @@ def test_v1_endpoint_uses_plain_openai_client(suffix: str, monkeypatch: pytest.M
     assert seen[0] == {"base_url": base + "/openai/v1/", "api_key": "secret"}
     assert seen[1]["base_url"] == base + "/openai/v1/"
     assert isinstance(seen[1]["api_key"], azure_foundry.AzureCliTokenProvider)
+
+
+def _v1_provider(monkeypatch: pytest.MonkeyPatch) -> azure_foundry.AzureFoundryProvider:
+    monkeypatch.setattr(azure_foundry, "AsyncOpenAI", lambda **_: SimpleNamespace())
+    return azure_foundry.AzureFoundryProvider(
+        endpoint="https://example.openai.azure.com/openai/v1", api_key="k", deployment="claude"
+    )
+
+
+async def test_v1_endpoint_streams_through_responses(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    async def responses(**kwargs: object) -> AsyncIterator[TextDeltaEvent]:
+        calls.append(str(kwargs["model"]))
+        yield TextDeltaEvent(content="hi")
+
+    chat = AsyncMock()
+    monkeypatch.setattr(azure_foundry, "stream_responses_tools", responses)
+    monkeypatch.setattr(azure_foundry, "stream_openai_tools", chat)
+    provider = _v1_provider(monkeypatch)
+    assert [c async for c in provider.stream_chat(model="", messages=[])] == ["hi"]
+    assert calls == ["claude"]
+    chat.assert_not_called()
+
+
+async def test_v1_endpoint_falls_back_to_chat_and_remembers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from precursor.backend.services.llm.base import LLMError
+
+    attempts = 0
+
+    async def responses(**_: object) -> AsyncIterator[TextDeltaEvent]:
+        nonlocal attempts
+        attempts += 1
+        raise LLMError("Requested API is currently not supported")
+        yield  # pragma: no cover
+
+    async def chat(**_: object) -> AsyncIterator[TextDeltaEvent]:
+        yield TextDeltaEvent(content="chat")
+
+    monkeypatch.setattr(azure_foundry, "stream_responses_tools", responses)
+    monkeypatch.setattr(azure_foundry, "stream_openai_tools", chat)
+    provider = _v1_provider(monkeypatch)
+    for _ in range(2):
+        events = [
+            e async for e in provider.stream_chat_with_tools(model="m", messages=[], tools=[])
+        ]
+        assert events == [TextDeltaEvent(content="chat")]
+    assert attempts == 1
+
+
+async def test_v1_endpoint_does_not_retry_auth_failures(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def responses(**_: object) -> AsyncIterator[TextDeltaEvent]:
+        raise azure_foundry.AzureCliError("run az login")
+        yield  # pragma: no cover
+
+    chat = AsyncMock()
+    monkeypatch.setattr(azure_foundry, "stream_responses_tools", responses)
+    monkeypatch.setattr(azure_foundry, "stream_openai_tools", chat)
+    provider = _v1_provider(monkeypatch)
+    with pytest.raises(azure_foundry.AzureCliError):
+        [e async for e in provider.stream_chat_with_tools(model="m", messages=[], tools=[])]
+    chat.assert_not_called()

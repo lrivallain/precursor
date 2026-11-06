@@ -106,6 +106,13 @@ must be on the `PATH` of the machine running Precursor, and your identity needs
 an Azure OpenAI data-plane role (for example *Cognitive Services OpenAI User*)
 on the resource.
 
+**Endpoint styles.** Both Azure OpenAI endpoints
+(`https://<resource>.openai.azure.com`, using the classic deployments API) and
+Foundry "v1" endpoints (`https://<resource>.openai.azure.com/openai/v1`) work.
+A v1 endpoint is called through the Responses API, which is how Claude
+deployments are served, and falls back to chat completions for models that
+don't offer it.
+
 <Screenshot src="/screenshots/foundry-models.png" alt="Azure AI Foundry settings with removable model bubbles and an Add model input" caption="Add deployment names individually, then apply the configuration to populate the model picker." />
 
 Precursor pins **no** model id of its own. Until you choose one in
