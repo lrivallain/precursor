@@ -23,14 +23,20 @@ export function StepPlanTrace({ content }: { content: string }) {
         <ListChecks size={16} className="mt-0.5 shrink-0 text-muted" aria-hidden />
         <div className="min-w-0 flex-1">
           <div className="text-xs font-medium text-muted">
-            {trace.action === "Linked" ? "Plan linked to Step by step" : "Request sent to Step by step"}
+            {trace.action === "Linked"
+              ? "Plan linked to Step by step"
+              : trace.action === "Amended"
+                ? "Plan amended in Step by step"
+                : "Request sent to Step by step"}
           </div>
           <StepPlanLink note={trace} />
           <div className="mt-2.5 border-l border-border pl-3 text-muted" data-testid="step-plan-prompt">
             {prompt != null ? (
               <>
                 <div className="mb-1.5 text-xs font-medium">
-                  Original prompt{trace.snapshot?.source === "topic_message" ? " · From topic message" : " · Submitted"}
+                  {trace.snapshot?.kind === "step_plan_amendment"
+                    ? `Follow-up · Revision ${trace.snapshot.revision}`
+                    : `Original prompt${trace.snapshot?.source === "topic_message" ? " · From topic message" : trace.snapshot?.source === "chat_message" ? " · From chat message" : " · Submitted"}`}
                 </div>
                 <div id={promptId} className="whitespace-pre-wrap [overflow-wrap:anywhere] leading-relaxed">
                   {expanded ? prompt : preview}{long && !expanded ? "…" : ""}

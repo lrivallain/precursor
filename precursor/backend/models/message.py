@@ -28,6 +28,8 @@ class MessageRole(str, enum.Enum):  # noqa: UP042 - StrEnum would change str() s
 
 # ``Message.kind`` for a context-compaction summary row (see services/compaction.py).
 MESSAGE_KIND_COMPACTION = "compaction"
+MESSAGE_KIND_STEP_AUTOMATION = "step_automation"
+MESSAGE_KIND_STEP_USER_REQUEST = "step_user_request"
 
 
 class Message(Base, TimestampMixin):
@@ -74,9 +76,8 @@ class Message(Base, TimestampMixin):
         ForeignKey("agent_sessions.id", ondelete="SET NULL"), index=True, nullable=True
     )
 
-    # Marks a special row. ``"compaction"``: a SYSTEM row whose content summarises
-    # everything before it; the model sees that summary instead of the older
-    # rows, which stay in the transcript (deleting the marker undoes it).
+    # Marks a special row or the origin of a Step-by-Step drafting prompt.
+    # ``"compaction"`` replaces earlier model context with its summary.
     kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     # Optional serialized tool-call payload (JSON string) for assistant turns.

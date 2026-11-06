@@ -105,8 +105,8 @@ export function WorkingView({
   const hasFinal = (plan.final_output ?? "").trim().length > 0;
 
   const finalHint = plan.status === "done"
-    ? plan.source_topic_id
-      ? "Done · sent to the topic"
+    ? plan.final_posted_version === plan.final_version && plan.final_version > 0
+      ? `Done · sent to the ${plan.source_chat_id != null ? "chat" : "topic"}`
       : "Done"
     : hasFinal
       ? plan.final_stale

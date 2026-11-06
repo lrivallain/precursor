@@ -990,6 +990,12 @@ export default function App() {
             void agentsCtl.loadAgents();
           }}
           onWorkflowsChanged={() => workflowsCtl.refreshWorkflows()}
+          onStepPlansChanged={(deletedId) => {
+            if (deletedId != null && stepsCtl.activePlanId === deletedId) {
+              void stepsCtl.openPlan(null);
+            }
+            stepsCtl.reload();
+          }}
           onSessionRestored={() => void liveCtl.loadMeetingSessions()}
           onSessionDeleted={(id) => {
             if (liveCtl.activeSessionId === id) liveCtl.setActiveSessionId(null);

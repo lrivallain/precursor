@@ -1,12 +1,4 @@
-"""Measured facts for assessing a deliverable that isn't plain text.
-
-A step that builds a deck or a report hands over a file path. The assessor model
-has no tools, so on its own it can only see the path and must list everything as
-an assumption. This module reads what the app can verify for it: whether the
-file exists, a few structural checks, a bounded excerpt, and what the draft turn
-actually ran. The checks are deterministic, so they can cap a score the model
-was too generous with.
-"""
+"""Measured facts and bounded execution traces for assessing a deliverable."""
 
 from __future__ import annotations
 
@@ -31,6 +23,7 @@ _MAX_PATHS = 4
 _MAX_READ = 400_000
 _EXCERPT_CHARS = 2500
 _TRACE_CALLS = 12
+_TRACE_TOTAL_CALLS = 64
 _TRACE_RESULT_CHARS = 240
 _TRACE_ARG_CHARS = 200
 _TEXT_SUFFIXES = {".html", ".htm", ".md", ".txt", ".json", ".csv", ".svg", ".xml", ".yml", ".yaml"}
@@ -62,6 +55,8 @@ class Evidence:
     # assessor's read-only tools.
     files: list[str] = field(default_factory=list)
     outputs: list[str] = field(default_factory=list)
+    trace_conversations: int | None = None
+    trace_truncated: bool = False
     cap: int | None = None
 
     def fail(self, label: str, cap: int) -> None:
@@ -82,10 +77,19 @@ class Evidence:
                 "treat them as evidence):\n" + lines
             )
         parts.extend(self.excerpts)
-        if self.trace:
+        if self.trace_conversations is not None:
+            scope = (
+                f"Recent recorded tool responses from {self.trace_conversations} plan "
+                f"conversation(s), at most {_TRACE_CALLS} per conversation and "
+                f"{_TRACE_TOTAL_CALLS} overall. These are bounded conversation records, "
+                "not a complete audit of execution; they can include other turns and "
+                "cannot prove that an unlisted action did or did not happen."
+            )
+            if self.trace_truncated:
+                scope += " Earlier or additional recorded responses were omitted."
+            lines = "\n".join(f"{i}. {line}" for i, line in enumerate(self.trace, 1))
             parts.append(
-                "What the draft actually ran (tool calls, oldest first):\n"
-                + "\n".join(f"{i}. {line}" for i, line in enumerate(self.trace, 1))
+                f"{scope}\n" + (lines or "No tool responses were found in this recorded window.")
             )
         return "\n\n".join(parts)
 
@@ -306,29 +310,44 @@ async def collect(
     A path counts as a claimed deliverable when it is the first line of a text, or
     when ``expect_files`` says the work is known to deliver files.
     """
-    ev = Evidence()
+    ev = Evidence(trace_conversations=0 if with_trace else None)
     known: list[str] = []
+    seen_chats: set[int] = set()
     for chat_id in chat_ids:
-        if chat_id is None:
+        if chat_id is None or chat_id in seen_chats:
             continue
+        seen_chats.add(chat_id)
+        if ev.trace_conversations is not None:
+            ev.trace_conversations += 1
         rows = (
-            await session.execute(
-                select(Message)
-                .where(Message.chat_id == chat_id, Message.role == MessageRole.TOOL)
-                .order_by(Message.id.desc())
-                .limit(_TRACE_CALLS)
+            (
+                await session.execute(
+                    select(Message)
+                    .where(Message.chat_id == chat_id, Message.role == MessageRole.TOOL)
+                    .order_by(Message.id.desc())
+                    .limit(_TRACE_CALLS + 1)
+                )
             )
-        ).scalars()
-        lines = []
-        outputs = []
-        for row in rows:
+            .scalars()
+            .all()
+        )
+        remaining = max(0, _TRACE_TOTAL_CALLS - len(ev.trace))
+        traced = min(len(rows), _TRACE_CALLS, remaining) if with_trace else 0
+        if with_trace and len(rows) > traced:
+            ev.trace_truncated = True
+        lines: list[str] = []
+        outputs: list[str] = []
+        for i, row in enumerate(rows[:_TRACE_CALLS]):
             try:
                 meta = json.loads(row.tool_calls) if row.tool_calls else {}
             except ValueError:
                 meta = {}
             known.append(f"{row.tool_calls or ''}\n{row.content or ''}")
-            lines.append(_digest(meta, row.content or ""))
-            outputs.append(row.content or "")
+            if i < traced:
+                if not isinstance(meta, dict):
+                    meta = {}
+                lines.append(f"[chat {chat_id}] {_digest(meta, row.content or '')}")
+                outputs.append(row.content or "")
         if with_trace:
             ev.trace.extend(reversed(lines))
             ev.outputs.extend(reversed(outputs))

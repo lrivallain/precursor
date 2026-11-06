@@ -72,8 +72,8 @@ function Section({ label, items }: { label: string; items: string[] }) {
 
 /**
  * A model self-assessment, shown as a score chip. Click it for the reasons (what
- * it covers, the evidence, assumptions, gaps and, for a whole plan,
- * contradictions) and to run it again. The model assesses on its own after it
+ * it covers, the evidence, assumptions, gaps and contradictions) and to run it
+ * again. The model assesses on its own after it
  * drafts; a step you wrote yourself offers "Assess" instead. Shown as out of
  * date when the work changed after it was written.
  */
@@ -145,6 +145,11 @@ export function AssessmentPanel({
             The model's own read of how well this answers the ask: a self-assessment, not a
             calibrated probability. Read the reasons, not just the number.
           </p>
+          <p className="text-[11px] text-muted" data-testid="assessment-process-limits">
+            The model's reasons can be wrong. Tool records may be incomplete, so an unlisted action
+            cannot be ruled out. App checks and reviewer tool-call notes, when available, are shown
+            separately below.
+          </p>
           {scopeNote && (
             <p className="text-[11px] font-medium text-fg" data-testid="assessment-scope">
               {scopeNote}
@@ -154,9 +159,10 @@ export function AssessmentPanel({
             {assessment.summary && <p className="text-sm">{assessment.summary}</p>}
             <Checks checks={assessment.checks ?? []} />
             <Section label="Checked with tools" items={assessment.inspected ?? []} />
-            <Section label="Covered" items={assessment.covered} />
-            <Section label="Evidence" items={assessment.evidence} />
+            <Section label="Model-reported coverage" items={assessment.covered} />
+            <Section label="Model-cited evidence" items={assessment.evidence} />
             <Section label="Assumptions" items={assessment.assumptions} />
+            <Section label="Observations" items={assessment.observations ?? []} />
             <Section label="Gaps" items={assessment.gaps} />
             <Section label="Contradictions" items={assessment.contradictions} />
           </div>

@@ -20,7 +20,7 @@ const MODES: { value: AutomationMode; label: string; hint: string }[] = [
   {
     value: "auto",
     label: "Automated",
-    hint: "The model drafts and scores every step, then a provisional final output. It never approves: you review step by step.",
+    hint: "The model drafts and scores the work. For a delegated plan, approval follows the source conversation's autonomy.",
   },
 ];
 
@@ -89,7 +89,7 @@ export function AutomationBar({ plan, mutate, canRun }: { plan: StepPlan; mutate
               className={BTN_PRIMARY}
               disabled={busy}
               onClick={() => void run(() => api.stepPlans.startAuto(plan.id))}
-              data-tooltip="Draft and score the steps that have no artifact yet. Approved steps and your edits are never touched."
+              data-tooltip="Draft untouched steps and assess the final output. Approved steps and existing outputs are preserved."
             >
               {busy ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
               {paused ? "Resume" : "Run"}
@@ -99,7 +99,7 @@ export function AutomationBar({ plan, mutate, canRun }: { plan: StepPlan; mutate
             <span
               className="inline-flex items-center gap-1.5 text-xs text-muted"
               role="status"
-              data-tooltip="Drafting and scoring the steps that have no artifact yet"
+              data-tooltip="Drafting and assessing the plan"
             >
               <Loader2 size={12} className="animate-spin" /> {runningLabel}
             </span>

@@ -99,9 +99,17 @@ async def run_topic_turn(
     )
 
 
-async def run_chat_turn(chat_id: int, prompt: str, *, llm_prompt: str | None = None) -> TurnResult:
+async def run_chat_turn(
+    chat_id: int,
+    prompt: str,
+    *,
+    llm_prompt: str | None = None,
+    message_kind: str | None = None,
+) -> TurnResult:
     """The same headless turn for a chat (a step's or a plan's discussion)."""
-    return await run_container_turn("chat", chat_id, prompt, llm_prompt=llm_prompt)
+    return await run_container_turn(
+        "chat", chat_id, prompt, llm_prompt=llm_prompt, message_kind=message_kind
+    )
 
 
 async def run_container_turn(
@@ -111,6 +119,7 @@ async def run_container_turn(
     *,
     clear_context: bool = False,
     llm_prompt: str | None = None,
+    message_kind: str | None = None,
 ) -> TurnResult:
     if kind == "topic":
         await publish_stream_started(container_id)
@@ -118,7 +127,12 @@ async def run_container_turn(
         await publish_stream_started_chat(container_id)
     try:
         return await _run(
-            kind, container_id, prompt, clear_context=clear_context, llm_prompt=llm_prompt
+            kind,
+            container_id,
+            prompt,
+            clear_context=clear_context,
+            llm_prompt=llm_prompt,
+            message_kind=message_kind,
         )
     finally:
         if kind == "topic":
@@ -134,6 +148,7 @@ async def _run(
     *,
     clear_context: bool = False,
     llm_prompt: str | None = None,
+    message_kind: str | None = None,
 ) -> TurnResult:
     manager = get_mcp_client_manager()
     result = TurnResult()
@@ -160,7 +175,9 @@ async def _run(
 
         # Persist the prompt as the user turn so the transcript and the unread
         # badge behave like a normal conversation.
-        user_msg = await persist_user_message(session, kind, container_id, prompt)
+        user_msg = await persist_user_message(
+            session, kind, container_id, prompt, message_kind=message_kind
+        )
         result.user_message_id = user_msg.id
 
         if isinstance(container, Chat):

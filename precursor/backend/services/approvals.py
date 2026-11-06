@@ -23,16 +23,16 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from fastapi import HTTPException, status
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute
 
-from precursor.backend.models import Chat, Message, MessageRole, Topic
+from precursor.backend.models import Chat, Message, MessageRole, Step, StepPlan, Topic
 from precursor.backend.models.approval_rule import (
     RULE_ALLOW,
     RULE_SCOPE_CHAT,
@@ -60,6 +60,9 @@ from precursor.backend.services.app_settings import (
 from precursor.backend.services.llm.base import ToolDef
 from precursor.backend.services.mcp.client import MCPToolDef
 from precursor.backend.services.workspaces import WORKSPACE_WRITE_TOOLS
+
+if TYPE_CHECKING:
+    from precursor.backend.schemas.approval import ApprovalPolicy
 
 ContainerKind = Literal["topic", "chat"]
 
@@ -94,12 +97,23 @@ _BUILTIN_MUTATING: dict[str, frozenset[str]] = {
             "state_delete",
             "workflow_state_set",
             "workflow_state_delete",
+            "create_step_plan",
+            "amend_step_plan",
+            "edit_step_plan",
+            "run_step_plan",
+            "pause_step_plan",
         }
     ),
     "fetch": frozenset({"http_request"}),
     "drawio": frozenset({"create_diagram", "write_diagram_xml"}),
     "cmd-runner": frozenset({"run_command", "run_script"}),
 }
+
+# Conversation planning is allowed in balanced/plan mode; reviewers don't get
+# this exception, and each delegated step still uses the source's policy.
+_PLAN_DELEGATION_TOOLS = frozenset(
+    {"create_step_plan", "amend_step_plan", "run_step_plan", "pause_step_plan"}
+)
 
 
 def is_read_only(server: str, raw_name: str, tool: MCPToolDef | None = None) -> bool:
@@ -124,6 +138,7 @@ class ApprovalGate:
 
     policy: str = POLICY_AUTONOMOUS
     rules: tuple[approval_rules.CompiledRule, ...] = ()
+    allow_plan_delegation: bool = True
 
     @property
     def offers_intent(self) -> bool:
@@ -146,6 +161,12 @@ class ApprovalGate:
             return GateDecision(f"An approval rule asks before this call{why}.", rule.id)
         if self.policy == POLICY_MANUAL:
             return GateDecision("Manual policy: every tool call needs your approval.")
+        if (
+            self.allow_plan_delegation
+            and server == "precursor"
+            and raw_name in _PLAN_DELEGATION_TOOLS
+        ):
+            return GateDecision()
         if self.policy in (POLICY_BALANCED, POLICY_PLAN) and not is_read_only(
             server, raw_name, tool
         ):
@@ -233,11 +254,34 @@ def _owner(kind: ContainerKind, container_id: int) -> dict[str, int]:
 # -- Policy ----------------------------------------------------------------
 
 
+async def delegated_chat_plan(
+    session: AsyncSession, chat: Chat
+) -> tuple[StepPlan, ApprovalPolicy] | None:
+    """The delegated plan and its inherited policy, if this is a plan discussion."""
+    plan_id = chat.step_plan_id
+    if chat.step_id is not None:
+        step = await session.get(Step, chat.step_id)
+        if step is None:
+            raise HTTPException(status.HTTP_409_CONFLICT, "The discussion's step no longer exists.")
+        plan_id = step.plan_id
+    if plan_id is None:
+        return None
+    plan = await session.get(StepPlan, plan_id)
+    if plan is None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "The discussion's plan no longer exists.")
+    if plan.delegation_policy is None:
+        return None
+    if plan.delegation_policy not in CONVERSATION_APPROVAL_POLICIES:
+        raise HTTPException(status.HTTP_409_CONFLICT, "The plan's approval policy is invalid.")
+    return plan, cast("ApprovalPolicy", plan.delegation_policy)
+
+
 async def resolve_policy(
     session: AsyncSession, *, topic_id: int | None = None, chat_id: int | None = None
 ) -> str:
-    """The conversation's own policy, else the global default."""
+    """The conversation's own policy, its delegated plan's policy, or the global default."""
     own: str | None = None
+    chat: Chat | None = None
     if topic_id is not None:
         topic = await session.get(Topic, topic_id)
         own = topic.approval_policy if topic else None
@@ -247,6 +291,9 @@ async def resolve_policy(
     if own in CONVERSATION_APPROVAL_POLICIES:
         return own
     if chat_id is not None:
+        delegated = await delegated_chat_plan(session, chat) if chat else None
+        if delegated is not None:
+            return delegated[1]
         return await resolve_chat_approval_policy(session)
     return await resolve_topic_approval_policy(session)
 
@@ -255,6 +302,20 @@ async def build_gate(session: AsyncSession, kind: ContainerKind, container_id: i
     """The gate for a conversation's next turn (its policy plus the rules that apply)."""
     policy = await resolve_policy(session, **_owner(kind, container_id))
     rules = await approval_rules.load_for_conversation(session, kind, container_id)
+    if kind == "chat":
+        chat = await session.get(Chat, container_id)
+        delegated = await delegated_chat_plan(session, chat) if chat else None
+        if delegated is not None:
+            plan, _ = delegated
+            source: tuple[ContainerKind, int] | None = None
+            if plan.source_topic_id is not None:
+                source = ("topic", plan.source_topic_id)
+            elif plan.source_chat_id is not None:
+                source = ("chat", plan.source_chat_id)
+            if source is not None:
+                inherited = await approval_rules.load_for_conversation(session, *source)
+                own_rules = (rule for rule in rules if rule.rank == 0)
+                rules = (*own_rules, *(replace(rule, rank=rule.rank + 1) for rule in inherited))
     return ApprovalGate(policy=policy, rules=rules)
 
 
@@ -300,10 +361,13 @@ async def record_pending(
     container_id: int,
     assistant_message_id: int | None,
     calls: Iterable[PendingCall],
+    *,
+    source_message_id: int | None = None,
 ) -> list[ToolApproval]:
     rows = [
         ToolApproval(
             assistant_message_id=assistant_message_id,
+            source_message_id=source_message_id,
             tool_call_id=c.call_id,
             tool_name=c.tool_name,
             server=c.server,

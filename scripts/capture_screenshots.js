@@ -311,15 +311,16 @@ const scenes = {
       await page.goto(`${BASE}/topics/step-prompt-audit`, { waitUntil: "networkidle" });
       const cards = page.getByTestId("step-plan-trace");
       await cards.last().waitFor();
-      await page.getByTestId("step-plan-output").waitFor();
+      const output = page.getByTestId("step-plan-output");
+      await output.waitFor();
       await cards.first().scrollIntoViewIfNeeded();
+      await output.hover();
       const first = await cards.first().boundingBox();
-      const last = await cards.last().boundingBox();
-      await page.getByTestId("step-plan-output").hover();
+      const last = await output.boundingBox();
       return {
         x: Math.floor(first.x - 8), y: Math.floor(first.y - 8),
         width: Math.ceil(first.width + 16),
-        height: Math.ceil(last.y + last.height - first.y + 16),
+        height: Math.ceil(last.y + last.height - first.y + 32),
       };
     },
   },

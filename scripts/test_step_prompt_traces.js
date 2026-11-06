@@ -22,6 +22,22 @@ async function run() {
     const errors = [];
     page.on("pageerror", (error) => errors.push(error.message));
     await prepareDemoPage(page);
+
+    await page.goto(`${BASE}/steps/1`, { waitUntil: "networkidle" });
+    await page.getByText("Confirm EU data residency", { exact: true }).first().click();
+    const assessment = page.getByTestId("assessment-panel")
+      .filter({ has: page.getByRole("button", { name: /^Assessment\b/ }) });
+    await assessment.getByRole("button", { name: /^Assessment\b/ }).click();
+    const limits = assessment.getByTestId("assessment-process-limits");
+    for (const theme of ["light", "dark"]) {
+      await page.evaluate((value) => document.documentElement.classList.toggle("dark", value === "dark"), theme);
+      assert.match(await limits.textContent(), /model's reasons can be wrong/i);
+      assert.match(await limits.textContent(), /unlisted action cannot be ruled out/i);
+      assert.equal(await limits.isVisible(), true);
+      assert.equal(await assessment.getByText("Model-reported coverage").isVisible(), true);
+      assert.equal(await assessment.getByText("Model-cited evidence").isVisible(), true);
+    }
+
     const topic = await api(page, "GET", "/topics/by-slug/step-prompt-audit");
     topicId = topic.id;
     const topicUrl = `${BASE}/topics/platform/${topic.slug}`;
@@ -126,6 +142,10 @@ async function run() {
     await shortCard.getByText("Count from 1 to 3.", { exact: true }).last().waitFor();
     await shortCard.getByText("Request sent to Step by step", { exact: true }).waitFor();
     assert.equal(await shortCard.getByRole("button", { name: /Show all|Show less/ }).count(), 0);
+    const emptyPlan = shortCard.getByTestId("step-plan-card");
+    await emptyPlan.getByText("No steps yet.", { exact: false }).waitFor();
+    assert.equal(await emptyPlan.getByText("Splitting the ask into steps…").count(), 0);
+    assert.equal(await emptyPlan.getByRole("button", { name: "Open the plan" }).count(), 1);
     const derived = page.locator(`[data-testid="step-plan-trace"][data-plan-id="${button.id}"]`);
     await derived.getByText("Original prompt · From topic message", { exact: true }).waitFor();
 
@@ -219,7 +239,7 @@ async function run() {
     assert.equal(await earlier.getByTestId("step-plan-note-header").textContent(), "Final output");
     const literalTitle = cards.filter({ hasText: "Keep the title literal, too." });
     assert.equal(await literalTitle.locator("img, a, strong").count(), 0);
-    assert.ok((await literalTitle.getByRole("button").textContent()).startsWith("**Literal <img"));
+    assert.ok((await literalTitle.getByRole("button", { name: /^\*\*Literal/ }).textContent()).startsWith("**Literal <img"));
     const activity = page.getByText("Assessing the current artifact…", { exact: true }).locator("../..");
     assert.equal(await activity.locator("..").getAttribute("data-testid"), null);
     assert.ok((await activity.getAttribute("class")).includes("bg-accent/[0.06]"));
@@ -318,8 +338,125 @@ async function run() {
     await footer.getByRole("button", { name: "Filed output", exact: true }).focus();
     await page.keyboard.press("Enter");
     await page.waitForURL(new RegExp(`/steps/${button.id}$`));
+    await openTopic();
+
+    // The synthetic traces above include repeated references to the same plan;
+    // remove them before testing one card's refresh sequence.
+    await page.unroute(`**/api/topics/${topic.id}/messages*`);
+    const examplePlan = await api(page, "GET", "/step-plans/1");
+    const approvedStep = examplePlan.steps.find((step) => step.status === "validated" && step.parent_step_id == null);
+    assert.ok(approvedStep, "the demo needs an approved top-level step");
+    const completedStep = { ...approvedStep, plan_id: short.id, needs_review: false };
+    const pauseReason = "The exercise has an unresolved timing overlap. Review it before resuming.";
+    let simulatedPlan = {
+      status: "active", automation_mode: "auto", auto_state: "idle",
+      steps: [completedStep], final_output: "  ", final_stale: false, final_provisional: false,
+    };
+    let failNextRead = false;
+    let delayNextRead = false;
+    let slowReads = false;
+    let markDelayedStart, markDelayedEnd, releaseDelayed;
+    const delayedStart = new Promise((resolve) => { markDelayedStart = resolve; });
+    const delayedEnd = new Promise((resolve) => { markDelayedEnd = resolve; });
+    const delayedRelease = new Promise((resolve) => { releaseDelayed = resolve; });
+    await page.route(`**/api/step-plans/${short.id}`, async (route) => {
+      if (failNextRead) {
+        failNextRead = false;
+        await route.fulfill({ status: 503, json: { detail: "Synthetic refresh failure" } });
+        return;
+      }
+      const response = await route.fetch();
+      const plan = await response.json();
+      const snapshot = { ...plan, ...simulatedPlan };
+      if (slowReads) await new Promise((resolve) => setTimeout(resolve, 4200));
+      if (delayNextRead) {
+        delayNextRead = false;
+        markDelayedStart();
+        await delayedRelease;
+        await route.fulfill({ response, json: snapshot });
+        markDelayedEnd();
+        return;
+      }
+      await route.fulfill({ response, json: snapshot });
+    });
+    await page.reload({ waitUntil: "networkidle" });
+    const pausedCard = shortCard.getByTestId("step-plan-card");
+    await pausedCard.getByText("1/1 approved · Final output needed", { exact: true }).waitFor();
+    await pausedCard.getByRole("button", { name: "Generate the final output", exact: true }).waitFor();
+    assert.equal(await pausedCard.getByRole("button", { name: "Send to the topic", exact: true }).count(), 0);
+    assert.equal(await pausedCard.getByText(/the final output is written/).count(), 0);
+
+    simulatedPlan = { ...simulatedPlan, final_output: "Ready for review." };
+    await page.reload({ waitUntil: "networkidle" });
+    await pausedCard.getByText("1/1 approved · Final output ready, your review", { exact: true }).waitFor();
+    await pausedCard.getByRole("button", { name: "Send to the topic", exact: true }).waitFor();
+
+    simulatedPlan = { ...simulatedPlan, source_topic_id: null, source_chat_id: 1 };
+    await page.reload({ waitUntil: "networkidle" });
+    await pausedCard.getByRole("button", { name: "Send to the chat", exact: true }).waitFor();
+    assert.equal(await pausedCard.getByRole("button", { name: "Send to the topic", exact: true }).count(), 0);
+
+    simulatedPlan = { ...simulatedPlan, source_topic_id: topic.id, source_chat_id: null, final_stale: true };
+    await page.reload({ waitUntil: "networkidle" });
+    await pausedCard.getByText("1/1 approved · Final output needs regeneration", { exact: true }).waitFor();
+    await pausedCard.getByRole("button", { name: "Regenerate the final output", exact: true }).waitFor();
+    assert.equal(await pausedCard.getByRole("button", { name: "Send to the topic", exact: true }).count(), 0);
+
+    simulatedPlan = { ...simulatedPlan, final_stale: false, final_provisional: true };
+    await page.reload({ waitUntil: "networkidle" });
+    await pausedCard.getByRole("button", { name: "Regenerate the final output", exact: true }).waitFor();
+    assert.equal(await pausedCard.getByRole("button", { name: "Send to the topic", exact: true }).count(), 0);
+
+    simulatedPlan = {
+      ...simulatedPlan, auto_state: "running", final_provisional: false,
+      activity: [{ id: 1, text: "Assessing the current step…", step_id: null, created_at: new Date().toISOString() }],
+    };
+    await page.reload({ waitUntil: "networkidle" });
+    await pausedCard.getByText("1/1 approved · Working", { exact: true }).waitFor();
+    await pausedCard.getByText("Assessing the current step…", { exact: true }).waitFor();
+    await pausedCard.getByRole("button", { name: "Open the plan", exact: true }).waitFor();
+    slowReads = true;
+    simulatedPlan = {
+      ...simulatedPlan,
+      activity: [{ id: 2, text: "Progress despite slow refreshes.", step_id: null, created_at: new Date().toISOString() }],
+    };
+    await pausedCard.getByText("Progress despite slow refreshes.", { exact: true }).waitFor({ timeout: 10000 });
+    slowReads = false;
+    failNextRead = true;
+    await pausedCard.getByRole("alert").filter({ hasText: "Synthetic refresh failure" }).waitFor({ timeout: 8000 });
+    delayNextRead = true;
+    await Promise.race([delayedStart, page.waitForTimeout(8000).then(() => { throw new Error("No running-plan refresh"); })]);
+    simulatedPlan = {
+      ...simulatedPlan, auto_state: "paused",
+      activity: [{ id: 1, text: pauseReason, step_id: null, created_at: new Date().toISOString() }],
+    };
+    await pausedCard.getByText("1/1 approved · Paused", { exact: true }).waitFor({ timeout: 8000 });
+    assert.equal(await pausedCard.getByRole("alert").count(), 0);
+    releaseDelayed();
+    await Promise.race([delayedEnd, page.waitForTimeout(8000).then(() => { throw new Error("Delayed refresh did not finish"); })]);
+    await page.waitForTimeout(300);
+    assert.equal(await pausedCard.getByText("1/1 approved · Paused", { exact: true }).count(), 1);
+    assert.equal(await pausedCard.getByRole("button", { name: "Send to the topic", exact: true }).count(), 0);
+    await pausedCard.getByRole("button", { name: "Resume", exact: true }).waitFor();
+    await pausedCard.getByRole("button", { name: "Open the plan", exact: true }).waitFor();
+    await page.setViewportSize({ width: 390, height: 1100 });
+    assert.equal(await pausedCard.evaluate((element) => element.scrollWidth > element.clientWidth + 1), false);
+    await page.setViewportSize({ width: 1440, height: 1100 });
+
+    simulatedPlan = { ...simulatedPlan, final_output: null };
+    await page.reload({ waitUntil: "networkidle" });
+    await pausedCard.getByText("1/1 approved · Paused", { exact: true }).waitFor();
+    assert.equal(await pausedCard.getByRole("button", { name: "Send to the topic", exact: true }).count(), 0);
+    assert.equal(await pausedCard.getByRole("button", { name: "Generate the final output", exact: true }).count(), 0);
+
+    simulatedPlan = { ...simulatedPlan, steps: [] };
+    await page.reload({ waitUntil: "networkidle" });
+    await pausedCard.getByText("0/0 approved · Paused", { exact: true }).waitFor();
+    await pausedCard.getByText("Run paused. Open the plan to review any blockers before resuming.", { exact: true }).waitFor();
+    await pausedCard.getByText(`Most recent activity: ${pauseReason}`, { exact: true }).waitFor();
+    await pausedCard.getByRole("button", { name: "Resume", exact: true }).waitFor();
     assert.deepEqual(errors, []);
-    console.log("step prompt traces: immutable snapshots, receipt/document hierarchy, ListChecks icons, Markdown, formatted copying, versions, links and responsive themes: ok");
+    console.log("step prompt traces: immutable snapshots, live refresh recovery, final-output states, paused activity, Markdown, versions and responsive themes: ok");
   } finally {
     const page = await browser.newPage();
     if (topicId != null) {

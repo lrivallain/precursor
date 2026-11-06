@@ -109,7 +109,10 @@ def _answer(text: str) -> list[ProviderEvent]:
 
 
 def _install(
-    monkeypatch: pytest.MonkeyPatch, provider: _ScriptedProvider
+    monkeypatch: pytest.MonkeyPatch,
+    provider: _ScriptedProvider,
+    *,
+    extra_tools: Sequence[MCPToolDef] = (),
 ) -> list[tuple[str, str, dict[str, Any]]]:
     """Wire the provider and a fake MCP manager; returns the executed tool calls."""
     monkeypatch.setitem(
@@ -138,7 +141,7 @@ def _install(
         _ = names, github_token, advertise_cached
         bundle = _Bundle(manager=manager)
         bundle.handler = handler
-        for tool in (_READ, _WRITE):
+        for tool in (_READ, _WRITE, *extra_tools):
             bundle.tools.append(tool)
             bundle.tool_to_server[tool.qualified_name] = (tool.server, tool.name)
         yield bundle
@@ -199,6 +202,138 @@ def _decide(client: TestClient, kind: str, cid: int, approval_id: int, **body: A
     return r.json()
 
 
+def _delegated_discussion(
+    client: TestClient, source_kind: str, source_id: int, policy: str | None, surface: str
+) -> tuple[int, int]:
+    plan_response = client.post(
+        "/api/step-plans",
+        json={
+            f"{source_kind}_id": source_id,
+            "source_text": "Prepare a result.",
+            "propose": False,
+            "delegation_policy": policy,
+        },
+    )
+    assert plan_response.status_code == 201, plan_response.text
+    plan_id = plan_response.json()["id"]
+    if surface == "final":
+        chat_response = client.post(f"/api/step-plans/{plan_id}/consolidation/chat")
+    else:
+        step_response = client.post(
+            f"/api/step-plans/{plan_id}/steps", json={"title": "Prepare", "instruction": "Draft"}
+        )
+        assert step_response.status_code == 201, step_response.text
+        chat_response = client.post(f"/api/steps/{step_response.json()['id']}/chat")
+    assert chat_response.status_code == 200, chat_response.text
+    return plan_id, int(chat_response.json()["id"])
+
+
+@pytest.mark.parametrize("source_kind", ["topic", "chat"])
+@pytest.mark.parametrize("surface", ["step", "final"])
+@pytest.mark.parametrize(
+    ("policy", "tool", "waiting"),
+    [
+        ("manual", "lookup", True),
+        ("balanced", "publish", True),
+        ("plan", "publish", True),
+        ("autonomous", "publish", False),
+    ],
+)
+def test_delegated_discussions_inherit_the_plan_policy(
+    monkeypatch: pytest.MonkeyPatch,
+    client: TestClient,
+    source_kind: str,
+    surface: str,
+    policy: str,
+    tool: str,
+    waiting: bool,
+) -> None:
+    source_id = _conversation(client, source_kind, policy)
+    _, chat_id = _delegated_discussion(client, source_kind, source_id, policy, surface)
+    chat = client.get(f"/api/chats/{chat_id}").json()
+    assert chat["approval_policy"] is None
+
+    provider = _ScriptedProvider(_tool_round(_Call("call", f"acme__{tool}")), _answer("Done."))
+    executed = _install(monkeypatch, provider)
+    events = _send(client, "chat", chat_id)
+    assert (events[-1][0] == "approval_required") is waiting
+    assert bool(executed) is not waiting
+    assert chat["inherited_approval_policy"] == policy
+
+
+def test_a_delegated_discussion_can_override_and_restore_its_inherited_policy(
+    monkeypatch: pytest.MonkeyPatch, client: TestClient
+) -> None:
+    source_id = _conversation(client, "topic", "manual")
+    _, chat_id = _delegated_discussion(client, "topic", source_id, "manual", "step")
+    assert (
+        client.patch(f"/api/chats/{chat_id}", json={"approval_policy": "autonomous"}).status_code
+        == 200
+    )
+    provider = _ScriptedProvider(_tool_round(_Call("one", "acme__lookup")), _answer("Done."))
+    assert _install(monkeypatch, provider) == []
+    assert _send(client, "chat", chat_id)[-1][0] != "approval_required"
+
+    assert client.patch(f"/api/chats/{chat_id}", json={"approval_policy": None}).status_code == 200
+    provider = _ScriptedProvider(_tool_round(_Call("two", "acme__lookup")), _answer("Done."))
+    executed = _install(monkeypatch, provider)
+    assert _send(client, "chat", chat_id)[-1][0] == "approval_required"
+    assert executed == []
+
+
+@pytest.mark.parametrize("source_kind", ["topic", "chat"])
+def test_amendment_updates_existing_discussions_default_without_losing_an_override(
+    monkeypatch: pytest.MonkeyPatch, client: TestClient, source_kind: str
+) -> None:
+    source_id = _conversation(client, source_kind, "manual")
+    plan_id, chat_id = _delegated_discussion(client, source_kind, source_id, "manual", "step")
+    assert (
+        client.patch(f"/api/chats/{chat_id}", json={"approval_policy": "autonomous"}).status_code
+        == 200
+    )
+    assert (
+        client.patch(
+            _base(source_kind, source_id), json={"approval_policy": "balanced"}
+        ).status_code
+        == 200
+    )
+    plan = client.get(f"/api/step-plans/{plan_id}").json()
+    amended = client.post(
+        f"/api/step-plans/{plan_id}/amend",
+        json={
+            f"{source_kind}_id": source_id,
+            "request": "Add the second part.",
+            "steps": [{"title": "Second part", "instruction": "Draft it."}],
+            "expected_state_token": plan["state_token"],
+        },
+    )
+    assert amended.status_code == 200, amended.text
+    chat = client.get(f"/api/chats/{chat_id}").json()
+    assert (chat["approval_policy"], chat["inherited_approval_policy"]) == (
+        "autonomous",
+        "balanced",
+    )
+
+    assert client.patch(f"/api/chats/{chat_id}", json={"approval_policy": None}).status_code == 200
+    provider = _ScriptedProvider(_tool_round(_Call("call", "acme__publish")), _answer("Done."))
+    executed = _install(monkeypatch, provider)
+    assert _send(client, "chat", chat_id)[-1][0] == "approval_required"
+    assert executed == []
+
+
+def test_a_user_started_plan_keeps_the_normal_chat_default(
+    monkeypatch: pytest.MonkeyPatch, client: TestClient
+) -> None:
+    source_id = _conversation(client, "topic", "manual")
+    _, chat_id = _delegated_discussion(client, "topic", source_id, None, "step")
+    assert client.get(f"/api/chats/{chat_id}").json()["inherited_approval_policy"] is None
+    provider = _ScriptedProvider(_tool_round(_Call("call", "acme__lookup")), _answer("Done."))
+    executed = _install(monkeypatch, provider)
+    waiting = client.get("/api/settings").json()["chat_approval_policy"] == "manual"
+    assert (_send(client, "chat", chat_id)[-1][0] == "approval_required") is waiting
+    assert bool(executed) is not waiting
+
+
 # -- classification ---------------------------------------------------------
 
 
@@ -222,6 +357,17 @@ def test_gate_reasons_per_policy() -> None:
     assert ApprovalGate("balanced", (allow,)).reason_for(*write) is None
     assert ApprovalGate("autonomous").offers_intent
     assert not ApprovalGate("manual").offers_intent
+
+
+@pytest.mark.parametrize("name", ["create_step_plan", "amend_step_plan", "run_step_plan"])
+def test_delegation_respects_the_conversation_policy_and_explicit_rules(name: str) -> None:
+    call = (f"precursor__{name}", "precursor", name, None)
+    assert not is_read_only("precursor", name)
+    assert ApprovalGate("balanced").reason_for(*call) is None
+    assert ApprovalGate("plan").reason_for(*call) is None
+    assert ApprovalGate("manual").reason_for(*call) is not None
+    ask = CompiledRule(id=1, effect="ask", server="precursor", tool=name)
+    assert ApprovalGate("balanced", (ask,)).reason_for(*call) is not None
 
 
 # -- the park / decide / resume loop ----------------------------------------
@@ -269,6 +415,57 @@ def test_manual_policy_parks_then_resumes_after_approval(
 
     assert client.get(f"{_base(kind, cid)}/approvals").json() == []
     assert client.post(f"{_base(kind, cid)}/approvals/resume").status_code == 409
+
+
+@pytest.mark.parametrize("kind", ["topic", "chat"])
+def test_plan_delegation_keeps_the_original_turn_through_approval_resumes(
+    monkeypatch: pytest.MonkeyPatch, client: TestClient, kind: str
+) -> None:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.models import Message, MessageRole
+
+    cid = _conversation(client, kind, "manual")
+
+    class InterleavedProvider(_ScriptedProvider):
+        async def stream_chat_with_tools(self, **kwargs: Any) -> AsyncIterator[ProviderEvent]:
+            if not self.calls:
+                async with SessionLocal() as session:
+                    session.add(
+                        Message(
+                            role=MessageRole.USER,
+                            content="A different filed result",
+                            **{f"{kind}_id": cid},
+                        )
+                    )
+                    await session.commit()
+            async for event in super().stream_chat_with_tools(**kwargs):
+                yield event
+
+    provider = InterleavedProvider(
+        _tool_round(_Call("create", "precursor__create_step_plan", '{"ask": "Guide"}')),
+        _tool_round(_Call("amend", "precursor__amend_step_plan", '{"request": "More"}')),
+        _answer("Done."),
+    )
+    tools = [
+        MCPToolDef("precursor", name, "Plan", {"type": "object", "properties": {}})
+        for name in ("create_step_plan", "amend_step_plan")
+    ]
+    executed = _install(monkeypatch, provider, extra_tools=tools)
+
+    events = _send(client, kind, cid, "Exactly two steps; no files.")
+    source_id = next(data["id"] for name, data in events if name == "user_message")
+    approval = events[-1][1]["approvals"][0]
+    assert json.loads(approval["arguments"])["source_message_id"] == source_id
+    assert json.loads(approval["arguments"])[f"{kind}_id"] == cid
+    _decide(client, kind, cid, approval["id"], approve=True)
+
+    resumed = _resume(client, kind, cid)
+    amendment = resumed[-1][1]["approvals"][0]
+    assert json.loads(amendment["arguments"])["source_message_id"] == source_id
+    assert json.loads(amendment["arguments"])[f"{kind}_id"] == cid
+    _decide(client, kind, cid, amendment["id"], approve=True)
+    _resume(client, kind, cid)
+    assert [args["source_message_id"] for _, _, args in executed] == [source_id, source_id]
 
 
 def test_deny_with_feedback_skips_the_tool_and_tells_the_model(

@@ -11,6 +11,7 @@ import json
 from collections.abc import Iterator
 from typing import Any
 
+import anyio
 import pytest
 from fastapi.testclient import TestClient
 
@@ -25,11 +26,13 @@ from precursor.backend.services.approval_rules import (
 )
 from precursor.backend.services.approvals import ApprovalGate
 from tests.test_conversation_approvals import (
+    _READ,
     _WRITE,
     _answer,
     _Call,
     _conversation,
     _decide,
+    _delegated_discussion,
     _install,
     _resume,
     _ScriptedProvider,
@@ -130,6 +133,87 @@ def _create(client: TestClient, **body: Any) -> dict[str, Any]:
     r = client.post("/api/approval-rules", json=payload)
     assert r.status_code == 201, r.text
     return r.json()
+
+
+@pytest.mark.parametrize("source_kind", ["topic", "chat"])
+@pytest.mark.parametrize("surface", ["step", "final"])
+def test_delegated_discussions_inherit_source_rules(
+    monkeypatch: pytest.MonkeyPatch, client: TestClient, source_kind: str, surface: str
+) -> None:
+    source_id = _conversation(client, source_kind, "autonomous")
+    _, chat_id = _delegated_discussion(client, source_kind, source_id, "autonomous", surface)
+    _create(client, effect="ask", scope=source_kind, **{f"{source_kind}_id": source_id})
+    provider = _ScriptedProvider(_tool_round(_Call("call", "acme__publish")), _answer("Done."))
+    executed = _install(monkeypatch, provider)
+    assert _send(client, "chat", chat_id)[-1][0] == "approval_required"
+    assert executed == []
+
+
+def test_delegated_rule_precedence_is_child_then_source_then_global(
+    monkeypatch: pytest.MonkeyPatch, client: TestClient
+) -> None:
+    source_id = _conversation(client, "topic", "autonomous")
+    _, chat_id = _delegated_discussion(client, "topic", source_id, "autonomous", "step")
+    _create(client, effect="ask", scope="global")
+    _create(client, effect="allow", scope="topic", topic_id=source_id)
+    provider = _ScriptedProvider(_tool_round(_Call("one", "acme__publish")), _answer("Done."))
+    executed = _install(monkeypatch, provider)
+    assert _send(client, "chat", chat_id)[-1][0] != "approval_required"
+    assert len(executed) == 1
+
+    _create(client, effect="ask", scope="topic", topic_id=source_id)
+    _create(client, effect="allow", scope="chat", chat_id=chat_id)
+    provider = _ScriptedProvider(_tool_round(_Call("two", "acme__publish")), _answer("Done."))
+    executed = _install(monkeypatch, provider)
+    assert _send(client, "chat", chat_id)[-1][0] != "approval_required"
+    assert len(executed) == 1
+
+
+def test_a_user_started_plan_does_not_inherit_source_rules(
+    monkeypatch: pytest.MonkeyPatch, client: TestClient
+) -> None:
+    source_id = _conversation(client, "topic", "autonomous")
+    _, chat_id = _delegated_discussion(client, "topic", source_id, None, "step")
+    assert (
+        client.patch(f"/api/chats/{chat_id}", json={"approval_policy": "autonomous"}).status_code
+        == 200
+    )
+    _create(client, effect="ask", scope="topic", topic_id=source_id)
+    provider = _ScriptedProvider(_tool_round(_Call("call", "acme__publish")), _answer("Done."))
+    executed = _install(monkeypatch, provider)
+    assert _send(client, "chat", chat_id)[-1][0] != "approval_required"
+    assert len(executed) == 1
+
+
+@pytest.mark.parametrize("source_kind", ["topic", "chat"])
+@pytest.mark.parametrize("policy", ["manual", "autonomous"])
+def test_assessor_inherits_the_discussions_source_rules_and_review_gate(
+    client: TestClient, source_kind: str, policy: str
+) -> None:
+    from precursor.backend.db import SessionLocal
+    from precursor.backend.services import approvals, step_assessor_tools
+
+    source_id = _conversation(client, source_kind, policy)
+    _, chat_id = _delegated_discussion(client, source_kind, source_id, policy, "step")
+    rule = _create(
+        client,
+        effect="ask",
+        tool="lookup",
+        scope=source_kind,
+        **{f"{source_kind}_id": source_id},
+    )
+
+    async def resolve() -> ApprovalGate:
+        async with SessionLocal() as session:
+            return step_assessor_tools.assessor_gate(
+                await approvals.build_gate(session, "chat", chat_id)
+            )
+
+    gate = anyio.run(resolve)
+    assert gate.policy == ("balanced" if policy == "autonomous" else "manual")
+    read = gate.check("acme__lookup", "acme", "lookup", _READ)
+    assert read.reason is not None and read.rule_id == rule["id"]
+    assert gate.check("acme__publish", "acme", "publish", _WRITE).reason is not None
 
 
 def test_rule_crud_round_trip(client: TestClient) -> None:

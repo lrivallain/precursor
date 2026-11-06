@@ -23,6 +23,7 @@ import type { Chat, WorkspaceTurnContext } from "../lib/types";
 import { RoleSelector } from "./RoleSelector";
 import { SideChatSeedCard } from "./SideChatSeedCard";
 import { discussionPermalink } from "../lib/routes";
+import { eventBus } from "../lib/events";
 
 interface TopicNoteState {
   loading: boolean;
@@ -85,6 +86,16 @@ export function ChatSessionPanel({
   });
   const { streamKey, systemNote, visibleMessages, streaming, reminders } = conv;
   const rewindFrom = conv.rewind.preview?.fromId ?? null;
+
+  useEffect(() => {
+    if (chat.inherited_approval_plan_id == null) return;
+    eventBus.start();
+    return eventBus.subscribe((event) => {
+      if (event.type === "step-plan.changed" && event.step_plan_id === chat.inherited_approval_plan_id) {
+        onChatUpdated();
+      }
+    });
+  }, [chat.inherited_approval_plan_id, onChatUpdated]);
 
   const { width: chatWidth, onMouseDown: onChatResize } = useResizableWidth({
     storageKey: "precursor:chat:width",
@@ -311,7 +322,7 @@ export function ChatSessionPanel({
               toolbarStart={
                 <>
                   <ComposerModelControls conversation={{ kind: "chat", id: chat.id, selection: chat.llm_selection, onUpdated: onChatUpdated }} />
-                  <ComposerApprovalControl kind="chat" id={chat.id} policy={chat.approval_policy} onUpdated={onChatUpdated} />
+                  <ComposerApprovalControl kind="chat" id={chat.id} policy={chat.approval_policy} inheritedPolicy={chat.inherited_approval_policy} onUpdated={onChatUpdated} />
                   <RoleSelector
                     value={chat.role ?? null}
                     onChange={(roleName) => void onSetRole?.(roleName)}

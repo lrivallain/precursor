@@ -527,10 +527,17 @@ titles disclose chat content.
 
 **Step-by-step plans.** The `step_plans` section (write-capable, off by default) lets a
 model delegate a long, multi-part ask to [Step by step](/features/step-by-step):
-`create_step_plan`, `list_step_plans`, `get_step_plan`, `edit_step_plan`,
-`run_step_plan` and `pause_step_plan`. The run happens inside the Precursor app and follows the
-topic's autonomy: autonomous topics close the plan by themselves, balanced ones ask for one final
-review, plan ones only draft the plan until you start it, manual ones for every step, and the model is woken once the output is filed; the topic shows a live task card for it.
+`create_step_plan`, `list_step_plans`, `get_step_plan`, `amend_step_plan`, `edit_step_plan`,
+`run_step_plan` and `pause_step_plan`. A follow-up can amend a related plan from its source topic
+or chat, retaining prior work and final-output history. The run happens inside the Precursor app and follows the
+source conversation's autonomy: autonomous conversations close the plan by themselves, balanced ones ask for one final
+review, plan ones only draft the plan until you start it, manual ones for every step, and the model is woken once the output is filed; the source conversation shows a live task card for it.
+For same-conversation tool calls made by the app, the current source is supplied when
+omitted and the original user turn is preserved with the delegated scope, including after
+an approval pause. `get_step_plan` reports whether a recorded copy of the exact current final
+still exists in the linked source; a false value does not rule out an independently posted copy.
+Archived plans are excluded from
+normal listings and must be restored before they can be amended or run.
 
 **Topics come back with their tree position resolved.** Every topic payload
 carries a `path` — the ancestor slugs joined root-first with `/` — so a caller

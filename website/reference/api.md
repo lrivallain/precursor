@@ -72,6 +72,11 @@ Chat/topic SSE `user_message`, `tool_calls` and `done` payloads also carry
 persisted, without waiting for a transcript refresh. `tool_calls.public_id`
 identifies the assistant message alongside its existing numeric `assistant_id`.
 
+Step-by-Step drafting turns retain the `user` role for the conversation protocol;
+their existing `kind` field distinguishes `step_user_request` from `step_automation`.
+Older prompts can have `kind: null`, so their origin cannot always be established.
+Both kinds remain ordinary timeline and rewind anchors.
+
 The Precursor MCP `list_messages` and `list_chat_messages` tools include each
 row's `public_id` and a `permalink` for user/assistant messages (`null` for
 UI notices and tool results). The link is instance-relative and ready for
@@ -121,7 +126,7 @@ The JSON API lives under `/api/*`. Routers are grouped by domain:
 | `collections` | CRUD for [collections](/features/collections); deleting one re-homes its topics via `?reassign_to=`. |
 | `chat` | Streamed chat (`.../messages/stream`) over Server-Sent Events, for topics (`/api/topics/{id}/messages/…`) and chats (`/api/chats/{id}/messages/…`). `POST …/messages/compact` `{instructions?}` summarises the conversation into a [compaction marker](/features/context-compression): a `system` message with `kind: "compaction"`, returned with `201`. The model's history starts from the latest marker, and deleting the marker undoes it. It answers `409` while a reply is generating or when there's nothing to compact. `GET …/messages/context` estimates the history the next turn sends: `tokens`, `by_role`, `saved_by_hygiene`, `messages`, `compacted`, `compaction_id` and `compacted_messages`, plus the estimated `system_tokens`, `system_tools_tokens` (the built-in `precursor` tools) and `mcp_tools_tokens` (every other enabled server's tools) that the stats panel's context breakdown adds to the history. Messages carry `kind` (`null` for ordinary rows). `PATCH …/messages/{message_id}` `{content}` edits an assistant reply in place and returns the message. The first edit keeps the model's answer in `original_content` and every edit sets `edited_at`. Both are `null` on untouched messages. Saving text equal to `original_content` restores the reply and clears both. Later turns send the edited `content` to the model. Prompts, system rows and empty content answer `422`, and a message from another conversation `404`. `GET …/messages/turns` returns the [timeline](/features/rewind) index, oldest first, one entry per user prompt: `message_id`, `last_message_id` (the last row before the next prompt), `created_at`, a 200-character `prompt` excerpt, the first assistant text as `reply`, `has_compaction` and `agent_session_id`. `POST …/messages/rewind` `{from_message_id, through_message_id?}` deletes the turn that `from_message_id` opens (it must be a user prompt, otherwise `422`) and every later row up to `through_message_id`, attachments included. It returns `{deleted}`, `404` for a message from another conversation, and `409` while a reply is generating. |
 | `chats` | Quick throwaway chats, including read/unread state. `POST /{id}/promote` turns one into a topic and takes `?collection_id=` for where it lands and `?parent_id=` to nest it under a topic (the topic then lands in the parent's collection; `404` if the parent is missing). A side chat becomes a child of its parent topic instead, in that topic's collection, and `collection_id` is ignored. The promoted topic keeps the chat's quoted reply as `seed_content`, which topic reads carry (`null` otherwise). `POST /{id}/messages/suggest-name` re-derives the title from the transcript; `POST /api/chats` takes `autoname: true` to mark the supplied title a placeholder the server may replace, and an optional `role` (a role name) to assign an assistant [role](/features/skills-memory) at creation (omit or `null` for the default role). Chat reads carry the [side chat](/features/chats#side-chats) link: `parent_topic_id`, `parent_topic_title`, `parent_message_id` and `seed_content`, the copy of the reply it started from. All are `null` for an ordinary chat. `POST /{id}/discard` deletes a side chat left untouched (no messages, still on its placeholder title, no reminder, notes, description or pin) with `204`, and answers `409` for any other chat. `POST /{id}/topic-note/draft` `{instructions?}` has the model sum up a side chat for its topic and returns `{text, topic_id, topic_title}` without saving anything. `POST /{id}/topic-note` `{text}` files the text into the topic as a user message headed by a link to the chat, and returns that message with `201`. Both answer `409` for a chat with no linked topic, and the draft also answers `409` while a reply is generating or when the chat has no messages yet. |
-| `step-plans` | [Step by step](/features/step-by-step) plans under `/api/step-plans` (`GET`/`POST` list and create — `POST` takes `topic_id`, `message_id` or `source_text`, plus `propose`; a failed proposal answers `502` but keeps the plan and its topic prompt snapshot — then `GET`/`PATCH`/`DELETE /{id}`; `PATCH` takes `source_topic_id` to link, change or — with `null` — unlink the topic, answering `404` for an unknown one) with `POST /{id}/propose`, `/suggest-missing`, `/start`, `/steps`, `/review`, `/auto/start`, `/auto/pause`, `/assess`, `/consolidation/chat`, `/consolidate/generate`, `/final/from-message`, `PUT /{id}/final`, `GET /{id}/final/versions` and `POST /{id}/final/revert` (the final output's version history; reverting records no new version; plans report `final_version`, `final_posted_version` and `final_posted_at`), `POST /{id}/complete` (marks a plan with a reviewed final output done; `409` otherwise) and `POST /{id}/send-to-topic`. `automation_mode` (`manual`, `assisted`, `auto`) is set on create or `PATCH`; plans report `auto_state`, `auto_step_id` (the step being drafted), `activity` (recent run notes), `final_provisional` and an `assessment` with `assessment_stale`. Steps live under `/api/steps/{id}`: `PATCH`/`DELETE`, `POST …/move`, `…/accept`, `…/status`, `PUT …/artifact`, `GET …/versions`, `POST …/artifact/revert`, `…/artifact/generate`, `…/artifact/from-message`, `…/assess`, `…/suggest-substeps` and `…/chat`. Steps report `needs_review`, `assessment` and `assessment_stale`; generation answers `{ step, outcome }` where `outcome` is `published`, `discussion` or `awaiting_approval`. Rule violations (limits, invalid moves or status changes) answer `409`, a garbled model reply `502`. Step and consolidation chats carry `step_id`/`step_plan_id` and are left out of `/api/chats`. |
+| `step-plans` | [Step by step](/features/step-by-step) plans under `/api/step-plans`. `GET` lists non-archived plans, optionally filtered by `topic_id` or `chat_id`; `GET /archived` lists archived plans. `POST` creates from `topic_id` or `chat_id`, `message_id` or `source_text`, plus `propose`; a failed proposal answers `502` but keeps the plan and its prompt snapshot. `GET`/`PATCH`/`DELETE /{id}` read, edit or delete; `PATCH` can link or unlink a source. `POST /{id}/archive` and `/unarchive` preserve or restore the plan; a live run cannot be archived. Other actions include `/amend`, `/propose`, `/suggest-missing`, `/start`, `/launch`, `/steps`, `/review`, `/auto/start`, `/auto/pause`, `/assess`, `/consolidation/chat`, `/consolidate/generate`, `/final/from-message`, `PUT /{id}/final`, `GET /{id}/final/versions`, `POST /{id}/final/revert`, `/complete` and `/send-to-source` (`/send-to-topic` is an alias). Reads include `archived_at`, `state_token`, revisions, run activity, final-version/posted markers and assessment freshness. Assessments include `observations` for model-reported non-blocking issues, separately from `gaps`. Steps live under `/api/steps/{id}`: `PATCH`/`DELETE`, `/move`, `/accept`, `/status`, `PUT …/artifact`, `/versions`, `/artifact/revert`, `/artifact/generate`, `/artifact/from-message`, `/assess`, `/suggest-substeps` and `/chat`. Generation returns `{ step, outcome }`: `published`, `discussion` or `awaiting_approval`. Rule violations answer `409`; a garbled model reply `502`. Step and consolidation chats are excluded from `/api/chats`. |
 | `commands` | The `/slash` [commands](/features/skills-memory) a topic composer can run. |
 | `attachments` | Upload / fetch [attachments](/features/attachments) on a topic or chat. |
 | `settings` | Runtime settings and provider/GitHub configuration (secrets never echoed — bar the [OpenAI-compatible endpoint](/features/openai-endpoint)'s key, returned in clear as `openai_proxy_key` so it can be pasted into more clients). `POST /api/settings/openai-proxy/key` replaces that key. |
@@ -166,9 +171,19 @@ naturally. It is **read-only and unauthenticated by design**, like the rest of
 this single-user app — one more reason to keep Precursor bound to loopback.
 :::
 
-### Step-plan topic traces
+### Step-plan source traces and amendments
 
-Creating a plan with `topic_id` also records a system message with `kind: "step_plan"`.
+`POST /api/step-plans/{id}/auto/pause` records the pause immediately. Work already in
+flight may finish, including consolidation or assessment, but no later step or automatic
+filing starts until the plan is resumed. It does not retract an output already filed.
+
+`POST /api/steps/{id}/assess` and `POST /api/step-plans/{id}/assess` use one
+tool-capable model review and apply the app's deterministic checks afterward. A failed
+review, invalid findings or review input that cannot fit the model's context returns
+`502`; the draft is kept and no tool-less fallback is substituted.
+
+Creating a plan with `topic_id` or `chat_id` also records a system message with
+`kind: "step_plan"` in that conversation.
 Its `content` string contains a `StepPlanTraceData` JSON object:
 
 ```json
@@ -182,12 +197,52 @@ Its `content` string contains a `StepPlanTraceData` JSON object:
 }
 ```
 
-`source` is `submitted` for explicit `source_text`, or `topic_message` when the ask
-was resolved from `message_id` or the topic's latest non-empty user ask. `prompt`
+`source` is `submitted` for explicit `source_text`, or `topic_message` / `chat_message`
+when the ask was resolved from `message_id` or the conversation's latest non-empty user ask. `prompt`
 is the full effective source after command-prefix/outer-whitespace normalization.
 The plan and trace are committed together before proposal generation. Later plan
-edits do not update this message. Historical traces and notes for topics linked
+edits do not update this message. Historical traces and notes for conversations linked
 after creation remain Markdown links without an original-prompt snapshot.
+
+`GET /api/step-plans?topic_id={id}` or `?chat_id={id}` lists plans for a source.
+Plan reads include `source_topic_id` / `source_chat_id`, ordered `amendments`, and
+an opaque `state_token`. To append work without replacing the original ask or approved
+steps, send `POST /api/step-plans/{id}/amend` with:
+
+```json
+{
+  "request": "Add a conclusion.",
+  "steps": [{"title": "Conclusion", "instruction": "Write one short conclusion."}],
+  "expected_state_token": "the state_token from the latest plan read",
+  "topic_id": 42
+}
+```
+
+For a chat, supply `chat_id` instead of `topic_id`. A linked plan requires its
+matching source; an unlinked plan has neither. Each step needs a non-empty title
+and instruction. Omit `output_instructions` to retain the current instructions,
+send a string to replace them, or send `null` to clear them. The mutation is atomic;
+an outdated token, wrong source, live run or other conflicting state answers `409`.
+It records a revision receipt, preserves earlier final versions, marks the old
+final stale, and reads the source's current autonomy. `POST /{id}/launch` starts a
+user-approved plan; the MCP `amend_step_plan` tool also starts the run when the
+current policy allows it.
+
+Saving a different final with `PUT /{id}/final`, or restoring a different version with
+`POST /{id}/final/revert`, moves a completed plan back to `consolidating` (`active` if
+the final is cleared). An unchanged save or restore leaves it done. Approved steps and
+the recorded version previously posted to the source are not changed.
+
+`POST /{id}/send-to-source` files an output into either source conversation.
+`POST /{id}/send-to-topic` remains a compatible alias. A forced provisional output
+is labelled and does not complete the plan or resume its source conversation.
+The MCP `get_step_plan` result includes `final_output.filed_in_current_source`, which checks the
+current version's recorded message and linked source. `false` means no matching recorded copy is
+present, not that no separate copy exists.
+`POST /{id}/archive` refuses a live run; an archived plan remains readable but every
+write on it (steps, artifacts, runs, amendments, filing) answers `409` until
+`POST /{id}/unarchive`. Archiving and restoring invalidate previously read amendment
+state tokens.
 
 ## Addressing an agent
 
@@ -298,7 +353,7 @@ error flag — plus `link` (`{slug, path}`) when the tool read or wrote a
 The same object is stored on the tool message's `tool_calls` metadata, so the
 chip survives a reload without re-reading the result body.
 
-Tool approvals ([feature](/features/approvals)) live under `/api/topics/{id}/approvals` and `/api/chats/{id}/approvals` (`GET` the open rows, `POST …/{approval_id}` to answer, `POST …/resume` to stream the rest of a parked turn), plus `/api/approval-rules` for standing `allow` / `ask` rules. Topics and chats carry `approval_policy` (`manual`, `balanced`, `autonomous`, or `null` to inherit) and `pending_approvals`. A turn that needs approval ends with an `approval_required` event instead of `done`; changes publish `approval.changed` and `approval.parked` on `/api/events`. Topic schedules take `approval_timeout_minutes`.
+Tool approvals ([feature](/features/approvals)) live under `/api/topics/{id}/approvals` and `/api/chats/{id}/approvals` (`GET` the open rows, `POST …/{approval_id}` to answer, `POST …/resume` to stream the rest of a parked turn), plus `/api/approval-rules` for standing `allow` / `ask` rules. Topics and chats carry `approval_policy` (`manual`, `balanced`, `plan`, `autonomous`, or `null` to inherit) and `pending_approvals`. Chat reads also return `inherited_approval_policy` and `inherited_approval_plan_id`: for a model-delegated plan discussion these describe the plan's default; otherwise both are `null`. Its own policy, if set, overrides that default. The discussion's rules precede the source conversation's rules, then global rules. A turn that needs approval ends with an `approval_required` event instead of `done`; changes publish `approval.changed` and `approval.parked` on `/api/events`. Topic schedules take `approval_timeout_minutes`.
 
 **Artifacts.** A chat or topic can carry links to [workspace](/features/workspaces#discussing-a-workspace)
 files: `GET /api/{topics|chats}/{id}/artifacts` lists them (`workspace_slug`,

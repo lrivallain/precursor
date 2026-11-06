@@ -1000,9 +1000,42 @@ async def _seed_step_prompt_traces(s: AsyncSession, collection_id: int) -> None:
         ("Count from 1 to 3", "Count from 1 to 3, with one number per step.", "submitted"),
         ("Prepare the demo release", long_prompt, "topic_message"),
     ):
-        plan = StepPlan(title=title, source_text=prompt, source_topic_id=topic.id)
+        plan = StepPlan(
+            title=title,
+            source_text=prompt,
+            source_topic_id=topic.id,
+            status="active" if source == "submitted" else "drafting",
+        )
         s.add(plan)
         await s.flush()
+        steps = (
+            [("Write 1", "validated", "1"), ("Write 2", "validated", "2"), ("Write 3", "open", "")]
+            if source == "submitted"
+            else [
+                ("Summarise the change", "proposed", ""),
+                ("List the checks", "proposed", ""),
+                ("Draft a rollout note", "proposed", ""),
+            ]
+        )
+        for position, (step_title, status, artifact) in enumerate(steps):
+            step = Step(
+                plan_id=plan.id,
+                position=position,
+                title=step_title,
+                instruction=step_title,
+                status=status,
+                artifact=artifact,
+                artifact_version=1 if artifact else 0,
+                created_by="model",
+            )
+            s.add(step)
+            await s.flush()
+            if artifact:
+                s.add(
+                    StepArtifactVersion(
+                        step_id=step.id, version=1, content=artifact, author="model"
+                    )
+                )
         snapshot = StepPlanTraceData(plan_id=plan.id, title=title, prompt=prompt, source=source)
         s.add(
             Message(
@@ -1039,9 +1072,17 @@ async def _seed_step_prompt_traces(s: AsyncSession, collection_id: int) -> None:
                     ),
                 ]
             )
-    legacy = StepPlan(title="An older demo plan", source_topic_id=topic.id)
+    legacy = StepPlan(title="An older demo plan", status="active", source_topic_id=topic.id)
     s.add(legacy)
     await s.flush()
+    s.add(
+        Step(
+            plan_id=legacy.id,
+            title="Review the older plan",
+            instruction="Review the work already captured by this plan.",
+            status="open",
+        )
+    )
     s.add(
         Message(
             topic_id=topic.id,

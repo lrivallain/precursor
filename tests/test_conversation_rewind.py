@@ -11,6 +11,10 @@ from sqlalchemy import select
 from precursor.backend.db import SessionLocal
 from precursor.backend.main import create_app
 from precursor.backend.models import MESSAGE_KIND_COMPACTION, Attachment, Message, MessageRole
+from precursor.backend.models.message import (
+    MESSAGE_KIND_STEP_AUTOMATION,
+    MESSAGE_KIND_STEP_USER_REQUEST,
+)
 from precursor.backend.services import events as events_mod
 
 
@@ -93,6 +97,30 @@ def test_turn_index_truncates_long_prompts() -> None:
         [turn] = client.get(f"{base}/turns").json()
         assert len(turn["prompt"]) == 200
         assert turn["reply"] == ""
+
+
+@pytest.mark.parametrize(
+    "message_kind", [MESSAGE_KIND_STEP_AUTOMATION, MESSAGE_KIND_STEP_USER_REQUEST]
+)
+def test_step_prompts_remain_timeline_turns_and_can_be_rewound(message_kind: str) -> None:
+    with TestClient(create_app()) as client:
+        cid, base = _container(client, "chat", "Step prompt")
+
+        async def _go() -> int:
+            async with SessionLocal() as s:
+                prompt = Message(
+                    role=MessageRole.USER, content="Draft this", chat_id=cid, kind=message_kind
+                )
+                s.add(prompt)
+                await s.flush()
+                s.add(Message(role=MessageRole.ASSISTANT, content="Done", chat_id=cid))
+                await s.commit()
+                return prompt.id
+
+        prompt_id = asyncio.run(_go())
+        assert [t["message_id"] for t in client.get(f"{base}/turns").json()] == [prompt_id]
+        response = client.post(f"{base}/rewind", json={"from_message_id": prompt_id})
+        assert response.status_code == 200 and response.json() == {"deleted": 2}
 
 
 @pytest.mark.parametrize("kind", ["topic", "chat"])

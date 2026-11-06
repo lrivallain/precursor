@@ -1,13 +1,14 @@
 import { useLayoutEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { ArrowRight, Check, ClipboardCheck, FileCheck2, Lightbulb, Link2, Link2Off, Trash2, X } from "lucide-react";
+import { Archive, ArrowRight, Check, ClipboardCheck, FileCheck2, Lightbulb, Link2, Link2Off, RotateCcw, Trash2, X } from "lucide-react";
 import { api, apiErrorMessage } from "../../lib/api";
 import { PLAN_STAGES, autoHasWork, planNext, planProgress, planStage } from "../../lib/stepPlans";
-import { openTopic } from "../../lib/sideChats";
+import { openChatById, openTopic } from "../../lib/sideChats";
 import type { StepPlan } from "../../lib/types";
 import { useConfirm } from "../ConfirmDialog";
 import { InlineTitle } from "../InlineTitle";
 import { Markdown } from "../Markdown";
+import { ScoreChip } from "./AssessmentPanel";
 import { AutomationBar } from "./AutomationBar";
 import { LinkTopicDialog } from "./LinkTopicDialog";
 import { dropPlanDrafts } from "../../lib/stepDrafts";
@@ -85,6 +86,7 @@ export function StepPlanHeader({
   useLayoutEffect(() => setSlot(document.getElementById(STEPS_HEADER_SLOT)), []);
   const next = planNext(plan);
   const running = plan.auto_state === "running";
+  const archived = plan.archived_at != null;
 
   async function runReview(): Promise<void> {
     setReviewError(null);
@@ -98,7 +100,7 @@ export function StepPlanHeader({
   async function remove(): Promise<void> {
     const ok = await confirm({
       title: "Delete this step plan?",
-      message: `“${plan.title}” will be deleted with all its steps, artifacts, chats and final output. The source topic is not touched.`,
+      message: `“${plan.title}” will be deleted with all its steps, artifacts, chats and final output. The source conversation is not touched.`,
       confirmLabel: "Delete plan",
       variant: "danger",
     });
@@ -113,8 +115,23 @@ export function StepPlanHeader({
     }
   }
 
+  async function archive(): Promise<void> {
+    const result = await mutate(async () => {
+      await api.stepPlans.archive(plan.id);
+      return true;
+    });
+    if (result) onDeleted();
+  }
+
+  async function restore(): Promise<void> {
+    await mutate(() => api.stepPlans.unarchive(plan.id));
+  }
+
   const working = plan.status !== "drafting" && plan.status !== "cancelled";
-  const tools: MenuItem[] = [
+  const tools: MenuItem[] = archived ? [
+    { label: "Restore plan", icon: RotateCcw, onSelect: restore },
+    { label: "Delete plan", icon: Trash2, danger: true, separated: true, onSelect: remove },
+  ] : [
     {
       label: "Suggest missing steps",
       icon: Lightbulb,
@@ -133,7 +150,7 @@ export function StepPlanHeader({
       ? [{ label: "Open the final output", icon: FileCheck2, onSelect: () => onSelect("final") } satisfies MenuItem]
       : []),
     {
-      label: plan.source_topic_id != null ? "Change the topic…" : "Link a topic…",
+      label: plan.source_topic_id != null ? "Change the topic…" : plan.source_chat_id != null ? "Change source to a topic…" : "Link a topic…",
       icon: Link2,
       separated: true,
       onSelect: () => setLinking(true),
@@ -149,63 +166,112 @@ export function StepPlanHeader({
           } satisfies MenuItem,
         ]
       : []),
-    { label: "Delete plan", icon: Trash2, danger: true, separated: true, onSelect: remove },
+    ...(plan.source_chat_id != null
+      ? [
+          {
+            label: "Unlink the chat",
+            icon: Link2Off,
+            onSelect: async () => {
+              await mutate(() => api.stepPlans.update(plan.id, { source_chat_id: null }));
+            },
+          } satisfies MenuItem,
+        ]
+      : []),
+    {
+      label: "Archive plan",
+      icon: Archive,
+      separated: true,
+      onSelect: archive,
+      disabledReason: running ? "Pause the run and wait for it to finish first" : undefined,
+    },
+    { label: "Delete plan", icon: Trash2, danger: true, onSelect: remove },
   ];
 
   const bar = (
     <div className="flex min-w-0 flex-1 items-center gap-2" data-testid="plan-header">
-      <InlineTitle
-        title={plan.title}
-        onRename={(title) => void mutate(() => api.stepPlans.update(plan.id, { title }))}
-        className="min-w-0 flex-1 truncate font-medium"
-        inputClassName="min-w-0 flex-1 rounded border border-accent/60 bg-bg px-1.5 py-0.5 font-medium outline-none"
-      />
-      {plan.status === "drafting" || plan.status === "cancelled" ? (
-        <PlanStatusPill status={plan.status} />
-      ) : (
-        <StageTrail plan={plan} />
-      )}
-      {plan.final_provisional && (plan.final_output ?? "").trim() !== "" && <ProvisionalBadge />}
-      {plan.final_stale && <StaleBadge />}
-      {working && (
-        <span className="hidden shrink-0 text-xs tabular-nums text-muted md:inline" data-tooltip="Steps approved">
-          {done}/{total} approved
-        </span>
-      )}
-      {plan.source_topic_id == null && (
-        <button
-          type="button"
-          onClick={() => setLinking(true)}
-          className="hidden shrink-0 items-center gap-1 rounded-full border border-dashed border-border px-2.5 py-0.5 text-xs text-muted hover:border-accent/60 hover:text-accent lg:inline-flex"
-          data-tooltip="Link a topic: its discussion becomes context, and the final output can be sent back to it"
-        >
-          <Link2 size={12} /> Link a topic
-        </button>
-      )}
-      {plan.source_topic_id != null && (
-        <button
-          type="button"
-          onClick={() => openTopic(plan.source_topic_id!)}
-          className="hidden max-w-[14rem] shrink truncate rounded-full border border-accent/30 bg-accent/[0.06] px-2.5 py-0.5 text-xs text-accent underline-offset-2 hover:border-accent/60 hover:bg-accent/10 hover:underline lg:inline"
-          data-tooltip={`Go to the topic this plan came from\n${plan.source_topic_title ?? ""}`}
-        >
-          {plan.source_topic_title ?? "Source topic"}
-        </button>
-      )}
-      {plan.status !== "cancelled" && (
-        <AutomationBar plan={plan} mutate={mutate} canRun={autoHasWork(plan)} />
-      )}
-      {next && !running && plan.status !== "done" && (
-        <button
-          type="button"
-          className={BTN_PRIMARY}
-          onClick={() => onSelect(next.target)}
-          data-testid="plan-next"
-          data-tooltip="The next thing to do on this plan"
-        >
-          {next.label} <ArrowRight size={14} />
-        </button>
-      )}
+      <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto">
+        {archived ? (
+          <span className="min-w-32 flex-1 truncate font-medium">{plan.title}</span>
+        ) : (
+          <InlineTitle
+            title={plan.title}
+            onRename={(title) => void mutate(() => api.stepPlans.update(plan.id, { title }))}
+            className="min-w-32 flex-1 truncate font-medium"
+            inputClassName="min-w-0 flex-1 rounded border border-accent/60 bg-bg px-1.5 py-0.5 font-medium outline-none"
+          />
+        )}
+        {archived && (
+          <span className="shrink-0 rounded-full bg-slate-500/15 px-2 py-0.5 text-xs text-muted">Archived</span>
+        )}
+        {plan.status === "drafting" || plan.status === "cancelled" ? (
+          <PlanStatusPill status={plan.status} />
+        ) : (
+          <StageTrail plan={plan} />
+        )}
+        {plan.final_provisional && (plan.final_output ?? "").trim() !== "" && <ProvisionalBadge />}
+        {plan.final_stale && <StaleBadge />}
+        {plan.assessment?.scope === "final" && (
+          <button
+            type="button"
+            className="inline-flex shrink-0 items-center gap-1 rounded-full text-xs text-muted hover:text-fg"
+            onClick={() => onSelect("final")}
+            aria-label={`Open final output, score ${plan.assessment.score} out of 100${plan.assessment_stale ? ", out of date" : ""}`}
+            data-tooltip="Open the final output assessment"
+            data-testid="final-score"
+          >
+            Final <ScoreChip assessment={plan.assessment} stale={plan.assessment_stale} />
+          </button>
+        )}
+        {working && (
+          <span className="hidden shrink-0 text-xs tabular-nums text-muted md:inline" data-tooltip="Steps approved">
+            {done}/{total} approved
+          </span>
+        )}
+        {!archived && plan.source_topic_id == null && plan.source_chat_id == null && (
+          <button
+            type="button"
+            onClick={() => setLinking(true)}
+            className="hidden shrink-0 items-center gap-1 rounded-full border border-dashed border-border px-2.5 py-0.5 text-xs text-muted hover:border-accent/60 hover:text-accent lg:inline-flex"
+            data-tooltip="Link a topic: its discussion becomes context, and the final output can be sent back to it"
+          >
+            <Link2 size={12} /> Link a topic
+          </button>
+        )}
+        {plan.source_topic_id != null && (
+          <button
+            type="button"
+            onClick={() => openTopic(plan.source_topic_id!)}
+            className="hidden max-w-[14rem] shrink truncate rounded-full border border-accent/30 bg-accent/[0.06] px-2.5 py-0.5 text-xs text-accent underline-offset-2 hover:border-accent/60 hover:bg-accent/10 hover:underline lg:inline"
+            data-tooltip={`Go to the topic this plan came from\n${plan.source_topic_title ?? ""}`}
+          >
+            {plan.source_topic_title ?? "Source topic"}
+          </button>
+        )}
+        {plan.source_chat_id != null && (
+          <button
+            type="button"
+            onClick={() => void mutate(async () => { await openChatById(plan.source_chat_id!); return true; })}
+            className="hidden max-w-[14rem] shrink truncate rounded-full border border-accent/30 bg-accent/[0.06] px-2.5 py-0.5 text-xs text-accent underline-offset-2 hover:border-accent/60 hover:bg-accent/10 hover:underline lg:inline"
+            data-tooltip={`Go to the chat this plan came from\n${plan.source_chat_title ?? ""}`}
+          >
+            {plan.source_chat_title ?? "Source chat"}
+          </button>
+        )}
+        {!archived && plan.status !== "cancelled" && (
+          <AutomationBar plan={plan} mutate={mutate} canRun={autoHasWork(plan)} />
+        )}
+        {!archived && next && !running && plan.status !== "done" && (
+          <button
+            type="button"
+            className={`${BTN_PRIMARY} shrink-0 whitespace-nowrap`}
+            onClick={() => onSelect(next.target)}
+            data-testid="plan-next"
+            data-tooltip="The next thing to do on this plan"
+          >
+            {next.label} <ArrowRight size={14} />
+          </button>
+        )}
+      </div>
       <OverflowMenu items={tools} label="Plan tools" />
     </div>
   );

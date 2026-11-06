@@ -76,14 +76,26 @@ class StepPlan(Base, TimestampMixin):
     status: Mapped[str] = mapped_column(
         String(16), nullable=False, default=PLAN_DRAFTING, server_default=PLAN_DRAFTING
     )
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # The topic the plan was started from, and where the final output is filed.
     source_topic_id: Mapped[int | None] = mapped_column(
         ForeignKey("topics.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    source_chat_id: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "chats.id", ondelete="SET NULL", use_alter=True, name="fk_step_plan_source_chat"
+        ),
+        nullable=True,
+        index=True,
     )
     role: Mapped[str | None] = mapped_column(String(64), nullable=True)
     llm_selection: Mapped[str | None] = mapped_column(Text, nullable=True)
     # What the final output should be (format, tone, language…).
     output_instructions: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Ordered revisions keep the original ask intact while recording later requests.
+    amendments_json: Mapped[str] = mapped_column(
+        Text, nullable=False, default="[]", server_default="[]"
+    )
     final_output: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Which of ``StepPlanFinalVersion`` the final output is (0: none yet).
     final_version: Mapped[int] = mapped_column(
@@ -142,7 +154,7 @@ class Step(Base, TimestampMixin):
         String(8), nullable=False, default=AUTHOR_USER, server_default=AUTHOR_USER
     )
     # The model's self-assessment of this step's artifact (JSON) and the signature
-    # (ask + instruction + artifact) it was made against.
+    # (ask + revisions + instruction + artifact) it was made against.
     assessment_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     assessed_sig: Mapped[str | None] = mapped_column(String(40), nullable=True)
     # The ask or this step's instruction changed after it was validated: the

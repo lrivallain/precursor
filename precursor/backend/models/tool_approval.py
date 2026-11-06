@@ -52,6 +52,11 @@ class ToolApproval(Base, TimestampMixin):
     assistant_message_id: Mapped[int | None] = mapped_column(
         ForeignKey("messages.id", ondelete="CASCADE"), index=True, nullable=True
     )
+    # The user turn that caused this approval, even if other messages arrive before resume.
+    source_message_id: Mapped[int | None] = mapped_column(
+        ForeignKey("messages.id", ondelete="SET NULL", name="fk_tool_approval_source_message"),
+        nullable=True,
+    )
     tool_call_id: Mapped[str] = mapped_column(String(128), nullable=False)
     # Qualified ``server__tool`` name as the model saw it.
     tool_name: Mapped[str] = mapped_column(String(255), nullable=False)

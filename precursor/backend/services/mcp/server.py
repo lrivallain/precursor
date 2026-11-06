@@ -47,6 +47,7 @@ _TOOLS_BY_SECTION: dict[str, list[str]] = {
         "create_step_plan",
         "list_step_plans",
         "get_step_plan",
+        "amend_step_plan",
         "edit_step_plan",
         "run_step_plan",
         "pause_step_plan",

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { CheckCircle2, ChevronDown, ChevronRight, FileText, Loader2, Send, Sparkles } from "lucide-react";
 import { api } from "../../lib/api";
-import { openTopic } from "../../lib/sideChats";
+import { openChatById, openTopic } from "../../lib/sideChats";
 import { dropDraft, markFailed, planFieldKey, useFieldDraft } from "../../lib/stepDrafts";
 import type { Message, StepPlan } from "../../lib/types";
 import { useConfirm } from "../ConfirmDialog";
@@ -87,6 +87,9 @@ export function ConsolidationPanel({
   const unvalidated = !plan.ready_to_consolidate;
   const hasFinal = finalOutput.trim().length > 0;
   const assessedFinal = plan.assessment?.scope === "final";
+  const sourceKind = plan.source_chat_id != null ? "chat" : "topic";
+  const sourceTitle = plan.source_chat_id != null ? plan.source_chat_title : plan.source_topic_title;
+  const hasSource = plan.source_topic_id != null || plan.source_chat_id != null;
 
   // Saving unchanged text is how you say "I read this against the current
   // steps and it still holds": it clears the out-of-date flag.
@@ -124,21 +127,21 @@ export function ConsolidationPanel({
     return !!(await mutate(() => api.stepPlans.finalFromMessage(plan.id, messageId)));
   }
 
-  async function sendToTopic(): Promise<void> {
+  async function sendToSource(): Promise<void> {
     const provisional = plan.final_provisional;
     const again = plan.final_posted_version === plan.final_version;
     const ok = await confirm({
-      title: provisional ? "Send a provisional output?" : "Send to topic?",
+      title: provisional ? "Send a provisional output?" : `Send to ${sourceKind}?`,
       message: provisional
-        ? `Not every step was approved when this output was written. It will be posted in “${plan.source_topic_title ?? "the source topic"}” marked as provisional, and the plan will not be marked done.`
-        : `Version ${plan.final_version} of the final output will be posted as a new message in “${plan.source_topic_title ?? "the source topic"}”.${again ? " This version was already posted once." : ""}`,
+        ? `Not every step was approved when this output was written. It will be posted in “${sourceTitle ?? `the source ${sourceKind}`}” marked as provisional, and the plan will not be marked done.`
+        : `Version ${plan.final_version} of the final output will be posted as a new message in “${sourceTitle ?? `the source ${sourceKind}`}”.${again ? " This version was already posted once." : ""}`,
       confirmLabel: provisional ? "Send as provisional" : "Send",
       variant: provisional ? "warning" : undefined,
     });
     if (!ok) return;
     setSending(true);
     try {
-      const message = await mutate(() => api.stepPlans.sendToTopic(plan.id, undefined, provisional));
+      const message = await mutate(() => api.stepPlans.sendToSource(plan.id, undefined, provisional));
       if (message) setSent(message);
     } finally {
       setSending(false);
@@ -203,16 +206,21 @@ export function ConsolidationPanel({
           Some steps are not approved yet. Approve them for a complete answer, or generate anyway.
         </p>
       ) : null}
-      {sent && plan.source_topic_id && (
+      {sent && hasSource && (
         <p className="flex flex-wrap items-center gap-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-300">
-          <CheckCircle2 size={16} /> Sent to “{plan.source_topic_title}”
+          <CheckCircle2 size={16} /> Sent to “{sourceTitle ?? `the source ${sourceKind}`}”
           {plan.final_posted_version ? ` as version ${plan.final_posted_version}` : ""}.
           <button
             type="button"
             className="underline"
-            onClick={() => openTopic(plan.source_topic_id!, sent.id)}
+            onClick={() => {
+              if (plan.source_topic_id != null) openTopic(plan.source_topic_id, sent.id);
+              else if (plan.source_chat_id != null) {
+                void mutate(async () => { await openChatById(plan.source_chat_id!); return true; });
+              }
+            }}
           >
-            Open the topic
+            Open the {sourceKind}
           </button>
         </p>
       )}
@@ -304,7 +312,7 @@ export function ConsolidationPanel({
               plan.final_posted_version != null && plan.final_version > 0 ? (
                 <span
                   className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] text-emerald-700 dark:text-emerald-300"
-                  data-tooltip={`Version ${plan.final_posted_version} was posted in the topic${plan.final_posted_at ? ` on ${new Date(plan.final_posted_at).toLocaleString()}` : ""}`}
+                  data-tooltip={`Version ${plan.final_posted_version} was posted in a source conversation${plan.final_posted_at ? ` on ${new Date(plan.final_posted_at).toLocaleString()}` : ""}`}
                 >
                   <Send size={10} />
                   {plan.final_posted_version === plan.final_version ? "posted" : `v${plan.final_posted_version} posted`}
@@ -313,16 +321,16 @@ export function ConsolidationPanel({
             }
             actions={
               <>
-                {plan.source_topic_id != null && (
+                {hasSource && (
                   <button
                     type="button"
-                    onClick={() => void sendToTopic()}
+                    onClick={() => void sendToSource()}
                     disabled={sendBlocker !== null || sending}
                     className={BTN_PRIMARY}
-                    data-tooltip={sendBlocker ?? "Post the final output as a message in the topic this plan came from"}
+                    data-tooltip={sendBlocker ?? `Post the final output as a message in the ${sourceKind} this plan came from`}
                   >
                     {sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-                    Send to topic
+                    Send to {sourceKind}
                   </button>
                 )}
                 {plan.status !== "done" && (

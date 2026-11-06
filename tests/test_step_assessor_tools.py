@@ -8,13 +8,16 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from precursor.backend.db import SessionLocal
 from precursor.backend.main import create_app
-from precursor.backend.schemas.step_plan import Assessment
+from precursor.backend.models import Chat, Message, MessageRole, StepPlan
+from precursor.backend.models.message import MESSAGE_KIND_STEP_AUTOMATION
 from precursor.backend.services import (
     approval_rules,
     step_assessor_tools,
@@ -23,19 +26,63 @@ from precursor.backend.services import (
     turn_engine,
 )
 from precursor.backend.services import approvals as approval_service
+from precursor.backend.services.context_budget import estimate_total_tokens
 from precursor.backend.services.conversation_turn import TurnSettings
 from precursor.backend.services.llm.base import (
+    ChatMessage,
     TextDeltaEvent,
     ToolCallRequest,
     ToolCallsEvent,
     TurnDoneEvent,
 )
-from precursor.backend.services.llm.one_shot import OneShotResult
 from precursor.backend.services.mcp.client import MCPToolDef
+from precursor.backend.services.message_links import MESSAGE_LINK_INSTRUCTION
 from precursor.backend.services.step_assessor_tools import Inspector
 from precursor.backend.services.turn_engine import ToolResultTurn
 
-_VERDICT = json.dumps({"score": 81, "summary": "ok"})
+
+def _verdict(score: int, summary: str) -> str:
+    return json.dumps(
+        {
+            "score": float(score),
+            "summary": summary,
+            "covered": [],
+            "evidence": [],
+            "assumptions": [],
+            "observations": [],
+            "gaps": [],
+            "contradictions": [],
+        }
+    )
+
+
+_VERDICT = _verdict(81, "ok")
+
+
+def test_an_assessment_without_a_score_is_not_treated_as_zero() -> None:
+    with pytest.raises(HTTPException, match="didn't return a score"):
+        step_plan_llm.parse_assessment('{"summary": "Missing score"}')
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"score": True},
+        {"summary": {"unexpected": "object"}},
+        {"summary": ""},
+        {"gaps": "Missing evidence"},
+        {"contradictions": [42]},
+    ],
+)
+def test_invalid_assessment_fields_are_rejected(changes: dict[str, Any]) -> None:
+    with pytest.raises(HTTPException):
+        step_plan_llm.parse_assessment(json.dumps({**json.loads(_VERDICT), **changes}))
+
+
+@pytest.mark.parametrize("answer", ['{"score": 80}', "Not a structured verdict"])
+def test_incomplete_or_unstructured_verdicts_are_rejected(answer: str) -> None:
+    with pytest.raises(HTTPException):
+        step_plan_llm.parse_assessment(answer)
 
 
 @pytest.fixture(autouse=True, scope="module")
@@ -126,7 +173,12 @@ async def test_a_long_file_is_paged(tmp_path: Path) -> None:
 async def test_a_tool_calls_full_output_is_readable_by_its_number() -> None:
     inspector = Inspector([], ["first", "x" * 20000])
     assert await _run(inspector, "read_tool_output", index=1) == "first"
-    assert len(await _run(inspector, "read_tool_output", index=2)) == 12000
+    truncated = await _run(inspector, "read_tool_output", index=2)
+    assert truncated.startswith("x" * 12000) and "Output truncated" in truncated
+    assert inspector.log == [
+        "Read the full output of tool call 1",
+        "Read the first 12000 characters of tool call 2",
+    ]
     assert "no tool call number 3" in await _run(inspector, "read_tool_output", index=3)
 
 
@@ -164,6 +216,47 @@ async def test_collect_hands_the_assessor_the_files_and_outputs(tmp_path: Path) 
     assert step_evidence.inspect_file(str(deck), produced=False, asked=None).files == []
 
 
+async def test_recorded_tool_trace_is_bounded_and_does_not_prove_absence() -> None:
+    async with SessionLocal() as session:
+        chat = Chat(title="Evidence trace", slug=f"trace-{uuid4().hex}")
+        session.add(chat)
+        await session.flush()
+        for i in range(14):
+            session.add(
+                Message(
+                    chat_id=chat.id,
+                    role=MessageRole.TOOL,
+                    content=f"result {i}",
+                    tool_calls=json.dumps({"name": "workiq__get_draft", "arguments": "{}"}),
+                )
+            )
+        await session.commit()
+        ev = await step_evidence.collect(session, texts=[], chat_ids=[chat.id, chat.id], ask="")
+        assert ev.trace_conversations == 1
+        assert ev.trace_truncated
+        assert len(ev.trace) == 12
+        assert ev.outputs == [f"result {i}" for i in range(2, 14)]
+        assert "result 2" in ev.trace[0] and "result 13" in ev.trace[-1]
+        assert "cannot prove that an unlisted action did or did not happen" in ev.prompt()
+        assert "responses were omitted" in ev.prompt()
+
+        no_trace = await step_evidence.collect(
+            session, texts=[], chat_ids=[chat.id], ask="", with_trace=False
+        )
+        assert no_trace.trace == [] and no_trace.outputs == [] and no_trace.prompt() == ""
+
+
+async def test_empty_recorded_tool_trace_is_explicitly_inconclusive() -> None:
+    async with SessionLocal() as session:
+        chat = Chat(title="Empty trace", slug=f"trace-{uuid4().hex}")
+        session.add(chat)
+        await session.commit()
+        ev = await step_evidence.collect(session, texts=[], chat_ids=[chat.id], ask="")
+    assert ev.trace_conversations == 1 and not ev.trace_truncated
+    assert "No tool responses were found" in ev.prompt()
+    assert "not a complete audit" in ev.prompt()
+
+
 def test_a_workspace_deep_link_is_read_as_the_workspaces_file(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -197,7 +290,7 @@ def test_an_html_page_with_sections_is_not_called_a_deck(tmp_path: Path) -> None
 
 
 def _plan() -> Any:
-    return SimpleNamespace(source_topic_id=None, llm_selection=None)
+    return SimpleNamespace(source_topic_id=None, source_chat_id=None, llm_selection=None)
 
 
 class _Active:
@@ -227,13 +320,17 @@ class _Script:
         self.rounds = list(rounds)
         self.tools_seen: list[list[str]] = []
         self.messages_seen: list[list[Any]] = []
+        self.models_seen: list[str] = []
 
     async def stream_chat(self, **_: Any) -> Any:
         yield ""
 
-    async def stream_chat_with_tools(self, *, messages: Any, tools: Any, **_: Any) -> Any:
+    async def stream_chat_with_tools(
+        self, *, model: str, messages: Any, tools: Any, **_: Any
+    ) -> Any:
         self.tools_seen.append([t.name for t in tools])
         self.messages_seen.append(list(messages))
+        self.models_seen.append(model)
         step = self.rounds.pop(0)
         if isinstance(step, str):
             yield TextDeltaEvent(content=step)
@@ -253,6 +350,7 @@ def chat(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         "active": _Active(_mail_tools()),
         "gate": approval_service.ApprovalGate(policy=approval_service.POLICY_BALANCED),
         "rounds": 6,
+        "history": [],
     }
 
     class _Manager:
@@ -267,34 +365,48 @@ def chat(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
             model="m",
             reasoning_effort="",
             max_tool_rounds=seen["rounds"],
-            max_input_tokens=100_000,
-            max_tool_result_tokens=10_000,
+            max_input_tokens=seen.get("input_tokens", 100_000),
+            max_tool_result_tokens=seen.get("tool_result_tokens", 10_000),
             provider=seen["provider"],
             github_token="",
-            enabled_servers=["workiq"],
+            enabled_servers=seen.get("enabled_servers", ["workiq"]),
             gate=seen["gate"],
         )
 
     async def _execute(_active: Any, call: ToolCallRequest, _wait: float) -> Any:
         seen["ran"].append(call.name)
-        yield ToolResultTurn(call, "Subject: Q3 plan", False, None)
+        yield ToolResultTurn(
+            call,
+            seen.get("responses", {}).get(call.id, "Subject: Q3 plan"),
+            call.id in seen.get("failed_calls", set()),
+            None,
+        )
+
+    async def _history(_session: Any, kind: str, container_id: int) -> list[ChatMessage]:
+        seen["history_requested"] = (kind, container_id)
+        return list(seen["history"])
 
     monkeypatch.setattr(step_assessor_tools, "get_mcp_client_manager", lambda: _Manager())
     monkeypatch.setattr(step_assessor_tools, "resolve_turn_settings", _settings)
+    monkeypatch.setattr(step_assessor_tools, "snapshot_history", _history)
     monkeypatch.setattr(turn_engine, "execute_tool_call", _execute)
     return seen
 
 
 async def _review(
-    inspector: Inspector, *, chat_id: int | None = 7, topic_id: int | None = None
-) -> str | None:
+    inspector: Inspector,
+    *,
+    chat_id: int | None = 7,
+    topic_id: int | None = None,
+    user: str = "usr",
+) -> str:
     async with SessionLocal() as session:
         return await step_assessor_tools.review_with_chat_tools(
             session,
             chat_id=chat_id,
             topic_id=topic_id,
             system="SYS",
-            user="usr",
+            user=user,
             inspector=inspector,
             usage_source="step_assessment",
         )
@@ -306,7 +418,29 @@ def test_the_assessor_gate_is_never_looser_than_balanced() -> None:
     loose = step_assessor_tools.assessor_gate(gate(policy=approval_service.POLICY_AUTONOMOUS))
     assert loose.policy == approval_service.POLICY_BALANCED
     manual = gate(policy=approval_service.POLICY_MANUAL)
-    assert step_assessor_tools.assessor_gate(manual) is manual
+    assert step_assessor_tools.assessor_gate(manual).policy == approval_service.POLICY_MANUAL
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["create_step_plan", "amend_step_plan", "edit_step_plan", "run_step_plan", "pause_step_plan"],
+)
+def test_assessor_blocks_plan_mutations_without_an_allow_rule(name: str) -> None:
+    call = (f"precursor__{name}", "precursor", name, None)
+    assert not approval_service.is_read_only("precursor", name)
+    for policy in (
+        approval_service.POLICY_AUTONOMOUS,
+        approval_service.POLICY_BALANCED,
+        approval_service.POLICY_PLAN,
+        approval_service.POLICY_MANUAL,
+    ):
+        gate = step_assessor_tools.assessor_gate(approval_service.ApprovalGate(policy=policy))
+        assert gate.reason_for(*call) is not None
+    allow = approval_rules.CompiledRule(id=1, effect="allow", server="precursor", tool=name)
+    gate = step_assessor_tools.assessor_gate(
+        approval_service.ApprovalGate(policy=approval_service.POLICY_AUTONOMOUS, rules=(allow,))
+    )
+    assert gate.reason_for(*call) is None
 
 
 async def test_the_assessor_reads_with_a_chats_tools_but_never_changes(
@@ -329,10 +463,9 @@ async def test_the_assessor_reads_with_a_chats_tools_but_never_changes(
     assert chat["ran"] == ["workiq__get_draft"]
     assert chat["resolved"] == {"chat_id": 7, "topic_id": None}
     assert chat["servers"] == ["workiq"]
-    assert "precursor" in chat["active"].restricted
-    assert "write_file" not in chat["active"].restricted["precursor"]
+    assert chat["active"].restricted == {}
     first = provider.tools_seen[0]
-    assert first[:3] == ["list_files", "read_file", "read_tool_output"]
+    assert not {"list_files", "read_file", "read_tool_output"} & set(first)
     assert "workiq__get_draft" in first and "workiq__send_mail" in first
     assert approval_service.REQUEST_APPROVAL_TOOL not in first
     answered = [m.content for m in provider.messages_seen[1] if m.role == "tool"]
@@ -344,10 +477,197 @@ async def test_the_assessor_reads_with_a_chats_tools_but_never_changes(
     ]
 
 
+@pytest.mark.parametrize("allow_write", [False, True])
+async def test_assessor_has_exposed_precursor_tools_under_the_review_gate(
+    chat: dict[str, Any], allow_write: bool
+) -> None:
+    schema: dict[str, Any] = {"type": "object", "properties": {}}
+    chat["active"] = _Active(
+        [
+            MCPToolDef("precursor", "get_topic", "Read a topic", schema, read_only=True),
+            MCPToolDef("precursor", "post_message", "Post a message", schema, read_only=False),
+        ]
+    )
+    chat["enabled_servers"] = ["precursor"]
+    if allow_write:
+        rule = approval_rules.CompiledRule(
+            id=1, effect=approval_service.RULE_ALLOW, server="precursor", tool="post_message"
+        )
+        chat["gate"] = approval_service.ApprovalGate(
+            policy=approval_service.POLICY_AUTONOMOUS, rules=(rule,)
+        )
+    else:
+        chat["gate"] = approval_service.ApprovalGate(policy=approval_service.POLICY_AUTONOMOUS)
+    chat["provider"] = provider = _Script(
+        [
+            [
+                ToolCallRequest("1", "precursor__get_topic", "{}"),
+                ToolCallRequest("2", "precursor__post_message", "{}"),
+            ],
+            _VERDICT,
+        ]
+    )
+    inspector = Inspector([], [])
+    assert await _review(inspector) == _VERDICT
+    assert chat["servers"] == ["precursor"]
+    assert chat["active"].restricted == {}
+    assert {"precursor__get_topic", "precursor__post_message"} <= set(provider.tools_seen[0])
+    assert chat["ran"] == (
+        ["precursor__get_topic", "precursor__post_message"]
+        if allow_write
+        else ["precursor__get_topic"]
+    )
+    assert inspector.log[0] == "Called precursor__get_topic (precursor): ok"
+    if allow_write:
+        assert inspector.log[1] == "Called precursor__post_message (precursor): ok"
+    else:
+        assert inspector.log[1] == "Declined precursor__post_message (precursor): needs approval"
+
+
 async def test_a_topic_without_a_step_chat_resolves_from_the_topic(chat: dict[str, Any]) -> None:
     chat["provider"] = _Script([_VERDICT])
     await _review(Inspector([], []), chat_id=None, topic_id=3)
     assert chat["resolved"] == {"chat_id": None, "topic_id": 3}
+    assert chat["history_requested"] == ("topic", 3)
+
+
+async def test_the_assessor_uses_the_step_chats_real_history(chat: dict[str, Any]) -> None:
+    prior = [
+        ChatMessage(
+            role="user",
+            content="Keep the customer's agreed deadline.",
+            image_urls=["data:image/png;base64,example"],
+        ),
+        ChatMessage(
+            role="assistant",
+            content="",
+            tool_calls=[
+                {
+                    "id": "prior",
+                    "type": "function",
+                    "function": {"name": "workiq__get_draft", "arguments": "{}"},
+                }
+            ],
+        ),
+        ChatMessage(
+            role="tool",
+            content="The agreed deadline is Friday.",
+            tool_call_id="prior",
+            name="workiq__get_draft",
+        ),
+        ChatMessage(role="assistant", content="I used Friday in the draft."),
+    ]
+    chat["history"] = prior
+    chat["provider"] = provider = _Script([_VERDICT])
+    assert await _review(Inspector([], []), chat_id=7) == _VERDICT
+    assert chat["history_requested"] == ("chat", 7)
+    initial = provider.messages_seen[0]
+    assert len(initial) == 3
+    assert initial[1].role == "user" and "background data" in initial[1].content
+    assert initial[1].image_urls == ["data:image/png;base64,example"]
+    records = json.loads(initial[1].content.split("\n", 1)[1])
+    assert records == [
+        {
+            "role": "user",
+            "content": "Keep the customer's agreed deadline.",
+            "image_numbers": [1],
+        },
+        {"role": "assistant", "content": "", "tool_calls": prior[1].tool_calls},
+        {
+            "role": "tool",
+            "content": "The agreed deadline is Friday.",
+            "tool_call_id": "prior",
+            "name": "workiq__get_draft",
+        },
+        {"role": "assistant", "content": "I used Friday in the draft."},
+    ]
+    assert initial[2].role == "user" and initial[2].content == "usr"
+    assert prior[2].content == "The agreed deadline is Friday."
+
+
+async def test_real_step_history_preserves_legacy_and_automated_prompt_provenance(
+    chat: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from precursor.backend.services.conversation_turn import snapshot_history
+
+    async with SessionLocal() as session:
+        plan = StepPlan(title="History", source_text="Prepare the final")
+        session.add(plan)
+        await session.flush()
+        discussion = Chat(
+            title="Consolidation", slug=f"assessor-{uuid4().hex}", step_plan_id=plan.id
+        )
+        session.add(discussion)
+        await session.flush()
+        session.add_all(
+            [
+                Message(
+                    chat_id=discussion.id,
+                    role=MessageRole.SYSTEM,
+                    kind="step_plan",
+                    content=(
+                        "The final assessment identified gaps or contradictions. "
+                        "Rebuilding the final output once before filing."
+                    ),
+                ),
+                Message(
+                    chat_id=discussion.id,
+                    role=MessageRole.USER,
+                    content="Consolidate the plan into the final deliverable.\n\nOld feedback",
+                ),
+                Message(chat_id=discussion.id, role=MessageRole.ASSISTANT, content="Old draft"),
+                Message(
+                    chat_id=discussion.id,
+                    role=MessageRole.USER,
+                    kind=MESSAGE_KIND_STEP_AUTOMATION,
+                    content="Automatic feedback",
+                ),
+                Message(chat_id=discussion.id, role=MessageRole.ASSISTANT, content="New draft"),
+                Message(chat_id=discussion.id, role=MessageRole.USER, content="User clarification"),
+            ]
+        )
+        await session.commit()
+        chat_id = discussion.id
+
+    monkeypatch.setattr(step_assessor_tools, "snapshot_history", snapshot_history)
+    chat["provider"] = provider = _Script([_VERDICT])
+    await _review(Inspector([], []), chat_id=chat_id)
+    messages = provider.messages_seen[0]
+    background = [m.content for m in messages[1:-1]]
+    assert any("preceding plan activity recorded an automatic repair" in m for m in background)
+    assert any("did not record its origin" in m and "Old feedback" in m for m in background)
+    assert any(
+        "automation initiated this draft" in m and "Automatic feedback" in m for m in background
+    )
+    assert any("User clarification" in m for m in background)
+    assert messages[-1].content == "usr"
+
+
+async def test_assessment_history_keeps_normal_tool_result_limits(chat: dict[str, Any]) -> None:
+    chat["history"] = [
+        ChatMessage(role="user", content="Inspect the draft"),
+        ChatMessage(
+            role="assistant",
+            content="",
+            tool_calls=[
+                {
+                    "id": "prior",
+                    "type": "function",
+                    "function": {"name": "workiq__get_draft", "arguments": "{}"},
+                }
+            ],
+        ),
+        ChatMessage(
+            role="tool", content="x" * 1000, tool_call_id="prior", name="workiq__get_draft"
+        ),
+        ChatMessage(role="assistant", content="Draft checked"),
+    ]
+    chat["tool_result_tokens"] = 20
+    chat["provider"] = provider = _Script([_VERDICT])
+    await _review(Inspector([], []))
+    background = provider.messages_seen[0][1].content
+    assert "[truncated" in background and "x" * 61 not in background
+    assert "Draft checked" in background
 
 
 async def test_an_allow_rule_lets_the_assessor_run_a_change(chat: dict[str, Any]) -> None:
@@ -367,23 +687,100 @@ async def test_the_assessor_opens_the_file_through_the_loop(
 ) -> None:
     doc = _docx(tmp_path / "runbook.docx").resolve()
     chat["provider"] = provider = _Script(
-        [[ToolCallRequest("1", "read_file", json.dumps({"path": str(doc)}))], _VERDICT]
+        [
+            [ToolCallRequest("1", "read_file", json.dumps({"path": str(doc)}))],
+            _VERDICT,
+        ]
     )
     chat["active"] = _Active([])
     inspector = Inspector([str(doc)], [])
     assert await _review(inspector) == _VERDICT
+    assert provider.tools_seen[0] == ["list_files", "read_file"]
     tool_msg = next(m.content for m in provider.messages_seen[1] if m.role == "tool")
     assert "Runbook" in tool_msg
     assert chat["ran"] == []
 
 
-async def test_without_a_file_or_a_server_tool_there_is_nothing_to_review_with(
+@pytest.mark.parametrize("name", ["list_files", "read_file", "read_tool_output"])
+@pytest.mark.parametrize("restriction", ["manual", "ask"])
+async def test_inspector_calls_follow_the_review_gate(
+    chat: dict[str, Any], tmp_path: Path, name: str, restriction: str
+) -> None:
+    file = (tmp_path / "artifact.txt").resolve()
+    file.write_text("File contents")
+    inspector = Inspector([str(file)], ["Tool output"])
+    args = {"read_file": {"path": str(file)}, "read_tool_output": {"index": 1}}.get(name, {})
+    if restriction == "manual":
+        chat["gate"] = approval_service.ApprovalGate(policy=approval_service.POLICY_MANUAL)
+    else:
+        rule = approval_rules.CompiledRule(id=1, effect="ask", server="step-inspector", tool=name)
+        chat["gate"] = approval_service.ApprovalGate(
+            policy=approval_service.POLICY_BALANCED, rules=(rule,)
+        )
+    chat["provider"] = provider = _Script(
+        [[ToolCallRequest("1", name, json.dumps(args))], _VERDICT]
+    )
+    assert await _review(inspector) == _VERDICT
+    result = next(m.content for m in provider.messages_seen[1] if m.role == "tool")
+    assert result.startswith("Not run:") and "assumptions" in result
+    assert "File contents" not in result and "Tool output" not in result
+    assert inspector.log == [f"Declined {name} (step-inspector): needs approval"]
+
+
+async def test_inspector_allow_rule_can_scope_a_manual_file_read(
+    chat: dict[str, Any], tmp_path: Path
+) -> None:
+    allowed_dir = tmp_path / "allowed"
+    allowed_dir.mkdir()
+    allowed = (allowed_dir / "allowed.txt").resolve()
+    denied = (tmp_path / "other.txt").resolve()
+    allowed.write_text("Allowed content")
+    denied.write_text("Private content")
+    rule = approval_rules.CompiledRule(
+        id=1,
+        effect="allow",
+        server="step-inspector",
+        tool="read_file",
+        clauses=(approval_rules.ArgClause("path", "under", str(allowed_dir)),),
+    )
+    chat["gate"] = approval_service.ApprovalGate(
+        policy=approval_service.POLICY_MANUAL, rules=(rule,)
+    )
+    chat["provider"] = provider = _Script(
+        [
+            [
+                ToolCallRequest("1", "read_file", json.dumps({"path": str(allowed)})),
+                ToolCallRequest("2", "read_file", json.dumps({"path": str(denied)})),
+            ],
+            _VERDICT,
+        ]
+    )
+    inspector = Inspector([str(allowed), str(denied)], [])
+    assert await _review(inspector) == _VERDICT
+    results = [m.content for m in provider.messages_seen[1] if m.role == "tool"]
+    assert "Allowed content" in results[0]
+    assert results[1].startswith("Not run:") and "Private content" not in results[1]
+    assert any("Declined read_file (step-inspector)" in line for line in inspector.log)
+
+
+async def test_the_assessor_only_gets_relevant_inspection_tools(chat: dict[str, Any]) -> None:
+    chat["provider"] = provider = _Script(
+        [[ToolCallRequest("1", "read_tool_output", '{"index": 1}')], _VERDICT]
+    )
+    chat["active"] = _Active([])
+    assert await _review(Inspector([], ["tool output"])) == _VERDICT
+    assert provider.tools_seen[0] == ["read_tool_output"]
+    assert next(m.content for m in provider.messages_seen[1] if m.role == "tool") == "tool output"
+
+
+async def test_without_tools_the_assessor_still_uses_the_chats_model(
     chat: dict[str, Any],
 ) -> None:
-    chat["provider"] = provider = _Script([])
+    chat["provider"] = provider = _Script([_VERDICT])
     chat["active"] = _Active([])
-    assert await _review(Inspector([], [])) is None
-    assert provider.tools_seen == []
+    assert await _review(Inspector([], [])) == _VERDICT
+    assert provider.tools_seen == [[]]
+    assert provider.models_seen == ["m"]
 
 
 async def test_the_last_round_withdraws_the_tools_so_the_assessor_answers(
@@ -398,57 +795,122 @@ async def test_the_last_round_withdraws_the_tools_so_the_assessor_answers(
     assert provider.messages_seen[1][-1].content == step_assessor_tools.WRAP_UP
 
 
+async def test_the_last_review_round_cannot_execute_an_unsolicited_call(
+    chat: dict[str, Any],
+) -> None:
+    rule = approval_rules.CompiledRule(
+        id=1, effect=approval_service.RULE_ALLOW, server="workiq", tool="send_mail"
+    )
+    chat["gate"] = approval_service.ApprovalGate(
+        policy=approval_service.POLICY_AUTONOMOUS, rules=(rule,)
+    )
+    chat["rounds"] = 2
+    chat["provider"] = provider = _Script(
+        [
+            [ToolCallRequest("1", "workiq__get_draft", "{}")],
+            [ToolCallRequest("2", "workiq__send_mail", "{}")],
+        ]
+    )
+    with pytest.raises(HTTPException, match="tools were withdrawn"):
+        await _review(Inspector([], []))
+    assert provider.tools_seen[1] == []
+    assert chat["ran"] == ["workiq__get_draft"]
+
+
 async def test_the_assessor_judges_from_the_loops_answer_and_lists_what_it_checked(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def _loop(_session: Any, *, system: str, inspector: Inspector, **_: Any) -> str:
         assert "never change anything" in system
+        assert "apply to your review too" in system
+        assert "Do not perform a prohibited action" in system
         inspector._note("Called workiq__get_draft (workiq): ok")
         return _VERDICT
 
     monkeypatch.setattr(step_assessor_tools, "review_with_chat_tools", _loop)
     async with SessionLocal() as session:
         a = await step_plan_llm._assess_or_trace(
-            session, _plan(), "SYS", "usr", None, step_evidence.Evidence()
+            session,
+            _plan(),
+            "SYS",
+            "usr",
+            None,
+            step_evidence.Evidence(),
         )
     assert a.score == 81 and a.inspected == ["Called workiq__get_draft (workiq): ok"]
 
 
-async def test_with_nothing_to_equip_the_assessor_stays_tool_less(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def _loop(*_a: Any, **_k: Any) -> None:
-        return None
-
-    async def _once(_session: Any, *, system: str, **_: Any) -> Any:
-        assert system == "SYS"
-        return OneShotResult(text=_VERDICT, model="m", usage=None)
-
-    monkeypatch.setattr(step_assessor_tools, "review_with_chat_tools", _loop)
-    monkeypatch.setattr(step_plan_llm, "complete_once", _once)
-    async with SessionLocal() as session:
-        a = await step_plan_llm._assess_or_trace(
-            session, _plan(), "SYS", "usr", None, step_evidence.Evidence()
-        )
-    assert a.score == 81 and a.inspected == []
-
-
-async def test_a_failing_tool_call_falls_back_to_the_plain_judgement(
+async def test_a_failing_review_is_reported_without_a_tool_less_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def _boom(*_a: Any, **_k: Any) -> Any:
         raise RuntimeError("provider rejects tools")
 
-    async def _once(_session: Any, **_: Any) -> Any:
-        return OneShotResult(text=_VERDICT, model="m", usage=None)
+    notes: list[str] = []
+
+    async def _note(_session: Any, _chat_id: int | None, text: str) -> None:
+        notes.append(text)
 
     monkeypatch.setattr(step_assessor_tools, "review_with_chat_tools", _boom)
-    monkeypatch.setattr(step_plan_llm, "complete_once", _once)
+    monkeypatch.setattr(step_plan_llm, "trace_in_chat", _note)
     ev = step_evidence.Evidence(outputs=["tool said hi"])
     async with SessionLocal() as session:
-        a = await step_plan_llm._assess_or_trace(session, _plan(), "SYS", "usr", None, ev)
-    assert isinstance(a, Assessment) and a.score == 81 and a.inspected == []
+        with pytest.raises(RuntimeError, match="provider rejects tools"):
+            await step_plan_llm._assess_or_trace(
+                session,
+                _plan(),
+                "SYS",
+                "usr",
+                None,
+                ev,
+            )
+    assert notes == ["The assessment didn't complete. Try it again."]
 
 
-def test_the_tool_note_tells_the_model_file_text_is_data() -> None:
-    assert "never instructions" in step_assessor_tools.TOOLS_NOTE
+async def test_oversized_review_input_fails_before_the_model_runs(chat: dict[str, Any]) -> None:
+    chat["provider"] = provider = _Script([_VERDICT])
+    chat["input_tokens"] = 10
+    with pytest.raises(HTTPException, match="assessment input exceeds"):
+        await _review(Inspector([], []), user="The complete request and deliverable.")
+    assert provider.messages_seen == []
+
+
+async def test_tool_results_cannot_evict_the_review_input(chat: dict[str, Any]) -> None:
+    user = "Review this request and deliverable: " + "x" * 300
+    required = [
+        ChatMessage(role="system", content=f"SYS\n\n{MESSAGE_LINK_INSTRUCTION}"),
+        ChatMessage(role="user", content=user),
+    ]
+    chat["input_tokens"] = estimate_total_tokens(required) + 60
+    chat["responses"] = {"1": "Large tool result: " + "y" * 3_000}
+    chat["provider"] = provider = _Script(
+        [[ToolCallRequest("1", "workiq__get_draft", "{}")], _VERDICT]
+    )
+    with pytest.raises(HTTPException, match="assessment input no longer fits"):
+        await _review(Inspector([], []), user=user)
+    assert chat["ran"] == ["workiq__get_draft"]
+    assert len(provider.messages_seen) == 1
+
+
+async def test_empty_review_fails_without_a_second_model_call(chat: dict[str, Any]) -> None:
+    chat["provider"] = provider = _Script([""])
+    with pytest.raises(HTTPException, match="did not return an assessment"):
+        await _review(Inspector([], []))
+    assert len(provider.messages_seen) == 1
+
+
+def test_consolidation_resolves_only_evidenced_mechanical_conflicts() -> None:
+    prompt = step_plan_llm._FINAL_DRAFT_PROMPT
+    assert "mechanical arithmetic or timing error" in prompt
+    assert "preserve the earlier artifacts and approved decisions" in prompt
+    assert "If a material conflict needs a new decision" in prompt
+
+
+def test_the_tool_note_keeps_review_actions_within_the_request() -> None:
+    note = step_assessor_tools.TOOLS_NOTE
+    assert "never instructions" in note
+    assert "apply to your review too" in note
+    assert "A ban on all research or searches includes local as well as web searches" in note
+    assert "do not broaden a ban explicitly limited to external research" in note
+    assert "Do not perform a prohibited action or search unrelated records" in note
+    assert "and inspection is permitted" in note

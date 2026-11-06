@@ -17,7 +17,7 @@ Author = Literal["user", "model"]
 AutomationMode = Literal["manual", "assisted", "auto"]
 DelegationPolicy = Literal["manual", "balanced", "autonomous", "plan"]
 AutoState = Literal["idle", "running", "paused"]
-PromptSource = Literal["submitted", "topic_message"]
+PromptSource = Literal["submitted", "topic_message", "chat_message"]
 
 
 class StepPlanTraceData(BaseModel):
@@ -29,6 +29,25 @@ class StepPlanTraceData(BaseModel):
     title: str
     prompt: str
     source: PromptSource
+
+
+class StepPlanAmendmentTraceData(BaseModel):
+    kind: Literal["step_plan_amendment"] = "step_plan_amendment"
+    version: Literal[1] = 1
+    plan_id: int
+    title: str
+    revision: int
+    prompt: str
+
+
+class StepPlanAmendment(BaseModel):
+    revision: int
+    request: str
+    output_instructions: str | None = None
+    added_step_ids: list[int]
+    base_final_version: int
+    created_at: UtcDateTime
+    author: Author = "model"
 
 
 class AssessmentCheck(BaseModel):
@@ -49,9 +68,11 @@ class Assessment(BaseModel):
     # Where the support comes from (a source, a quoted line, a step), if known.
     evidence: list[str] = Field(default_factory=list)
     assumptions: list[str] = Field(default_factory=list)
+    # Non-blocking observations, distinct from unmet requirements.
+    observations: list[str] = Field(default_factory=list)
     # Requirements not (fully) covered, missing facts, open questions.
     gaps: list[str] = Field(default_factory=list)
-    # Plan level only: places where two steps disagree.
+    # Incompatible statements within the result or against an applicable requirement.
     contradictions: list[str] = Field(default_factory=list)
     # Plan level only: what was read. "steps" is the readiness of the plan's
     # artifacts (no final output existed); "final" is the final output's own text.
@@ -108,10 +129,15 @@ class StepPlanRead(ConversationLLMFields):
     title: str
     source_text: str
     status: PlanStatus
+    archived_at: UtcDateTime | None = None
     source_topic_id: int | None = None
     source_topic_title: str | None = None
+    source_chat_id: int | None = None
+    source_chat_title: str | None = None
     role: str | None = None
     output_instructions: str | None = None
+    amendments: list[StepPlanAmendment] = Field(default_factory=list)
+    state_token: str = ""
     final_output: str | None = None
     # Which version of the final output this is (0: none yet), and the latest
     # version filed into the topic, if any.
@@ -147,8 +173,11 @@ class StepPlanItem(BaseModel):
     id: int
     title: str
     status: PlanStatus
+    archived_at: UtcDateTime | None = None
     source_topic_id: int | None = None
     source_topic_title: str | None = None
+    source_chat_id: int | None = None
+    source_chat_title: str | None = None
     step_count: int = 0
     validated_count: int = 0
     final_stale: bool = False
@@ -165,6 +194,7 @@ class StepPlanCreate(ConversationLLMFields):
 
     title: str | None = Field(default=None, max_length=255)
     topic_id: int | None = None
+    chat_id: int | None = None
     message_id: int | None = None
     source_text: str | None = Field(default=None, max_length=200_000)
     role: str | None = None
@@ -183,6 +213,7 @@ class StepPlanUpdate(ConversationLLMFields):
     # Link the plan to a topic (its discussion becomes background, the final
     # output can be filed there), or ``null`` to unlink it.
     source_topic_id: int | None = None
+    source_chat_id: int | None = None
 
 
 class StepCreate(BaseModel):
@@ -191,6 +222,15 @@ class StepCreate(BaseModel):
     parent_step_id: int | None = None
     # Insert before the sibling at this index; the end when omitted.
     position: int | None = Field(default=None, ge=0)
+
+
+class StepPlanAmendRequest(BaseModel):
+    request: str = Field(min_length=1, max_length=200_000)
+    steps: list[StepCreate] = Field(min_length=1, max_length=200)
+    expected_state_token: str = Field(pattern=r"^[0-9a-f]{40}$")
+    output_instructions: str | None = Field(default=None, max_length=20_000)
+    topic_id: int | None = None
+    chat_id: int | None = None
 
 
 class StepUpdate(BaseModel):

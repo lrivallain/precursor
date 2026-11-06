@@ -124,25 +124,68 @@ async function run() {
     };
     // the demo's mock model cannot return an assessment, so inject one; the
     // prompts and signatures are covered by tests/test_step_plans.py
-    const injected = (assessment_scope) => async (route) => {
+    const injected = (assessment_scope, observations) => async (route) => {
       const response = await route.fetch();
       const body = await response.json();
       body.assessment = { score: 70, summary: "s", covered: [], evidence: [], assumptions: [], gaps: [], contradictions: [], scope: assessment_scope };
+      if (observations) body.assessment.observations = observations;
       body.assessment_stale = false;
       await route.fulfill({ response, json: body });
     };
-    await page.route(`**/api/step-plans/${plan.id}`, injected("final"));
+    await page.route(`**/api/step-plans/${plan.id}`, injected("final", ["A non-blocking review note."]));
     await page.reload();
     await page.getByTestId("final-output-row").click();
     assert.match(await scope(), /final output as written/);
+    await page.getByTestId("assessment-panel").getByText("Observations", { exact: true }).waitFor();
+    await page.getByTestId("assessment-panel").getByText("A non-blocking review note.", { exact: true }).waitFor();
     await page.unroute(`**/api/step-plans/${plan.id}`);
     await page.route(`**/api/step-plans/${plan.id}`, injected("steps"));
     await page.reload();
     await page.getByTestId("final-output-row").click();
     assert.match(await scope(), /steps only/);
 
+    // A delegated discussion displays its inherited policy, keeps an explicit
+    // override on amendment, and follows the updated policy again on Default.
+    const policyTopic = await api(page, "POST", "/topics", {
+      title: "Delegated policy test", approval_policy: "manual",
+    });
+    const policyPlan = await api(page, "POST", "/step-plans", {
+      topic_id: policyTopic.id, propose: false,
+      source_text: "Prepare the first part.", delegation_policy: "manual",
+    });
+    await api(page, "POST", `/step-plans/${policyPlan.id}/steps`, { title: "Policy step" });
+    await api(page, "POST", `/step-plans/${policyPlan.id}/start`, {});
+    await page.goto(`${BASE}/steps/${policyPlan.id}`);
+    await page.getByRole("complementary", { name: "Plan steps" }).getByText("Policy step", { exact: true }).click();
+    await page.getByRole("tab", { name: "Discussion" }).click();
+    const shield = page.getByRole("button", { name: /^Tool approval policy/ });
+    await shield.waitFor();
+    await shield.click();
+    const inherited = page.getByRole("option", { name: /^Default — Manual/ });
+    await inherited.waitFor();
+    assert.match(await inherited.textContent(), /Follows the delegated plan's autonomy/);
+    await page.getByRole("option", { name: /^Autonomous/ }).click();
+
+    await api(page, "PATCH", `/topics/${policyTopic.id}`, { approval_policy: "balanced" });
+    const currentPolicyPlan = await api(page, "GET", `/step-plans/${policyPlan.id}`);
+    await api(page, "POST", `/step-plans/${policyPlan.id}/amend`, {
+      topic_id: policyTopic.id, expected_state_token: currentPolicyPlan.state_token,
+      request: "Add the second part.", steps: [{ title: "Second part", instruction: "Prepare it." }],
+    });
+    await shield.click();
+    const updatedDefault = page.getByRole("option", { name: /^Default — Balanced/ });
+    await updatedDefault.waitFor();
+    assert.equal(await page.getByRole("option", { name: /^Autonomous/ }).getAttribute("aria-selected"), "true");
+    await updatedDefault.click();
+    await shield.click();
+    assert.equal(await page.getByRole("option", { name: /^Default — Balanced/ }).getAttribute("aria-selected"), "true");
+    await page.keyboard.press("Escape");
+
+    await api(page, "DELETE", `/step-plans/${policyPlan.id}`);
+    await api(page, "DELETE", `/topics/${policyTopic.id}`);
     assert.deepEqual(errors, []);
     await api(page, "DELETE", `/step-plans/${plan.id}`);
+    await api(page, "DELETE", `/topics/${topic.id}`);
     console.log("step drafts + stale final: ok");
   } finally {
     await browser.close();
