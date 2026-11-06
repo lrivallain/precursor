@@ -15,6 +15,9 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **Remove a saved provider key.** Secret fields in **Settings → Model** now have a
+  **Remove** link (with **Undo**) next to *(configured)*, so a stored API key can
+  be deleted, for example to switch Azure AI Foundry to Azure CLI sign-in.
 - **Azure CLI sign-in for Azure AI Foundry.** Leave the API key empty to
   authenticate with `az login`, optionally against a custom **Tenant ID**
   (otherwise the CLI's default tenant). The API key is no longer required.
