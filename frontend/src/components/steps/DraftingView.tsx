@@ -104,6 +104,7 @@ export function DraftingView({
         </div>
         <StepTree
           planId={plan.id}
+          rootTitle={plan.title}
           roots={roots}
           selectedId={selectedId}
           onSelect={onSelect}

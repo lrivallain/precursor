@@ -1,12 +1,35 @@
 import { useState } from "react";
-import { ChevronDown, ChevronRight, Gauge, Loader2 } from "lucide-react";
-import type { Assessment } from "../../lib/types";
+import { Check, ChevronDown, ChevronRight, Gauge, Loader2, X } from "lucide-react";
+import type { Assessment, AssessmentCheck } from "../../lib/types";
 import { BTN_SMALL } from "./StepUi";
 
 function scoreTone(score: number): string {
   if (score >= 75) return "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300";
   if (score >= 50) return "bg-amber-500/15 text-amber-700 dark:text-amber-300";
   return "bg-red-500/15 text-red-600 dark:text-red-300";
+}
+
+function Checks({ checks }: { checks: AssessmentCheck[] }) {
+  if (checks.length === 0) return null;
+  return (
+    <div data-testid="assessment-checks">
+      <h5 className="text-[11px] font-medium uppercase tracking-wide text-muted">
+        Verified by the app
+      </h5>
+      <ul className="mt-1 space-y-0.5 text-sm">
+        {checks.map((c, i) => (
+          <li key={i} className="flex items-start gap-1.5">
+            {c.ok ? (
+              <Check size={13} className="mt-0.5 shrink-0 text-emerald-600" aria-label="Passed" />
+            ) : (
+              <X size={13} className="mt-0.5 shrink-0 text-red-600" aria-label="Failed" />
+            )}
+            <span>{c.label}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
 }
 
 /** A compact score chip for tree rows and headings. */
@@ -49,8 +72,8 @@ function Section({ label, items }: { label: string; items: string[] }) {
 
 /**
  * A model self-assessment, shown as a score chip. Click it for the reasons (what
- * it covers, the evidence, assumptions, gaps and, for a whole plan,
- * contradictions) and to run it again. The model assesses on its own after it
+ * it covers, the evidence, assumptions, gaps and contradictions) and to run it
+ * again. The model assesses on its own after it
  * drafts; a step you wrote yourself offers "Assess" instead. Shown as out of
  * date when the work changed after it was written.
  */
@@ -122,6 +145,11 @@ export function AssessmentPanel({
             The model's own read of how well this answers the ask: a self-assessment, not a
             calibrated probability. Read the reasons, not just the number.
           </p>
+          <p className="text-[11px] text-muted" data-testid="assessment-process-limits">
+            The model's reasons can be wrong. Tool records may be incomplete, so an unlisted action
+            cannot be ruled out. App checks and reviewer tool-call notes, when available, are shown
+            separately below.
+          </p>
           {scopeNote && (
             <p className="text-[11px] font-medium text-fg" data-testid="assessment-scope">
               {scopeNote}
@@ -129,9 +157,12 @@ export function AssessmentPanel({
           )}
           <div className={`space-y-2 ${stale ? "opacity-70" : ""}`}>
             {assessment.summary && <p className="text-sm">{assessment.summary}</p>}
-            <Section label="Covered" items={assessment.covered} />
-            <Section label="Evidence" items={assessment.evidence} />
+            <Checks checks={assessment.checks ?? []} />
+            <Section label="Checked with tools" items={assessment.inspected ?? []} />
+            <Section label="Model-reported coverage" items={assessment.covered} />
+            <Section label="Model-cited evidence" items={assessment.evidence} />
             <Section label="Assumptions" items={assessment.assumptions} />
+            <Section label="Observations" items={assessment.observations ?? []} />
             <Section label="Gaps" items={assessment.gaps} />
             <Section label="Contradictions" items={assessment.contradictions} />
           </div>

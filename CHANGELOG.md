@@ -20,6 +20,114 @@ are the per-version history; releasing does not rewrite this file.
   shortcuts for chats, topics, agents, live sessions, plans, workflows and
   workspaces. The menu adapts to available space, supports touch and keyboard
   navigation, respects reduced motion, and remembers the button's position.
+- **Plan prompt provenance.** Step-by-step discussions distinguish user-requested drafts
+  from automation prompts. Review feedback is no longer labelled as user guidance, and older
+  prompts with no recorded origin are treated as uncertain rather than silently attributed
+  to the user. Repair drafts are instructed to verify fallible findings against the request
+  rather than inventing requirements to satisfy them. Assessments receive past discussion and
+  tool history as background evidence, rather than continuing an earlier draft. Images and
+  timeline controls are preserved.
+- **Archive step plans.** Archive an inactive plan from its tools menu and restore or
+  permanently delete it from the shared Archive's Plans tab. Its steps, discussions,
+  output versions and source receipts are kept; a live run must stop first.
+- **Follow up on a delegated plan.** A topic or chat can amend a related plan, preserve its
+  approved steps and final-output history, add the missing work, and revise the output
+  instructions. The current conversation autonomy controls resumption; Plan mode waits for
+  a person to start. Follow-ups appear as live plan receipts, and final assessments account
+  for accepted revisions. Existing step assessments are marked out of date when requirements
+  change, without changing their artifacts or approvals. File contents are not snapshotted by
+  text version history.
+- **Final output score in the plan bar.** Once a final output has been assessed, its score is
+  visible in the header, with an out-of-date indicator when the work changes.
+- **The assessor can inspect the work with tools.** It can list the step's files, read them (docx,
+  pptx, xlsx, HTML and text are extracted to text, with paging) and re-read a numbered tool call's
+  bounded output, limited to files the plan produced or its workspace folder, never hidden folders.
+  It runs through the same tool loop as a chat, with the step chat's model, per-run tool-use
+  budget, enabled MCP servers and approval rules, so it has a chat's tools (mailbox, GitHub, web,
+  workspace, skills and other exposed Precursor tools…) to verify the work at the source, such as checking a mail draft through
+  WorkIQ. It also receives the discussion history and linked source conversation as background,
+  under the usual context limits. The review itself is not persisted as a conversation. Autonomous is treated as balanced: read-only
+  tools run, anything else is declined (never parked) unless an allow rule covers it, and the
+  assessor reports it as an assumption. Its last round has the tools withdrawn so it answers.
+  Everything it opened or called shows under **Checked with tools**. One reviewer receives the
+  complete request, accepted revisions, applicable result and available evidence. It is instructed
+  to distinguish unmet requirements from uncertain claims and non-blocking observations, and
+  to respect applicable request restrictions in its own tool calls. These instructions are not
+  access controls and its assessment can still be wrong. A failed or malformed review, or one
+  whose required input cannot fit throughout the tool loop, is reported instead of silently
+  substituting a tool-less judgement. Its additional `step-inspector` tool calls now follow the
+  same approval policy and rules; automatic evidence collection remains separate. Measured checks
+  and caps still apply afterward.
+- Consolidation is instructed to resolve only evidence-supported mechanical inconsistencies
+  without altering approved step artifacts; material conflicts requiring a new decision remain
+  open rather than becoming an unrequested section in the delivered result.
+- Hand-back now provides the exact current final-assessment score when available, or instructs
+  the source model not to invent one when it is unavailable. It is instructed to check the
+  actual output rather than treat the score as proof and to acknowledge unverified process
+  restrictions. A waiting hand-back is skipped if its final or filed message is superseded or
+  its source changes.
+- **Automatic runs keep each step on scope and review it before continuing.** The whole ask and
+  sibling artifacts remain available as context, while the current step's requested result is
+  explicitly prioritized; useful work beyond that scope remains allowed and should be identified.
+  Model-facing guidance and the activity trace now say that steps run one at a time and that
+  automatic filing depends on the review rather than being guaranteed.
+  Balanced, autonomous and plan-policy runs check and validate each draft before starting the next
+  step, retrying failed checks, assessment gaps or contradictions, or scores under 60 once. If a
+  check, gap or contradiction remains,
+  a score stays under 50, or the assessment is unavailable or stale, the run pauses before later
+  steps can rely on it. Existing unfinished, weak or incomplete drafts are preserved for review.
+  Model-generated gaps can be wrong and a person can review them. Assessor tool notes now
+  include the file path or safe source URL it actually checked. Pausing also stops the run
+  after an in-flight consolidation or assessment and prevents automatic filing until resumed.
+- **A weak or incomplete final output is held back.** An automated balanced or autonomous run
+  retries a newly generated final once when the assessment identifies gaps or contradictions,
+  and does not file it if those remain or it scores under 50/100. Existing finals are preserved
+  for review instead of being rewritten. Autonomous filing also rechecks the assessed plan text,
+  stored steps and source transactionally, and saves the message and version record together.
+  A `/ws/<workspace>/<file>`
+  link in a step's result is now read as that workspace's file instead of failing the file check.
+  An HTML page made of sections is reported as sections, not as a deck of slides.
+- **Assessments verify file deliverables.** When a step's result is a file, the assessor gets
+  measured facts (the file exists, slide count against the ask, parseable content, an excerpt) and
+  bounded recent tool records from the plan discussions, instead of a bare path. The measured
+  checks show as **Verified by the app** in the assessment panel, and a failed check caps the score;
+  the panel warns that model reasons can be wrong and tool records alone cannot prove that an
+  unlisted action did not occur; coverage and evidence are labelled as model-reported rather
+  than app-verified.
+  In autonomous and balanced runs a step with a failed check or an assessment gap is redrafted once
+  before it can be validated, a step scoring under 60 is also redrafted once (and held for you if it is still under 50),
+  and a final output that names a missing file, or never names the file the steps built, is rebuilt
+  once; if it is still wrong, nothing is filed in the topic and the plan waits for you. A cover
+  slide doesn't count against an asked slide count, files in the app's own workspaces are read, and
+  a transient model failure (timeout, 5xx) is retried twice instead of pausing the run.
+- **Plans can use skills and tools.** A topic may delegate work that needs a skill or a
+  tool-built file when separate stages are useful. Step drafts can call `list_skills` /
+  `get_skill`, and a file result is filed back as its path with how to open it.
+- **Plan autonomy mode.** A fourth topic/chat autonomy option: tools ask like
+  Balanced, and a model delegating a long job only drafts and amends the step
+  plan. `run_step_plan` is refused until you press **Start the run** on the card.
+- **Delegated step plans follow the topic's autonomy.** Autonomous: the drafts
+  are validated, the output is filed in the topic and the topic's model reviews
+  it. Balanced: one final review by you. Manual: you validate each step. In the
+  last two the topic's model is woken once you send the output, and carries on.
+- **Models can delegate long asks to Step by step.** A new opt-in `step_plans`
+  MCP section (Settings → MCP exposure, off by default) adds `create_step_plan`,
+  `list_step_plans`, `get_step_plan` (optionally waiting for the run),
+  `edit_step_plan`, `run_step_plan` and `pause_step_plan`, and the system prompt
+  guides the model to use them when work benefits from separate stages. There is no fixed
+  deliverable-count rule; the choice remains model-generated and is not guaranteed.
+  Approval follows the topic's autonomy. Inside a conversation these tools are pinned
+  to that conversation: it can only create, amend, run or pause its own plans, and a
+  plan follows its source's current autonomy whenever a run starts.
+- **Archived plans are read-only.** Every write on an archived plan answers `409`
+  until it is restored.
+- **Amended plans finish on their own.** When the final consolidation after an
+  amendment only asks a question, the run now asks once more for the deliverable
+  instead of leaving the final stale, and a repaired step stays its own result.
+- **Live plan card in the discussion.** A topic that started a step plan now
+  shows its tasks (status, scores, spinner on the step being drafted, progress)
+  under the plan receipt, updating as the plan runs. A running card also refreshes
+  periodically if an event is missed, and displays refresh failures.
 
 ### Fixed
 
@@ -39,6 +147,69 @@ are the per-version history; releasing does not rewrite this file.
   install` preserves an unchanged plist and leaves an already-loaded app or tray
   job alone, avoiding unnecessary background-item re-registration notifications.
   Unloaded jobs are loaded again, and changed configurations are still replaced.
+- **Delegated discussions inherit source approvals.** Step and final-output discussions
+  now default to the plan's recorded autonomy and use source-conversation rules as well
+  as their own and global rules. A discussion's explicit policy and rules still take
+  precedence; the assessor retains its no-looser-than-balanced gate. User-started plans
+  keep the ordinary chat defaults.
+- **Revised final outputs reopen completed plans.** Saving or restoring a different final
+  version returns a completed plan to its final-output stage instead of presenting the new
+  version as already finished. Earlier posted versions and approved steps are preserved; an
+  unchanged save does not reopen the plan.
+- **Running steps are not a final delivery.** Plan tool results now distinguish validated step
+  drafts and their scores from an assessed, filed final output, and instruct the source model
+  to report a newly launched run once and leave review and hand-back to the app, unless the user
+  asks it to wait. The tool descriptions no longer encourage a conflicting polling loop. The
+  model is guided to answer short, straightforward multi-part requests directly rather than
+  creating a plan just to count sections. It may still repeat a result or check progress despite
+  this guidance. Tool results report whether
+  the current final's recorded copy still exists in the current source, and final assessments
+  receive that status rather than inferring publication from an inline draft. An absent record
+  does not rule out a separately posted copy.
+- **Delegated plans retain the originating request.** For same-conversation creation and
+  amendments, Precursor supplies the current source if omitted and carries the actual user
+  turn alongside the model's narrower delegated scope, including across approval pauses.
+  An omitted title comes from the delegated ask, not the request wrapper. The planner is instructed to honor
+  relevant constraints without expanding that scope; model output still needs review.
+  Final hand-back waits for an active or approval-paused source turn and avoids a second
+  reply when that turn read the exact final version and responded after it was filed.
+- **Empty plan receipts are honest.** A plan with no proposed steps now links to the plan
+  instead of showing an indefinite splitting spinner after a proposal failed.
+- **Paused plans show their latest activity in the source conversation.** The Tasks card
+  distinguishes a pause from active work and points to the plan for blocker review.
+- **Step assessments distinguish intermediate content from final files and check factual claims more carefully.**
+  An intermediate HTML section or table is not treated as a missing file unless that step asks
+  for one. Assessors are instructed to verify material factual claims against supplied sources
+  or available read-only tools, inspect named final files using read-only tools or app-provided
+  evidence, and ground final requirements in the original ask rather than inventing them from
+  intermediate steps. Repeating a claim in generated work does not independently support it;
+  unsupported quantitative or comparative claims and excess length should be called out,
+  and absent execution evidence does not prove a file or lookup never occurred.
+  File inspection tools are offered only when there are files or tool outputs to inspect.
+  The audit checks explicit limits and exclusions independently, and shows non-blocking
+  observations separately from unmet requirements. Model classifications and scores remain
+  estimates, not correctness guarantees.
+- **Step drafts use your skills.** A step's chat and drafts now list the active
+  skills and tell the model to load a named one (`get_skill`) before improvising;
+  `/skill` mentions in a step's instructions are expanded, and the draft and retry
+  prompts no longer push the model to hand-write what a tool or skill should build.
+  A file deliverable is the path plus how to open it.
+- **Redoing a validated step.** A model reply with a new deliverable on a validated
+  step now applies as a new version and reopens it for your validation, instead of
+  being dropped. The validated version stays in the history.
+
+- **A finished delegated plan now says what it is waiting for.** Once every step
+  is approved, the discussion card offers **Generate the final output** when none
+  exists, **Regenerate the final output** when it needs updating, or **Send to the
+  topic** when the current output is ready. A paused plan directs you to review its
+  blockers instead of offering final actions from the card. Regenerating
+  no longer completes a plan delegated from a topic: sending it does, so the
+  topic's model is always woken. A final output the model fails to write is
+  retried once, then the run pauses with a note.
+- **Automated step runs no longer skip a step silently.** A step the model answers
+  with questions instead of a draft is asked once more to write it; if it still
+  has none, the run pauses and says which step needs you, instead of building the
+  final output without it.
 - **Settings: save without closing.** Saving keeps the panel open on the current
   category with a confirmation. Closing only warns about edits made since the
   last successful save; failed saves keep your changes available to retry.

@@ -22,8 +22,18 @@ from precursor.backend.db import SessionLocal
 from precursor.backend.main import create_app
 from precursor.backend.models import Chat, Topic, UsageRecord
 from precursor.backend.services.llm import one_shot
-from precursor.backend.services.llm.base import TextDeltaEvent, UsageEvent
-from precursor.backend.services.llm.one_shot import LLMCallFailed, complete_once
+from precursor.backend.services.llm.base import (
+    TextDeltaEvent,
+    ToolCallRequest,
+    ToolCallsEvent,
+    ToolDef,
+    UsageEvent,
+)
+from precursor.backend.services.llm.one_shot import (
+    LLMCallFailed,
+    complete_once,
+    complete_with_tools,
+)
 
 
 @pytest.fixture(autouse=True, scope="module")
@@ -223,3 +233,87 @@ async def test_an_unhandled_failure_is_a_502_from_the_api(
         )
     assert resp.status_code == 502
     assert resp.json() == {"detail": "LLM call failed: upstream is down"}
+
+
+class _Scripted:
+    """A provider that asks for a tool on each round until its tools are withdrawn."""
+
+    name = "scripted"
+
+    def __init__(self, rounds_with_tools: int) -> None:
+        self._left = rounds_with_tools
+        self.calls: list[dict[str, Any]] = []
+
+    async def stream_chat_with_tools(self, **kwargs: Any) -> AsyncIterator[object]:
+        self.calls.append({**kwargs, "messages": list(kwargs["messages"])})
+        if kwargs["tools"] and self._left > 0:
+            self._left -= 1
+            yield ToolCallsEvent(calls=[ToolCallRequest(id="c1", name="peek", arguments="{}")])
+        else:
+            yield TextDeltaEvent(content="verdict")
+        yield UsageEvent(prompt_tokens=1, completion_tokens=1, total_tokens=2)
+
+
+_PEEK = ToolDef(name="peek", description="d", parameters={"type": "object", "properties": {}})
+
+
+async def test_a_tool_loop_feeds_results_back_and_returns_the_final_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _Scripted(rounds_with_tools=1)
+    _use(monkeypatch, provider)  # type: ignore[arg-type]
+    ran: list[str] = []
+
+    async def _run(call: ToolCallRequest) -> str:
+        ran.append(call.name)
+        return "file text"
+
+    before = await _ledger_count()
+    async with SessionLocal() as session:
+        result = await complete_with_tools(
+            session, system="s", user="u", usage_source="/probe", tools=[_PEEK], run_tool=_run
+        )
+    assert result.text == "verdict" and ran == ["peek"]
+    roles = [m.role for m in provider.calls[1]["messages"]]
+    assert roles == ["system", "user", "assistant", "tool"]
+    assert provider.calls[1]["messages"][-1].content == "file text"
+    assert await _ledger_count() == before + 2
+
+
+async def test_a_tool_loop_withdraws_the_tools_so_the_model_must_answer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _Scripted(rounds_with_tools=99)
+    _use(monkeypatch, provider)  # type: ignore[arg-type]
+
+    async def _run(_call: ToolCallRequest) -> str:
+        return "x"
+
+    async with SessionLocal() as session:
+        result = await complete_with_tools(
+            session,
+            system="s",
+            user="u",
+            usage_source="/probe",
+            tools=[_PEEK],
+            run_tool=_run,
+            max_rounds=2,
+        )
+    assert result.text == "verdict"
+    assert [bool(c["tools"]) for c in provider.calls] == [True, True, False]
+    assert "final answer" in provider.calls[-1]["messages"][-1].content
+
+
+async def test_a_tool_loop_failure_is_a_single_error_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _use(monkeypatch, _Provider(error=RuntimeError("boom")))
+
+    async def _run(_call: ToolCallRequest) -> str:
+        return "x"
+
+    async with SessionLocal() as session:
+        with pytest.raises(LLMCallFailed, match="boom"):
+            await complete_with_tools(
+                session, system="s", user="u", usage_source="/probe", tools=[], run_tool=_run
+            )

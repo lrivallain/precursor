@@ -27,11 +27,11 @@ export function StepPlanList({ plans, ...props }: Props) {
             : `${PLAN_STATUS_LABEL[plan.status]} · ${plan.validated_count}/${plan.step_count} approved`,
         dot: PLAN_STATUS_DOT[plan.status],
         extra:
-          plan.source_topic_title || plan.final_stale ? (
+          plan.source_topic_title || plan.source_chat_title || plan.final_stale ? (
             <span className="mt-1 flex flex-wrap items-center gap-1">
-              {plan.source_topic_title && (
+              {(plan.source_topic_title || plan.source_chat_title) && (
                 <span className="max-w-full truncate rounded-full border border-border px-1.5 py-px text-[10px] text-muted">
-                  {plan.source_topic_title}
+                  {plan.source_topic_title || plan.source_chat_title}
                 </span>
               )}
               {plan.final_stale && <StaleBadge />}

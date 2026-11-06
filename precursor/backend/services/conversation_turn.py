@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from collections.abc import AsyncIterator, Callable, Collection
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -39,6 +40,10 @@ from precursor.backend.models import (
     Message,
     MessageRole,
     Topic,
+)
+from precursor.backend.models.message import (
+    MESSAGE_KIND_STEP_AUTOMATION,
+    MESSAGE_KIND_STEP_USER_REQUEST,
 )
 from precursor.backend.models.tool_approval import APPROVAL_APPROVED, APPROVAL_KIND_INTENT
 from precursor.backend.schemas import ChatRequest
@@ -83,6 +88,8 @@ from precursor.backend.services.turn_engine import (
     run_message_stream,
 )
 from precursor.backend.services.workspaces import WORKSPACE_READ_TOOLS, WORKSPACE_WRITE_TOOLS
+
+logger = logging.getLogger(__name__)
 
 
 def _message_fk(kind: ContainerKind) -> InstrumentedAttribute[int | None]:
@@ -199,12 +206,18 @@ async def _resolve_base_settings(
 
 
 async def persist_user_message(
-    session: AsyncSession, kind: ContainerKind, container_id: int, content: str
+    session: AsyncSession,
+    kind: ContainerKind,
+    container_id: int,
+    content: str,
+    *,
+    message_kind: str | None = None,
 ) -> Message:
     """Save ``content`` as a user turn now, so the transcript shows it at once."""
     user_msg = Message(
         role=MessageRole.USER,
         content=content,
+        kind=message_kind,
         **container_message_kwargs(kind, container_id),
     )
     session.add(user_msg)
@@ -333,6 +346,8 @@ async def load_model_history(
         attachment_max_chars=await resolve_llm_max_attachment_chars(session),
         prompt_override=prompt_override,
         discussion_path=discussion_path(kind, container.public_id) if container else None,
+        legacy_step_prompts=isinstance(container, Chat)
+        and (container.step_id is not None or container.step_plan_id is not None),
     )
 
 
@@ -384,6 +399,7 @@ def _turn_events(
     echo: dict[str, Any] | None,
     settings: TurnSettings,
     auth_wait_timeout: float = AUTH_PAUSE_TIMEOUT_SECONDS,
+    source_message_id: int | None = None,
 ) -> AsyncIterator[dict[str, str]]:
     return run_message_stream(
         kind=kind,
@@ -402,6 +418,7 @@ def _turn_events(
         auth_wait_timeout=auth_wait_timeout,
         gate=settings.gate,
         restrict_precursor=settings.restrict_precursor,
+        source_message_id=source_message_id,
     )
 
 
@@ -515,6 +532,12 @@ def resume_turn(
         # answers given a moment ago apply to the very next call.
         async with SessionLocal() as s:
             gate = await approval_service.build_gate(s, kind, container_id)
+        source_ids = {row.source_message_id for row in decided}
+        source_message_id = next(iter(source_ids)) if len(source_ids) == 1 else None
+        if len(source_ids) > 1:
+            logger.warning(
+                "Cannot anchor resumed %s %s: approval origins differ", kind, container_id
+            )
         async for evt in _turn_events(
             kind,
             container_id,
@@ -523,6 +546,7 @@ def resume_turn(
             None,
             replace(settings, gate=gate),
             auth_wait_timeout,
+            source_message_id,
         ):
             yield evt
 
@@ -655,7 +679,11 @@ async def list_container_turns(
     turns: list[TurnIndexEntry] = []
     for mid, role, msg_kind, created_at, agent_id, excerpt in rows:
         text = (excerpt or "").strip()
-        if role == MessageRole.USER and msg_kind is None:
+        if role == MessageRole.USER and msg_kind in (
+            None,
+            MESSAGE_KIND_STEP_AUTOMATION,
+            MESSAGE_KIND_STEP_USER_REQUEST,
+        ):
             turns.append(
                 TurnIndexEntry(
                     message_id=mid,
@@ -709,7 +737,11 @@ async def rewind_container(
     owner = None if anchor is None else (anchor.topic_id if kind == "topic" else anchor.chat_id)
     if anchor is None or owner != container_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Message not found")
-    if anchor.role != MessageRole.USER or anchor.kind is not None:
+    if anchor.role != MessageRole.USER or anchor.kind not in (
+        None,
+        MESSAGE_KIND_STEP_AUTOMATION,
+        MESSAGE_KIND_STEP_USER_REQUEST,
+    ):
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT, "A rewind must start at a user prompt."
         )

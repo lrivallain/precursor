@@ -80,6 +80,9 @@ MCP_EXPOSE_SECTIONS: tuple[str, ...] = (
     "notes",
     "post_message",
     "side_chats",
+    # Delegating a long job to Step by step: creates plans and starts runs that
+    # spend the provider's quota, so it is a write toggle.
+    "step_plans",
     "schedules",
     "reminders",
     # Sandboxed file access to workspace working trees; writes (and creating a
@@ -947,7 +950,7 @@ DEFAULT_AGENTS_SYSTEM_PROMPT = ""
 DEFAULT_AGENTS_WATCHDOG_TIMEOUT_SECONDS = 600
 
 
-CONVERSATION_APPROVAL_POLICIES = ("manual", "balanced", "autonomous")
+CONVERSATION_APPROVAL_POLICIES = ("manual", "balanced", "autonomous", "plan")
 # Autonomous keeps chats and topics behaving as they did before approvals
 # existed; a conversation (or this default) opts in to prompting.
 DEFAULT_CONVERSATION_APPROVAL_POLICY = "autonomous"

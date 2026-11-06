@@ -50,6 +50,8 @@ interface Props {
   activeStepId?: number | null;
   /** Steps holding edits that are not saved yet. */
   unsavedStepIds?: ReadonlySet<number>;
+  /** The ask the steps split: drawn as the starting point of the tree lines. */
+  rootTitle?: string;
 }
 
 const ACTION_BTN =
@@ -71,6 +73,7 @@ export function StepTree({
   footer,
   activeStepId = null,
   unsavedStepIds,
+  rootTitle,
 }: Props) {
   const confirm = useConfirm();
   const [adding, setAdding] = useState<{ parent: number | null } | null>(null);
@@ -128,8 +131,9 @@ export function StepTree({
     if (ok) await mutate(() => api.stepPlans.removeStep(node.step.id));
   }
 
-  function renderNode(node: StepNode): ReactNode {
+  function renderNode(node: StepNode, index: number, siblings: StepNode[]): ReactNode {
     const { step, depth } = node;
+    const isLast = index === siblings.length - 1;
     const selected = step.id === selectedId;
     const proposed = step.status === "proposed";
     const group = isGroup(node);
@@ -137,7 +141,21 @@ export function StepTree({
     const dropHere = drop?.id === step.id ? drop.zone : null;
     const dragged = dragId !== null ? find(dragId) : undefined;
     return (
-      <li key={step.id}>
+      <li key={step.id} className="relative">
+        {(depth > 0 || rootTitle) && (
+          <>
+            <span
+              className="pointer-events-none absolute -left-[9px] top-0 h-[18px] w-[9px] rounded-bl-lg border-b border-l border-border"
+              aria-hidden
+            />
+            {!isLast && (
+              <span
+                className="pointer-events-none absolute -bottom-0.5 -left-[9px] top-0 w-px bg-border"
+                aria-hidden
+              />
+            )}
+          </>
+        )}
         <div
           draggable
           onDragStart={(e) => {
@@ -178,7 +196,6 @@ export function StepTree({
           } ${dragId === step.id ? "opacity-40" : ""} ${
             dropHere === "inside" ? "ring-2 ring-accent/60" : ""
           }`}
-          style={{ marginLeft: depth * 16 }}
           data-testid={`step-row-${step.id}`}
         >
           {dropHere === "before" && (
@@ -265,7 +282,7 @@ export function StepTree({
           {selected && renderDetail && <div className="px-2 pb-2">{renderDetail(node)}</div>}
         </div>
         {adding?.parent === step.id && (
-          <div style={{ marginLeft: (depth + 1) * 16 }}>
+          <div className="ml-4">
             <AddStepRow
               onCancel={() => setAdding(null)}
               onAdd={(title) => {
@@ -275,7 +292,7 @@ export function StepTree({
             />
           </div>
         )}
-        {node.children.length > 0 && <ul className="space-y-0.5">{node.children.map(renderNode)}</ul>}
+        {node.children.length > 0 && <ul className="ml-4 space-y-0.5">{node.children.map(renderNode)}</ul>}
       </li>
     );
   }
@@ -287,9 +304,20 @@ export function StepTree({
           {emptyMessage}
         </p>
       ) : (
-        <ul className="space-y-0.5" aria-label="Steps">
-          {roots.map(renderNode)}
-        </ul>
+        <div>
+          {rootTitle && (
+            <div className="relative flex items-center gap-2 py-1 text-sm font-medium">
+              <span className="absolute bottom-0 left-[7px] top-1/2 w-px bg-border" aria-hidden />
+              <span className="relative mx-[3px] h-[9px] w-[9px] shrink-0 rounded-full border-2 border-accent bg-bg" aria-hidden />
+              <span className="min-w-0 flex-1 truncate" data-tooltip={rootTitle}>
+                {rootTitle}
+              </span>
+            </div>
+          )}
+          <ul className={`space-y-0.5 ${rootTitle ? "ml-4" : ""}`} aria-label="Steps">
+            {roots.map(renderNode)}
+          </ul>
+        </div>
       )}
       {adding?.parent === null ? (
         <AddStepRow

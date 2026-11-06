@@ -78,7 +78,7 @@ export function VersionHistory({
               {v.posted_at && (
                 <span
                   className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] text-emerald-700 dark:text-emerald-300"
-                  data-tooltip={`Posted in the topic on ${new Date(v.posted_at).toLocaleString()}`}
+                  data-tooltip={`Posted in a source conversation on ${new Date(v.posted_at).toLocaleString()}`}
                 >
                   <Send size={10} /> posted
                 </span>

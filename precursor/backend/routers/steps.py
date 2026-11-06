@@ -8,11 +8,16 @@ refresh.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.db import get_session
-from precursor.backend.models.step_plan import AUTHOR_USER, AUTOMATION_AUTO
+from precursor.backend.models.step_plan import (
+    AUTHOR_USER,
+    PLAN_DONE,
+    Step,
+    StepPlan,
+)
 from precursor.backend.schemas.chat import ChatRead
 from precursor.backend.schemas.message import MessageRead
 from precursor.backend.schemas.step_plan import (
@@ -28,6 +33,7 @@ from precursor.backend.schemas.step_plan import (
     StepCreate,
     StepGenerateRequest,
     StepMove,
+    StepPlanAmendRequest,
     StepPlanCreate,
     StepPlanItem,
     StepPlanRead,
@@ -45,8 +51,45 @@ from precursor.backend.services import step_plans as svc
 from precursor.backend.services.events import publish_step_plan_changed
 from precursor.backend.services.side_chats import to_chat_read
 
-router = APIRouter(prefix="/api/step-plans", tags=["step-plans"])
-steps_router = APIRouter(prefix="/api/steps", tags=["step-plans"])
+# Archiving, deleting and opening a conversation stay possible on an archived plan.
+_ARCHIVE_EXEMPT_ROUTES = frozenset(
+    {
+        "/api/step-plans/{plan_id}/archive",
+        "/api/step-plans/{plan_id}/unarchive",
+        "/api/step-plans/{plan_id}",
+        "/api/step-plans/{plan_id}/consolidation/chat",
+        "/api/steps/{step_id}/chat",
+    }
+)
+
+
+async def reject_archived_writes(
+    request: Request, session: AsyncSession = Depends(get_session)
+) -> None:
+    """An archived plan is read-only until it is restored."""
+    if request.method in ("GET", "HEAD", "OPTIONS"):
+        return
+    route = request.scope.get("route")
+    path = getattr(route, "path", "")
+    if path in _ARCHIVE_EXEMPT_ROUTES and (request.method != "PATCH"):
+        return
+    plan_id = request.path_params.get("plan_id")
+    if plan_id is None and "step_id" in request.path_params:
+        step = await session.get(Step, int(request.path_params["step_id"]))
+        plan_id = step.plan_id if step is not None else None
+    if plan_id is None:
+        return
+    plan = await session.get(StepPlan, int(plan_id))
+    if plan is not None:
+        svc.require_unarchived(plan)
+
+
+router = APIRouter(
+    prefix="/api/step-plans", tags=["step-plans"], dependencies=[Depends(reject_archived_writes)]
+)
+steps_router = APIRouter(
+    prefix="/api/steps", tags=["step-plans"], dependencies=[Depends(reject_archived_writes)]
+)
 
 
 async def _plan(session: AsyncSession, plan_id: int) -> StepPlanRead:
@@ -62,9 +105,16 @@ async def _step(session: AsyncSession, step_id: int) -> StepRead:
 
 @router.get("", response_model=list[StepPlanItem])
 async def list_plans(
-    topic_id: int | None = None, session: AsyncSession = Depends(get_session)
+    topic_id: int | None = None,
+    chat_id: int | None = None,
+    session: AsyncSession = Depends(get_session),
 ) -> list[StepPlanItem]:
-    return await svc.list_plans(session, topic_id)
+    return await svc.list_plans(session, topic_id, chat_id)
+
+
+@router.get("/archived", response_model=list[StepPlanItem])
+async def list_archived_plans(session: AsyncSession = Depends(get_session)) -> list[StepPlanItem]:
+    return await svc.list_plans(session, archived=True)
 
 
 @router.post("", response_model=StepPlanRead, status_code=status.HTTP_201_CREATED)
@@ -92,6 +142,31 @@ async def update_plan(
     plan_id: int, payload: StepPlanUpdate, session: AsyncSession = Depends(get_session)
 ) -> StepPlanRead:
     await svc.update_plan(session, plan_id, payload)
+    await publish_step_plan_changed(plan_id)
+    return await _plan(session, plan_id)
+
+
+@router.post("/{plan_id}/amend", response_model=StepPlanRead)
+async def amend_plan(
+    plan_id: int, payload: StepPlanAmendRequest, session: AsyncSession = Depends(get_session)
+) -> StepPlanRead:
+    await svc.amend_plan(session, plan_id, payload)
+    await publish_step_plan_changed(plan_id)
+    return await _plan(session, plan_id)
+
+
+@router.post("/{plan_id}/archive", response_model=StepPlanRead)
+async def archive_plan(plan_id: int, session: AsyncSession = Depends(get_session)) -> StepPlanRead:
+    await svc.set_archived(session, plan_id, archived=True)
+    await publish_step_plan_changed(plan_id)
+    return await _plan(session, plan_id)
+
+
+@router.post("/{plan_id}/unarchive", response_model=StepPlanRead)
+async def unarchive_plan(
+    plan_id: int, session: AsyncSession = Depends(get_session)
+) -> StepPlanRead:
+    await svc.set_archived(session, plan_id, archived=False)
     await publish_step_plan_changed(plan_id)
     return await _plan(session, plan_id)
 
@@ -137,11 +212,9 @@ async def start_plan(
     payload: StepStartRequest | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> StepPlanRead:
-    plan = await svc.start_plan(
+    await runner.activate(
         session, plan_id, accept_proposed=payload.accept_proposed if payload else True
     )
-    if plan.automation_mode == AUTOMATION_AUTO:
-        await runner.start(session, plan_id)
     await publish_step_plan_changed(plan_id)
     return await _plan(session, plan_id)
 
@@ -158,6 +231,14 @@ async def complete_plan(plan_id: int, session: AsyncSession = Depends(get_sessio
 async def start_auto(plan_id: int, session: AsyncSession = Depends(get_session)) -> StepPlanRead:
     """Start (or resume) the automated run: it drafts and scores, never validates."""
     await runner.start(session, plan_id)
+    await publish_step_plan_changed(plan_id)
+    return await _plan(session, plan_id)
+
+
+@router.post("/{plan_id}/launch", response_model=StepPlanRead)
+async def launch(plan_id: int, session: AsyncSession = Depends(get_session)) -> StepPlanRead:
+    """Confirm a plan drafted by a model: accept its steps and start the automated run."""
+    await runner.launch(session, plan_id)
     await publish_step_plan_changed(plan_id)
     return await _plan(session, plan_id)
 
@@ -209,12 +290,17 @@ async def generate_final(
     payload: ConsolidateRequest | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> FinalDraftResult:
+    plan = await svc.get_plan(session, plan_id)
+    # A delegated plan finishes when its final output reaches the topic, so the model is woken.
+    delegated = plan.delegation_policy is not None and (
+        plan.source_topic_id is not None or plan.source_chat_id is not None
+    )
     draft = await llm.generate_final(
         session,
         plan_id,
         instructions=payload.instructions if payload else None,
         force=payload.force if payload else False,
-        complete=True,
+        complete=not delegated,
     )
     await publish_step_plan_changed(plan_id)
     return FinalDraftResult(plan=await _plan(session, plan_id), outcome=draft.outcome)
@@ -255,17 +341,51 @@ async def revert_final(
 
 
 @router.post("/{plan_id}/send-to-topic", response_model=MessageRead)
-async def send_to_topic(
+@router.post("/{plan_id}/send-to-source", response_model=MessageRead)
+async def send_to_source(
     plan_id: int,
     payload: SendToTopicRequest | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> MessageRead:
-    _, message = await llm.send_to_topic(
+    plan, message = await llm.send_to_source(
         session,
         plan_id,
         payload.text if payload else None,
         force=payload.force if payload else False,
     )
+    if (
+        plan.delegation_policy in ("manual", "balanced", "plan")
+        and plan.status == PLAN_DONE
+        and not plan.final_provisional
+        and svc.is_ready(await svc.plan_steps(session, plan.id))
+        and (plan.source_topic_id is not None or plan.source_chat_id is not None)
+    ):
+        from precursor.backend.services import step_plan_runner
+
+        matching_final = (
+            payload is None
+            or payload.text is None
+            or (payload.text.strip("\n") == plan.final_output)
+        )
+        if plan.source_topic_id is not None:
+            step_plan_runner.hand_back(
+                plan.source_topic_id,
+                plan.title,
+                reviewed_by_user=True,
+                plan_id=plan.id,
+                posted_message_id=message.id,
+                final_version=plan.final_version if matching_final else None,
+            )
+        elif plan.source_chat_id is not None:
+            step_plan_runner.hand_back(
+                plan.source_chat_id,
+                plan.title,
+                reviewed_by_user=True,
+                source_kind="chat",
+                plan_id=plan.id,
+                posted_message_id=message.id,
+                final_version=plan.final_version if matching_final else None,
+            )
     await publish_step_plan_changed(plan_id)
     return message
 

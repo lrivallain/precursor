@@ -143,6 +143,9 @@ export interface Chat {
   /** Frozen copy of that reply; survives its rewind or deletion. */
   seed_content?: string | null;
   approval_policy?: ConversationApprovalPolicy | null;
+  /** The delegated plan's default for this discussion, if it has one. */
+  inherited_approval_policy?: ConversationApprovalPolicy | null;
+  inherited_approval_plan_id?: number | null;
   pending_approvals?: number;
 }
 
@@ -1360,7 +1363,7 @@ export interface Message {
   original_content?: string | null;
   /** When the reply was last edited (null when untouched). */
   edited_at?: string | null;
-  /** Special-row marker; "compaction" = a context-compaction summary (system row). */
+  /** Special row or Step-by-Step drafting-prompt origin. */
   kind?: string | null;
   /** Assistant turns: the model's thinking for this round, shown collapsed. */
   reasoning?: string | null;
@@ -1510,7 +1513,7 @@ export interface NoteDraftAttachment {
 export type AgentApprovalPolicy = "manual" | "balanced" | "autonomous";
 
 /** Per-conversation tool approval policy (mirrors backend `ApprovalPolicy`). */
-export type ConversationApprovalPolicy = AgentApprovalPolicy;
+export type ConversationApprovalPolicy = AgentApprovalPolicy | "plan";
 
 /** A tool call (or the model's own intent) waiting on, or settled by, the user. */
 export interface ToolApproval {
@@ -2987,7 +2990,26 @@ export interface StepPlanTraceData {
   plan_id: number;
   title: string;
   prompt: string;
-  source: "submitted" | "topic_message";
+  source: "submitted" | "topic_message" | "chat_message";
+}
+
+export interface StepPlanAmendmentTraceData {
+  kind: "step_plan_amendment";
+  version: 1;
+  plan_id: number;
+  title: string;
+  revision: number;
+  prompt: string;
+}
+
+export interface StepPlanAmendment {
+  revision: number;
+  request: string;
+  output_instructions: string | null;
+  added_step_ids: number[];
+  base_final_version: number;
+  created_at: string;
+  author: "user" | "model";
 }
 
 export type StepPlanStatus = "drafting" | "active" | "consolidating" | "done" | "cancelled";
@@ -3007,6 +3029,12 @@ export type SettableStepStatus = Exclude<StepStatus, "proposed">;
 export type AutomationMode = "manual" | "assisted" | "auto";
 export type AutoState = "idle" | "running" | "paused";
 
+/** One fact the app measured itself for an assessment (a file exists, a slide count). */
+export interface AssessmentCheck {
+  label: string;
+  ok: boolean;
+}
+
 /** A model's self-assessment of a result. Not a calibrated probability. */
 export interface Assessment {
   /** 0-100: how well the result seems to answer what it was asked. */
@@ -3015,8 +3043,10 @@ export interface Assessment {
   covered: string[];
   evidence: string[];
   assumptions: string[];
+  /** Model-reported non-blocking issues, not unmet requirements. */
+  observations: string[];
   gaps: string[];
-  /** Plan level only: places where two steps disagree. */
+  /** Incompatible statements within the result or against an applicable requirement. */
   contradictions: string[];
   /**
    * Plan level only: what was read. "steps" is readiness of the plan before
@@ -3024,6 +3054,10 @@ export interface Assessment {
    * is the final output's text against the ask.
    */
   scope?: "steps" | "final";
+  /** Measured by the app for a file deliverable; a failed one caps the score. */
+  checks?: AssessmentCheck[];
+  /** What the assessor opened with its read-only tools (a file, a tool's output). */
+  inspected?: string[];
 }
 
 export interface Step {
@@ -3063,11 +3097,16 @@ export interface StepPlan {
   title: string;
   source_text: string;
   status: StepPlanStatus;
+  archived_at: string | null;
   source_topic_id: number | null;
   source_topic_title: string | null;
+  source_chat_id: number | null;
+  source_chat_title: string | null;
   role: string | null;
   llm_selection: ConversationLLMSelection | null;
   output_instructions: string | null;
+  amendments: StepPlanAmendment[];
+  state_token: string;
   final_output: string | null;
   /** Which version of the final output this is (0: none yet). */
   final_version: number;
@@ -3078,6 +3117,7 @@ export interface StepPlan {
   /** The final output was written before every step was validated. */
   final_provisional: boolean;
   automation_mode: AutomationMode;
+  delegation_policy: "manual" | "balanced" | "autonomous" | "plan" | null;
   auto_state: AutoState;
   /** The step being drafted right now, only while the run is going. */
   auto_step_id: number | null;
@@ -3097,8 +3137,11 @@ export interface StepPlanItem {
   id: number;
   title: string;
   status: StepPlanStatus;
+  archived_at: string | null;
   source_topic_id: number | null;
   source_topic_title: string | null;
+  source_chat_id: number | null;
+  source_chat_title: string | null;
   step_count: number;
   validated_count: number;
   final_stale: boolean;
@@ -3109,6 +3152,7 @@ export interface StepPlanItem {
 export interface StepPlanCreate {
   title?: string | null;
   topic_id?: number | null;
+  chat_id?: number | null;
   message_id?: number | null;
   source_text?: string | null;
   role?: string | null;
@@ -3126,7 +3170,17 @@ export interface StepPlanUpdate {
   output_instructions?: string | null;
   /** Link the plan to a topic, or `null` to unlink it. */
   source_topic_id?: number | null;
+  source_chat_id?: number | null;
   llm_selection?: ConversationLLMSelection | null;
+}
+
+export interface StepPlanAmendRequest {
+  request: string;
+  steps: StepCreate[];
+  expected_state_token: string;
+  output_instructions?: string | null;
+  topic_id?: number | null;
+  chat_id?: number | null;
 }
 
 export interface StepCreate {

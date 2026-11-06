@@ -43,6 +43,15 @@ _TOOLS_BY_SECTION: dict[str, list[str]] = {
     "notes": ["append_note"],
     "side_chats": ["create_side_chat"],
     "post_message": ["post_message"],
+    "step_plans": [
+        "create_step_plan",
+        "list_step_plans",
+        "get_step_plan",
+        "amend_step_plan",
+        "edit_step_plan",
+        "run_step_plan",
+        "pause_step_plan",
+    ],
     "schedules": [
         "list_schedules",
         "get_schedule",

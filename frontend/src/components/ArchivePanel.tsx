@@ -7,12 +7,14 @@ import {
   MessagesSquare,
   Radio,
   RotateCcw,
+  ListTree,
   Trash2,
   Workflow as WorkflowIcon,
   X,
 } from "lucide-react";
 import { api } from "../lib/api";
-import type { AgentSession, Chat, MeetingSession, Topic, Workflow } from "../lib/types";
+import { eventBus } from "../lib/events";
+import type { AgentSession, Chat, MeetingSession, StepPlanItem, Topic, Workflow } from "../lib/types";
 import { useConfirm } from "./ConfirmDialog";
 
 interface Props {
@@ -27,9 +29,10 @@ interface Props {
   onSessionDeleted: (sessionId: number) => void;
   /** Nudges the Workflows cockpit to re-fetch after a restore/delete. */
   onWorkflowsChanged?: () => void;
+  onStepPlansChanged?: (deletedPlanId?: number) => void;
 }
 
-type Tab = "topics" | "chats" | "agents" | "workflows" | "live";
+type Tab = "topics" | "chats" | "agents" | "workflows" | "steps" | "live";
 
 // Archive is shared across modes: topics, chats, agent sessions, workflows and live
 // sessions are all archivable, and each restores into its own section. The view
@@ -45,6 +48,7 @@ export function ArchivePanel({
   onSessionRestored,
   onSessionDeleted,
   onWorkflowsChanged,
+  onStepPlansChanged,
 }: Props) {
   const confirmAction = useConfirm();
   const [tab, setTab] = useState<Tab>("topics");
@@ -52,6 +56,7 @@ export function ArchivePanel({
   const [chats, setChats] = useState<Chat[] | null>(null);
   const [agents, setAgents] = useState<AgentSession[] | null>(null);
   const [workflows, setWorkflows] = useState<Workflow[] | null>(null);
+  const [plans, setPlans] = useState<StepPlanItem[] | null>(null);
   const [sessions, setSessions] = useState<MeetingSession[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -79,6 +84,27 @@ export function ArchivePanel({
         setSessions([]);
       }
     })();
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    const refresh = () => {
+      void api.stepPlans.listArchived().then(
+        (items) => { if (active) setPlans(items); },
+        (e: unknown) => {
+          if (active) {
+            setError(e instanceof Error ? e.message : String(e));
+            setPlans([]);
+          }
+        },
+      );
+    };
+    refresh();
+    eventBus.start();
+    const unsubscribe = eventBus.subscribe((event) => {
+      if (event.type === "step-plan.changed") refresh();
+    });
+    return () => { active = false; unsubscribe(); };
   }, []);
 
   async function restoreTopic(t: Topic): Promise<void> {
@@ -225,6 +251,42 @@ export function ArchivePanel({
     }
   }
 
+  async function restorePlan(plan: StepPlanItem): Promise<void> {
+    setBusy(`p${plan.id}`);
+    setError(null);
+    try {
+      await api.stepPlans.unarchive(plan.id);
+      setPlans((prev) => prev?.filter((item) => item.id !== plan.id) ?? []);
+      onStepPlansChanged?.();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function deletePlan(plan: StepPlanItem): Promise<void> {
+    if (
+      !(await confirmAction({
+        message: `Permanently delete "${plan.title}" with its steps, artifacts, chats and final output? The source conversation is kept.`,
+        confirmLabel: "Delete plan",
+        variant: "danger",
+      }))
+    )
+      return;
+    setBusy(`p${plan.id}`);
+    setError(null);
+    try {
+      await api.stepPlans.remove(plan.id);
+      setPlans((prev) => prev?.filter((item) => item.id !== plan.id) ?? []);
+      onStepPlansChanged?.(plan.id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function restoreSession(s: MeetingSession): Promise<void> {
     setBusy(`s${s.id}`);
     setError(null);
@@ -265,6 +327,7 @@ export function ArchivePanel({
   const chatCount = chats?.length ?? 0;
   const agentCount = agents?.length ?? 0;
   const workflowCount = workflows?.length ?? 0;
+  const planCount = plans?.length ?? 0;
   const sessionCount = sessions?.length ?? 0;
 
   return (
@@ -290,7 +353,7 @@ export function ArchivePanel({
           </button>
         </header>
 
-        <nav className="flex border-b border-border text-sm">
+        <nav className="flex overflow-x-auto border-b border-border text-sm">
           <button
             className={`flex items-center gap-1.5 px-4 py-2 ${
               tab === "topics"
@@ -334,6 +397,17 @@ export function ArchivePanel({
           >
             <WorkflowIcon size={14} /> Workflows
             {workflowCount > 0 && <span className="text-xs opacity-70">({workflowCount})</span>}
+          </button>
+          <button
+            className={`flex shrink-0 items-center gap-1.5 px-4 py-2 ${
+              tab === "steps"
+                ? "border-b-2 border-accent text-accent"
+                : "text-muted hover:text-text"
+            }`}
+            onClick={() => setTab("steps")}
+          >
+            <ListTree size={14} /> Plans
+            {planCount > 0 && <span className="text-xs opacity-70">({planCount})</span>}
           </button>
           <button
             className={`flex items-center gap-1.5 px-4 py-2 ${
@@ -476,6 +550,34 @@ export function ArchivePanel({
                       busy={busy === `w${w.id}`}
                       onRestore={() => void restoreWorkflow(w)}
                       onDelete={() => void deleteWorkflow(w)}
+                    />
+                  </li>
+                ))}
+              </ul>
+            )
+          ) : tab === "steps" ? (
+            plans === null ? (
+              <p className="text-xs text-muted px-1">Loading…</p>
+            ) : plans.length === 0 ? (
+              <p className="text-xs text-muted px-1">No archived plans.</p>
+            ) : (
+              <ul className="space-y-2">
+                {plans.map((plan) => (
+                  <li
+                    key={plan.id}
+                    className="flex items-start gap-3 rounded border border-border bg-surface px-3 py-2"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-medium truncate">{plan.title}</div>
+                      <div className="text-[11px] text-muted truncate">
+                        {plan.validated_count}/{plan.step_count} steps approved
+                        {plan.archived_at && <> · archived {new Date(plan.archived_at).toLocaleString()}</>}
+                      </div>
+                    </div>
+                    <RestoreDeleteButtons
+                      busy={busy === `p${plan.id}`}
+                      onRestore={() => void restorePlan(plan)}
+                      onDelete={() => void deletePlan(plan)}
                     />
                   </li>
                 ))}

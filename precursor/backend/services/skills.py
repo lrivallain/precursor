@@ -303,6 +303,35 @@ async def expand_references(
     return expand_references_with(text, table, max_depth=max_depth)
 
 
+def skills_prompt(skills: list[ResolvedSkill], *, context: str = "") -> str:
+    """Tell a model which skills exist and to load one before improvising.
+
+    ``context`` is text the model is about to act on (a step's title and
+    instructions): a skill it names is called out as required, because prose such
+    as "use the deckforge skill" is not a ``/deckforge`` reference and is never
+    expanded.
+    """
+    active = [s for s in skills if s.active]
+    if not active:
+        return ""
+    lines = [
+        "Skills available to you (reusable procedures). When a task names a skill, "
+        "or its description matches the work, call get_skill(name) FIRST and follow "
+        "its instructions instead of guessing tools, packages or commands:",
+        *(f"- {s.name}: {(s.description or 'no description').strip()[:160]}" for s in active),
+    ]
+    lowered = context.lower()
+    named = [
+        s.name for s in active if re.search(rf"(?<![\w-]){re.escape(s.name)}(?![\w-])", lowered)
+    ]
+    if named:
+        lines.append(
+            "This task names the skill(s) " + ", ".join(named) + ": load them with "
+            "get_skill before doing anything else and follow them."
+        )
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
 # mutations
 # ---------------------------------------------------------------------------

@@ -18,6 +18,11 @@ export const CONVERSATION_APPROVAL_POLICIES: {
     hint: "Read-only tools run on their own; anything that changes something, or is not known to be read-only, waits for your approval. The model can also ask first when it is unsure.",
   },
   {
+    value: "plan",
+    label: "Plan — plan first, run after my go",
+    hint: "Tools ask like Balanced. For long jobs the model only drafts and amends a step-by-step plan; nothing runs until you start it, then you do one final review.",
+  },
+  {
     value: "autonomous",
     label: "Autonomous — never ask",
     hint: "Every tool call runs on its own. The model can still pause to ask you when it judges an action needs your go-ahead.",

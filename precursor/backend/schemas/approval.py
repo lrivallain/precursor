@@ -17,7 +17,7 @@ from precursor.backend.services.approval_rules import (
     parse_clauses,
 )
 
-ApprovalPolicy = Literal["manual", "balanced", "autonomous"]
+ApprovalPolicy = Literal["manual", "balanced", "autonomous", "plan"]
 
 
 class ArgClause(BaseModel):

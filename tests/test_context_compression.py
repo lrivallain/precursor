@@ -19,6 +19,10 @@ from mcp.types import CallToolResult, ImageContent, TextContent
 
 from precursor.backend.main import create_app
 from precursor.backend.models import MESSAGE_KIND_COMPACTION, Message, MessageRole
+from precursor.backend.models.message import (
+    MESSAGE_KIND_STEP_AUTOMATION,
+    MESSAGE_KIND_STEP_USER_REQUEST,
+)
 from precursor.backend.services import compaction as compaction_mod
 from precursor.backend.services import events as events_mod
 from precursor.backend.services.context_budget import (
@@ -158,6 +162,59 @@ def test_a_skill_prompt_override_keeps_the_summary() -> None:
     history = hydrate_history(rows, prompt_override="Translate: bravo")
     assert "the summary" in history[0].content
     assert history[0].content.endswith("Translate: bravo")
+
+
+def test_step_prompt_origins_keep_full_history_and_distinguish_legacy_feedback() -> None:
+    repair = (
+        "The final assessment identified gaps or contradictions. "
+        "Rebuilding the final output once before filing."
+    )
+    rows = [
+        _row(MessageRole.USER, "A genuine clarification"),
+        _row(MessageRole.ASSISTANT, "Prior answer"),
+        _row(MessageRole.SYSTEM, repair, kind="step_plan"),
+        _row(
+            MessageRole.USER,
+            "Consolidate the plan into the final deliverable.\n\nOld review feedback",
+        ),
+        _row(MessageRole.ASSISTANT, "Earlier draft"),
+        _row(
+            MessageRole.USER,
+            "Draft the artifact for this step.\n\nNew automated feedback",
+            kind=MESSAGE_KIND_STEP_AUTOMATION,
+        ),
+        _row(MessageRole.ASSISTANT, "Newer draft"),
+        _row(
+            MessageRole.USER,
+            "Draft the artifact for this step.\n\nUse the agreed deadline",
+            kind=MESSAGE_KIND_STEP_USER_REQUEST,
+        ),
+    ]
+
+    history = hydrate_history(rows, legacy_step_prompts=True)
+
+    assert history[0].content == "A genuine clarification"
+    assert history[1].content == "Prior answer"
+    assert "preceding plan activity recorded an automatic repair" in history[2].content
+    assert "origin" in history[2].content and "Old review feedback" in history[2].content
+    assert history[3].content == "Earlier draft"
+    assert "automation initiated this draft" in history[4].content
+    assert "New automated feedback" in history[4].content
+    assert history[5].content == "Newer draft"
+    assert "user requested this Step-by-Step draft" in history[6].content
+    assert history[6].content.endswith("Use the agreed deadline")
+
+    override = hydrate_history(rows, prompt_override="Expanded guidance", legacy_step_prompts=True)
+    assert "user requested this Step-by-Step draft" in override[-1].content
+    assert override[-1].content.endswith("Expanded guidance")
+    assert rows[-1].content.endswith("Use the agreed deadline")
+
+
+def test_a_matching_old_prompt_outside_step_discussions_is_not_relabelled() -> None:
+    row = _row(
+        MessageRole.USER, "Consolidate the plan into the final deliverable.\n\nMy own instruction"
+    )
+    assert hydrate_history([row])[0].content == row.content
 
 
 def test_summary_gets_its_own_user_turn_when_history_opens_with_the_assistant() -> None:

@@ -5,6 +5,7 @@ import type {
   StepCreate,
   StepMove,
   StepPlan,
+  StepPlanAmendRequest,
   StepPlanCreate,
   StepPlanItem,
   StepPlanReview,
@@ -802,18 +803,29 @@ export const api = {
     // with a versioned Markdown artifact and its own chat, then consolidated into
     // one final output. Model-backed calls (create with propose, propose,
     // suggest-*, generate) are slow and answer 502 when the model fails.
-    list: (topicId?: number) =>
+    list: (topicId?: number, chatId?: number) =>
       request<StepPlanItem[]>(
-        `/api/step-plans${topicId != null ? `?topic_id=${topicId}` : ""}`,
+        `/api/step-plans${topicId != null ? `?topic_id=${topicId}` : chatId != null ? `?chat_id=${chatId}` : ""}`,
       ),
+    listArchived: () => request<StepPlanItem[]>(`/api/step-plans/archived`),
     create: (payload: StepPlanCreate) =>
       request<StepPlan>(`/api/step-plans`, { method: "POST", body: JSON.stringify(payload) }),
-    get: (id: number) => request<StepPlan>(`/api/step-plans/${id}`),
+    get: (id: number, signal?: AbortSignal) =>
+      request<StepPlan>(`/api/step-plans/${id}`, { signal }),
     update: (id: number, payload: StepPlanUpdate) =>
       request<StepPlan>(`/api/step-plans/${id}`, {
         method: "PATCH",
         body: JSON.stringify(payload),
       }),
+    amend: (id: number, payload: StepPlanAmendRequest) =>
+      request<StepPlan>(`/api/step-plans/${id}/amend`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }),
+    archive: (id: number) =>
+      request<StepPlan>(`/api/step-plans/${id}/archive`, { method: "POST" }),
+    unarchive: (id: number) =>
+      request<StepPlan>(`/api/step-plans/${id}/unarchive`, { method: "POST" }),
     remove: (id: number) => request<void>(`/api/step-plans/${id}`, { method: "DELETE" }),
     propose: (id: number, instructions?: string) =>
       request<StepPlan>(`/api/step-plans/${id}/propose`, {
@@ -832,6 +844,8 @@ export const api = {
       }),
     startAuto: (id: number) =>
       request<StepPlan>(`/api/step-plans/${id}/auto/start`, { method: "POST" }),
+    launch: (id: number) =>
+      request<StepPlan>(`/api/step-plans/${id}/launch`, { method: "POST" }),
     pauseAuto: (id: number) =>
       request<StepPlan>(`/api/step-plans/${id}/auto/pause`, { method: "POST" }),
     assessPlan: (id: number) =>
@@ -876,6 +890,11 @@ export const api = {
       request<StepPlan>(`/api/step-plans/${id}/complete`, { method: "POST" }),
     sendToTopic: (id: number, text?: string, force = false) =>
       request<Message>(`/api/step-plans/${id}/send-to-topic`, {
+        method: "POST",
+        body: JSON.stringify({ text: text ?? null, force }),
+      }),
+    sendToSource: (id: number, text?: string, force = false) =>
+      request<Message>(`/api/step-plans/${id}/send-to-source`, {
         method: "POST",
         body: JSON.stringify({ text: text ?? null, force }),
       }),

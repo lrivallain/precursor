@@ -42,6 +42,7 @@ export function LinkTopicDialog({
       <p className="mt-1 text-sm text-muted">
         The topic&rsquo;s discussion becomes background for the model, and the final output can be sent
         back to it. A note in the topic points to this plan.
+        {plan.source_chat_id != null && " This replaces the current source chat."}
       </p>
       <div className="mt-4">
         <StepTopicPicker value={topicId} onChange={setTopicId} disabled={busy} />

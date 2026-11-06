@@ -82,9 +82,9 @@ export function StepPlansOverview({
                     </span>
                   )}
                   <span className="flex flex-wrap items-center gap-1.5">
-                    {plan.source_topic_title && (
+                    {(plan.source_topic_title || plan.source_chat_title) && (
                       <span className="max-w-full truncate rounded-full border border-border px-2 py-0.5 text-[11px] text-muted">
-                        {plan.source_topic_title}
+                        {plan.source_topic_title || plan.source_chat_title}
                       </span>
                     )}
                     {plan.final_stale && <StaleBadge />}

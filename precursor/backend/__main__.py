@@ -420,6 +420,9 @@ def _run_prod(
         open_browser=open_browser,
         stop=stop,
     )
+    # The port may have been auto-picked; settings (and so stdio MCP children
+    # calling back over loopback) must see the one actually bound.
+    os.environ["PRECURSOR_PORT"] = str(resolved)
     try:
         uvicorn.run(
             "precursor.backend.main:app",
@@ -689,6 +692,7 @@ def _run_dev(
             if docs_proc is not None:
                 _terminate_process_tree(docs_proc)
 
+    os.environ["PRECURSOR_PORT"] = str(backend_port)
     try:
         _inject_reload_trigger()
         uvicorn.run(

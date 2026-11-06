@@ -47,6 +47,9 @@ class ChatRead(ChatBase):
     id: int
     public_id: str
     slug: str
+    # A delegated plan supplies the default when this discussion has no override.
+    inherited_approval_policy: ApprovalPolicy | None = None
+    inherited_approval_plan_id: int | None = None
     created_at: datetime
     updated_at: datetime
     archived_at: datetime | None = None

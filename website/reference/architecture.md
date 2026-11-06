@@ -150,6 +150,24 @@ history and nothing is stored — but it drives the same tool loop and its usage
 counts too. Tool-less features that ask the model once (`/refine`, summaries,
 auto-naming, …) don't take this path; they use `complete_once()` — see
 **One-shot calls** under [LLM provider abstraction](#llm-provider-abstraction).
+Step assessments also use the shared tool loop with the chat's enabled MCP servers and exposed
+built-in tools, its budgeted discussion history and linked source conversation as background,
+but are ephemeral rather than persisted turns. Their reviewer gate treats autonomous as balanced
+and declines calls requiring approval; explicit allow rules still apply. One reviewer receives the
+complete original request and accepted revisions, the scoped work, and available evidence, and
+may use the chat's tools. It is instructed to honor the request's applicable restrictions on its
+own tool calls; this model guidance does not replace MCP exposure or approval rules. Its internal
+inspection calls use the same gate under `step-inspector`; automatic evidence collection and supplied
+history are separate. Headless
+Step-by-Step prompts record whether they were user-requested
+or initiated by automation. Hydration labels that origin, retaining both discussion content and
+tool history; matching older prompts whose origin was not recorded are labelled uncertain.
+The reviewer receives earlier turns as labelled background data, including their tool calls,
+results and images, rather than continuing their assistant dialogue. Prior model-review feedback
+is not itself a user requirement. If context trimming would discard that required review input, the
+assessment fails explicitly. Deterministic failed checks are applied afterward. An automated
+step run treats reported gaps and contradictions as blocking findings before allowing dependent
+work. The assessment and its score remain fallible model judgments, not proof.
 
 While a turn is streaming, the transcript's tail is in flux. So
 [compaction](/features/context-compression) and [rewind](/features/rewind)
@@ -428,10 +446,14 @@ and its `StepArtifactVersion` history (`models/step_plan.py`; no ORM relationshi
 services query by id). `services/step_plans.py` holds the tree and status rules (a step
 with accepted children is a group whose status is derived) and the prompt grounding that
 `turn_engine.build_chat_system_context` injects into step chats, which are ordinary `Chat`
-rows linked by `step_id`/`step_plan_id`. `services/step_plan_llm.py` runs the one-shot,
-tool-less model actions (propose, sub-steps, artifact draft, review, consolidation) through
-`complete_once`. SQLite doesn't enforce foreign keys, so deleting a plan or step removes its
-chats and versions explicitly, and deleting a topic detaches its plans. Changes publish
+rows linked by `step_id`/`step_plan_id`. `services/step_plan_llm.py` uses `complete_once`
+for structured proposals and review; artifact drafts and consolidation run as real chat turns.
+For delegated plans, `approvals.build_gate` defaults those discussions to the plan's
+recorded source autonomy and combines their own rules, source-conversation rules and global
+rules in that order. An explicit discussion policy overrides the default; user-started
+plans keep the usual chat defaults. The assessor uses that gate, capped at balanced.
+SQLite doesn't enforce foreign keys, so deleting a plan or step removes its
+chats and versions explicitly, and deleting a topic or source chat detaches its plans. Changes publish
 `step-plan.changed`. See [Step by step](/features/step-by-step).
 
 Creating a topic-linked plan commits the plan and a UI-only `Message(kind="step_plan")`
@@ -441,7 +463,32 @@ ask, its submitted/topic-message provenance, and the plan's id and title at crea
 Markdown or metadata. It shares the filed-output header, with a bounded preview and
 accessible expansion. Legacy Markdown link traces and later linking notes remain
 navigable, but carry no original-prompt claim; reads never reconstruct one from
-`StepPlan.source_text`.
+`StepPlan.source_text`. Source chats have the same receipt and delivery path; promoting a
+chat transfers its plan links to the new topic.
+
+A model follow-up reads the plan's state token, then `amend_step_plan` routes its atomic
+mutation to the app process, which owns automated runs. The mutation checks the source,
+token and run state, records the ordered amendment and its new steps, marks the existing
+final stale and publishes a revision receipt. A per-plan lock serializes amendments with
+run starts. The run reuses approved steps, builds a revised final and assesses it against
+the original ask plus accepted follow-ups; prior final text versions remain in the database.
+Saving or restoring a different final version reopens a completed plan while leaving its
+approved steps and posted-version records intact. The text history does not snapshot
+workspace files.
+
+For same-source `create_step_plan` and `amend_step_plan` calls, the streaming turn fills in
+an omitted source and attaches its persisted user-message ID before the call is saved or parked. The MCP server validates
+the message's role and conversation, then keeps its text alongside the model's delegated
+scope. A parked `ToolApproval` retains that origin across resume; unrelated intervening
+user-role messages are not used as a substitute. Model prompts distinguish the narrower
+scope from the full request, but do not guarantee that generated steps obey every constraint.
+When a final output is filed during another source turn, hand-back waits for that turn and
+any outstanding approval. A source turn that read the exact final-version text and answered
+after it was filed avoids a duplicate hand-back, even when the read preceded filing.
+
+Archiving uses the same per-plan lock as amendments and run starts. Normal lists exclude
+archived plans, while direct reads and histories remain available. Archived plans cannot be
+started or amended until restored, and archiving a live run is rejected.
 
 ## SPA
 

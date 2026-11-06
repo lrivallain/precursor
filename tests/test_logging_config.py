@@ -174,6 +174,9 @@ def test_the_production_path_asks_for_the_log_file(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(entry, "_resolve_port", lambda *_a, **_k: 8123)
     monkeypatch.setattr(entry, "_announce_when_ready", lambda **_k: None)
     monkeypatch.setattr(entry.uvicorn, "run", lambda *_a, **_k: None)
+    # `_run_prod` publishes the bound port in the environment; setenv first so
+    # monkeypatch removes it afterwards instead of leaking it to later tests.
+    monkeypatch.setenv("PRECURSOR_PORT", "8123")
 
     entry._run_prod("127.0.0.1", 8123, "info", strict_port=False, open_browser=False)
     assert seen["log_file"] == log_path()

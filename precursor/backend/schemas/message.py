@@ -142,7 +142,7 @@ class MessageRead(BaseModel):
     # when it was edited. Both NULL for untouched messages.
     original_content: str | None = None
     edited_at: datetime | None = None
-    # Special-row marker; "compaction" = a context-compaction summary.
+    # Special-row marker or provenance for a Step-by-Step drafting prompt.
     kind: str | None = None
     # The model's thinking for this assistant round, shown collapsed.
     reasoning: str | None = None

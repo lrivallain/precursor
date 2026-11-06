@@ -16,7 +16,7 @@ import asyncio
 import json
 import logging
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -27,13 +27,20 @@ from sqlalchemy.orm import selectinload
 
 from precursor.backend.db import SessionLocal
 from precursor.backend.models import MESSAGE_KIND_COMPACTION, Chat, Message, MessageRole, Topic
+from precursor.backend.models.message import (
+    MESSAGE_KIND_STEP_AUTOMATION,
+    MESSAGE_KIND_STEP_USER_REQUEST,
+)
 from precursor.backend.models.tool_approval import APPROVAL_KIND_TOOL
 from precursor.backend.services import approval_rules as approval_rules_service
 from precursor.backend.services import approvals as approval_service
 from precursor.backend.services import memories as memory_service
 from precursor.backend.services import side_chats, step_plans
 from precursor.backend.services import skills as skills_service
-from precursor.backend.services.app_settings import DEFAULT_LLM_MAX_ATTACHMENT_CHARS
+from precursor.backend.services.app_settings import (
+    DEFAULT_LLM_MAX_ATTACHMENT_CHARS,
+    resolve_mcp_expose,
+)
 from precursor.backend.services.artifacts import artifacts_prompt, record_written_file
 from precursor.backend.services.attachment_extraction import (
     attachments_to_image_urls,
@@ -92,6 +99,73 @@ ContainerKind = Literal["topic", "chat"]
 # -- System context --------------------------------------------------------
 
 
+async def _plan_delegation_context(
+    session: AsyncSession, kind: ContainerKind, container_id: int
+) -> list[str]:
+    exposed = await resolve_mcp_expose(session)
+    if not exposed.get("step_plans"):
+        return []
+    scope = f"{kind}_id={container_id}"
+    parts = [
+        "When a follow-up extends or revises an existing deliverable, first find the "
+        f"related plan with list_step_plans({scope}) and read it with get_step_plan "
+        "(include_artifacts=True). If it is the same work, use amend_step_plan with "
+        f"{scope}, the fresh state_token, the user's follow-up, and only the missing "
+        "steps; preserve useful completed work and unrelated requirements, include the "
+        "user's full follow-up and constraints, and honor any explicit step count. "
+        "Consolidation is automatic, so do not add a step just to assemble the final. Supply "
+        "complete replacement output instructions only when they need to change; the "
+        "follow-up itself already updates the final requirements. Do not introduce "
+        "exceptions to retained constraints or additional content the user did not request. "
+        "Run the amended plan according to this conversation's autonomy; Plan mode "
+        "requires the user to start it. A running plan cannot be amended until its "
+        "run has stopped. Do not create a new plan or redo finished steps merely "
+        "because the existing plan is complete. If a run pauses, report the actual blocker; "
+        "do not claim completion, repeatedly resume a held draft, or produce a substitute "
+        "final outside the plan.",
+        "When get_step_plan reports filed_in_current_source=true and the final is not stale "
+        "or provisional, the complete result is already visible in this conversation. Review "
+        "it briefly without repeating each section or posting another copy, unless the user "
+        "asks for an additional copy after delivery. Do not claim that a file or external "
+        "lookup was or was not made without evidence: an inline result or an incomplete "
+        "tool record cannot establish that. A model's score is an estimate, not proof.",
+        "Before doing substantial work, choose whether the request needs Step by step. "
+        "If the precursor__create_step_plan tool is available and the ask is substantial "
+        "and multi-stage, consider delegating it with "
+        f"precursor__create_step_plan({scope}, run=True). "
+        "This includes several nontrivial, interdependent deliverables that must agree "
+        "on shared timings, identifiers, calculations or other constraints, such as a "
+        "schedule, risk analysis, instructions and evaluation. Separate drafting and "
+        "review can help even when one reply could contain them. Honor an explicit "
+        "request not to delegate. "
+        "Preserve the complete original request and its constraints "
+        "in the delegated ask. Tell the user where to follow the plan and return rather than "
+        "waiting for its run, unless the user explicitly asks you to wait; the app handles "
+        "review and hand-back according to the conversation's autonomy. An automated run "
+        "drafts and checks steps one at a time, not in parallel. This conversation's autonomy "
+        "decides who reviews: autonomous, the app files the assessed final and wakes you only "
+        "if checks pass; the run can instead stop for approval or review without filing. "
+        "Balanced, the user does one final review; manual, the user validates every step. "
+        "In the last two you are woken here once they file the result: then carry on by "
+        "yourself. In plan mode, nothing runs: the plan is only drafted and the user starts "
+        "it. Do not use it for "
+        "short or straightforward requests, even if they have several small parts. "
+        "If a delegated plan or its run fails to start, say so and retry run_step_plan; "
+        "do not silently carry out its steps yourself. A plan may also help when work "
+        "needs a skill or a tool-built file and benefits from separate stages. When "
+        "delegating such work, put the skill's name in the ask so a step can run it "
+        "and file the result back here.",
+    ]
+    if exposed.get("skills"):
+        names = [s.name for s in await skills_service.reconcile_and_list(session) if s.active]
+        if names:
+            parts.append(
+                "Skills a plan's steps can run: " + ", ".join(names[:40]) + ". Name one in "
+                "the delegated ask when the job calls for it."
+            )
+    return parts
+
+
 async def build_system_context(
     session: AsyncSession, topic: Topic, *, fetch_issue: bool = True
 ) -> str:
@@ -121,6 +195,7 @@ async def build_system_context(
         parts.append(f"Topic description: {topic.description}")
     if topic.seed_content:
         parts.append(side_chats.seed_prompt(topic.seed_content, "topic"))
+    parts.extend(await _plan_delegation_context(session, "topic", topic.id))
 
     repo = await resolve_topic_github_repo(session, topic)
     token = await resolve_github_token(session)
@@ -191,6 +266,8 @@ async def build_chat_system_context(session: AsyncSession, chat: Chat) -> str:
     step_context = await step_plans.build_step_context(session, chat)
     if step_context:
         parts.append(step_context)
+    elif chat.step_id is None and chat.step_plan_id is None:
+        parts.extend(await _plan_delegation_context(session, "chat", chat.id))
 
     # When this chat is attached to a live meeting session, fold in the current
     # meeting grounding (transcript/insights/notes/…), rebuilt every turn.
@@ -255,6 +332,7 @@ def hydrate_history(
     attachment_max_chars: int = DEFAULT_LLM_MAX_ATTACHMENT_CHARS,
     prompt_override: str | None = None,
     discussion_path: str | None = None,
+    legacy_step_prompts: bool = False,
 ) -> list[ChatMessage]:
     """Turn persisted Messages back into ChatMessages, preserving tool calls.
 
@@ -276,14 +354,24 @@ def hydrate_history(
             rows = rows[idx + 1 :]
             break
     out = _hydrate_rows(
-        rows, attachment_max_chars=attachment_max_chars, discussion_path=discussion_path
+        rows,
+        attachment_max_chars=attachment_max_chars,
+        discussion_path=discussion_path,
+        legacy_step_prompts=legacy_step_prompts,
     )
     if prompt_override:
         for idx in range(len(out) - 1, -1, -1):
             if out[idx].role == "user":
+                row_idx = next(
+                    i for i in range(len(rows) - 1, -1, -1) if rows[i].role == MessageRole.USER
+                )
+                source = rows[row_idx]
+                previous = rows[row_idx - 1] if row_idx else None
+                label = _step_prompt_provenance(source, previous, legacy_step_prompts)
+                content = f"{label}\n\n{prompt_override}" if label else prompt_override
                 out[idx] = ChatMessage(
                     role="user",
-                    content=prompt_override,
+                    content=content,
                     image_urls=out[idx].image_urls,
                     permalink=out[idx].permalink,
                 )
@@ -321,8 +409,48 @@ def _with_compaction_summary(history: list[ChatMessage], summary: str) -> list[C
     return [ChatMessage(role="user", content=prefix), *history]
 
 
+def _step_prompt_provenance(
+    message: Message, previous: Message | None, legacy_step_prompts: bool
+) -> str:
+    if message.role != MessageRole.USER:
+        return ""
+    if message.kind == MESSAGE_KIND_STEP_AUTOMATION:
+        return (
+            "[Step-by-Step automation initiated this draft. Its instructions can include "
+            "fallible model-review feedback; they are not new user requirements.]"
+        )
+    if message.kind == MESSAGE_KIND_STEP_USER_REQUEST:
+        return "[The user requested this Step-by-Step draft and supplied any extra guidance.]"
+    if not legacy_step_prompts or message.kind is not None:
+        return ""
+    if not message.content.startswith(
+        ("Draft the artifact for this step.", "Consolidate the plan into the final deliverable.")
+    ):
+        return ""
+    activity = ""
+    if (
+        previous is not None
+        and previous.role == MessageRole.SYSTEM
+        and previous.kind == "step_plan"
+        and previous.content
+        == "The final assessment identified gaps or contradictions. Rebuilding the final output once before filing."
+    ):
+        activity = "The preceding plan activity recorded an automatic repair. "
+    return (
+        "["
+        + activity
+        + "This older Step-by-Step draft prompt did not record its origin; it may contain "
+        "user guidance or automatic review feedback. Model findings can be wrong and do not "
+        "themselves establish new user requirements.]"
+    )
+
+
 def _hydrate_rows(
-    rows: list[Message], *, attachment_max_chars: int, discussion_path: str | None
+    rows: list[Message],
+    *,
+    attachment_max_chars: int,
+    discussion_path: str | None,
+    legacy_step_prompts: bool,
 ) -> list[ChatMessage]:
     out: list[ChatMessage] = []
     i = 0
@@ -392,7 +520,8 @@ def _hydrate_rows(
             # each turn, so never feed these to the model.
             i += 1
             continue
-        content = m.content
+        label = _step_prompt_provenance(m, rows[i - 1] if i else None, legacy_step_prompts)
+        content = f"{label}\n\n{m.content}" if label else m.content
         image_urls: list[str] = []
         if role == "user" and m.attachments:
             user_attachments = list(m.attachments)
@@ -615,6 +744,8 @@ class ToolResultTurn:
     # offer a link to it without parsing ``result_text`` — which for a read
     # embeds the whole file. None for every other tool.
     link: dict[str, Any] | None = None
+    # The approval gate refused the call and the loop answered it instead of parking.
+    declined: bool = False
 
 
 @dataclass(slots=True)
@@ -796,6 +927,41 @@ async def execute_tool_call(
     yield ToolResultTurn(call, result_text, is_error, link)
 
 
+def _ground_plan_calls(
+    calls: list[Any],
+    tool_to_server: dict[str, tuple[str, str]],
+    source: tuple[ContainerKind, int, int] | None,
+) -> None:
+    """Pin delegation tools to the conversation that is running this turn.
+
+    A model must not create, amend, run or pause plans of another conversation.
+    """
+    if source is None:
+        return
+    kind, container_id, message_id = source
+    other = "chat_id" if kind == "topic" else "topic_id"
+    for call in calls:
+        target = tool_to_server.get(call.name)
+        if target not in {
+            ("precursor", "create_step_plan"),
+            ("precursor", "amend_step_plan"),
+            ("precursor", "run_step_plan"),
+            ("precursor", "pause_step_plan"),
+        }:
+            continue
+        try:
+            args = json.loads(call.arguments or "{}")
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(args, dict):
+            continue
+        args[f"{kind}_id"] = container_id
+        args.pop(other, None)
+        if target[1] in ("create_step_plan", "amend_step_plan"):
+            args["source_message_id"] = message_id
+        call.arguments = json.dumps(args, ensure_ascii=False)
+
+
 async def run_tool_loop(
     *,
     active: Any,
@@ -809,6 +975,13 @@ async def run_tool_loop(
     max_tool_result_tokens: int,
     auth_wait_timeout: float = AUTH_PAUSE_TIMEOUT_SECONDS,
     gate: approval_service.ApprovalGate | None = None,
+    extra_tools: Sequence[ToolDef] = (),
+    run_extra: Callable[[Any], Awaitable[str]] | None = None,
+    extra_permissions: dict[str, MCPToolDef] | None = None,
+    decline_note: str | None = None,
+    wrap_up: str | None = None,
+    source_message: tuple[ContainerKind, int, int] | None = None,
+    required_history_message: ChatMessage | None = None,
 ) -> AsyncIterator[TurnEvent]:
     """Drive the provider + MCP tool loop, yielding semantic turn events.
 
@@ -828,11 +1001,28 @@ async def run_tool_loop(
     round's other calls ran, an :class:`ApprovalsRequested` event is yielded and
     the loop ends, leaving the turn parked until the user decides. ``None`` runs
     every call, as workspace chat does.
+
+    The remaining options serve a caller that nobody can answer, such as the step
+    assessor: ``decline_note`` answers a held call with "Not run: <why> <note>"
+    instead of parking the turn (and ``request_approval`` is not offered);
+    ``extra_tools`` are local tools ``run_extra`` executes, shadowing an MCP tool
+    of the same name. ``extra_permissions`` gives local tools a read/write identity
+    for the gate; gated local tools must use a decline handler rather than park.
+    ``wrap_up`` is a last instruction sent with the tools withdrawn on the final
+    round, so the model answers instead of hitting the cap.
+    ``required_history_message`` makes a bounded caller fail rather than review
+    without its input if normal context trimming would discard that message.
     """
+    if extra_permissions and gate is not None and decline_note is None:
+        raise ValueError("Gated extra tools require a decline handler.")
     tool_to_server = active.tool_to_server  # qualified -> (server, raw_name)
-    provider_tools = mcp_tools_to_provider(active.tools)
+    extra_names = {t.name for t in extra_tools}
+    provider_tools = [
+        *extra_tools,
+        *(t for t in mcp_tools_to_provider(active.tools) if t.name not in extra_names),
+    ]
     tool_defs = {t.qualified_name: t for t in active.tools}
-    if gate is not None and gate.offers_intent:
+    if gate is not None and gate.offers_intent and decline_note is None:
         provider_tools = [*provider_tools, approval_service.REQUEST_APPROVAL_DEF]
         system_prompt = f"{system_prompt}\n\n{approval_service.APPROVAL_PROMPT}"
 
@@ -846,19 +1036,31 @@ async def run_tool_loop(
     ]
 
     for _round in range(max_tool_rounds):
+        last_round = wrap_up is not None and _round == max_tool_rounds - 1
+        if last_round:
+            messages.append(ChatMessage(role="user", content=wrap_up or ""))
         text_chunks: list[str] = []
         reasoning_chunks: list[str] = []
         tool_calls: list[Any] = []
         round_usage: UsageEvent | None = None
 
+        trimmed = trim_messages(
+            messages,
+            max_input_tokens=max_input_tokens,
+            per_message_max_tokens=max_tool_result_tokens,
+        )
+        if required_history_message is not None and not any(
+            message is required_history_message for message in trimmed
+        ):
+            raise HTTPException(
+                status.HTTP_502_BAD_GATEWAY,
+                "The assessment input no longer fits the model's context after tool results. "
+                "The draft was kept; shorten the input or choose a larger context.",
+            )
         async for event in provider.stream_chat_with_tools(
             model=model,
-            messages=trim_messages(
-                messages,
-                max_input_tokens=max_input_tokens,
-                per_message_max_tokens=max_tool_result_tokens,
-            ),
-            tools=provider_tools,
+            messages=trimmed,
+            tools=[] if last_round else provider_tools,
             reasoning_effort=reasoning_effort,
         ):
             if isinstance(event, TextDeltaEvent):
@@ -878,6 +1080,11 @@ async def run_tool_loop(
         # Kept for the transcript only: it never goes back into ``messages``.
         reasoning = "".join(reasoning_chunks).strip()
 
+        if last_round and tool_calls:
+            raise HTTPException(
+                status.HTTP_502_BAD_GATEWAY,
+                "The model requested a tool after tools were withdrawn.",
+            )
         if not tool_calls:
             yield AssistantFinalTurn(
                 assistant_text,
@@ -888,6 +1095,7 @@ async def run_tool_loop(
             )
             return
 
+        _ground_plan_calls(tool_calls, tool_to_server, source_message)
         openai_tool_calls = [
             {
                 "id": c.id,
@@ -916,8 +1124,20 @@ async def run_tool_loop(
 
         parked: list[approval_service.PendingCall] = []
         for call in tool_calls:
-            server_lookup = tool_to_server.get(call.name)
-            if gate is not None and call.name == approval_service.REQUEST_APPROVAL_TOOL:
+            is_extra = run_extra is not None and call.name in extra_names
+            extra_def = (extra_permissions or {}).get(call.name) if is_extra else None
+            if is_extra:
+                server_lookup = (
+                    (extra_def.server, extra_def.name) if extra_def is not None else None
+                )
+            else:
+                server_lookup = tool_to_server.get(call.name)
+            if (
+                gate is not None
+                and not is_extra
+                and call.name == approval_service.REQUEST_APPROVAL_TOOL
+                and decline_note is None
+            ):
                 if gate.offers_intent:
                     parked.append(approval_service.intent_pending(call.id, call.arguments))
                     continue
@@ -926,11 +1146,20 @@ async def run_tool_loop(
                     call.name,
                     server_lookup[0],
                     server_lookup[1],
-                    tool_defs.get(call.name),
+                    extra_def if is_extra else tool_defs.get(call.name),
                     call.arguments or "{}",
                 )
                 if verdict.rule_id is not None:
                     await approval_rules_service.touch_rule(verdict.rule_id)
+                if verdict.reason is not None and decline_note is not None:
+                    declined = f"Not run: {verdict.reason} {decline_note}"
+                    yield ToolResultTurn(call, declined, True, None, declined=True)
+                    messages.append(
+                        ChatMessage(
+                            role="tool", content=declined, tool_call_id=call.id, name=call.name
+                        )
+                    )
+                    continue
                 if verdict.reason is not None:
                     parked.append(
                         approval_service.PendingCall(
@@ -944,6 +1173,15 @@ async def run_tool_loop(
                         )
                     )
                     continue
+            if run_extra is not None and is_extra:
+                extra_result = await run_extra(call)
+                yield ToolResultTurn(call, extra_result, False, None)
+                messages.append(
+                    ChatMessage(
+                        role="tool", content=extra_result, tool_call_id=call.id, name=call.name
+                    )
+                )
+                continue
             outcome: ToolResultTurn | None = None
             async for step in execute_tool_call(active, call, auth_wait_timeout):
                 if isinstance(step, ToolAuthRequired):
@@ -1154,6 +1392,7 @@ async def run_message_stream(
     auth_wait_timeout: float = AUTH_PAUSE_TIMEOUT_SECONDS,
     gate: approval_service.ApprovalGate | None = None,
     restrict_precursor: bool = False,
+    source_message_id: int | None = None,
 ) -> AsyncIterator[dict[str, str]]:
     """Container-agnostic SSE generator shared by topic and chat streaming.
 
@@ -1169,6 +1408,8 @@ async def run_message_stream(
     message to echo. ``gate`` applies the conversation's approval policy.
     """
     manager = get_mcp_client_manager()
+    if user_echo is not None and isinstance(user_echo.get("id"), int):
+        source_message_id = user_echo["id"]
 
     if user_echo is not None:
         yield {
@@ -1216,6 +1457,9 @@ async def run_message_stream(
                 max_tool_result_tokens=max_tool_result_tokens,
                 auth_wait_timeout=auth_wait_timeout,
                 gate=gate,
+                source_message=(kind, container_id, source_message_id)
+                if source_message_id is not None
+                else None,
             ):
                 if isinstance(ev, AssistantTextDelta):
                     yield {
@@ -1326,7 +1570,12 @@ async def run_message_stream(
                 elif isinstance(ev, ApprovalsRequested):
                     async with SessionLocal() as ws:
                         rows = await approval_service.record_pending(
-                            ws, kind, container_id, last_assistant_id, ev.items
+                            ws,
+                            kind,
+                            container_id,
+                            last_assistant_id,
+                            ev.items,
+                            source_message_id=source_message_id,
                         )
                         payload = [approval_service.serialize(r) for r in rows]
                     await publish_approval_changed(**container_message_kwargs(kind, container_id))

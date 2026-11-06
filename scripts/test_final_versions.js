@@ -34,6 +34,7 @@ async function run() {
       topic_id: topic.id,
       propose: false,
       source_text: "Final versions test: answer one ask.",
+      delegation_policy: "autonomous",
     });
     const step = await api(page, "POST", `/step-plans/${plan.id}/steps`, { title: "Only step" });
     await api(page, "POST", `/step-plans/${plan.id}/start`, {});
@@ -103,7 +104,15 @@ async function run() {
     await save.click();
     await page.getByText("Version 3", { exact: true }).waitFor();
     await page.getByText("v1 posted").waitFor();
-    assert.equal((await read()).final_posted_version, 1);
+    await page.getByText("This plan is done.").waitFor({ state: "hidden" });
+    const revised = await read();
+    assert.equal(revised.final_posted_version, 1);
+    assert.equal(revised.status, "consolidating", "a changed final reopens the plan");
+
+    // A delegated final that has not been assessed can be run again from the plan.
+    await api(page, "PATCH", `/step-plans/${plan.id}`, { automation_mode: "auto" });
+    await page.reload();
+    await page.getByTestId("automation-bar").getByRole("button", { name: "Run", exact: true }).waitFor();
 
     // in the topic the note shows a header band, split from its content
     await page.goto(`${BASE}/topics`);
@@ -113,11 +122,12 @@ async function run() {
     assert.match(await band.innerText(), /final output/i);
     assert.match(await band.innerText(), /v1/);
     assert.equal(await page.getByText("**From step-by-step plan").count(), 0, "no raw markdown header");
-    await band.getByRole("button").first().click();
+    await page.getByTestId("step-plan-note-footer").getByRole("button").click();
     await page.waitForURL(`${BASE}/steps/${plan.id}`, { waitUntil: "commit" });
 
     assert.deepEqual(errors, []);
     await api(page, "DELETE", `/step-plans/${plan.id}`);
+    await api(page, "DELETE", `/topics/${topic.id}`);
     console.log("final output versions: ok");
   } finally {
     await browser.close();

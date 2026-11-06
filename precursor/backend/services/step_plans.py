@@ -25,15 +25,19 @@ import asyncio
 import hashlib
 import json
 import re
+import weakref
 from collections import defaultdict
 from collections.abc import Iterable
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Any, Literal, cast
 from uuid import uuid4
 
 from fastapi import HTTPException, status
-from sqlalchemy import delete, func, or_, select
+from pydantic import TypeAdapter, ValidationError
+from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from precursor.backend.models import (
     Chat,
@@ -46,11 +50,14 @@ from precursor.backend.models import (
     Topic,
     TopicSummary,
 )
+from precursor.backend.models.message import MESSAGE_KIND_STEP_USER_REQUEST
 from precursor.backend.models.step_plan import (
     AUTHOR_MODEL,
     AUTHOR_USER,
+    AUTO_PAUSED,
     AUTO_RUNNING,
     PLAN_ACTIVE,
+    PLAN_CANCELLED,
     PLAN_CONSOLIDATING,
     PLAN_DONE,
     PLAN_DRAFTING,
@@ -68,6 +75,9 @@ from precursor.backend.schemas.step_plan import (
     PromptSource,
     StepArtifactVersionRead,
     StepCreate,
+    StepPlanAmendment,
+    StepPlanAmendmentTraceData,
+    StepPlanAmendRequest,
     StepPlanCreate,
     StepPlanItem,
     StepPlanRead,
@@ -77,8 +87,14 @@ from precursor.backend.schemas.step_plan import (
     StepUpdate,
 )
 from precursor.backend.services import roles as roles_service
+from precursor.backend.services import skills as skills_service
+from precursor.backend.services.app_settings import (
+    resolve_chat_approval_policy,
+    resolve_mcp_expose,
+    resolve_topic_approval_policy,
+)
 from precursor.backend.services.conversation_llm import validate_selection
-from precursor.backend.services.events import publish_message_changed
+from precursor.backend.services.events import publish_message_changed, publish_message_changed_chat
 from precursor.backend.services.slugs import allocate_unique_slug
 
 # Plans whose automated run is alive in this process. ``auto_state`` in the
@@ -87,9 +103,20 @@ from precursor.backend.services.slugs import allocate_unique_slug
 RUNNING: set[int] = set()
 # The step the automated run is drafting right now, per plan.
 CURRENT_STEP: dict[int, int] = {}
+_PLAN_LOCKS: weakref.WeakValueDictionary[int, asyncio.Lock] = weakref.WeakValueDictionary()
+_AMENDMENTS = TypeAdapter(list[StepPlanAmendment])
 
 MAX_STEPS_PER_PLAN = 200
 MAX_DEPTH = 6
+
+
+def plan_lock(plan_id: int) -> asyncio.Lock:
+    lock = _PLAN_LOCKS.get(plan_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _PLAN_LOCKS[plan_id] = lock
+    return lock
+
 
 # A reply is a discussion; only what sits between these lines is a deliverable.
 # HTML comments, so they stay invisible when the transcript renders Markdown.
@@ -133,6 +160,36 @@ async def get_plan(session: AsyncSession, plan_id: int) -> StepPlan:
     return plan
 
 
+def require_unarchived(plan: StepPlan) -> None:
+    if plan.archived_at is not None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "Restore this archived plan before continuing."
+        )
+
+
+async def sync_delegation_policy(session: AsyncSession, plan: StepPlan) -> bool:
+    """Align the plan's autonomy with its source conversation's current policy.
+
+    Returns False when a linked source no longer exists. A standalone plan keeps its
+    own policy. The caller commits.
+    """
+    if plan.source_topic_id is not None:
+        topic = await session.get(Topic, plan.source_topic_id)
+        if topic is None:
+            return False
+        plan.delegation_policy = topic.approval_policy or await resolve_topic_approval_policy(
+            session
+        )
+    elif plan.source_chat_id is not None:
+        source_chat = await session.get(Chat, plan.source_chat_id)
+        if source_chat is None:
+            return False
+        plan.delegation_policy = source_chat.approval_policy or await resolve_chat_approval_policy(
+            session
+        )
+    return True
+
+
 async def get_step(session: AsyncSession, step_id: int) -> Step:
     step = await session.get(Step, step_id)
     if step is None:
@@ -140,10 +197,11 @@ async def get_step(session: AsyncSession, step_id: int) -> Step:
     return step
 
 
-async def plan_steps(session: AsyncSession, plan_id: int) -> list[Step]:
-    rows = await session.execute(
-        select(Step).where(Step.plan_id == plan_id).order_by(Step.position, Step.id)
-    )
+async def plan_steps(session: AsyncSession, plan_id: int, *, refresh: bool = False) -> list[Step]:
+    statement = select(Step).where(Step.plan_id == plan_id).order_by(Step.position, Step.id)
+    if refresh:
+        statement = statement.execution_options(populate_existing=True)
+    rows = await session.execute(statement)
     return list(rows.scalars().all())
 
 
@@ -252,8 +310,8 @@ def is_ready(steps: list[Step]) -> bool:
 # --- assessments --------------------------------------------------------------
 #
 # An assessment is tied to a signature of what it looked at; the signature is
-# recomputed on read, so a changed artifact, instruction or ask marks it stale
-# without any bookkeeping on the write paths.
+# recomputed on read, so changed requirements or work mark it stale without
+# any bookkeeping on the write paths.
 
 
 def _sig(*parts: str) -> str:
@@ -261,8 +319,64 @@ def _sig(*parts: str) -> str:
     return digest.hexdigest()
 
 
-def step_signature(plan: StepPlan, step: Step) -> str:
+def _step_content_signature(plan: StepPlan, step: Step) -> str:
     return _sig(plan.source_text, step.instruction, step.artifact)
+
+
+def step_signature(plan: StepPlan, step: Step) -> str:
+    content = _step_content_signature(plan, step)
+    if plan_amendments(plan):
+        return _sig(content, plan.amendments_json)
+    return content
+
+
+def plan_amendments(plan: StepPlan) -> list[StepPlanAmendment]:
+    try:
+        return _AMENDMENTS.validate_json(plan.amendments_json or "[]")
+    except ValidationError as exc:
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR, "The plan's amendment history is invalid."
+        ) from exc
+
+
+def plan_state_token(plan: StepPlan, steps: list[Step]) -> str:
+    """A read-before-write guard over the plan and the steps being amended."""
+    data = {
+        "status": plan.status,
+        "archived": plan.archived_at is not None,
+        "updated_at": (
+            plan.updated_at.astimezone(UTC).replace(tzinfo=None)
+            if plan.updated_at.tzinfo is not None
+            else plan.updated_at
+        ).isoformat(),
+        "source_topic_id": plan.source_topic_id,
+        "source_chat_id": plan.source_chat_id,
+        "source_text": plan.source_text,
+        "output_instructions": plan.output_instructions,
+        "amendments": plan.amendments_json or "[]",
+        "final_output": plan.final_output,
+        "final_version": plan.final_version,
+        "final_stale": plan.final_stale,
+        "final_provisional": plan.final_provisional,
+        "automation_mode": plan.automation_mode,
+        "delegation_policy": plan.delegation_policy,
+        "auto_state": plan.auto_state,
+        "steps": [
+            [
+                step.id,
+                step.parent_step_id,
+                step.position,
+                step.title,
+                step.instruction,
+                step.status,
+                step.artifact,
+                step.artifact_version,
+                step.needs_review,
+            ]
+            for step in sorted(steps, key=lambda item: item.id)
+        ],
+    }
+    return _sig(json.dumps(data, ensure_ascii=False, sort_keys=True))
 
 
 def plan_scope(plan: StepPlan) -> Literal["steps", "final"]:
@@ -271,8 +385,12 @@ def plan_scope(plan: StepPlan) -> Literal["steps", "final"]:
 
 
 def plan_signature(plan: StepPlan, steps: list[Step]) -> str:
-    leaves = [f"{s.id}:{step_signature(plan, s)}" for s in working_leaves(steps)]
+    # Amendments are already included separately in the plan signature. Keep
+    # existing final assessments valid when only step signature semantics change.
+    leaves = [f"{s.id}:{_step_content_signature(plan, s)}" for s in working_leaves(steps)]
     parts = [plan.source_text, plan.output_instructions or "", *leaves]
+    if plan_amendments(plan):
+        parts.append(plan.amendments_json)
     if plan_scope(plan) == "final":
         # A steps-only assessment is never the assessment of a final output.
         parts += ["final-output", plan.final_output or ""]
@@ -354,8 +472,15 @@ async def to_plan_read(session: AsyncSession, plan: StepPlan) -> StepPlanRead:
     if plan.source_topic_id is not None:
         topic = await session.get(Topic, plan.source_topic_id)
         topic_title = topic.title if topic else None
+    chat_title = None
+    if plan.source_chat_id is not None:
+        source_chat = await session.get(Chat, plan.source_chat_id)
+        chat_title = source_chat.title if source_chat else None
     read = StepPlanRead.model_validate(plan)
     read.source_topic_title = topic_title
+    read.source_chat_title = chat_title
+    read.amendments = plan_amendments(plan)
+    read.state_token = plan_state_token(plan, steps)
     read.ready_to_consolidate = is_ready(steps)
     if consolidation is not None:
         read.consolidation_chat_id, read.consolidation_chat_slug = consolidation
@@ -407,10 +532,23 @@ async def read_step(session: AsyncSession, step: Step) -> StepRead:
     return _step_read(step, effective[step.id], chats.get(step.id), plan)
 
 
-async def list_plans(session: AsyncSession, topic_id: int | None = None) -> list[StepPlanItem]:
-    stmt = select(StepPlan).order_by(StepPlan.created_at.desc(), StepPlan.id.desc())
+async def list_plans(
+    session: AsyncSession,
+    topic_id: int | None = None,
+    chat_id: int | None = None,
+    *,
+    archived: bool = False,
+) -> list[StepPlanItem]:
+    stmt = select(StepPlan).where(
+        StepPlan.archived_at.is_not(None) if archived else StepPlan.archived_at.is_(None)
+    )
+    stmt = stmt.order_by(
+        StepPlan.archived_at.desc() if archived else StepPlan.created_at.desc(), StepPlan.id.desc()
+    )
     if topic_id is not None:
         stmt = stmt.where(StepPlan.source_topic_id == topic_id)
+    if chat_id is not None:
+        stmt = stmt.where(StepPlan.source_chat_id == chat_id)
     plans = list((await session.execute(stmt)).scalars().all())
     if not plans:
         return []
@@ -423,6 +561,11 @@ async def list_plans(session: AsyncSession, topic_id: int | None = None) -> list
     if topic_ids:
         trows = await session.execute(select(Topic.id, Topic.title).where(Topic.id.in_(topic_ids)))
         titles = {tid: title for tid, title in trows.all()}
+    chat_ids = {p.source_chat_id for p in plans if p.source_chat_id is not None}
+    chat_titles: dict[int, str] = {}
+    if chat_ids:
+        crows = await session.execute(select(Chat.id, Chat.title).where(Chat.id.in_(chat_ids)))
+        chat_titles = {cid: title for cid, title in crows.all()}
     items: list[StepPlanItem] = []
     for p in plans:
         leaves = working_leaves(by_plan[p.id])
@@ -431,8 +574,11 @@ async def list_plans(session: AsyncSession, topic_id: int | None = None) -> list
                 id=p.id,
                 title=p.title,
                 status=p.status,
+                archived_at=p.archived_at,
                 source_topic_id=p.source_topic_id,
                 source_topic_title=titles.get(p.source_topic_id) if p.source_topic_id else None,
+                source_chat_id=p.source_chat_id,
+                source_chat_title=chat_titles.get(p.source_chat_id) if p.source_chat_id else None,
                 step_count=len(leaves),
                 validated_count=sum(1 for s in leaves if is_approved(s)),
                 final_stale=p.final_stale,
@@ -446,6 +592,23 @@ async def list_plans(session: AsyncSession, topic_id: int | None = None) -> list
 # --- plans --------------------------------------------------------------------
 
 
+async def set_archived(session: AsyncSession, plan_id: int, *, archived: bool) -> StepPlan:
+    async with plan_lock(plan_id):
+        plan = await get_plan(session, plan_id)
+        await session.refresh(plan)
+        if archived and plan_id in RUNNING:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Pause the run and wait for the current work to finish before archiving.",
+            )
+        if archived and plan.archived_at is None:
+            plan.archived_at = datetime.now(UTC)
+        elif not archived:
+            plan.archived_at = None
+        await session.commit()
+        return plan
+
+
 _STEPS_COMMAND = re.compile(r"^\s*/steps\b[ \t]*", re.IGNORECASE)
 
 
@@ -454,7 +617,7 @@ def _strip_steps_command(text: str) -> str:
     return _STEPS_COMMAND.sub("", text, count=1).strip()
 
 
-def _title_from(text: str) -> str:
+def title_from(text: str) -> str:
     text = _strip_steps_command(text)
     for line in text.splitlines():
         line = line.strip().lstrip("#>*- ").strip()
@@ -465,28 +628,50 @@ def _title_from(text: str) -> str:
 
 async def _source_for(
     session: AsyncSession, payload: StepPlanCreate
-) -> tuple[str, Topic | None, PromptSource]:
+) -> tuple[str, Topic | None, Chat | None, PromptSource]:
+    if payload.topic_id is not None and payload.chat_id is not None:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, "Choose one source conversation."
+        )
     topic = None
+    chat = None
     if payload.topic_id is not None:
         topic = await session.get(Topic, payload.topic_id)
         if topic is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
+    if payload.chat_id is not None:
+        chat = await session.get(Chat, payload.chat_id)
+        if chat is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Chat not found")
+        if chat.step_id is not None or chat.step_plan_id is not None:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT, "A plan's own discussion cannot be its source chat."
+            )
     text = _strip_steps_command(payload.source_text or "")
     source: PromptSource = "submitted"
-    if not text and topic is not None:
-        source = "topic_message"
+    if not text and (topic is not None or chat is not None):
+        source = "topic_message" if topic is not None else "chat_message"
+        if topic is not None:
+            container_id = topic.id
+        else:
+            assert chat is not None
+            container_id = chat.id
+        container_column = Message.topic_id if topic is not None else Message.chat_id
         if payload.message_id is not None:
             msg = await session.get(Message, payload.message_id)
-            if msg is None or msg.topic_id != topic.id:
+            if msg is None or (msg.topic_id if topic is not None else msg.chat_id) != container_id:
                 raise HTTPException(status.HTTP_404_NOT_FOUND, "Message not found")
             text = msg.content.strip()
         else:
             rows = await session.execute(
                 select(Message.content)
                 .where(
-                    Message.topic_id == topic.id,
+                    container_column == container_id,
                     Message.role == MessageRole.USER,
-                    Message.kind.is_(None),
+                    or_(
+                        Message.kind.is_(None),
+                        Message.kind == MESSAGE_KIND_STEP_USER_REQUEST,
+                    ),
                 )
                 .order_by(Message.id.desc())
                 .limit(20)
@@ -502,29 +687,32 @@ async def _source_for(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             "There's nothing to break down yet — paste the text to work through.",
         )
-    return text, topic, source
+    return text, topic, chat, source
 
 
 async def create_plan(session: AsyncSession, payload: StepPlanCreate) -> StepPlan:
-    text, topic, source = await _source_for(session, payload)
+    text, topic, chat, source = await _source_for(session, payload)
     selection = payload.llm_selection
     await validate_selection(session, selection)
+    container = topic if topic is not None else chat
     role = (
         await roles_service.require_role(session, payload.role)
         if payload.role is not None
-        else (topic.role if topic else None)
+        else (container.role if container is not None else None)
     )
     plan = StepPlan(
-        title=(payload.title or "").strip() or _title_from(text),
+        title=(payload.title or "").strip() or title_from(text),
         source_text=text,
         status=PLAN_DRAFTING,
         automation_mode=payload.automation_mode,
+        delegation_policy=payload.delegation_policy,
         source_topic_id=topic.id if topic else None,
+        source_chat_id=chat.id if chat else None,
         role=role,
         llm_selection=(
             selection.model_dump_json()
             if selection
-            else (topic.llm_selection if topic is not None else None)
+            else (container.llm_selection if container is not None else None)
         ),
     )
     session.add(plan)
@@ -532,6 +720,9 @@ async def create_plan(session: AsyncSession, payload: StepPlanCreate) -> StepPla
     if topic is not None:
         snapshot = StepPlanTraceData(plan_id=plan.id, title=plan.title, prompt=text, source=source)
         await _trace_in_topic(session, plan, topic.id, snapshot=snapshot)
+    elif chat is not None:
+        snapshot = StepPlanTraceData(plan_id=plan.id, title=plan.title, prompt=text, source=source)
+        await _trace_in_chat(session, plan, chat.id, snapshot=snapshot)
     else:
         await session.commit()
     return plan
@@ -565,6 +756,30 @@ async def _trace_in_topic(
     await publish_message_changed(topic_id)
 
 
+async def _trace_in_chat(
+    session: AsyncSession,
+    plan: StepPlan,
+    chat_id: int,
+    verb: str = "Started",
+    *,
+    snapshot: StepPlanTraceData | None = None,
+) -> None:
+    session.add(
+        Message(
+            chat_id=chat_id,
+            role=MessageRole.SYSTEM,
+            kind=STEP_PLAN_TRACE_KIND,
+            content=(
+                snapshot.model_dump_json()
+                if snapshot is not None
+                else f"{verb} step by step: [{plan.title}](/steps/{plan.id})"
+            ),
+        )
+    )
+    await session.commit()
+    await publish_message_changed_chat(chat_id)
+
+
 async def update_plan(session: AsyncSession, plan_id: int, payload: StepPlanUpdate) -> StepPlan:
     plan = await get_plan(session, plan_id)
     fields = payload.model_fields_set
@@ -588,17 +803,40 @@ async def update_plan(session: AsyncSession, plan_id: int, payload: StepPlanUpda
         )
     if "output_instructions" in fields:
         text = (payload.output_instructions or "").strip()
-        plan.output_instructions = text or None
+        if (text or None) != plan.output_instructions:
+            plan.output_instructions = text or None
+            _reopen_plan(plan)
+    if payload.source_topic_id is not None and payload.source_chat_id is not None:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, "Choose one source conversation."
+        )
     newly_linked: int | None = None
+    newly_linked_chat: int | None = None
     if "source_topic_id" in fields and payload.source_topic_id != plan.source_topic_id:
         if payload.source_topic_id is not None:
             if await session.get(Topic, payload.source_topic_id) is None:
                 raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
             newly_linked = payload.source_topic_id
         plan.source_topic_id = payload.source_topic_id
+        if payload.source_topic_id is not None:
+            plan.source_chat_id = None
+    if "source_chat_id" in fields and payload.source_chat_id != plan.source_chat_id:
+        if payload.source_chat_id is not None:
+            source_chat = await session.get(Chat, payload.source_chat_id)
+            if source_chat is None:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "Chat not found")
+            if source_chat.step_id is not None or source_chat.step_plan_id is not None:
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT, "A plan's own discussion cannot be its source chat."
+                )
+            newly_linked_chat = payload.source_chat_id
+            plan.source_topic_id = None
+        plan.source_chat_id = payload.source_chat_id
     await session.commit()
     if newly_linked is not None:
         await _trace_in_topic(session, plan, newly_linked, verb="Linked")
+    if newly_linked_chat is not None:
+        await _trace_in_chat(session, plan, newly_linked_chat, verb="Linked")
     return plan
 
 
@@ -643,6 +881,23 @@ async def detach_topic(session: AsyncSession, topic_id: int) -> list[int]:
     return [p.id for p in plans]
 
 
+async def detach_chat(session: AsyncSession, chat_id: int) -> list[int]:
+    rows = await session.execute(select(StepPlan).where(StepPlan.source_chat_id == chat_id))
+    plans = list(rows.scalars().all())
+    for plan in plans:
+        plan.source_chat_id = None
+    return [p.id for p in plans]
+
+
+async def transfer_chat_source(session: AsyncSession, chat_id: int, topic_id: int) -> list[int]:
+    rows = await session.execute(select(StepPlan).where(StepPlan.source_chat_id == chat_id))
+    plans = list(rows.scalars().all())
+    for plan in plans:
+        plan.source_chat_id = None
+        plan.source_topic_id = topic_id
+    return [p.id for p in plans]
+
+
 async def _flag_for_review(session: AsyncSession, plan: StepPlan) -> None:
     """The ask changed: every approval and the final output must be looked at again."""
     for step in working_leaves(await plan_steps(session, plan.id)):
@@ -681,6 +936,111 @@ def _reopen_plan(plan: StepPlan) -> None:
         plan.status = PLAN_ACTIVE
     if plan.final_output:
         plan.final_stale = True
+
+
+async def amend_plan(
+    session: AsyncSession, plan_id: int, payload: StepPlanAmendRequest
+) -> StepPlan:
+    """Apply a follow-up and all its new steps together, without rewriting old work."""
+    async with plan_lock(plan_id):
+        async with session.begin_nested():
+            plan = await get_plan(session, plan_id)
+            await session.refresh(plan)
+            require_unarchived(plan)
+            steps = await plan_steps(session, plan_id)
+            if plan.id in RUNNING:
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    "The plan is still running. Pause it and wait for the current step to finish.",
+                )
+            if plan.status == PLAN_CANCELLED:
+                raise HTTPException(status.HTTP_409_CONFLICT, "A cancelled plan cannot be amended.")
+            if payload.expected_state_token != plan_state_token(plan, steps):
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    "The plan changed since it was read. Read it again before amending it.",
+                )
+            if payload.topic_id is not None and payload.chat_id is not None:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_CONTENT, "Choose one source conversation."
+                )
+            if plan.source_topic_id is not None and payload.topic_id != plan.source_topic_id:
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT, "The plan does not belong to this topic."
+                )
+            if plan.source_chat_id is not None and payload.chat_id != plan.source_chat_id:
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT, "The plan does not belong to this chat."
+                )
+            if (
+                plan.source_topic_id is None
+                and plan.source_chat_id is None
+                and (payload.topic_id is not None or payload.chat_id is not None)
+            ):
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT, "The plan has no matching source conversation."
+                )
+            request = payload.request.strip()
+            if not request or any(
+                not item.title.strip() or not item.instruction.strip() for item in payload.steps
+            ):
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    "The follow-up and every new step need a title and instruction.",
+                )
+            if len(steps) + len(payload.steps) > MAX_STEPS_PER_PLAN:
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT, f"A plan holds at most {MAX_STEPS_PER_PLAN} steps."
+                )
+
+            if not await sync_delegation_policy(session, plan):
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "Source conversation not found.")
+
+            history = plan_amendments(plan)
+            added: list[int] = []
+            for item in payload.steps:
+                step = await create_step(
+                    session,
+                    plan,
+                    item,
+                    author=AUTHOR_MODEL,
+                    proposed=plan.status == PLAN_DRAFTING,
+                    commit=False,
+                )
+                added.append(step.id)
+            if "output_instructions" in payload.model_fields_set:
+                plan.output_instructions = (payload.output_instructions or "").strip() or None
+            revision = StepPlanAmendment(
+                revision=len(history) + 1,
+                request=request,
+                output_instructions=plan.output_instructions,
+                added_step_ids=added,
+                base_final_version=plan.final_version,
+                created_at=datetime.now(UTC),
+            )
+            plan.amendments_json = _AMENDMENTS.dump_json([*history, revision]).decode()
+            _reopen_plan(plan)
+            if plan.auto_state == AUTO_RUNNING:
+                plan.auto_state = AUTO_PAUSED
+            trace = StepPlanAmendmentTraceData(
+                plan_id=plan.id, title=plan.title, revision=revision.revision, prompt=request
+            )
+            if plan.source_topic_id is not None or plan.source_chat_id is not None:
+                session.add(
+                    Message(
+                        topic_id=plan.source_topic_id,
+                        chat_id=plan.source_chat_id,
+                        role=MessageRole.SYSTEM,
+                        kind=STEP_PLAN_TRACE_KIND,
+                        content=trace.model_dump_json(),
+                    )
+                )
+        await session.commit()
+    if plan.source_topic_id is not None:
+        await publish_message_changed(plan.source_topic_id)
+    elif plan.source_chat_id is not None:
+        await publish_message_changed_chat(plan.source_chat_id)
+    return plan
 
 
 # --- steps --------------------------------------------------------------------
@@ -868,6 +1228,7 @@ async def drop_proposed(
 async def start_plan(session: AsyncSession, plan_id: int, *, accept_proposed: bool) -> StepPlan:
     """Leave the drafting screen: the plan becomes active."""
     plan = await get_plan(session, plan_id)
+    require_unarchived(plan)
     if plan.status != PLAN_DRAFTING:
         raise HTTPException(status.HTTP_409_CONFLICT, "This plan has already started.")
     if accept_proposed:
@@ -927,6 +1288,81 @@ async def set_step_status(session: AsyncSession, step_id: int, new_status: str) 
             _reopen_plan(plan)
     await session.commit()
     return step
+
+
+async def validate_assessed_step(
+    session: AsyncSession,
+    plan_id: int,
+    step_id: int,
+    *,
+    expected_signature: str,
+    expected_assessment: str,
+) -> bool:
+    """Validate only the exact work and assessment that the runner reviewed."""
+    plan = await session.scalar(
+        select(StepPlan)
+        .where(StepPlan.id == plan_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    step = await session.scalar(
+        select(Step)
+        .where(Step.id == step_id, Step.plan_id == plan_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if (
+        plan is None
+        or step is None
+        or plan.archived_at is not None
+        or plan.status == PLAN_CANCELLED
+        or step.status != STEP_TO_VALIDATE
+        or not step.artifact.strip()
+        or step.assessed_sig != expected_signature
+        or step.assessment_json != expected_assessment
+        or step_signature(plan, step) != expected_signature
+    ):
+        await session.rollback()
+        return False
+    child = aliased(Step)
+    has_children = (
+        select(child.id)
+        .where(child.parent_step_id == step_id, child.status != STEP_PROPOSED)
+        .exists()
+    )
+    same_plan = (
+        select(StepPlan.id)
+        .where(
+            StepPlan.id == plan_id,
+            StepPlan.source_text == plan.source_text,
+            StepPlan.amendments_json == plan.amendments_json,
+            StepPlan.archived_at.is_(None),
+            StepPlan.status != PLAN_CANCELLED,
+        )
+        .exists()
+    )
+    result = await session.execute(
+        update(Step)
+        .where(
+            Step.id == step_id,
+            Step.status == STEP_TO_VALIDATE,
+            Step.instruction == step.instruction,
+            Step.artifact == step.artifact,
+            Step.assessed_sig == expected_signature,
+            Step.assessment_json == expected_assessment,
+            ~has_children,
+            same_plan,
+        )
+        .values(status=STEP_VALIDATED, needs_review=False)
+        .execution_options(synchronize_session=False)
+    )
+    if not cast("CursorResult[Any]", result).rowcount:
+        await session.rollback()
+        return False
+    _reopen_plan(plan)
+    await session.commit()
+    await session.refresh(step)
+    return True
 
 
 async def write_artifact(
@@ -1049,13 +1485,17 @@ async def revert_artifact(session: AsyncSession, step_id: int, version: int) -> 
 
 
 async def record_final_version(
-    session: AsyncSession, plan: StepPlan, text: str, *, author: str = AUTHOR_USER
+    session: AsyncSession,
+    plan: StepPlan,
+    text: str,
+    *,
+    author: str = AUTHOR_USER,
+    force_new: bool = False,
 ) -> None:
     """Point the plan's final output at ``text``, as a version.
 
-    Mirrors a step's artifact history: a text the output already had points back
-    at that version instead of recording a duplicate, so restoring an older
-    version (or saving unchanged text) never creates a new one.
+    An existing text points back at its previous version, except when an
+    amendment explicitly starts a new final-output revision.
     """
     if not text.strip():
         plan.final_output, plan.final_version = None, 0
@@ -1074,7 +1514,7 @@ async def record_final_version(
         .first()
     )
     plan.final_output = text
-    if known is not None:
+    if known is not None and not force_new:
         plan.final_version = known.version
         return
     latest = (
@@ -1123,20 +1563,56 @@ async def latest_posted_final(session: AsyncSession, plan_id: int) -> StepPlanFi
     )
 
 
+async def final_filed_in_current_source(session: AsyncSession, plan: StepPlan) -> bool:
+    """Whether a recorded copy of the current final still exists in the linked source."""
+    if (
+        not plan.final_output
+        or not plan.final_version
+        or (plan.source_topic_id is None and plan.source_chat_id is None)
+    ):
+        return False
+    version = await session.scalar(
+        select(StepPlanFinalVersion).where(
+            StepPlanFinalVersion.plan_id == plan.id,
+            StepPlanFinalVersion.version == plan.final_version,
+            StepPlanFinalVersion.content == plan.final_output,
+            StepPlanFinalVersion.posted_at.is_not(None),
+        )
+    )
+    if version is None or version.posted_message_id is None:
+        return False
+    message = await session.get(Message, version.posted_message_id)
+    if (
+        message is None
+        or message.role != MessageRole.USER
+        or message.topic_id != plan.source_topic_id
+        or message.chat_id != plan.source_chat_id
+    ):
+        return False
+    header, separator, body = message.content.partition("\n\n")
+    return bool(
+        separator
+        and f"](/steps/{plan.id}) · final output v{plan.final_version}" in header
+        and body == plan.final_output.strip()
+    )
+
+
 async def mark_final_posted(
-    session: AsyncSession, plan_id: int, text: str, message_id: int
+    session: AsyncSession,
+    plan_id: int,
+    text: str,
+    message_id: int,
+    *,
+    version: int | None = None,
 ) -> StepPlanFinalVersion | None:
     """Flag the version holding ``text`` as filed into the topic (none when it matches no version)."""
+    stmt = select(StepPlanFinalVersion).where(
+        StepPlanFinalVersion.plan_id == plan_id, StepPlanFinalVersion.content == text
+    )
+    if version is not None:
+        stmt = stmt.where(StepPlanFinalVersion.version == version)
     row = (
-        (
-            await session.execute(
-                select(StepPlanFinalVersion)
-                .where(
-                    StepPlanFinalVersion.plan_id == plan_id, StepPlanFinalVersion.content == text
-                )
-                .order_by(StepPlanFinalVersion.version.desc())
-            )
-        )
+        (await session.execute(stmt.order_by(StepPlanFinalVersion.version.desc())))
         .scalars()
         .first()
     )
@@ -1267,44 +1743,59 @@ _VALIDATED_EXCERPT = 4_000
 _DRAFT_EXCERPT = 1_500
 
 
-def plan_header(plan: StepPlan) -> str:
-    return f"Plan: {plan.title}\n\nThe original ask:\n<<<ASK\n{_cap(plan.source_text, _SOURCE_CAP)}\nASK>>>"
+def plan_header(plan: StepPlan, *, full: bool = False) -> str:
+    source = plan.source_text.strip() if full else _cap(plan.source_text, _SOURCE_CAP)
+    header = f"Plan: {plan.title}\n\nThe original ask:\n<<<ASK\n{source}\nASK>>>"
+    amendments = plan_amendments(plan)
+    if amendments:
+        history = "\n\n".join(f"Revision {a.revision}:\n{a.request}" for a in amendments)
+        if not full and len(history) > _SOURCE_CAP:
+            history = "…(earlier revisions omitted)\n" + history[-_SOURCE_CAP:]
+        header += (
+            "\n\nAccepted follow-up requests, in order. A later request supersedes an earlier "
+            "requirement only where it explicitly changes it; keep the rest:\n"
+            f"<<<AMENDMENTS\n{history}\nAMENDMENTS>>>"
+        )
+    return header
 
 
-async def topic_background(session: AsyncSession, plan: StepPlan) -> str:
-    """The source topic's own discussion, so a step knows what led to the plan.
-
-    Empty when the plan wasn't started from a topic (or the topic is gone).
-    """
-    if plan.source_topic_id is None:
+async def conversation_background(session: AsyncSession, plan: StepPlan) -> str:
+    """The source conversation, as context rather than a new instruction."""
+    if plan.source_topic_id is None and plan.source_chat_id is None:
         return ""
-    topic = await session.get(Topic, plan.source_topic_id)
-    if topic is None:
+    topic = await session.get(Topic, plan.source_topic_id) if plan.source_topic_id else None
+    chat = await session.get(Chat, plan.source_chat_id) if plan.source_chat_id else None
+    container = topic if topic is not None else chat
+    if container is None:
         return ""
     # Imported here: these services import this module's siblings at load time.
     from precursor.backend.services.compaction import render_transcript
     from precursor.backend.services.conversation_turn import load_model_history
 
     parts = [
-        "The plan was started from this topic; use it as background (earlier "
+        "The plan was started from this conversation; use it as background (earlier "
         "exchanges, decisions, constraints), not as an instruction to redo it.",
-        f"Source topic: {topic.title}",
+        f"Source {'topic' if topic is not None else 'chat'}: {container.title}",
     ]
-    if topic.description:
-        parts.append(f"Topic description: {topic.description}")
-    summary = (
-        await session.execute(select(TopicSummary.content).where(TopicSummary.topic_id == topic.id))
-    ).scalar_one_or_none()
-    if summary and summary.strip():
-        parts.append(f"Topic summary:\n{summary.strip()}")
-    history = await load_model_history(session, "topic", topic.id)
+    if container.description:
+        parts.append(f"Conversation description: {container.description}")
+    if topic is not None:
+        summary = (
+            await session.execute(
+                select(TopicSummary.content).where(TopicSummary.topic_id == topic.id)
+            )
+        ).scalar_one_or_none()
+        if summary and summary.strip():
+            parts.append(f"Topic summary:\n{summary.strip()}")
+    kind: Literal["topic", "chat"] = "topic" if topic is not None else "chat"
+    history = await load_model_history(session, kind, container.id)
     transcript = "\n\n".join(
         render_transcript([m for m in history if m.role in ("user", "assistant")])
     )
     if transcript:
         if len(transcript) > _TOPIC_TRANSCRIPT_CAP:
             transcript = "…(earlier messages omitted)\n" + transcript[-_TOPIC_TRANSCRIPT_CAP:]
-        parts.append(f"Topic conversation:\n<<<TOPIC\n{transcript}\nTOPIC>>>")
+        parts.append(f"Source conversation:\n<<<CONVERSATION\n{transcript}\nCONVERSATION>>>")
     return "\n\n".join(parts)
 
 
@@ -1357,10 +1848,23 @@ async def step_grounding(
     session: AsyncSession, plan: StepPlan, steps: list[Step], step: Step
 ) -> list[str]:
     """The plan-wide context blocks shared by a step's chat and its drafting."""
-    parts = [plan_header(plan)]
+    parts = [
+        plan_header(plan),
+        "Step scope: the original ask and sibling artifacts provide context; "
+        "the current step's instruction defines its primary result. Complete that "
+        "result even if you also make useful progress on another step. If work "
+        "overlaps, explain what you completed and what remains for the other step.",
+    ]
     if plan.output_instructions:
         parts.append(f"The final deliverable will be:\n{plan.output_instructions}")
-    background = await topic_background(session, plan)
+    if any(step.id in amendment.added_step_ids for amendment in plan_amendments(plan)):
+        parts.append(
+            "This is follow-up work on an existing result. Inspect the current deliverable "
+            "and preserve user changes. For a file, keep the previous version and work on a "
+            "revised copy unless the user explicitly requested an in-place change. Report "
+            "the resulting artifact and what changed; do not redo unrelated approved work."
+        )
+    background = await conversation_background(session, plan)
     if background:
         parts.append(background)
     parts.append(f"Plan outline:\n{render_outline(steps, mark=step.id)}")
@@ -1397,10 +1901,13 @@ async def build_step_context(session: AsyncSession, chat: Chat) -> str:
             "diff or an excerpt): the app saves exactly that as a new, unvalidated "
             "version of the step's artifact right away. Don't use the markers for "
             "anything else; questions, alternatives, explanations and notes stay "
-            "outside them, and a reply without markers leaves the artifact untouched."
+            "outside them, and a reply without markers leaves the artifact untouched. "
+            "When the step's result is a file you built with a tool, the artifact is "
+            "its absolute path, one line on what it is and how to open it: mark that, "
+            "so the step records the file."
             + (
-                " This step is validated, so a marked artifact is NOT applied until "
-                "the user reopens the step: say so instead of promising a change."
+                " This step is validated: a marked artifact still applies, as a new "
+                "version that reopens the step for the user's validation."
                 if step.status == STEP_VALIDATED
                 else ""
             ),
@@ -1408,7 +1915,15 @@ async def build_step_context(session: AsyncSession, chat: Chat) -> str:
             f"Current step: {step.title}",
         ]
         if step.instruction:
-            parts.append(f"What this step must produce:\n{step.instruction}")
+            instruction = await skills_service.expand_references(session, step.instruction)
+            parts.append(f"What this step must produce:\n{instruction}")
+        if (await resolve_mcp_expose(session)).get("skills"):
+            skills = await skills_service.reconcile_and_list(session)
+            catalog = skills_service.skills_prompt(
+                skills, context=f"{step.title}\n{step.instruction or ''}"
+            )
+            if catalog:
+                parts.append(catalog)
         if step.artifact.strip():
             parts.append(
                 f"Current artifact (version {step.artifact_version}, status {step.status}):\n"
@@ -1433,7 +1948,7 @@ async def build_step_context(session: AsyncSession, chat: Chat) -> str:
             "the markers; a reply without markers changes nothing.",
             plan_header(plan),
         ]
-        background = await topic_background(session, plan)
+        background = await conversation_background(session, plan)
         if background:
             parts.append(background)
         parts.append(f"Plan outline:\n{render_outline(steps)}")

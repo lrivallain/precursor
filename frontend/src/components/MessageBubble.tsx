@@ -37,6 +37,7 @@ import { CopyMessageLink } from "./CopyMessageLink";
 interface Props {
   role: MessageRole;
   content: string;
+  senderLabel?: string;
   // For assistant turns: the model's thinking, shown in a collapsed area above
   // the reply (streaming in while the turn is pending).
   reasoning?: string | null;
@@ -109,7 +110,7 @@ function matchSkillInvocation(
   return { skill, argument: (m[2] ?? "").trim() };
 }
 
-export function MessageBubble({ role, content, reasoning, pending, attachments, onDelete, permalink, onStop, collapsible, agentSessionId, createdAt, model, provider, elapsedMs, isError, onRetry, highlighted, onRewindHere, onEditResend, revealActions, onStartSideChat, footer, quotableId, onEditReply, editor, edited }: Props) {
+export function MessageBubble({ role, content, senderLabel, reasoning, pending, attachments, onDelete, permalink, onStop, collapsible, agentSessionId, createdAt, model, provider, elapsedMs, isError, onRetry, highlighted, onRewindHere, onEditResend, revealActions, onStartSideChat, footer, quotableId, onEditReply, editor, edited }: Props) {
   const isUser = role === "user";
   const skills = useSkills();
   const skillInvocation =
@@ -205,7 +206,7 @@ export function MessageBubble({ role, content, reasoning, pending, attachments, 
         className="flex flex-col items-end gap-1 group min-w-0"
       >
         <div className="text-[11px] uppercase tracking-wide text-muted">
-          {roleLabel[role]}
+          {senderLabel ?? roleLabel[role]}
         </div>
         <div className="relative rounded-lg border border-border bg-accent/10 max-w-full">
           {(permalink || onDelete) && (
@@ -266,7 +267,7 @@ export function MessageBubble({ role, content, reasoning, pending, attachments, 
       className={`group flex flex-col gap-1 min-w-0 ${isUser ? "items-end" : "items-start"} ${planNote ? "w-full" : ""}`}
     >
       <div className="flex items-center gap-2">
-        <div className="text-[11px] uppercase tracking-wide text-muted">{roleLabel[role]}</div>
+        <div className="text-[11px] uppercase tracking-wide text-muted">{senderLabel ?? roleLabel[role]}</div>
         {agentSessionId != null && <AgentExchangeBadge agentSessionId={agentSessionId} />}
       </div>
       <div

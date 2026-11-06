@@ -55,7 +55,10 @@ export function TranscriptMessage(props: TranscriptMessageProps) {
   const row = renderRow(props);
   if (row === null) return null;
   // A turn's prompt anchors the timeline rail (see useTurnTimeline).
-  const anchor = m.role === "user" && !m.kind && m.id > 0;
+  const anchor =
+    m.role === "user" &&
+    (!m.kind || m.kind === "step_automation" || m.kind === "step_user_request") &&
+    m.id > 0;
   if (!anchor && !compacted && !doomed && !cutAbove && !m.public_id) return row;
   const dim = doomed
     ? "opacity-35 grayscale transition-opacity"
@@ -165,6 +168,7 @@ function renderRow({
       permalink={discussionPermalink && m.public_id ? messagePermalink(discussionPermalink, m.public_id) : undefined}
       role={m.role}
       content={split ? split.text : m.content}
+      senderLabel={m.kind === "step_automation" ? "Step-by-step automation" : undefined}
       reasoning={m.reasoning}
       attachments={m.attachments}
       collapsible={collapsible}
@@ -262,6 +266,7 @@ export function TranscriptTail({
 
 function removedLabel(message: Message): string {
   if (message.kind === "compaction") return "Compaction summary";
+  if (message.kind === "step_automation") return "Automated plan prompt";
   if (message.role === "user") return "Your message";
   return message.role === "assistant" ? "Assistant reply" : "Message";
 }

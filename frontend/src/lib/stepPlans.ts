@@ -1,5 +1,5 @@
 import { api } from "./api";
-import type { Step, StepPlan, StepPlanStatus, StepPlanTraceData } from "./types";
+import type { Step, StepPlan, StepPlanAmendmentTraceData, StepPlanStatus, StepPlanTraceData } from "./types";
 
 export const PLAN_STATUS_LABEL: Record<StepPlanStatus, string> = {
   drafting: "Drafting",
@@ -157,13 +157,18 @@ export function planStage(plan: StepPlan): PlanStage {
   return total > 0 && done === total ? "final" : "work";
 }
 
-/** Whether the automated run still has something to do (empty steps to draft, or no final output yet). */
+/** Whether the automated run has untouched work or a delegated final to assess. */
 export function autoHasWork(plan: StepPlan): boolean {
   if (plan.automation_mode !== "auto" || (plan.status !== "active" && plan.status !== "consolidating")) {
     return false;
   }
   const leaves = buildStepTree(plan.steps).flatMap(workingLeaves);
-  return leaves.some((l) => l.step.artifact.trim() === "") || !hasFinalOutput(plan);
+  const latestAmendment = plan.amendments.at(-1);
+  const amendmentNeedsFinal = plan.final_stale && latestAmendment?.base_final_version === plan.final_version;
+  const finalNeedsAssessment =
+    plan.delegation_policy != null && hasFinalOutput(plan) && !plan.final_stale && !plan.final_provisional &&
+    (plan.assessment == null || plan.assessment.scope !== "final" || plan.assessment_stale);
+  return leaves.some((l) => l.step.artifact.trim() === "") || !hasFinalOutput(plan) || amendmentNeedsFinal || finalNeedsAssessment;
 }
 
 export interface PlanNext {
@@ -185,7 +190,10 @@ export function planNext(plan: StepPlan): PlanNext | null {
   if (todo) return { label: "Go to the next step", target: todo.step.id };
   if (!hasFinalOutput(plan)) return { label: "Write the final output", target: "final" };
   if (plan.final_stale || plan.final_provisional) return { label: "Regenerate the final output", target: "final" };
-  return { label: plan.source_topic_id != null ? "Send to the topic" : "Review the final output", target: "final" };
+  return {
+    label: plan.source_topic_id != null ? "Send to the topic" : plan.source_chat_id != null ? "Send to the chat" : "Review the final output",
+    target: "final",
+  };
 }
 
 /** The step to show first once a plan is working: the first leaf still to do, else the first step. */
@@ -305,8 +313,8 @@ export interface OpenStepPlanDetail {
 interface StepPlanTrace {
   planId: number;
   title: string;
-  action: "Started" | "Linked";
-  snapshot: StepPlanTraceData | null;
+  action: "Started" | "Linked" | "Amended";
+  snapshot: StepPlanTraceData | StepPlanAmendmentTraceData | null;
 }
 
 const TRACE_LINK = /^(Started|Linked) step by step: \[([\s\S]*)\]\(\/steps\/([1-9]\d*)\)$/;
@@ -328,7 +336,7 @@ export function parseStepPlanTrace(content: string): StepPlanTrace | null {
       Number.isSafeInteger(data.plan_id) && data.plan_id > 0 &&
       "title" in data && typeof data.title === "string" &&
       "prompt" in data && typeof data.prompt === "string" &&
-      "source" in data && (data.source === "submitted" || data.source === "topic_message")
+      "source" in data && (data.source === "submitted" || data.source === "topic_message" || data.source === "chat_message")
     ) {
       return {
         planId: data.plan_id,
@@ -337,6 +345,27 @@ export function parseStepPlanTrace(content: string): StepPlanTrace | null {
         snapshot: {
           kind: data.kind, version: data.version, plan_id: data.plan_id,
           title: data.title, prompt: data.prompt, source: data.source,
+        },
+      };
+    }
+    if (
+      typeof data === "object" && data !== null &&
+      "kind" in data && data.kind === "step_plan_amendment" &&
+      "version" in data && data.version === 1 &&
+      "plan_id" in data && typeof data.plan_id === "number" &&
+      Number.isSafeInteger(data.plan_id) && data.plan_id > 0 &&
+      "title" in data && typeof data.title === "string" &&
+      "prompt" in data && typeof data.prompt === "string" &&
+      "revision" in data && typeof data.revision === "number" &&
+      Number.isSafeInteger(data.revision) && data.revision > 0
+    ) {
+      return {
+        planId: data.plan_id,
+        title: data.title,
+        action: "Amended",
+        snapshot: {
+          kind: data.kind, version: data.version, plan_id: data.plan_id,
+          title: data.title, prompt: data.prompt, revision: data.revision,
         },
       };
     }

@@ -22,13 +22,17 @@ from precursor.backend.schemas import (
 )
 from precursor.backend.schemas.topic import TopicRead
 from precursor.backend.services import roles as roles_service
-from precursor.backend.services import side_chat_notes
+from precursor.backend.services import side_chat_notes, step_plans
 from precursor.backend.services.collections import (
     resolve_collection_default_role,
     resolve_collection_id,
 )
 from precursor.backend.services.conversation_llm import validate_selection
-from precursor.backend.services.events import publish_read_changed, publish_topic_changed
+from precursor.backend.services.events import (
+    publish_read_changed,
+    publish_step_plan_changed,
+    publish_topic_changed,
+)
 from precursor.backend.services.side_chats import (
     discard_if_untouched,
     to_chat_read,
@@ -197,8 +201,11 @@ async def delete_chat(
     if not chat:
         raise HTTPException(status_code=404, detail="Chat not found")
     parent_topic_id = chat.parent_topic_id
+    detached_plans = await step_plans.detach_chat(session, chat_id)
     await session.delete(chat)
     await session.commit()
+    for plan_id in detached_plans:
+        await publish_step_plan_changed(plan_id)
     if parent_topic_id is not None:
         await publish_topic_changed(parent_topic_id)
 
@@ -355,6 +362,7 @@ async def promote_chat_to_topic(
         # Keep the quoted reply: the transcript alone lacks what it answered.
         seed_content=chat.seed_content,
         role=await resolve_collection_default_role(session, resolved_collection_id),
+        approval_policy=chat.approval_policy,
     )
     session.add(topic)
     await session.flush()  # assign topic.id
@@ -364,11 +372,14 @@ async def promote_chat_to_topic(
     await session.execute(
         update(Message).where(Message.chat_id == chat_id).values(topic_id=topic.id, chat_id=None)
     )
+    moved_plans = await step_plans.transfer_chat_source(session, chat_id, topic.id)
     parent_topic_id = chat.parent_topic_id
     await session.delete(chat)
     await session.commit()
     await session.refresh(topic)
     await publish_topic_changed(topic.id)
+    for plan_id in moved_plans:
+        await publish_step_plan_changed(plan_id)
     if parent_topic_id is not None:
         await publish_topic_changed(parent_topic_id)
     return topic

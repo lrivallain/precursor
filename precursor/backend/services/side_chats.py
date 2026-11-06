@@ -158,6 +158,10 @@ async def to_chat_reads(
         read.pending_approvals = pending.get(chat.id, 0)
         if chat.parent_topic_id is not None:
             read.parent_topic_title = titles.get(chat.parent_topic_id)
+        delegated = await approval_service.delegated_chat_plan(session, chat)
+        if delegated is not None:
+            plan, read.inherited_approval_policy = delegated
+            read.inherited_approval_plan_id = plan.id
         out.append(read)
     return out
 

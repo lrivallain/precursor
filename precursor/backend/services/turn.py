@@ -61,6 +61,8 @@ from precursor.backend.services.turn_engine import (
 from precursor.backend.services.unattended_approvals import announce_parked
 from precursor.backend.services.workspaces import WORKSPACE_READ_TOOLS, WORKSPACE_WRITE_TOOLS
 
+SKILL_READ_TOOLS = frozenset({"list_skills", "get_skill"})
+
 logger = logging.getLogger(__name__)
 
 
@@ -97,9 +99,17 @@ async def run_topic_turn(
     )
 
 
-async def run_chat_turn(chat_id: int, prompt: str, *, llm_prompt: str | None = None) -> TurnResult:
+async def run_chat_turn(
+    chat_id: int,
+    prompt: str,
+    *,
+    llm_prompt: str | None = None,
+    message_kind: str | None = None,
+) -> TurnResult:
     """The same headless turn for a chat (a step's or a plan's discussion)."""
-    return await run_container_turn("chat", chat_id, prompt, llm_prompt=llm_prompt)
+    return await run_container_turn(
+        "chat", chat_id, prompt, llm_prompt=llm_prompt, message_kind=message_kind
+    )
 
 
 async def run_container_turn(
@@ -109,6 +119,7 @@ async def run_container_turn(
     *,
     clear_context: bool = False,
     llm_prompt: str | None = None,
+    message_kind: str | None = None,
 ) -> TurnResult:
     if kind == "topic":
         await publish_stream_started(container_id)
@@ -116,7 +127,12 @@ async def run_container_turn(
         await publish_stream_started_chat(container_id)
     try:
         return await _run(
-            kind, container_id, prompt, clear_context=clear_context, llm_prompt=llm_prompt
+            kind,
+            container_id,
+            prompt,
+            clear_context=clear_context,
+            llm_prompt=llm_prompt,
+            message_kind=message_kind,
         )
     finally:
         if kind == "topic":
@@ -132,6 +148,7 @@ async def _run(
     *,
     clear_context: bool = False,
     llm_prompt: str | None = None,
+    message_kind: str | None = None,
 ) -> TurnResult:
     manager = get_mcp_client_manager()
     result = TurnResult()
@@ -158,7 +175,9 @@ async def _run(
 
         # Persist the prompt as the user turn so the transcript and the unread
         # badge behave like a normal conversation.
-        user_msg = await persist_user_message(session, kind, container_id, prompt)
+        user_msg = await persist_user_message(
+            session, kind, container_id, prompt, message_kind=message_kind
+        )
         result.user_message_id = user_msg.id
 
         if isinstance(container, Chat):
@@ -188,7 +207,11 @@ async def _run(
         # re-expose Precursor's own MCP server to itself — that would let a
         # post_message-triggered turn recursively call post_message. Only the
         # workspace file tools stay, as they did when they were a separate server.
-        active.restrict_server_tools("precursor", WORKSPACE_READ_TOOLS | WORKSPACE_WRITE_TOOLS)
+        allowed = WORKSPACE_READ_TOOLS | WORKSPACE_WRITE_TOOLS
+        if isinstance(container, Chat) and (container.step_id or container.step_plan_id):
+            # A step draft must be able to load the skill its step names.
+            allowed |= SKILL_READ_TOOLS
+        active.restrict_server_tools("precursor", allowed)
         for server_name, err in active.unavailable:
             logger.warning("Headless run: MCP server %s unavailable: %s", server_name, err)
 
