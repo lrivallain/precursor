@@ -98,6 +98,188 @@
   --accent: #60a5fa;
 }
 
+/* A single floating launcher; its popover keeps a pointer-safe bridge to the trigger. */
+.quick-actions-trigger {
+  position: relative;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  box-shadow: 0 4px 8px rgb(0 0 0 / 12%), 0 12px 28px rgb(0 0 0 / 16%);
+  cursor: grab;
+  transition: transform 200ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 200ms ease;
+}
+.quick-actions-badge {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--bg);
+  border-radius: 50%;
+  background: var(--text);
+  color: var(--bg);
+}
+.quick-actions-badge > svg {
+  transition: transform 240ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.quick-actions[data-open="true"] .quick-actions-badge > svg {
+  transform: rotate(45deg);
+}
+.quick-actions-trigger:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 12px rgb(0 0 0 / 14%), 0 16px 32px rgb(0 0 0 / 18%);
+}
+.quick-actions[data-dragging="true"] .quick-actions-trigger {
+  cursor: grabbing;
+  transform: scale(1.06);
+}
+.quick-actions-popover {
+  visibility: hidden;
+  opacity: 0;
+  transform: translateY(8px) scale(0.96);
+  transform-origin: bottom;
+  transition: opacity 180ms ease, transform 240ms cubic-bezier(0.16, 1, 0.3, 1), visibility 180ms;
+  pointer-events: none;
+}
+.quick-actions-popover[data-side="bottom"] {
+  transform: translateY(-8px) scale(0.96);
+  transform-origin: top;
+}
+.quick-actions[data-open="true"] .quick-actions-popover {
+  visibility: visible;
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  pointer-events: auto;
+}
+.quick-actions-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+.quick-actions-item {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  height: 44px;
+  width: 44px;
+  border-radius: 24px;
+  filter: drop-shadow(0 2px 4px rgb(0 0 0 / 10%));
+  cursor: pointer;
+  transform-origin: left center;
+  transition: transform 220ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.quick-actions-popover[data-bend="left"] .quick-actions-item {
+  transform-origin: right center;
+}
+.quick-actions-pill {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  left: 0;
+  top: 0;
+  width: max-content;
+  min-width: 44px;
+  height: 44px;
+  padding-left: 44px;
+  padding-right: 14px;
+  border: 1px solid var(--border);
+  border-radius: 24px;
+  background: var(--bg);
+  clip-path: inset(0 calc(100% - 44px) 0 0 round 24px);
+  pointer-events: none;
+  transition: clip-path 240ms cubic-bezier(0.16, 1, 0.3, 1), background 160ms ease;
+}
+.quick-actions-popover[data-bend="left"] .quick-actions-pill {
+  left: auto;
+  right: 0;
+  padding-left: 14px;
+  padding-right: 44px;
+  clip-path: inset(0 0 0 calc(100% - 44px) round 24px);
+}
+.quick-actions-item:is(:hover, :focus-visible) .quick-actions-pill {
+  background: color-mix(in oklab, var(--bg) 94%, currentColor);
+  clip-path: inset(0 0 0 0 round 24px);
+  pointer-events: auto;
+}
+.quick-actions-icon {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--bg);
+  transition: background 160ms ease, border-color 160ms ease;
+}
+.quick-actions-item:is(:hover, :focus-visible) .quick-actions-icon {
+  border-color: transparent;
+  background: transparent;
+}
+.quick-actions-label {
+  min-width: 0;
+  overflow: hidden;
+  opacity: 0;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  transform: translateX(-8px);
+  pointer-events: none;
+  transition: transform 240ms cubic-bezier(0.16, 1, 0.3, 1), opacity 160ms ease;
+}
+.quick-actions-item:is(:hover, :focus-visible) {
+  transform: scale(1.08);
+}
+.quick-actions-item:is(:hover, :focus-visible) .quick-actions-label {
+  opacity: 1;
+  transform: translateX(0);
+  pointer-events: auto;
+}
+.quick-actions-slot {
+  position: relative;
+  height: 44px;
+  flex-shrink: 0;
+  opacity: 0;
+  transform: translateY(16px) scale(0.8);
+  transition: opacity 160ms ease, transform 280ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.quick-actions-popover[data-side="bottom"] .quick-actions-slot {
+  transform: translateY(-16px) scale(0.8);
+}
+.quick-actions[data-open="true"] .quick-actions-slot {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+.quick-actions-trigger:focus-visible,
+.quick-actions-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+.quick-actions-item:focus-visible {
+  outline-offset: -2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .quick-actions-trigger,
+  .quick-actions-badge > svg,
+  .quick-actions-item,
+  .quick-actions-icon,
+  .quick-actions-pill,
+  .quick-actions-label,
+  .quick-actions-slot,
+  .quick-actions-popover {
+    transition: none !important;
+  }
+}
+
 /* Reading font override. A `.font-<id>` class is set on <html> (see
    lib/font.ts, mirrors the `.dark` toggle above) to swap the app-wide
    `--font-sans` — which both the `font-sans` utility and `body` below read —

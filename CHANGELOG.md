@@ -13,6 +13,14 @@ are the per-version history; releasing does not rewrite this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Floating quick actions.** A draggable **Precursor** button opens an animated,
+  icon-only arc of creation
+  shortcuts for chats, topics, agents, live sessions, plans, workflows and
+  workspaces. The menu adapts to available space, supports touch and keyboard
+  navigation, respects reduced motion, and remembers the button's position.
+
 ### Fixed
 
 - **Message links: stop teaching replies to repeat navigation headers.** Topic
