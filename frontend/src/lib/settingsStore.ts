@@ -1,11 +1,9 @@
 import { useEffect } from "react";
-import { useSyncExternalStore } from "react";
 import { api } from "./api";
+import { VersionedStore, useStoreVersion } from "./externalStore";
 import type { Settings } from "./types";
 
-type Listener = () => void;
-
-class SettingsStore {
+class SettingsStore extends VersionedStore {
   private settings: Settings | null = null;
   private loaded = false;
   // Whether the first fetch has *finished*, successfully or not. Distinct from
@@ -14,22 +12,6 @@ class SettingsStore {
   // the width of the request and the UI flashes a "turn this on" empty state.
   private settled = false;
   private loading: Promise<void> | null = null;
-  private version = 0;
-  private listeners = new Set<Listener>();
-
-  subscribe = (l: Listener): (() => void) => {
-    this.listeners.add(l);
-    return () => {
-      this.listeners.delete(l);
-    };
-  };
-
-  getSnapshot = (): number => this.version;
-
-  private notify(): void {
-    this.version++;
-    for (const l of this.listeners) l();
-  }
 
   current(): Settings | null {
     return this.settings;
@@ -73,11 +55,7 @@ class SettingsStore {
 export const settingsStore = new SettingsStore();
 
 export function useSettings(): Settings | null {
-  useSyncExternalStore(
-    settingsStore.subscribe,
-    settingsStore.getSnapshot,
-    settingsStore.getSnapshot,
-  );
+  useStoreVersion(settingsStore);
   useEffect(() => {
     void settingsStore.ensureLoaded();
   }, []);
@@ -90,11 +68,7 @@ export function useSettings(): Settings | null {
  * "not fetched yet", and gating UI on it would advertise the feature as off.
  */
 export function useSettingsReady(): boolean {
-  useSyncExternalStore(
-    settingsStore.subscribe,
-    settingsStore.getSnapshot,
-    settingsStore.getSnapshot,
-  );
+  useStoreVersion(settingsStore);
   useEffect(() => {
     void settingsStore.ensureLoaded();
   }, []);

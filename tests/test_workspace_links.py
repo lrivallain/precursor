@@ -165,7 +165,7 @@ async def test_a_failed_write_carries_no_link(
 async def test_workspace_write_result_links_to_the_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from precursor.backend.services.mcp import precursor_server as srv
+    from precursor.backend.services.mcp.precursor_tools import workspaces as srv
 
     class _WS:
         slug = "notes"
@@ -190,7 +190,7 @@ async def test_read_tools_also_link_to_the_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from precursor.backend.services.mcp import drawio_server as drawio
-    from precursor.backend.services.mcp import precursor_server as wsfs
+    from precursor.backend.services.mcp.precursor_tools import workspaces as wsfs
 
     class _WS:
         slug = "notes"
@@ -217,7 +217,7 @@ async def test_read_tools_also_link_to_the_file(
 async def test_a_failed_read_carries_no_link(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from precursor.backend.services.mcp import precursor_server as wsfs
+    from precursor.backend.services.mcp.precursor_tools import workspaces as wsfs
 
     class _WS:
         slug = "notes"

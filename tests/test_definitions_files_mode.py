@@ -1050,7 +1050,7 @@ async def test_a_pull_applies_new_files_at_once(
 async def test_the_assistant_cannot_write_definitions_in_a_workspace(
     files_mode: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from precursor.backend.services.mcp import precursor_server as srv
+    from precursor.backend.services.mcp.precursor_tools import workspaces as srv
 
     async def _open(_section: str) -> None:
         return None

@@ -1,10 +1,8 @@
 import { useEffect } from "react";
-import { useSyncExternalStore } from "react";
 import { api } from "./api";
+import { VersionedStore, useStoreVersion } from "./externalStore";
 import { loadPluginEntries } from "./pluginLoader";
 import type { PluginDescriptor } from "./types";
-
-type Listener = () => void;
 
 /**
  * The frontend contributions published by installed, enabled plugins.
@@ -18,25 +16,9 @@ type Listener = () => void;
  * `refresh()` re-imports any newly available plugin bundle before publishing,
  * so a section is never announced before the code that renders it exists.
  */
-class PluginStore {
+class PluginStore extends VersionedStore {
   private descriptors: PluginDescriptor[] | null = null;
   private loading: Promise<void> | null = null;
-  private version = 0;
-  private listeners = new Set<Listener>();
-
-  subscribe = (l: Listener): (() => void) => {
-    this.listeners.add(l);
-    return () => {
-      this.listeners.delete(l);
-    };
-  };
-
-  getSnapshot = (): number => this.version;
-
-  private notify(): void {
-    this.version++;
-    for (const l of this.listeners) l();
-  }
 
   /** `null` until the first fetch resolves. */
   current(): PluginDescriptor[] | null {
@@ -71,7 +53,7 @@ export const pluginStore = new PluginStore();
 
 /** Subscribe to the descriptor list, fetching it on first use. */
 export function usePluginDescriptors(): PluginDescriptor[] | null {
-  useSyncExternalStore(pluginStore.subscribe, pluginStore.getSnapshot, pluginStore.getSnapshot);
+  useStoreVersion(pluginStore);
   useEffect(() => {
     if (pluginStore.current() === null) void pluginStore.refresh();
   }, []);

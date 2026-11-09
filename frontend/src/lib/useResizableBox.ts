@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { beginDrag } from "./dragGuard";
+import { useRef } from "react";
+import { clamp, useMouseDrag, usePersistedState } from "./resizeCore";
 
 interface Size {
   width: number;
@@ -32,63 +32,32 @@ export function useResizableBox({
   maxWidth,
   maxHeight,
 }: Options) {
-  const [size, setSize] = useState<Size>(() => readStored(storageKey, defaultWidth, defaultHeight));
-  const dragging = useRef(false);
-  const start = useRef({ x: 0, y: 0, w: 0, h: 0 });
-  const endGuard = useRef<(() => void) | null>(null);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem(storageKey, JSON.stringify(size));
-  }, [storageKey, size]);
-
-  const onResizeStart = useCallback(
-    (e: React.MouseEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      dragging.current = true;
-      start.current = { x: e.clientX, y: e.clientY, w: size.width, h: size.height };
-      endGuard.current?.();
-      endGuard.current = beginDrag();
-      document.body.style.userSelect = "none";
-      document.body.style.cursor = "nwse-resize";
-    },
-    [size.width, size.height],
+  const [size, setSize] = usePersistedState<Size>(
+    storageKey,
+    { width: defaultWidth, height: defaultHeight },
+    (raw) => parseSize(raw, defaultWidth, defaultHeight),
+    JSON.stringify,
   );
-
-  useEffect(() => {
-    function onMove(e: MouseEvent): void {
-      if (!dragging.current) return;
+  const startSize = useRef(size);
+  const onResizeStart = useMouseDrag({
+    cursor: "nwse-resize",
+    stopPropagation: true,
+    onStart: () => {
+      startSize.current = size;
+    },
+    onMove: (dx, dy) => {
       const maxW = maxWidth ?? window.innerWidth - 32;
       const maxH = maxHeight ?? window.innerHeight - 32;
-      const width = clamp(start.current.w + (e.clientX - start.current.x), minWidth, maxW);
-      const height = clamp(start.current.h + (e.clientY - start.current.y), minHeight, maxH);
-      setSize({ width, height });
-    }
-    function onUp(): void {
-      endGuard.current?.();
-      endGuard.current = null;
-      if (!dragging.current) return;
-      dragging.current = false;
-      document.body.style.userSelect = "";
-      document.body.style.cursor = "";
-    }
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-    return () => {
-      onUp();
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    };
-  }, [minWidth, minHeight, maxWidth, maxHeight]);
-
+      setSize({
+        width: clamp(startSize.current.width + dx, minWidth, maxW),
+        height: clamp(startSize.current.height + dy, minHeight, maxH),
+      });
+    },
+  });
   return { size, onResizeStart };
 }
 
-function readStored(key: string, w: number, h: number): Size {
-  if (typeof window === "undefined") return { width: w, height: h };
-  const raw = window.localStorage.getItem(key);
-  if (!raw) return { width: w, height: h };
+function parseSize(raw: string, w: number, h: number): Size {
   try {
     const parsed = JSON.parse(raw) as Partial<Size>;
     return {
@@ -98,8 +67,4 @@ function readStored(key: string, w: number, h: number): Size {
   } catch {
     return { width: w, height: h };
   }
-}
-
-function clamp(n: number, min: number, max: number): number {
-  return Math.max(min, Math.min(Math.max(min, max), n));
 }

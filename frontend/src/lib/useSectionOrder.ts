@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useSyncExternalStore } from "react";
 
 import type { SidebarMode } from "../components/Sidebar";
+import { Emitter } from "./externalStore";
 
 const STORAGE_KEY = "precursor:sidebar:sectionOrder";
 
@@ -30,7 +31,7 @@ export type DropSide = "before" | "after";
 // appear asynchronously (once `/api/plugins` resolves) and must slot in without
 // a reload.
 let order: SidebarMode[] | null = null;
-const listeners = new Set<() => void>();
+const changes = new Emitter();
 
 function loadPersisted(): SidebarMode[] {
   if (typeof window === "undefined") return [];
@@ -49,10 +50,7 @@ function snapshot(): SidebarMode[] {
   return order;
 }
 
-function subscribe(cb: () => void): () => void {
-  listeners.add(cb);
-  return () => listeners.delete(cb);
-}
+const { subscribe } = changes;
 
 function persist(next: SidebarMode[]): void {
   order = next;
@@ -63,7 +61,7 @@ function persist(next: SidebarMode[]): void {
       /* ignore quota / privacy-mode failures */
     }
   }
-  listeners.forEach((cb) => cb());
+  changes.emit();
 }
 
 function reorderStore(

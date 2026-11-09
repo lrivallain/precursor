@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from "react";
+import { VersionedStore, useStoreVersion } from "./externalStore";
 import { mcpAuthStore } from "./mcpAuth";
 import { resumeConversation, streamChat, streamChatSession, type ChatStreamBody } from "./sse";
 import { parseToolMeta, STOPPED_TOOL_RESULT } from "./toolMeta";
@@ -50,8 +50,6 @@ interface Session {
   requestError: string | null;
 }
 
-type Listener = () => void;
-
 const EMPTY_APPROVALS: ToolApproval[] = [];
 
 function hashString(s: string): number {
@@ -60,32 +58,16 @@ function hashString(s: string): number {
   return h;
 }
 
-class StreamStore {
+class StreamStore extends VersionedStore {
   private sessions = new Map<string, Session>();
   private remoteStreaming = new Set<string>();
   // Open approvals per conversation. Kept apart from `sessions`: they outlive a
   // finished stream (the turn is parked on them) and are reloaded from the server.
   private approvalMap = new Map<string, ToolApproval[]>();
-  private version = 0;
-  private listeners = new Set<Listener>();
   private onCompleteCb: ((key: string, ok: boolean) => void) | null = null;
 
   setOnComplete(cb: ((key: string, ok: boolean) => void) | null): void {
     this.onCompleteCb = cb;
-  }
-
-  subscribe = (l: Listener): (() => void) => {
-    this.listeners.add(l);
-    return () => {
-      this.listeners.delete(l);
-    };
-  };
-
-  getSnapshot = (): number => this.version;
-
-  private notify(): void {
-    this.version++;
-    for (const l of this.listeners) l();
   }
 
   hasSession(key: string): boolean {
@@ -591,9 +573,5 @@ export function mergeConversation(
 }
 
 export function useStreamVersion(): number {
-  return useSyncExternalStore(
-    streamStore.subscribe,
-    streamStore.getSnapshot,
-    streamStore.getSnapshot,
-  );
+  return useStoreVersion(streamStore);
 }
