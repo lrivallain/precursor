@@ -1,10 +1,10 @@
 import { Select } from "../Select";
 import { NumberInput } from "./NumberInput";
-import type { SettingsPanelState } from "./useSettingsPanelState";
+import type { LLMModel } from "../../lib/types";
+import type { LiveSettings } from "./useLiveSettings";
 
-export function LiveTab({ s }: { s: SettingsPanelState }) {
+export function LiveTab({ s, models }: { s: LiveSettings; models: LLMModel[] }) {
   const {
-    models,
     liveFastModel,
     setLiveFastModel,
     liveReasoningEffort,
