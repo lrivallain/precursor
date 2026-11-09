@@ -6,15 +6,14 @@ import json
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.config import get_settings
 from precursor.backend.db import get_session
 from precursor.backend.models import AppSetting
 from precursor.backend.schemas import SettingsPayload, SettingsRead
-from precursor.backend.schemas.model_fallback import ModelCategories, normalize_stored_categories
+from precursor.backend.schemas.model_fallback import normalize_stored_categories
 from precursor.backend.services.agents.manager import get_agent_manager
 from precursor.backend.services.agents.runtime import agents_available
 from precursor.backend.services.app_settings import (
@@ -59,23 +58,14 @@ from precursor.backend.services.app_settings import (
 )
 from precursor.backend.services.backup import resolve_backup_status, run_backup
 from precursor.backend.services.cmd_runner import docker_available
-from precursor.backend.services.github_auth import (
-    github_token_source,
-    invalidate_gh_cli_token,
-    resolve_github_token,
-)
-from precursor.backend.services.llm.registry import PROVIDERS
+from precursor.backend.services.github_auth import github_token_source
 from precursor.backend.services.mcp.precursor_server import (
     http_endpoint_url,
     is_loopback_host,
 )
-from precursor.backend.services.model_catalog import invalidate_model_catalog
 from precursor.backend.services.model_fallbacks import (
     preview_llm_category_preset,
     resolve_model_category,
-    resolve_model_fallbacks,
-    scoped_categories,
-    selected_category_presets,
 )
 from precursor.backend.services.openai_proxy import (
     ensure_proxy_key,
@@ -83,6 +73,11 @@ from precursor.backend.services.openai_proxy import (
     proxy_base_url,
     rotate_proxy_key,
 )
+from precursor.backend.services.settings_update import (
+    apply_saved_settings,
+    normalise_settings_update,
+)
+from precursor.backend.services.settings_update import load_stored_settings as _load_all
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -101,11 +96,6 @@ def _clamp_max_tool_rounds(value: Any) -> int:
     if n > MAX_TOOL_ROUNDS_CEILING:
         return MAX_TOOL_ROUNDS_CEILING
     return n
-
-
-async def _load_all(session: AsyncSession) -> dict[str, Any]:
-    result = await session.execute(select(AppSetting))
-    return {row.key: json.loads(row.value) for row in result.scalars().all()}
 
 
 async def _upsert(session: AsyncSession, key: str, value: Any) -> None:
@@ -254,8 +244,7 @@ async def _agents_block(session: AsyncSession) -> dict[str, Any]:
     }
 
 
-@router.get("", response_model=SettingsRead)
-async def read_settings(session: AsyncSession = Depends(get_session)) -> SettingsRead:
+async def _settings_response(session: AsyncSession) -> SettingsRead:
     data = await _load_all(session)
     system = await resolve_system_settings(session)
     system["mcp_expose"] = await resolve_mcp_expose(session)
@@ -269,188 +258,26 @@ async def read_settings(session: AsyncSession = Depends(get_session)) -> Setting
     return _as_read(data, system, docker_available()[0], await resolve_llm_model(session))
 
 
+@router.get("", response_model=SettingsRead)
+async def read_settings(session: AsyncSession = Depends(get_session)) -> SettingsRead:
+    return await _settings_response(session)
+
+
 @router.put("", response_model=SettingsRead)
 async def update_settings(
     payload: SettingsPayload,
     session: AsyncSession = Depends(get_session),
 ) -> SettingsRead:
     data = payload.model_dump(exclude_unset=True)
-
-    for model_key, category_key in (
-        ("llm_model", "llm_model_category"),
-        ("agents_default_model", "agents_model_category"),
-    ):
-        if model_key in data and category_key not in data:
-            data[category_key] = None
-    for category_key, scope in (("llm_model_category", "llm"), ("agents_model_category", "agents")):
-        if "model_fallbacks" in data:
-            categories = scoped_categories(
-                ModelCategories.model_validate(data["model_fallbacks"]), scope
-            )
-        else:
-            categories = await resolve_model_fallbacks(session, scope)
-        selected = data.get(category_key)
-        if selected is not None and not selected_category_presets(categories, selected):
-            raise HTTPException(
-                status_code=422,
-                detail=f"No presets are configured for the {selected!r} category.",
-            )
-        # Deleting or emptying a category must not leave a dangling selection.
-        if selected is None and category_key not in data and "model_fallbacks" in data:
-            saved_category = await resolve_model_category(session, agents=scope == "agents")
-            if saved_category is not None and not selected_category_presets(
-                categories, saved_category
-            ):
-                data[category_key] = None
-
-    for provider_key in ("iq_embedding_provider", "iq_ask_provider"):
-        if data.get(provider_key) and data[provider_key] not in PROVIDERS:
-            raise HTTPException(status_code=422, detail=f"Unknown LLM provider for {provider_key}.")
-
-    # Merge api_keys instead of replacing — clients may PATCH a single key.
-    if "api_keys" in data:
-        current = await _load_all(session)
-        merged = {**(current.get("api_keys") or {}), **data["api_keys"]}
-        data["api_keys"] = {k: v for k, v in merged.items() if v}
-        # Clearing the saved token falls back to the CLI: re-read it rather than
-        # serving whatever was cached before.
-        invalidate_gh_cli_token()
-        # A tokenless provider resolves to the mock, whose one-entry catalogue
-        # must not outlive the credential that was just added or removed.
-        invalidate_model_catalog()
-
-    # Deep-merge llm_providers per provider so a partial update (e.g. one field)
-    # doesn't drop the rest; an empty-string value clears a field.
-    if "llm_providers" in data:
-        current = await _load_all(session)
-        stored = current.get("llm_providers")
-        merged_providers: dict[str, dict[str, str]] = (
-            dict(stored) if isinstance(stored, dict) else {}
-        )
-        for provider_id, cfg in (data["llm_providers"] or {}).items():
-            existing = dict(merged_providers.get(provider_id) or {})
-            for key, value in (cfg or {}).items():
-                if value == "":
-                    existing.pop(key, None)
-                else:
-                    existing[key] = value
-            merged_providers[provider_id] = existing
-        data["llm_providers"] = merged_providers
-        # Credentials moved: whatever catalogue that provider served is stale.
-        invalidate_model_catalog()
-
-    # Switching provider changes which catalogue is authoritative.
-    if "llm_provider" in data:
-        invalidate_model_catalog()
-
+    await normalise_settings_update(session, data)
     for key, value in data.items():
         await _upsert(session, key, value)
     # First switch-on mints the key, so the endpoint is usable straight away.
     if data.get("openai_proxy_enabled"):
         await ensure_proxy_key(session)
     await session.commit()
-
-    # Reconcile the agents runtime live so toggling the setting doesn't require a
-    # restart (both start/stop are idempotent and a no-op when unavailable). The
-    # preference is already persisted, so a runtime hiccup here must not fail the
-    # save — log and carry on.
-    if "agents_enabled" in data:
-        manager = get_agent_manager()
-        try:
-            if await resolve_agents_enabled(session):
-                await manager.start()
-            else:
-                await manager.stop()
-        except Exception:
-            logger.exception("Agents runtime reconcile failed after settings update")
-
-    # Push model / reasoning-effort / context-tier changes onto idle live agent
-    # sessions so they apply on the next message instead of only new sessions.
-    if any(
-        k in data
-        for k in (
-            "agents_default_model",
-            "agents_reasoning_effort",
-            "agents_context_tier",
-            "agents_model_category",
-            "model_fallbacks",
-        )
-    ):
-        try:
-            await get_agent_manager().apply_session_overrides()
-        except Exception:
-            logger.exception("Applying agent session overrides failed after settings update")
-
-    # Kick off a backup right away when the user just enabled it (or changed the
-    # target folder while enabled), so they don't wait up to a day for the first
-    # one. The ticker's nudge only runs if a backup is actually due.
-    if any(k in data for k in ("backup_enabled", "backup_dir")):
-        from precursor.backend.services.backup_ticker import get_backup_ticker
-
-        try:
-            await get_backup_ticker().nudge()
-        except Exception:
-            logger.exception("Backup nudge failed after settings update")
-
-    # Start vectorising right away rather than on the next indexer tick.
-    if data.get("iq_embeddings_enabled") or any(
-        k in data for k in ("iq_embedding_model", "iq_embedding_provider")
-    ):
-        from precursor.backend.services.iq.ticker import get_iq_ticker
-
-        try:
-            await get_iq_ticker().nudge()
-        except Exception:
-            logger.exception("Precursor IQ nudge failed after settings update")
-
-    # Re-point the Agent 365 servers when the tenant changes, so a fresh tenant
-    # takes effect without a restart (and clearing it disables them cleanly).
-    if "workiq_tenant_id" in data:
-        from precursor.backend.services.mcp.agent365 import configure_agent365_servers
-
-        try:
-            await configure_agent365_servers()
-        except Exception:
-            logger.exception("Agent 365 reconfigure failed after settings update")
-
-    # The precursor server advertises only the exposed sections, so its cached
-    # tool list is stale now: restart its session and re-list so the count in
-    # Settings (and the tools a chat offers the model) follow the toggles.
-    if "mcp_expose" in data:
-        from precursor.backend.routers.mcp import _load_enabled
-        from precursor.backend.services.mcp.client import get_mcp_client_manager
-
-        try:
-            mcp_manager = get_mcp_client_manager()
-            await mcp_manager.retire_worker("precursor")
-            if (await _load_enabled(session)).get("precursor", False):
-                await mcp_manager.probe(
-                    "precursor", github_token=await resolve_github_token(session)
-                )
-        except Exception:
-            logger.exception("Precursor MCP tool refresh failed after settings update")
-
-    # Re-point the built-in Playwright server at the chosen browser channel so it
-    # takes effect without a restart (retiring the warm worker, if any).
-    if "playwright_browser" in data:
-        from precursor.backend.services.mcp.client import configure_playwright_server
-
-        try:
-            await configure_playwright_server()
-        except Exception:
-            logger.exception("Playwright reconfigure failed after settings update")
-
-    refreshed = await _load_all(session)
-    system = await resolve_system_settings(session)
-    system["mcp_expose"] = await resolve_mcp_expose(session)
-    system.update(await _mcp_http_block(session))
-    system.update(await _openai_proxy_block(session))
-    system.update(await _stt_block(session))
-    system.update(await _iq_block(session))
-    system.update(await _llm_block(session, refreshed))
-    system.update(await _agents_block(session))
-    system.update(await resolve_backup_status(session))
-    return _as_read(refreshed, system, docker_available()[0], await resolve_llm_model(session))
+    await apply_saved_settings(session, data)
+    return await _settings_response(session)
 
 
 @router.post("/openai-proxy/key")

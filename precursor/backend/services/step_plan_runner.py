@@ -18,7 +18,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Any, Literal
+from dataclasses import dataclass
+from typing import Any, Literal, NoReturn
 
 from fastapi import HTTPException, status
 from sqlalchemy import or_, select, update
@@ -40,7 +41,7 @@ from precursor.backend.models.step_plan import (
     StepPlan,
     StepPlanFinalVersion,
 )
-from precursor.backend.schemas.step_plan import StepPlanUpdate
+from precursor.backend.schemas.step_plan import Assessment, StepPlanUpdate
 from precursor.backend.services import approvals as approval_service
 from precursor.backend.services import step_plan_llm as llm
 from precursor.backend.services import step_plans as svc
@@ -49,6 +50,15 @@ from precursor.backend.services.events import (
     is_streaming,
     publish_step_plan_changed,
     set_current_client_id,
+)
+from precursor.backend.services.step_plan_repair_prompts import (
+    FIX_FILE,
+    FIX_FINAL_GAPS,
+    FIX_FINAL_PATH,
+    FIX_WEAK,
+    HOLD_BELOW,
+    NO_QUESTIONS,
+    WEAK_BELOW,
 )
 
 log = logging.getLogger(__name__)
@@ -86,13 +96,6 @@ async def _retried(
 
 def _live(plan: StepPlan) -> bool:
     return plan.auto_state == AUTO_RUNNING and plan.status in (PLAN_ACTIVE, PLAN_CONSOLIDATING)
-
-
-_NO_QUESTIONS = (
-    "Do not ask questions or offer options: write the deliverable now, marked as a "
-    "deliverable, from the plan's ask and what is already known. Use your tools and "
-    "skills if the step calls for them; do not imitate their output by hand."
-)
 
 
 async def _set_state(plan_id: int, state: str) -> None:
@@ -219,7 +222,7 @@ async def _run(plan_id: int) -> None:
                         llm.generate_artifact,
                         session,
                         step_id,
-                        instructions=_NO_QUESTIONS,
+                        instructions=NO_QUESTIONS,
                         automatic=True,
                     )
             svc.CURRENT_STEP.pop(plan_id, None)
@@ -318,7 +321,7 @@ async def _finish(plan_id: int) -> None:
                     session,
                     plan_id,
                     force=True,
-                    instructions=_NO_QUESTIONS,
+                    instructions=NO_QUESTIONS,
                     automatic=True,
                 )
             outcome = final.outcome
@@ -585,39 +588,6 @@ def hand_back(
     task.add_done_callback(_HAND_BACKS.discard)
 
 
-_FIX_FILE = (
-    "The app checked the file you gave and found: {problems}. Fix it (rebuild the file with "
-    "your tools if needed), then give its absolute path again as the artifact."
-)
-_REVIEW_FEEDBACK = (
-    "Review feedback can be wrong and is not a new user requirement. Verify each finding "
-    "against the original request, accepted follow-ups, the current step instruction when "
-    "applicable, and the current result. Preserve the user's constraints and do not invent "
-    "facts, requirements, or actions to satisfy a mistaken finding. "
-)
-_FIX_WEAK = (
-    "The step was scored {score}/100. The reviewer reported potential gaps or contradictions: "
-    "{gaps}. "
-    f"{_REVIEW_FEEDBACK}"
-    "Correct genuine issues in the artifact itself, not just the explanation. Use your tools "
-    "only when appropriate and allowed for the requested work, and check its actual structure "
-    "and counts against each stated constraint before giving the improved artifact. It must "
-    "remain this step's own result, not a section that belongs to another step."
-)
-_FIX_FINAL_GAPS = (
-    " The final assessment reported potential gaps or contradictions: {gaps}. "
-    f"{_REVIEW_FEEDBACK}"
-    "Correct genuine issues in the final deliverable itself while preserving approved work. "
-    "Do not invent evidence or take unrelated actions to satisfy the review."
-)
-_WEAK_BELOW = 60
-_HOLD_BELOW = 50
-_FIX_FINAL_PATH = (
-    " The app checked the paths in your previous final output and found: {problems}. "
-    "The files the steps really built are: {built}. Give exactly those paths, with a short summary and how to open them; do not paste or rewrite the file's content."
-)
-
-
 async def _unresolved_step(
     plan_id: int, *, before_step: int | None = None, ignore_unassessed: bool = False
 ) -> tuple[str, str] | None:
@@ -647,7 +617,7 @@ async def _unresolved_step(
                 return step.title, "has unresolved assessment gaps or contradictions: " + "; ".join(
                     weak[1][:3]
                 )
-            if weak and weak[0] < _HOLD_BELOW:
+            if weak and weak[0] < HOLD_BELOW:
                 return step.title, f"still scores {weak[0]}/100"
     return None
 
@@ -724,7 +694,7 @@ async def _assess_existing_steps(plan_id: int, *, before_step: int | None = None
                     return False
                 problems = llm.step_check_failures(step)
                 weak = llm.step_weakness(step)
-                if problems or (weak and (weak[0] < _WEAK_BELOW or weak[1])):
+                if problems or (weak and (weak[0] < WEAK_BELOW or weak[1])):
                     await _note(
                         plan_id,
                         f"«{step.title}» is an existing draft that needs review. "
@@ -754,19 +724,19 @@ async def _review_step(session: AsyncSession, plan_id: int, plan: StepPlan, step
     step_id, title = step.id, step.title
     problems = llm.step_check_failures(step)
     weak = llm.step_weakness(step)
-    if problems or (weak and (weak[0] < _WEAK_BELOW or weak[1])):
+    if problems or (weak and (weak[0] < WEAK_BELOW or weak[1])):
         reasons: list[str] = []
         instructions: list[str] = []
         if problems:
             reasons.append("failed a check")
-            instructions.append(_FIX_FILE.format(problems="; ".join(problems)))
-        if weak and (weak[0] < _WEAK_BELOW or weak[1]):
-            if weak[0] < _WEAK_BELOW:
+            instructions.append(FIX_FILE.format(problems="; ".join(problems)))
+        if weak and (weak[0] < WEAK_BELOW or weak[1]):
+            if weak[0] < WEAK_BELOW:
                 reasons.append(f"scored {weak[0]}/100")
             elif weak[1]:
                 reasons.append("has assessment gaps or contradictions")
             instructions.append(
-                _FIX_WEAK.format(score=weak[0], gaps="; ".join(weak[1][:5]) or "none listed")
+                FIX_WEAK.format(score=weak[0], gaps="; ".join(weak[1][:5]) or "none listed")
             )
         await _note(
             plan_id,
@@ -797,7 +767,7 @@ async def _review_step(session: AsyncSession, plan_id: int, plan: StepPlan, step
             return False
         problems = llm.step_check_failures(step)
         weak = llm.step_weakness(step)
-        if problems or (weak and (weak[0] < _HOLD_BELOW or weak[1])):
+        if problems or (weak and (weak[0] < HOLD_BELOW or weak[1])):
             if problems:
                 reason = "failed a check: " + "; ".join(problems[:3])
             elif weak and weak[1]:
@@ -830,6 +800,264 @@ async def _review_step_before_dependents(plan_id: int, step_id: int) -> bool:
     return reviewed
 
 
+class _Halt(Exception):
+    """Ends an automatic review early, leaving the plan for a person."""
+
+
+@dataclass(slots=True)
+class _Review:
+    """One automatic review of a delegated plan, in the session that runs it."""
+
+    plan_id: int
+    policy: str
+    session: AsyncSession
+    topic_id: int | None
+    chat_id: int | None
+    require_running: bool
+    generated_final: bool
+
+    @property
+    def source(self) -> str:
+        return "topic" if self.topic_id is not None else "chat"
+
+    async def checkpoint(self) -> None:
+        if self.require_running and not await _still_running(self.plan_id):
+            raise _Halt
+
+    async def halt(self, text: str) -> NoReturn:
+        await _note(self.plan_id, text)
+        raise _Halt
+
+    async def generate_final(self, instructions: str | None = None) -> llm.FinalDraft:
+        extra = {} if instructions is None else {"instructions": instructions}
+        draft: llm.FinalDraft = await _retried(
+            self.plan_id,
+            llm.generate_final,
+            self.session,
+            self.plan_id,
+            force=True,
+            **extra,
+            automatic=True,
+        )
+        return draft
+
+    async def review_steps(self, plan: StepPlan) -> None:
+        for step in svc.working_leaves(await svc.plan_steps(self.session, self.plan_id)):
+            await self.checkpoint()
+            if step.status != STEP_TO_VALIDATE or not step.artifact.strip():
+                continue
+            if not await _review_step(self.session, self.plan_id, plan, step):
+                raise _Halt
+
+    async def _draft_final(self) -> str:
+        plan = await svc.get_plan(self.session, self.plan_id)
+        existing = (plan.final_output or "").strip()
+        if existing and not plan.final_stale and not plan.final_provisional:
+            return "published"
+        if existing and not self.generated_final:
+            await self.halt(
+                "The existing final output needs review and was preserved. "
+                "Review or regenerate it before continuing."
+            )
+        final = await self.generate_final()
+        await self.checkpoint()
+        if final.outcome == "discussion":
+            final = await self.generate_final(NO_QUESTIONS)
+            await self.checkpoint()
+        self.generated_final = final.outcome == "published"
+        return final.outcome
+
+    async def _check_final_files(self) -> str:
+        problems, built = await llm.final_file_problems(self.session, self.plan_id)
+        if not problems:
+            return "published"
+        if not self.generated_final:
+            await self.halt(
+                "The existing final output has a file problem "
+                f"({'; '.join(problems)}). It was preserved; review it yourself."
+            )
+        await self.checkpoint()
+        await _note(
+            self.plan_id,
+            f"The final output has a file problem ({'; '.join(problems)}). Rebuilding it once.",
+        )
+        final = await self.generate_final(
+            NO_QUESTIONS
+            + FIX_FINAL_PATH.format(problems="; ".join(problems), built=", ".join(built))
+        )
+        await self.checkpoint()
+        problems, _ = await llm.final_file_problems(self.session, self.plan_id)
+        if problems:
+            await self.halt(
+                "The final output still has a file problem. It was "
+                f"not filed in the {self.source}: review it, then send it yourself."
+            )
+        return final.outcome
+
+    async def prepare_final(self) -> None:
+        """Make sure a non-provisional final output exists and its files check out."""
+        outcome = await self._draft_final()
+        if outcome == "published":
+            outcome = await self._check_final_files()
+        if outcome != "published":
+            await self.halt(
+                "The model did not write the final output. Regenerate it from the plan, "
+                f"then send it to the {self.source}."
+            )
+
+    async def _fresh(self) -> tuple[StepPlan, Assessment | None, list[Step]]:
+        plan = await svc.get_plan(self.session, self.plan_id)
+        await self.session.refresh(plan)
+        verdict = svc.parse_assessment(plan.assessment_json)
+        return plan, verdict, await svc.plan_steps(self.session, self.plan_id, refresh=True)
+
+    def _final_changed(self, plan: StepPlan, steps: list[Step]) -> bool:
+        return (
+            plan.final_stale
+            or plan.final_provisional
+            or not svc.is_ready(steps)
+            or (plan.source_topic_id, plan.source_chat_id) != (self.topic_id, self.chat_id)
+        )
+
+    @staticmethod
+    def _assessed(plan: StepPlan, verdict: Assessment | None, steps: list[Step]) -> bool:
+        return (
+            verdict is not None
+            and verdict.scope == "final"
+            and plan.assessed_sig == svc.plan_signature(plan, steps)
+        )
+
+    async def _current_verdict(self) -> tuple[StepPlan, Assessment]:
+        await self.checkpoint()
+        plan, verdict, steps = await self._fresh()
+        if self._final_changed(plan, steps):
+            await self.halt(
+                "The final output or its source changed during review. "
+                "It was not filed; review the current plan before continuing."
+            )
+        if not self._assessed(plan, verdict, steps):
+            await _retried(self.plan_id, llm.assess_plan, self.session, self.plan_id)
+            await self.checkpoint()
+            plan, verdict, steps = await self._fresh()
+            if not self._assessed(plan, verdict, steps) or self._final_changed(plan, steps):
+                await self.halt(
+                    "The final output has no current assessment. "
+                    "It was not filed; assess the current version or review it yourself."
+                )
+        assert verdict is not None
+        return plan, verdict
+
+    async def _repair_gaps(self, gaps: list[str]) -> None:
+        await _note(
+            self.plan_id,
+            "The final assessment identified gaps or contradictions. "
+            "Rebuilding the final output once before filing.",
+        )
+        await self.checkpoint()
+        final = await self.generate_final(
+            NO_QUESTIONS + FIX_FINAL_GAPS.format(gaps="; ".join(gaps[:5]))
+        )
+        await self.checkpoint()
+        if final.outcome == "awaiting_approval":
+            await _note(
+                self.plan_id,
+                "Paused: a tool call while rebuilding the final output needs your approval.",
+            )
+            await _set_state(self.plan_id, AUTO_PAUSED)
+            raise _Halt
+        if final.outcome != "published":
+            await self.halt(
+                "The final output could not be rebuilt. "
+                f"It was not filed in the {self.source}; review it, then send it yourself."
+            )
+        problems, _ = await llm.final_file_problems(self.session, self.plan_id)
+        if problems:
+            await self.halt(
+                "The rebuilt final output has a file problem "
+                f"({'; '.join(problems)}). It was not filed in the {self.source}; review it."
+            )
+
+    async def assess_final(self) -> tuple[StepPlan, Assessment]:
+        """A current final assessment with no gaps, rebuilding the output once if allowed."""
+        repaired_gaps = False
+        while True:
+            plan, verdict = await self._current_verdict()
+            gaps = [
+                item.strip() for item in [*verdict.gaps, *verdict.contradictions] if item.strip()
+            ]
+            if not gaps:
+                return plan, verdict
+            if not self.generated_final or repaired_gaps:
+                await self.halt(
+                    "The final assessment still has unresolved gaps or contradictions "
+                    f"({'; '.join(gaps[:3])}). The output was preserved and not filed "
+                    f"in the {self.source}; review it, then send it yourself."
+                )
+            await self._repair_gaps(gaps)
+            repaired_gaps = True
+
+    async def file_final(self, plan: StepPlan, verdict: Assessment) -> tuple[StepPlan, int | None]:
+        """Send the final output to its source when the policy allows it."""
+        if verdict.score < HOLD_BELOW:
+            await self.halt(
+                f"The final output scored {verdict.score}/100 against the ask "
+                f"({'; '.join(verdict.gaps[:3]) or 'no gaps listed'}). It was not filed "
+                f"in the {self.source}: review it, then send it yourself."
+            )
+        if self.policy != "autonomous":
+            return plan, None
+        await self.checkpoint()
+        if plan.assessed_sig is None or plan.assessment_json is None:
+            await self.halt("The final output has no current assessment.")
+        plan, posted = await llm.send_to_source(
+            self.session,
+            self.plan_id,
+            None,
+            assessed=llm.AssessedFinal(
+                signature=plan.assessed_sig,
+                assessment_json=plan.assessment_json,
+                source_topic_id=self.topic_id,
+                source_chat_id=self.chat_id,
+                version=plan.final_version,
+                require_running=self.require_running,
+            ),
+        )
+        return plan, posted.id
+
+    async def announce(self, title: str, final_version: int, posted_message_id: int | None) -> None:
+        if self.policy != "autonomous":
+            await _note(
+                self.plan_id,
+                "Drafts validated. The final output is ready: review it, then send it to "
+                f"the {self.source}.",
+            )
+            return
+        await _note(
+            self.plan_id,
+            f"Drafts validated and the final output filed in the {self.source}, "
+            "which now reviews it.",
+        )
+        if self.topic_id is not None:
+            hand_back(
+                self.topic_id,
+                title,
+                reviewed_by_user=False,
+                plan_id=self.plan_id,
+                posted_message_id=posted_message_id,
+                final_version=final_version,
+            )
+        elif self.chat_id is not None:
+            hand_back(
+                self.chat_id,
+                title,
+                reviewed_by_user=False,
+                source_kind="chat",
+                plan_id=self.plan_id,
+                posted_message_id=posted_message_id,
+                final_version=final_version,
+            )
+
+
 async def _review(
     plan_id: int,
     policy: str,
@@ -849,264 +1077,26 @@ async def _review(
             return False
         async with SessionLocal() as session:
             plan = await svc.get_plan(session, plan_id)
-            topic_id = plan.source_topic_id
-            chat_id = plan.source_chat_id
-            if topic_id is None and chat_id is None:
+            if plan.source_topic_id is None and plan.source_chat_id is None:
                 return False
-            source = "topic" if topic_id is not None else "chat"
-            steps = await svc.plan_steps(session, plan_id)
-            for step in svc.working_leaves(steps):
-                if require_running and not await _still_running(plan_id):
-                    return False
-                if step.status != STEP_TO_VALIDATE or not step.artifact.strip():
-                    continue
-                if not await _review_step(session, plan_id, plan, step):
-                    return False
-            plan = await svc.get_plan(session, plan_id)
-            needs_final = (
-                not (plan.final_output or "").strip() or plan.final_stale or plan.final_provisional
+            review = _Review(
+                plan_id,
+                policy,
+                session,
+                plan.source_topic_id,
+                plan.source_chat_id,
+                require_running=require_running,
+                generated_final=generated_final,
             )
-            final_outcome = "published"
-            if needs_final:
-                if (plan.final_output or "").strip() and not generated_final:
-                    await _note(
-                        plan_id,
-                        "The existing final output needs review and was preserved. "
-                        "Review or regenerate it before continuing.",
-                    )
-                    return False
-                final = await _retried(
-                    plan_id, llm.generate_final, session, plan_id, force=True, automatic=True
-                )
-                if require_running and not await _still_running(plan_id):
-                    return False
-                if final.outcome == "discussion":
-                    final = await _retried(
-                        plan_id,
-                        llm.generate_final,
-                        session,
-                        plan_id,
-                        force=True,
-                        instructions=_NO_QUESTIONS,
-                        automatic=True,
-                    )
-                    if require_running and not await _still_running(plan_id):
-                        return False
-                final_outcome = final.outcome
-                generated_final = final_outcome == "published"
-            if final_outcome == "published":
-                problems, built = await llm.final_file_problems(session, plan_id)
-                if problems:
-                    if not generated_final:
-                        await _note(
-                            plan_id,
-                            "The existing final output has a file problem "
-                            f"({'; '.join(problems)}). It was preserved; review it yourself.",
-                        )
-                        return False
-                    if require_running and not await _still_running(plan_id):
-                        return False
-                    await _note(
-                        plan_id,
-                        f"The final output has a file problem ({'; '.join(problems)}). "
-                        "Rebuilding it once.",
-                    )
-                    final = await _retried(
-                        plan_id,
-                        llm.generate_final,
-                        session,
-                        plan_id,
-                        force=True,
-                        instructions=_NO_QUESTIONS
-                        + _FIX_FINAL_PATH.format(
-                            problems="; ".join(problems), built=", ".join(built)
-                        ),
-                        automatic=True,
-                    )
-                    if require_running and not await _still_running(plan_id):
-                        return False
-                    final_outcome = final.outcome
-                    problems, _ = await llm.final_file_problems(session, plan_id)
-                    if problems:
-                        await _note(
-                            plan_id,
-                            "The final output still has a file problem. It was "
-                            f"not filed in the {source}: review it, then send it yourself.",
-                        )
-                        return False
-            if final_outcome != "published":
-                await _note(
-                    plan_id,
-                    "The model did not write the final output. Regenerate it from the plan, "
-                    f"then send it to the {source}.",
-                )
-                return False
-            repaired_gaps = False
-            while True:
-                if require_running and not await _still_running(plan_id):
-                    return False
-                plan = await svc.get_plan(session, plan_id)
-                await session.refresh(plan)
-                verdict = svc.parse_assessment(plan.assessment_json)
-                steps = await svc.plan_steps(session, plan_id, refresh=True)
-                if (
-                    plan.final_stale
-                    or plan.final_provisional
-                    or not svc.is_ready(steps)
-                    or (plan.source_topic_id, plan.source_chat_id) != (topic_id, chat_id)
-                ):
-                    await _note(
-                        plan_id,
-                        "The final output or its source changed during review. "
-                        "It was not filed; review the current plan before continuing.",
-                    )
-                    return False
-                if (
-                    verdict is None
-                    or verdict.scope != "final"
-                    or plan.assessed_sig != svc.plan_signature(plan, steps)
-                ):
-                    await _retried(plan_id, llm.assess_plan, session, plan_id)
-                    if require_running and not await _still_running(plan_id):
-                        return False
-                    plan = await svc.get_plan(session, plan_id)
-                    await session.refresh(plan)
-                    verdict = svc.parse_assessment(plan.assessment_json)
-                    steps = await svc.plan_steps(session, plan_id, refresh=True)
-                    if (
-                        verdict is None
-                        or verdict.scope != "final"
-                        or plan.assessed_sig != svc.plan_signature(plan, steps)
-                        or plan.final_stale
-                        or plan.final_provisional
-                        or not svc.is_ready(steps)
-                        or (plan.source_topic_id, plan.source_chat_id) != (topic_id, chat_id)
-                    ):
-                        await _note(
-                            plan_id,
-                            "The final output has no current assessment. "
-                            "It was not filed; assess the current version or review it yourself.",
-                        )
-                        return False
-                assert verdict is not None
-                gaps = [
-                    item.strip()
-                    for item in [*verdict.gaps, *verdict.contradictions]
-                    if item.strip()
-                ]
-                if not gaps:
-                    break
-                if not generated_final or repaired_gaps:
-                    await _note(
-                        plan_id,
-                        "The final assessment still has unresolved gaps or contradictions "
-                        f"({'; '.join(gaps[:3])}). The output was preserved and not filed "
-                        f"in the {source}; review it, then send it yourself.",
-                    )
-                    return False
-                await _note(
-                    plan_id,
-                    "The final assessment identified gaps or contradictions. "
-                    "Rebuilding the final output once before filing.",
-                )
-                if require_running and not await _still_running(plan_id):
-                    return False
-                final = await _retried(
-                    plan_id,
-                    llm.generate_final,
-                    session,
-                    plan_id,
-                    force=True,
-                    instructions=_NO_QUESTIONS + _FIX_FINAL_GAPS.format(gaps="; ".join(gaps[:5])),
-                    automatic=True,
-                )
-                if require_running and not await _still_running(plan_id):
-                    return False
-                if final.outcome == "awaiting_approval":
-                    await _note(
-                        plan_id,
-                        "Paused: a tool call while rebuilding the final output needs your approval.",
-                    )
-                    await _set_state(plan_id, AUTO_PAUSED)
-                    return False
-                if final.outcome != "published":
-                    await _note(
-                        plan_id,
-                        "The final output could not be rebuilt. "
-                        f"It was not filed in the {source}; review it, then send it yourself.",
-                    )
-                    return False
-                problems, _ = await llm.final_file_problems(session, plan_id)
-                if problems:
-                    await _note(
-                        plan_id,
-                        "The rebuilt final output has a file problem "
-                        f"({'; '.join(problems)}). It was not filed in the {source}; review it.",
-                    )
-                    return False
-                repaired_gaps = True
-            if verdict.score < _HOLD_BELOW:
-                await _note(
-                    plan_id,
-                    f"The final output scored {verdict.score}/100 against the ask "
-                    f"({'; '.join(verdict.gaps[:3]) or 'no gaps listed'}). It was not filed "
-                    f"in the {source}: review it, then send it yourself.",
-                )
-                return False
-            posted_message_id = None
-            if policy == "autonomous":
-                if require_running and not await _still_running(plan_id):
-                    return False
-                if plan.assessed_sig is None or plan.assessment_json is None:
-                    await _note(plan_id, "The final output has no current assessment.")
-                    return False
-                plan, posted = await llm.send_to_source(
-                    session,
-                    plan_id,
-                    None,
-                    assessed=llm.AssessedFinal(
-                        signature=plan.assessed_sig,
-                        assessment_json=plan.assessment_json,
-                        source_topic_id=topic_id,
-                        source_chat_id=chat_id,
-                        version=plan.final_version,
-                        require_running=require_running,
-                    ),
-                )
-                posted_message_id = posted.id
-            title = plan.title
-            final_version = plan.final_version
+            await review.review_steps(plan)
+            await review.prepare_final()
+            plan, verdict = await review.assess_final()
+            plan, posted_message_id = await review.file_final(plan, verdict)
+            title, final_version = plan.title, plan.final_version
         await publish_step_plan_changed(plan_id)
-        if policy == "autonomous":
-            await _note(
-                plan_id,
-                f"Drafts validated and the final output filed in the {source}, which now reviews it.",
-            )
-            if topic_id is not None:
-                hand_back(
-                    topic_id,
-                    title,
-                    reviewed_by_user=False,
-                    plan_id=plan_id,
-                    posted_message_id=posted_message_id,
-                    final_version=final_version,
-                )
-            elif chat_id is not None:
-                hand_back(
-                    chat_id,
-                    title,
-                    reviewed_by_user=False,
-                    source_kind="chat",
-                    plan_id=plan_id,
-                    posted_message_id=posted_message_id,
-                    final_version=final_version,
-                )
-        else:
-            await _note(
-                plan_id,
-                "Drafts validated. The final output is ready: review it, then send it to "
-                f"the {source}.",
-            )
+        await review.announce(title, final_version, posted_message_id)
+    except _Halt:
+        return False
     except Exception as exc:
         if require_running and not await _still_running(plan_id):
             return False
