@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useSyncExternalStore } from "react";
 import { api } from "./api";
+import { resolveDefaultModel } from "./conversationModel";
 import type { LLMModel, Settings } from "./types";
 
 type Listener = () => void;
@@ -15,6 +16,9 @@ class ModelsStore {
   private errors = new Map<string, string>();
   private provider = "github_copilot";
   private currentId: string | null = null;
+  // The default model's provider: a default category's preset can sit on
+  // another provider than `llm_provider`.
+  private currentProvider: string | null = null;
   private loading = new Map<string, Promise<void>>();
   private generations = new Map<string, number>();
   private requests = new Map<string, symbol>();
@@ -53,12 +57,18 @@ class ModelsStore {
   }
 
   current(): LLMModel | null {
-    return this.byIdOrNull(this.currentId);
+    return this.byIdOrNull(this.currentId, this.currentProviderId());
   }
 
-  setCurrent(id: string | null): void {
-    if (this.currentId === id) return;
+  /** Provider whose catalog lists the current model. */
+  currentProviderId(): string {
+    return this.currentProvider ?? this.provider;
+  }
+
+  setCurrent(id: string | null, provider: string | null = null): void {
+    if (this.currentId === id && this.currentProvider === provider) return;
     this.currentId = id;
+    this.currentProvider = provider;
     this.notify();
   }
 
@@ -67,7 +77,8 @@ class ModelsStore {
       this.provider = settings.llm_provider;
       this.notify();
     }
-    this.setCurrent((settings?.llm_model_category ? settings.llm_category_preset?.model : null) ?? settings?.llm_model ?? null);
+    const resolved = resolveDefaultModel(settings);
+    this.setCurrent(resolved.id, resolved.provider);
   }
 
   /** Seed the catalog from a list a caller already fetched. */
@@ -131,8 +142,9 @@ export function useModelsVersion(): number {
 
 export function useCurrentModel(): LLMModel | null {
   useModelsVersion();
+  const provider = modelsStore.currentProviderId();
   useEffect(() => {
-    void modelsStore.ensureLoaded();
-  }, []);
+    void modelsStore.ensureLoaded(provider);
+  }, [provider]);
   return modelsStore.current();
 }

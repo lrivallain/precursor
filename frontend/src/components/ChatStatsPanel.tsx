@@ -12,6 +12,7 @@ import {
 import { streamStore } from "../lib/streamStore";
 import { api } from "../lib/api";
 import { modelsStore, useCurrentModel } from "../lib/modelsStore";
+import { resolveConversationModel } from "../lib/conversationModel";
 import { useSettings } from "../lib/settingsStore";
 import { useIsNarrow } from "../lib/useMediaQuery";
 import type { ContextEstimate, ConversationLLMSelection, Message, ReminderContainer } from "../lib/types";
@@ -158,15 +159,13 @@ export function ChatStatsPanel({
     };
   }, []);
   const globalModel = useCurrentModel();
+  const resolved = resolveConversationModel(settings, selection);
+  const selectionProvider = selection ? resolved.provider : null;
   useEffect(() => {
-    if (selection?.provider) void modelsStore.ensureLoaded(selection.provider);
-  }, [selection?.provider]);
-  const selectedPresets = selection?.category ? (settings?.model_fallbacks?.categories.find((entry) => entry.id === selection.category)?.presets ?? []).filter((preset) => preset.provider !== "agents") : [];
-  const selectedId = selection?.model || selectedPresets[0]?.model;
-  const model = selection ? modelsStore.byIdOrNull(selectedId, selectedPresets[0]?.provider || selection.provider) : globalModel;
-  const contextWindow = selection
-    ? selectedPresets.length ? Math.max(...selectedPresets.map((preset) => preset.context_tokens)) : selection.context_tokens
-    : model?.context_window ?? null;
+    if (selectionProvider) void modelsStore.ensureLoaded(selectionProvider);
+  }, [selectionProvider]);
+  const model = selection ? modelsStore.byIdOrNull(resolved.id, resolved.provider ?? undefined) : globalModel;
+  const contextWindow = resolved.contextTokens ?? model?.context_window ?? null;
 
   const totals = useMemo(() => computeTotals(messages), [messages]);
   const roles = useMemo(() => countByRole(messages), [messages]);
