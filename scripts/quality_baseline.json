@@ -2,7 +2,6 @@
   "file-size": {
     "frontend/src/App.tsx": 1031,
     "frontend/src/components/AgentDashboard.tsx": 834,
-    "frontend/src/components/AgentView.tsx": 3545,
     "frontend/src/components/ChatPanel.tsx": 899,
     "frontend/src/components/CommandPalette.tsx": 830,
     "frontend/src/components/DefinitionsMigrationWizard.tsx": 1111,
@@ -121,9 +120,6 @@
     "frontend/src/components/AgentSettingsPanel.tsx::eslint(max-lines-per-function)": 1,
     "frontend/src/components/AgentTimeline.tsx::eslint(complexity)": 1,
     "frontend/src/components/AgentUsage.tsx::eslint(complexity)": 1,
-    "frontend/src/components/AgentView.tsx::eslint(complexity)": 11,
-    "frontend/src/components/AgentView.tsx::eslint(max-lines-per-function)": 4,
-    "frontend/src/components/AgentView.tsx::react-hooks(exhaustive-deps)": 1,
     "frontend/src/components/AgentsRuntimeCard.tsx::eslint(complexity)": 1,
     "frontend/src/components/AgentsRuntimeCard.tsx::eslint(max-lines-per-function)": 1,
     "frontend/src/components/AgentsSettings.tsx::eslint(complexity)": 1,
@@ -324,7 +320,7 @@
     "frontend/src/lib/workflows.ts::eslint(complexity)": 2
   },
   "duplication": {
-    "duplicated-lines": 2594
+    "duplicated-lines": 2592
   },
   "untyped-responses": {
     "DELETE /api/plugins/installed/{plugin_id}": 1,
