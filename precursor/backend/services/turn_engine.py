@@ -17,7 +17,7 @@ import json
 import logging
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from fastapi import HTTPException, status
@@ -68,7 +68,6 @@ from precursor.backend.services.llm.base import (
     TextDeltaEvent,
     ToolCallsEvent,
     ToolDef,
-    TurnDoneEvent,
     UsageEvent,
 )
 from precursor.backend.services.mcp.client import (
@@ -92,6 +91,38 @@ from precursor.backend.services.tool_loading import (
     SEARCH_TOOLS_NAME,
     ToolLoadingPolicy,
     build_loadout,
+)
+
+# The events are re-exported: consumers import them from here.
+from precursor.backend.services.turn_events import (
+    ApprovalsRequested as ApprovalsRequested,
+)
+from precursor.backend.services.turn_events import (
+    AssistantFinalTurn as AssistantFinalTurn,
+)
+from precursor.backend.services.turn_events import (
+    AssistantReasoningDelta as AssistantReasoningDelta,
+)
+from precursor.backend.services.turn_events import (
+    AssistantTextDelta as AssistantTextDelta,
+)
+from precursor.backend.services.turn_events import (
+    AssistantToolCallsTurn as AssistantToolCallsTurn,
+)
+from precursor.backend.services.turn_events import (
+    RoundCapReached as RoundCapReached,
+)
+from precursor.backend.services.turn_events import (
+    ToolAuthRequired as ToolAuthRequired,
+)
+from precursor.backend.services.turn_events import (
+    ToolCallOutcome as ToolCallOutcome,
+)
+from precursor.backend.services.turn_events import (
+    ToolResultTurn as ToolResultTurn,
+)
+from precursor.backend.services.turn_events import (
+    TurnEvent as TurnEvent,
 )
 from precursor.backend.services.usage_stats import record_usage
 from precursor.backend.services.workspaces import WORKSPACE_READ_TOOLS, WORKSPACE_WRITE_TOOLS
@@ -700,86 +731,6 @@ async def prepare_retry_turn(
 # -- The tool loop ---------------------------------------------------------
 
 
-@dataclass(slots=True)
-class AssistantTextDelta:
-    """A streamed chunk of assistant text."""
-
-    content: str
-
-
-@dataclass(slots=True)
-class AssistantReasoningDelta:
-    """A streamed chunk of the model's thinking for the current round."""
-
-    content: str
-
-
-@dataclass(slots=True)
-class AssistantFinalTurn:
-    """The model finished with a plain-text answer (no tool calls)."""
-
-    text: str
-    usage: UsageEvent | None
-    reasoning: str = ""
-    model: str | None = None
-    provider: str | None = None
-
-
-@dataclass(slots=True)
-class AssistantToolCallsTurn:
-    """The model requested one or more tool calls."""
-
-    text: str
-    tool_calls: list[Any]
-    openai_tool_calls: list[dict[str, Any]]
-    usage: UsageEvent | None
-    reasoning: str = ""
-    model: str | None = None
-    provider: str | None = None
-
-
-@dataclass(slots=True)
-class ToolResultTurn:
-    """A single tool call was executed."""
-
-    call: Any
-    result_text: str
-    is_error: bool
-    # ``{"slug", "path"}`` (+ ``written`` for a change) when the tool touched a
-    # workspace file, so the UI can
-    # offer a link to it without parsing ``result_text`` — which for a read
-    # embeds the whole file. None for every other tool.
-    link: dict[str, Any] | None = None
-    # The approval gate refused the call and the loop answered it instead of parking.
-    declined: bool = False
-
-
-@dataclass(slots=True)
-class ToolAuthRequired:
-    """A tool the model called needs an interactive sign-in before it can run.
-
-    Yielded at *call* time rather than turn-start time: the catalogue is
-    advertised from the stored one even while a credential is stale, so an
-    unrelated question is never held hostage by one expired token. The prompt is
-    also strictly better than the old blanket one, because it can name the tool
-    that actually needs the sign-in.
-    """
-
-    server: str
-    message: str
-    tool: str
-
-
-@dataclass(slots=True)
-class ToolCallOutcome:
-    """How one tool call ended, once any sign-in retries are exhausted."""
-
-    result_text: str
-    is_error: bool
-    # ``{"slug", "path"}`` when the tool touched a workspace file. None otherwise.
-    link: dict[str, Any] | None = None
-
-
 async def call_tool_with_auth_retry(
     *,
     active: Any,
@@ -867,32 +818,6 @@ async def call_tool_with_auth_retry(
         return
 
 
-@dataclass(slots=True)
-class RoundCapReached:
-    """The tool-round budget was exhausted without a final answer."""
-
-    max_tool_rounds: int
-
-
-@dataclass(slots=True)
-class ApprovalsRequested:
-    """The round's remaining calls wait on the user, so the turn parks here."""
-
-    items: list[approval_service.PendingCall]
-
-
-TurnEvent = (
-    AssistantTextDelta
-    | AssistantReasoningDelta
-    | AssistantFinalTurn
-    | AssistantToolCallsTurn
-    | ToolResultTurn
-    | ToolAuthRequired
-    | ApprovalsRequested
-    | RoundCapReached
-)
-
-
 def _effective_provider(provider: Any) -> str | None:
     return getattr(provider, "effective_provider", None) or getattr(provider, "name", None)
 
@@ -966,6 +891,176 @@ def _ground_plan_calls(
         if target[1] in ("create_step_plan", "amend_step_plan"):
             args["source_message_id"] = message_id
         call.arguments = json.dumps(args, ensure_ascii=False)
+
+
+def _seed_messages(
+    system_prompt: str, history: list[ChatMessage], tool_index: str
+) -> list[ChatMessage]:
+    """The system prompt and history a turn's first round is sent."""
+    system_prompt = f"{system_prompt}\n\n{MESSAGE_LINK_INSTRUCTION}"
+    if tool_index:
+        system_prompt = f"{system_prompt}\n\n{tool_index}"
+    messages: list[ChatMessage] = [
+        ChatMessage(role="system", content=system_prompt),
+        *history,
+    ]
+    # The references change every turn, so they sit just before the newest user
+    # message instead of in the system prompt: a stable prompt + history prefix
+    # is what provider prompt caching reuses from one turn to the next.
+    references = message_reference_context(history)
+    if references:
+        note = ChatMessage(role="system", content=references)
+        if history and history[-1].role == "user":
+            messages.insert(len(messages) - 1, note)
+        else:
+            messages.append(note)
+    return messages
+
+
+@dataclass(slots=True)
+class _RoundReply:
+    """What the model sent back in one round, gathered while it streamed."""
+
+    text: list[str] = field(default_factory=list)
+    reasoning: list[str] = field(default_factory=list)
+    tool_calls: list[Any] = field(default_factory=list)
+    provider_content: list[dict[str, Any]] | None = None
+    usage: UsageEvent | None = None
+
+
+async def _stream_round(
+    provider: Any, reply: _RoundReply, **request: Any
+) -> AsyncIterator[AssistantTextDelta | AssistantReasoningDelta]:
+    """Stream one model round into ``reply``, passing the deltas on."""
+    async for event in provider.stream_chat_with_tools(**request):
+        if isinstance(event, TextDeltaEvent):
+            reply.text.append(event.content)
+            yield AssistantTextDelta(event.content)
+        elif isinstance(event, ReasoningDeltaEvent):
+            reply.reasoning.append(event.content)
+            yield AssistantReasoningDelta(event.content)
+        elif isinstance(event, ToolCallsEvent):
+            reply.tool_calls = event.calls
+            reply.provider_content = event.provider_content
+        elif isinstance(event, UsageEvent):
+            reply.usage = event
+
+
+def _require_in_context(trimmed: list[ChatMessage], required: ChatMessage | None) -> None:
+    if required is not None and not any(message is required for message in trimmed):
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            "The assessment input no longer fits the model's context after tool results. "
+            "The draft was kept; shorten the input or choose a larger context.",
+        )
+
+
+@dataclass(slots=True)
+class _ToolDispatch:
+    """Runs, declines or parks the calls of a round, recording their results.
+
+    Each result is yielded, then appended to ``messages`` for the next round.
+    Calls that wait on the user collect in ``parked``.
+    """
+
+    active: Any
+    loadout: Any
+    tool_to_server: dict[str, tuple[str, str]]
+    tool_defs: dict[str, MCPToolDef]
+    messages: list[ChatMessage]
+    auth_wait_timeout: float
+    gate: approval_service.ApprovalGate | None
+    extra_names: set[str]
+    run_extra: Callable[[Any], Awaitable[str]] | None
+    extra_permissions: dict[str, MCPToolDef] | None
+    decline_note: str | None
+    parked: list[approval_service.PendingCall] = field(default_factory=list)
+
+    def _remember(self, result: ToolResultTurn) -> None:
+        call = result.call
+        self.messages.append(
+            ChatMessage(
+                role="tool", content=result.result_text, tool_call_id=call.id, name=call.name
+            )
+        )
+
+    async def run(self, call: Any) -> AsyncIterator[ToolResultTurn | ToolAuthRequired]:
+        if (
+            self.loadout.deferred
+            and call.name == SEARCH_TOOLS_NAME
+            and call.name not in self.extra_names
+        ):
+            result = ToolResultTurn(call, self.loadout.search(call.arguments), False, None)
+            yield result
+            self._remember(result)
+            return
+        # A tool named straight from the on-demand index runs (routing has
+        # the full catalogue) and stays loaded for the rest of the turn.
+        self.loadout.load([call.name])
+        is_extra = self.run_extra is not None and call.name in self.extra_names
+        held = await self._hold(call, is_extra)
+        if isinstance(held, approval_service.PendingCall):
+            self.parked.append(held)
+            return
+        if held is not None:
+            yield held
+            self._remember(held)
+            return
+        if self.run_extra is not None and is_extra:
+            result = ToolResultTurn(call, await self.run_extra(call), False, None)
+            yield result
+            self._remember(result)
+            return
+        outcome: ToolResultTurn | None = None
+        async for step in execute_tool_call(self.active, call, self.auth_wait_timeout):
+            if isinstance(step, ToolAuthRequired):
+                yield step
+            else:
+                outcome = step
+        assert outcome is not None
+        yield outcome
+        self._remember(outcome)
+
+    async def _hold(
+        self, call: Any, is_extra: bool
+    ) -> approval_service.PendingCall | ToolResultTurn | None:
+        """What the approval gate makes of a call: park it, decline it, or let it run."""
+        gate = self.gate
+        if gate is None:
+            return None
+        if (
+            not is_extra
+            and call.name == approval_service.REQUEST_APPROVAL_TOOL
+            and self.decline_note is None
+        ):
+            if gate.offers_intent:
+                return approval_service.intent_pending(call.id, call.arguments)
+            return None
+        extra_def = (self.extra_permissions or {}).get(call.name) if is_extra else None
+        if is_extra:
+            lookup = (extra_def.server, extra_def.name) if extra_def is not None else None
+        else:
+            lookup = self.tool_to_server.get(call.name)
+        if lookup is None:
+            return None
+        tool_def = extra_def if is_extra else self.tool_defs.get(call.name)
+        verdict = gate.check(call.name, lookup[0], lookup[1], tool_def, call.arguments or "{}")
+        if verdict.rule_id is not None:
+            await approval_rules_service.touch_rule(verdict.rule_id)
+        if verdict.reason is None:
+            return None
+        if self.decline_note is not None:
+            declined = f"Not run: {verdict.reason} {self.decline_note}"
+            return ToolResultTurn(call, declined, True, None, declined=True)
+        return approval_service.PendingCall(
+            call_id=call.id,
+            tool_name=call.name,
+            server=lookup[0],
+            raw_tool=lookup[1],
+            arguments=call.arguments or "{}",
+            kind=APPROVAL_KIND_TOOL,
+            reason=verdict.reason,
+        )
 
 
 async def run_tool_loop(
@@ -1043,85 +1138,56 @@ async def run_tool_loop(
             *loadout.meta_tools(),
         ]
 
-    system_prompt = f"{system_prompt}\n\n{MESSAGE_LINK_INSTRUCTION}"
-    tool_index = loadout.index()
-    if tool_index:
-        system_prompt = f"{system_prompt}\n\n{tool_index}"
-    messages: list[ChatMessage] = [
-        ChatMessage(role="system", content=system_prompt),
-        *history,
-    ]
-    # The references change every turn, so they sit just before the newest user
-    # message instead of in the system prompt: a stable prompt + history prefix
-    # is what provider prompt caching reuses from one turn to the next.
-    references = message_reference_context(history)
-    if references:
-        note = ChatMessage(role="system", content=references)
-        if history and history[-1].role == "user":
-            messages.insert(len(messages) - 1, note)
-        else:
-            messages.append(note)
-
+    messages = _seed_messages(system_prompt, history, loadout.index())
+    dispatch = _ToolDispatch(
+        active=active,
+        loadout=loadout,
+        tool_to_server=tool_to_server,
+        tool_defs=tool_defs,
+        messages=messages,
+        auth_wait_timeout=auth_wait_timeout,
+        gate=gate,
+        extra_names=extra_names,
+        run_extra=run_extra,
+        extra_permissions=extra_permissions,
+        decline_note=decline_note,
+    )
     for _round in range(max_tool_rounds):
         last_round = wrap_up is not None and _round == max_tool_rounds - 1
         if last_round:
             messages.append(ChatMessage(role="user", content=wrap_up or ""))
-        text_chunks: list[str] = []
-        reasoning_chunks: list[str] = []
-        tool_calls: list[Any] = []
-        provider_content: list[dict[str, Any]] | None = None
-        round_usage: UsageEvent | None = None
-
         trimmed = trim_messages(
             messages,
             max_input_tokens=max_input_tokens,
             per_message_max_tokens=max_tool_result_tokens,
         )
-        if required_history_message is not None and not any(
-            message is required_history_message for message in trimmed
-        ):
-            raise HTTPException(
-                status.HTTP_502_BAD_GATEWAY,
-                "The assessment input no longer fits the model's context after tool results. "
-                "The draft was kept; shorten the input or choose a larger context.",
-            )
-        async for event in provider.stream_chat_with_tools(
+        _require_in_context(trimmed, required_history_message)
+        reply = _RoundReply()
+        async for delta in _stream_round(
+            provider,
+            reply,
             model=model,
             messages=trimmed,
             tools=[] if last_round else round_tools(),
             reasoning_effort=reasoning_effort,
         ):
-            if isinstance(event, TextDeltaEvent):
-                text_chunks.append(event.content)
-                yield AssistantTextDelta(event.content)
-            elif isinstance(event, ReasoningDeltaEvent):
-                reasoning_chunks.append(event.content)
-                yield AssistantReasoningDelta(event.content)
-            elif isinstance(event, ToolCallsEvent):
-                tool_calls = event.calls
-                provider_content = event.provider_content
-            elif isinstance(event, UsageEvent):
-                round_usage = event
-            elif isinstance(event, TurnDoneEvent):
-                pass
+            yield delta
 
-        assistant_text = "".join(text_chunks)
+        assistant_text = "".join(reply.text)
         # Kept for the transcript only: it never goes back into ``messages``.
-        reasoning = "".join(reasoning_chunks).strip()
-
+        reasoning = "".join(reply.reasoning).strip()
+        tool_calls = reply.tool_calls
+        answered_by = (
+            getattr(provider, "effective_model", None) or model,
+            _effective_provider(provider),
+        )
         if last_round and tool_calls:
             raise HTTPException(
                 status.HTTP_502_BAD_GATEWAY,
                 "The model requested a tool after tools were withdrawn.",
             )
         if not tool_calls:
-            yield AssistantFinalTurn(
-                assistant_text,
-                round_usage,
-                reasoning,
-                getattr(provider, "effective_model", None) or model,
-                _effective_provider(provider),
-            )
+            yield AssistantFinalTurn(assistant_text, reply.usage, reasoning, *answered_by)
             return
 
         _ground_plan_calls(tool_calls, tool_to_server, source_message)
@@ -1134,15 +1200,8 @@ async def run_tool_loop(
             for c in tool_calls
         ]
         yield AssistantToolCallsTurn(
-            assistant_text,
-            tool_calls,
-            openai_tool_calls,
-            round_usage,
-            reasoning,
-            getattr(provider, "effective_model", None) or model,
-            _effective_provider(provider),
+            assistant_text, tool_calls, openai_tool_calls, reply.usage, reasoning, *answered_by
         )
-
         messages.append(
             ChatMessage(
                 role="assistant",
@@ -1150,101 +1209,16 @@ async def run_tool_loop(
                 tool_calls=openai_tool_calls,
                 # Replayed as the model wrote it, before ``_ground_plan_calls``:
                 # Claude rejects a signed turn whose blocks were edited.
-                provider_content=provider_content,
+                provider_content=reply.provider_content,
             )
         )
 
-        parked: list[approval_service.PendingCall] = []
+        dispatch.parked = []
         for call in tool_calls:
-            if loadout.deferred and call.name == SEARCH_TOOLS_NAME and call.name not in extra_names:
-                found = loadout.search(call.arguments)
-                yield ToolResultTurn(call, found, False, None)
-                messages.append(
-                    ChatMessage(role="tool", content=found, tool_call_id=call.id, name=call.name)
-                )
-                continue
-            # A tool named straight from the on-demand index runs (routing has
-            # the full catalogue) and stays loaded for the rest of the turn.
-            loadout.load([call.name])
-            is_extra = run_extra is not None and call.name in extra_names
-            extra_def = (extra_permissions or {}).get(call.name) if is_extra else None
-            if is_extra:
-                server_lookup = (
-                    (extra_def.server, extra_def.name) if extra_def is not None else None
-                )
-            else:
-                server_lookup = tool_to_server.get(call.name)
-            if (
-                gate is not None
-                and not is_extra
-                and call.name == approval_service.REQUEST_APPROVAL_TOOL
-                and decline_note is None
-            ):
-                if gate.offers_intent:
-                    parked.append(approval_service.intent_pending(call.id, call.arguments))
-                    continue
-            elif gate is not None and server_lookup is not None:
-                verdict = gate.check(
-                    call.name,
-                    server_lookup[0],
-                    server_lookup[1],
-                    extra_def if is_extra else tool_defs.get(call.name),
-                    call.arguments or "{}",
-                )
-                if verdict.rule_id is not None:
-                    await approval_rules_service.touch_rule(verdict.rule_id)
-                if verdict.reason is not None and decline_note is not None:
-                    declined = f"Not run: {verdict.reason} {decline_note}"
-                    yield ToolResultTurn(call, declined, True, None, declined=True)
-                    messages.append(
-                        ChatMessage(
-                            role="tool", content=declined, tool_call_id=call.id, name=call.name
-                        )
-                    )
-                    continue
-                if verdict.reason is not None:
-                    parked.append(
-                        approval_service.PendingCall(
-                            call_id=call.id,
-                            tool_name=call.name,
-                            server=server_lookup[0],
-                            raw_tool=server_lookup[1],
-                            arguments=call.arguments or "{}",
-                            kind=APPROVAL_KIND_TOOL,
-                            reason=verdict.reason,
-                        )
-                    )
-                    continue
-            if run_extra is not None and is_extra:
-                extra_result = await run_extra(call)
-                yield ToolResultTurn(call, extra_result, False, None)
-                messages.append(
-                    ChatMessage(
-                        role="tool", content=extra_result, tool_call_id=call.id, name=call.name
-                    )
-                )
-                continue
-            outcome: ToolResultTurn | None = None
-            async for step in execute_tool_call(active, call, auth_wait_timeout):
-                if isinstance(step, ToolAuthRequired):
-                    yield step
-                else:
-                    outcome = step
-            assert outcome is not None
-            result_text = outcome.result_text
-            yield outcome
-
-            messages.append(
-                ChatMessage(
-                    role="tool",
-                    content=result_text,
-                    tool_call_id=call.id,
-                    name=call.name,
-                )
-            )
-
-        if parked:
-            yield ApprovalsRequested(parked)
+            async for event in dispatch.run(call):
+                yield event
+        if dispatch.parked:
+            yield ApprovalsRequested(dispatch.parked)
             return
 
     yield RoundCapReached(max_tool_rounds)
@@ -1439,6 +1413,141 @@ def usage_event(message_id: int, usage: UsageEvent) -> dict[str, str]:
 # -- SSE consumer ----------------------------------------------------------
 
 
+def _sse(event: str, payload: Any) -> dict[str, str]:
+    return {"event": event, "data": json.dumps(payload)}
+
+
+@dataclass(slots=True)
+class _StreamRelay:
+    """Persists a turn's events against its container and turns them into SSE.
+
+    ``finished`` is set once the turn has nothing more to say: it answered, or
+    it parked on the user's approval.
+    """
+
+    kind: ContainerKind
+    container_id: int
+    model: str
+    source_message_id: int | None
+    turn_started: float
+    last_assistant_id: int | None = None
+    finished: bool = False
+
+    async def relay(self, ev: TurnEvent) -> AsyncIterator[dict[str, str]]:
+        if isinstance(ev, AssistantTextDelta):
+            yield _sse("delta", {"content": ev.content})
+        elif isinstance(ev, AssistantReasoningDelta):
+            yield _sse("reasoning", {"content": ev.content})
+        elif isinstance(ev, AssistantFinalTurn):
+            async for sse in self._final(ev):
+                yield sse
+        elif isinstance(ev, AssistantToolCallsTurn):
+            async for sse in self._tool_calls(ev):
+                yield sse
+        elif isinstance(ev, ToolResultTurn):
+            yield await self._tool_result(ev)
+        elif isinstance(ev, ToolAuthRequired):
+            # The model reached for a tool whose credential has lapsed. This is
+            # the moment the sign-in is genuinely required, so prompt now —
+            # naming the tool — rather than at turn start.
+            yield _sse(
+                "mcp_auth_required", {"server": ev.server, "message": ev.message, "tool": ev.tool}
+            )
+        elif isinstance(ev, ApprovalsRequested):
+            yield await self._approvals(ev)
+        elif isinstance(ev, RoundCapReached):
+            cap_msg = f"Stopped after {ev.max_tool_rounds} tool rounds."
+            await _persist_system_message(self.container_id, f"Error: {cap_msg}", kind=self.kind)
+            yield _sse("error", {"message": cap_msg})
+
+    async def _final(self, ev: AssistantFinalTurn) -> AsyncIterator[dict[str, str]]:
+        # Split off any suggested follow-ups, persist the clean text, and
+        # surface the chips separately.
+        self.finished = True
+        elapsed_ms = int((time.monotonic() - self.turn_started) * 1000)
+        actual_model = ev.model or self.model
+        answer = await persist_final_turn(
+            self.kind, self.container_id, ev, model=actual_model, elapsed_ms=elapsed_ms
+        )
+        if self.kind == "chat":
+            # Imported here: step_plan_llm runs turns through this module.
+            from precursor.backend.services.step_plan_llm import apply_chat_reply
+
+            await apply_chat_reply(self.container_id, answer.text)
+        if ev.usage is not None:
+            yield usage_event(answer.message_id, ev.usage)
+        yield _sse(
+            "done",
+            {
+                "id": answer.message_id,
+                "public_id": answer.public_id,
+                "content": answer.text,
+                "model": actual_model,
+                "provider": ev.provider,
+                "elapsed_ms": elapsed_ms,
+            },
+        )
+        if answer.suggestions:
+            yield _sse(
+                "suggestions", {"message_id": answer.message_id, "items": answer.suggestions}
+            )
+
+    async def _tool_calls(self, ev: AssistantToolCallsTurn) -> AsyncIterator[dict[str, str]]:
+        assistant_id, public_id = await persist_tool_calls_turn(
+            self.kind, self.container_id, ev, model=ev.model or self.model
+        )
+        self.last_assistant_id = assistant_id
+        if ev.usage is not None:
+            yield usage_event(assistant_id, ev.usage)
+        calls = [{"id": c.id, "name": c.name, "arguments": c.arguments} for c in ev.tool_calls]
+        yield _sse(
+            "tool_calls", {"assistant_id": assistant_id, "public_id": public_id, "calls": calls}
+        )
+
+    async def _tool_result(self, ev: ToolResultTurn) -> dict[str, str]:
+        tool_msg_id = await persist_tool_result(self.kind, self.container_id, ev)
+        return _sse(
+            "tool_result",
+            {
+                "message_id": tool_msg_id,
+                "tool_call_id": ev.call.id,
+                "name": ev.call.name,
+                "arguments": ev.call.arguments,
+                "content": ev.result_text,
+                "is_error": ev.is_error,
+                "link": ev.link,
+            },
+        )
+
+    async def _approvals(self, ev: ApprovalsRequested) -> dict[str, str]:
+        self.finished = True
+        async with SessionLocal() as ws:
+            rows = await approval_service.record_pending(
+                ws,
+                self.kind,
+                self.container_id,
+                self.last_assistant_id,
+                ev.items,
+                source_message_id=self.source_message_id,
+            )
+            payload = [approval_service.serialize(r) for r in rows]
+        await publish_approval_changed(**container_message_kwargs(self.kind, self.container_id))
+        return _sse("approval_required", {"approvals": payload})
+
+
+def _unavailable_server_events(active: Any) -> list[dict[str, str]]:
+    """Report MCP servers that failed to start; failures don't abort the turn."""
+    events = []
+    for server_name, err in active.unavailable:
+        logger.warning("MCP server %s unavailable: %s", server_name, err)
+        if server_name in active.advertised_from_cache:
+            # Its tools are on offer and it reconnects on first use, so
+            # saying "unavailable" here would be both noisy and wrong.
+            continue
+        events.append(_sse("system", {"message": f"MCP server '{server_name}' unavailable: {err}"}))
+    return events
+
+
 async def run_message_stream(
     *,
     kind: ContainerKind,
@@ -1478,10 +1587,7 @@ async def run_message_stream(
         source_message_id = user_echo["id"]
 
     if user_echo is not None:
-        yield {
-            "event": "user_message",
-            "data": json.dumps(user_echo),
-        }
+        yield _sse("user_message", user_echo)
 
     # No pre-LLM auth gate: the turn starts now. The catalogue of a server whose
     # credential has lapsed is still advertised (from the stored one), so the
@@ -1495,22 +1601,14 @@ async def run_message_stream(
         if restrict_precursor:
             active.restrict_server_tools("precursor", WORKSPACE_READ_TOOLS | WORKSPACE_WRITE_TOOLS)
         # Warm MCP sessions for the enabled servers (reused across turns). Each
-        # contributes tools we aggregate for the LLM; failures are surfaced but
-        # don't abort the turn.
-        for server_name, err in active.unavailable:
-            logger.warning("MCP server %s unavailable: %s", server_name, err)
-            if server_name in active.advertised_from_cache:
-                # Its tools are on offer and it reconnects on first use, so
-                # saying "unavailable" here would be both noisy and wrong.
-                continue
-            yield {
-                "event": "system",
-                "data": json.dumps({"message": f"MCP server '{server_name}' unavailable: {err}"}),
-            }
+        # contributes tools we aggregate for the LLM.
+        for event in _unavailable_server_events(active):
+            yield event
 
-        last_assistant_id: int | None = None
         try:
-            turn_started = time.monotonic()
+            relay = _StreamRelay(
+                kind, container_id, model, source_message_id, turn_started=time.monotonic()
+            )
             async for ev in run_tool_loop(
                 active=active,
                 provider=provider,
@@ -1528,149 +1626,21 @@ async def run_message_stream(
                 else None,
                 tool_policy=tool_policy,
             ):
-                if isinstance(ev, AssistantTextDelta):
-                    yield {
-                        "event": "delta",
-                        "data": json.dumps({"content": ev.content}),
-                    }
-
-                elif isinstance(ev, AssistantReasoningDelta):
-                    yield {
-                        "event": "reasoning",
-                        "data": json.dumps({"content": ev.content}),
-                    }
-
-                elif isinstance(ev, AssistantFinalTurn):
-                    # Final assistant turn — split off any suggested follow-ups,
-                    # persist the clean text, and surface the chips separately.
-                    elapsed_ms = int((time.monotonic() - turn_started) * 1000)
-                    actual_model = ev.model or model
-                    answer = await persist_final_turn(
-                        kind, container_id, ev, model=actual_model, elapsed_ms=elapsed_ms
-                    )
-                    if kind == "chat":
-                        # Imported here: step_plan_llm runs turns through this module.
-                        from precursor.backend.services.step_plan_llm import apply_chat_reply
-
-                        await apply_chat_reply(container_id, answer.text)
-                    if ev.usage is not None:
-                        yield usage_event(answer.message_id, ev.usage)
-                    yield {
-                        "event": "done",
-                        "data": json.dumps(
-                            {
-                                "id": answer.message_id,
-                                "public_id": answer.public_id,
-                                "content": answer.text,
-                                "model": actual_model,
-                                "provider": ev.provider,
-                                "elapsed_ms": elapsed_ms,
-                            }
-                        ),
-                    }
-                    if answer.suggestions:
-                        yield {
-                            "event": "suggestions",
-                            "data": json.dumps(
-                                {"message_id": answer.message_id, "items": answer.suggestions}
-                            ),
-                        }
+                async for sse in relay.relay(ev):
+                    yield sse
+                if relay.finished:
                     return
-
-                elif isinstance(ev, AssistantToolCallsTurn):
-                    assistant_id, public_id = await persist_tool_calls_turn(
-                        kind, container_id, ev, model=ev.model or model
-                    )
-                    last_assistant_id = assistant_id
-                    if ev.usage is not None:
-                        yield usage_event(assistant_id, ev.usage)
-                    yield {
-                        "event": "tool_calls",
-                        "data": json.dumps(
-                            {
-                                "assistant_id": assistant_id,
-                                "public_id": public_id,
-                                "calls": [
-                                    {
-                                        "id": c.id,
-                                        "name": c.name,
-                                        "arguments": c.arguments,
-                                    }
-                                    for c in ev.tool_calls
-                                ],
-                            }
-                        ),
-                    }
-
-                elif isinstance(ev, ToolResultTurn):
-                    tool_msg_id = await persist_tool_result(kind, container_id, ev)
-                    yield {
-                        "event": "tool_result",
-                        "data": json.dumps(
-                            {
-                                "message_id": tool_msg_id,
-                                "tool_call_id": ev.call.id,
-                                "name": ev.call.name,
-                                "arguments": ev.call.arguments,
-                                "content": ev.result_text,
-                                "is_error": ev.is_error,
-                                "link": ev.link,
-                            }
-                        ),
-                    }
-
-                elif isinstance(ev, ToolAuthRequired):
-                    # The model reached for a tool whose credential has lapsed.
-                    # This is the moment the sign-in is genuinely required, so
-                    # prompt now — naming the tool — rather than at turn start.
-                    yield {
-                        "event": "mcp_auth_required",
-                        "data": json.dumps(
-                            {
-                                "server": ev.server,
-                                "message": ev.message,
-                                "tool": ev.tool,
-                            }
-                        ),
-                    }
-
-                elif isinstance(ev, ApprovalsRequested):
-                    async with SessionLocal() as ws:
-                        rows = await approval_service.record_pending(
-                            ws,
-                            kind,
-                            container_id,
-                            last_assistant_id,
-                            ev.items,
-                            source_message_id=source_message_id,
-                        )
-                        payload = [approval_service.serialize(r) for r in rows]
-                    await publish_approval_changed(**container_message_kwargs(kind, container_id))
-                    yield {
-                        "event": "approval_required",
-                        "data": json.dumps({"approvals": payload}),
-                    }
-                    return
-
-                elif isinstance(ev, RoundCapReached):
-                    # Hit the iteration cap.
-                    cap_msg = f"Stopped after {ev.max_tool_rounds} tool rounds."
-                    await _persist_system_message(container_id, f"Error: {cap_msg}", kind=kind)
-                    yield {
-                        "event": "error",
-                        "data": json.dumps({"message": cap_msg}),
-                    }
         except LLMError as exc:
             # Provider rejected the request for a reason worth showing the
             # user (too many tools, bad credentials, …) — surface it cleanly
             # without a crash-style traceback.
             logger.warning("Chat stream rejected by provider: %s", exc)
             await _persist_system_message(container_id, f"Error: {exc}", kind=kind)
-            yield {"event": "error", "data": json.dumps({"message": str(exc)})}
+            yield _sse("error", {"message": str(exc)})
         except Exception as exc:
             logger.exception("Chat stream failed")
             await _persist_system_message(container_id, f"Error: {exc}", kind=kind)
-            yield {"event": "error", "data": json.dumps({"message": str(exc)})}
+            yield _sse("error", {"message": str(exc)})
 
 
 # Turns running in the background, per container. A turn is not tied to the
