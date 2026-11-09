@@ -32,6 +32,13 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Fixed
 
+- **Reloading the page no longer loses a reply in progress.** A chat or topic
+  turn now runs on the server independently of the browser connection: reload
+  or close the tab and the turn still finishes and is saved. A reloaded window
+  shows the turn as running and displays the reply when it lands. **Stop**
+  still stops it (now through an explicit request), and clearing a transcript
+  stops a reply still being written.
+
 - **Bounded Azure AI Foundry retries.** Rate limits, timeouts, conflicts, server
   errors and authentication failures no longer trigger another batch of requests
   through the other API surface after SDK retries. API compatibility fallback

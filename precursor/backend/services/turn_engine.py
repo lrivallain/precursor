@@ -17,6 +17,7 @@ import json
 import logging
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from contextlib import aclosing
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -50,6 +51,7 @@ from precursor.backend.services.attachment_extraction import (
 from precursor.backend.services.collections import resolve_topic_github_repo
 from precursor.backend.services.context_budget import strip_inline_binaries, trim_messages
 from precursor.backend.services.events import (
+    bind_client_detached,
     publish_approval_changed,
     publish_message_changed,
     publish_message_changed_chat,
@@ -1672,25 +1674,92 @@ async def run_message_stream(
             yield {"event": "error", "data": json.dumps({"message": str(exc)})}
 
 
+# Turns running in the background, per container. A turn is not tied to the
+# request that started it: closing or reloading the page only stops the relay of
+# its events, while the turn itself runs on and persists its result. Stopping
+# one is explicit (``cancel_running_turns``).
+_RUNNING_TURNS: dict[tuple[str, int], set[asyncio.Task[None]]] = {}
+_END_OF_TURN: dict[str, str] = {"event": "__end__"}
+
+
+def running_turns() -> list[tuple[str, int]]:
+    """Containers with a turn still generating."""
+    return [key for key, tasks in _RUNNING_TURNS.items() if tasks]
+
+
+async def cancel_running_turns(kind: ContainerKind, container_id: int) -> bool:
+    """Stop the turns generating in a container; True when one was running.
+
+    Waits (briefly) for them to unwind, so the caller can persist what the user
+    kept without racing the turn's own final write.
+    """
+    tasks = [t for t in _RUNNING_TURNS.get((kind, container_id), ()) if not t.done()]
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        await asyncio.wait(tasks, timeout=10)
+    return bool(tasks)
+
+
 def lifecycle_stream(
     kind: ContainerKind,
     container_id: int,
     inner: AsyncIterator[dict[str, str]],
 ) -> AsyncIterator[dict[str, str]]:
-    """Wrap an event stream with stream.started / stream.ended publishing."""
+    """Run a turn in the background and relay its events to the caller.
 
-    async def gen() -> AsyncIterator[dict[str, str]]:
+    The turn is framed by stream.started / stream.ended publishing. It runs in a
+    task of its own, so a client that disconnects (a page reload, a closed tab)
+    no longer cancels it: the relay stops, the turn finishes and persists. From
+    then on its bus events go to every window, the originating one included —
+    that window, reloaded, has the same client id and would otherwise ignore the
+    message.changed / stream.ended that bring the result in.
+    """
+    key = (kind, container_id)
+
+    async def run(queue: asyncio.Queue[dict[str, str]], listener: dict[str, bool]) -> None:
+        # The task runs in its own context copy: this binding is the turn's own.
+        bind_client_detached(listener)
         if kind == "topic":
             await publish_stream_started(container_id)
         else:
             await publish_stream_started_chat(container_id)
         try:
-            async for evt in inner:
-                yield evt
+            async with aclosing(inner) as events:
+                async for evt in events:
+                    if not listener["detached"]:
+                        queue.put_nowait(evt)
         finally:
             if kind == "topic":
                 await publish_stream_ended(container_id)
             else:
                 await publish_stream_ended_chat(container_id)
+            queue.put_nowait(_END_OF_TURN)
 
-    return gen()
+    def forget(task: asyncio.Task[None]) -> None:
+        tasks = _RUNNING_TURNS.get(key)
+        if tasks is not None:
+            tasks.discard(task)
+            if not tasks:
+                _RUNNING_TURNS.pop(key, None)
+        if not task.cancelled() and task.exception() is not None:
+            logger.error("Turn in %s %s failed", kind, container_id, exc_info=task.exception())
+
+    async def relay() -> AsyncIterator[dict[str, str]]:
+        queue: asyncio.Queue[dict[str, str]] = asyncio.Queue()
+        listener = {"detached": False}
+        task = asyncio.create_task(run(queue, listener), name=f"turn-{kind}-{container_id}")
+        _RUNNING_TURNS.setdefault(key, set()).add(task)
+        task.add_done_callback(forget)
+        try:
+            while True:
+                evt = await queue.get()
+                if evt is _END_OF_TURN:
+                    return
+                yield evt
+        finally:
+            # Detach only: the turn carries on without a listener, and its
+            # events from now on reach every window.
+            listener["detached"] = True
+
+    return relay()

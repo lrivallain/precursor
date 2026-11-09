@@ -44,7 +44,7 @@ from precursor.backend.services.conversation_turn import (
     stream_turn,
     user_echo,
 )
-from precursor.backend.services.turn_engine import build_system_context
+from precursor.backend.services.turn_engine import build_system_context, cancel_running_turns
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +77,8 @@ async def clear_messages(
     session: AsyncSession = Depends(get_session),
 ) -> None:
     """Wipe the chat transcript for a topic. Topic + GitHub link are kept."""
+    # A reply still generating would otherwise land after the wipe.
+    await cancel_running_turns("topic", topic_id)
     await clear_container_messages(session, "topic", topic_id)
 
 
@@ -154,6 +156,18 @@ async def context_estimate(
     return await estimate_context(session, "topic", topic_id)
 
 
+@router.post(
+    "/stop", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(get_topic_or_404)]
+)
+async def stop_turn(topic_id: int) -> None:
+    """Stop the turn generating in this topic.
+
+    A turn runs on when its stream's client goes away (a reload must not lose
+    it), so stopping one is this explicit request rather than a disconnect.
+    """
+    await cancel_running_turns("topic", topic_id)
+
+
 @router.post("/stopped", response_model=list[MessageRead])
 async def save_stopped_turn(
     topic_id: int,
@@ -163,6 +177,8 @@ async def save_stopped_turn(
     """Persist the partial reply and the in-flight tool calls when the user stops."""
     if await session.get(Topic, topic_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
+    # The turn itself must be gone before its partial reply is saved.
+    await cancel_running_turns("topic", topic_id)
     return await save_stopped_container_turn(
         session, "topic", topic_id, payload.content, payload.tool_call_ids, payload.reasoning
     )

@@ -311,6 +311,11 @@ export interface ContainerApi {
    */
   saveStopped: (turn: StoppedTurn) => Promise<Message[]>;
   /**
+   * Stop the turn generating server-side. A turn outlives its stream (a reload
+   * must not lose it), so aborting the request alone no longer stops it.
+   */
+  stop: () => Promise<void>;
+  /**
    * Summarise the conversation so far into a compaction marker; the model sees
    * the summary instead of older turns. Deleting the marker undoes it.
    */
@@ -516,6 +521,8 @@ export const api = {
         method: "POST",
         body: JSON.stringify(turn),
       }),
+    stopTurn: (chatId: number) =>
+      request<void>(`/api/chats/${chatId}/messages/stop`, { method: "POST" }),
     // /suggest-name — re-derive the chat's title from its transcript.
     suggestName: (chatId: number) =>
       request<{ title: string }>(`/api/chats/${chatId}/messages/suggest-name`, {
@@ -1152,6 +1159,8 @@ export const api = {
         method: "POST",
         body: JSON.stringify(turn),
       }),
+    stopTurn: (topicId: number) =>
+      request<void>(`/api/topics/${topicId}/messages/stop`, { method: "POST" }),
   },
 
   container: (kind: ReminderContainer, id: number): ContainerApi =>
@@ -1162,6 +1171,7 @@ export const api = {
           editMessage: (mid, content) => api.messages.edit(id, mid, content),
           clearMessages: () => api.messages.clear(id),
           saveStopped: (turn) => api.messages.saveStopped(id, turn),
+          stop: () => api.messages.stopTurn(id),
           compact: (instructions) => compactContainer(`/api/topics/${id}/messages`, instructions),
           contextEstimate: () =>
             request<ContextEstimate>(`/api/topics/${id}/messages/context`),
@@ -1187,6 +1197,7 @@ export const api = {
           editMessage: (mid, content) => api.chats.editMessage(id, mid, content),
           clearMessages: () => api.chats.clearMessages(id),
           saveStopped: (turn) => api.chats.saveStoppedMessage(id, turn),
+          stop: () => api.chats.stopTurn(id),
           compact: (instructions) => compactContainer(`/api/chats/${id}/messages`, instructions),
           contextEstimate: () =>
             request<ContextEstimate>(`/api/chats/${id}/messages/context`),

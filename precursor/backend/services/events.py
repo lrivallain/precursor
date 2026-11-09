@@ -109,12 +109,29 @@ class Event(TypedDict, total=False):
 _current_client_id: ContextVar[str | None] = ContextVar("precursor_client_id", default=None)
 
 
+# Set by a background turn (``turn_engine.lifecycle_stream``) to a flag its
+# stream flips once the client that started it has gone. From then on the
+# turn's events carry no client id, so they reach every window — the reloaded
+# originating window included, which keeps its client id across reloads.
+_client_detached: ContextVar[dict[str, bool] | None] = ContextVar(
+    "precursor_client_detached", default=None
+)
+
+
 def set_current_client_id(value: str | None) -> None:
     _current_client_id.set(value)
 
 
 def get_current_client_id() -> str | None:
+    detached = _client_detached.get()
+    if detached is not None and detached.get("detached"):
+        return None
     return _current_client_id.get()
+
+
+def bind_client_detached(flag: dict[str, bool]) -> None:
+    """Tie this context's event tagging to ``flag["detached"]`` (see above)."""
+    _client_detached.set(flag)
 
 
 @contextlib.contextmanager
@@ -230,7 +247,7 @@ class EventBus:
             "title": event.get("title"),
             "count": event.get("count"),
             "expires_at": event.get("expires_at"),
-            "client_id": event.get("client_id") or _current_client_id.get(),
+            "client_id": event.get("client_id") or get_current_client_id(),
         }
         self.dispatch(payload)
         # In a stdio MCP child there are no local subscribers; hand the event to

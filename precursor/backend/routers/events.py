@@ -24,6 +24,7 @@ from precursor.backend.services.events import (
     Event,
     get_bus,
 )
+from precursor.backend.services.turn_engine import running_turns
 
 router = APIRouter(prefix="/api", tags=["events"])
 
@@ -39,6 +40,13 @@ async def stream_events(request: Request) -> EventSourceResponse:
     async def gen() -> AsyncIterator[dict[str, str]]:
         async with bus.subscribe() as queue:
             yield {"event": "ready", "data": "{}"}
+            # A window that (re)connects mid-turn — a reloaded page — missed the
+            # turn's stream.started; replay it so the turn shows as running and
+            # the window picks up the result when stream.ended arrives.
+            for kind, container_id in running_turns():
+                field = "topic_id" if kind == "topic" else "chat_id"
+                event = {"type": "stream.started", field: container_id}
+                yield {"event": "stream.started", "data": json.dumps(event)}
             while True:
                 if await request.is_disconnected():
                     return
