@@ -93,6 +93,31 @@ def test_file_size_flags_only_files_over_the_limit(
     assert ratchet.check_file_size() == {"big.tsx": ratchet.MAX_FILE_LINES + 1}
 
 
+def test_untyped_responses_flags_only_shapeless_json() -> None:
+    def op(schema: object) -> dict[str, object]:
+        content = {"application/json": {"schema": schema}}
+        return {"responses": {"200": {"content": content}}}
+
+    openapi = {
+        "paths": {
+            "/typed": {"get": op({"$ref": "#/components/schemas/Topic"})},
+            "/list": {"get": op({"type": "array", "items": {"type": "string"}})},
+            "/dict": {"get": op({"type": "object", "additionalProperties": True})},
+            "/any": {"post": op({})},
+            "/dicts": {"get": op({"type": "array", "items": {"type": "object"}})},
+            "/maybe": {"get": op({"anyOf": [{"type": "object"}, {"type": "null"}]})},
+            "/map": {"get": op({"type": "object", "additionalProperties": {"type": "integer"}})},
+            "/empty": {"delete": {"responses": {"204": {"description": "No Content"}}}},
+        }
+    }
+    assert set(ratchet.untyped_responses(openapi)) == {
+        "GET /dict",
+        "POST /any",
+        "GET /dicts",
+        "GET /maybe",
+    }
+
+
 def test_committed_baseline_covers_every_check() -> None:
     baseline = json.loads((REPO_ROOT / "scripts" / "quality_baseline.json").read_text())
     assert set(baseline) == set(ratchet.CHECKS)

@@ -1,5 +1,10 @@
 {
-  "path": ["precursor", "frontend/src", "tests", "scripts"],
+  "path": [
+    "precursor",
+    "frontend/src",
+    "tests",
+    "scripts"
+  ],
   "minLines": 8,
   "minTokens": 60,
   "ignore": [
@@ -8,8 +13,11 @@
     "**/*.json",
     "**/*.md",
     "**/*.css",
-    "**/*.html"
+    "**/*.html",
+    "**/generated/**"
   ],
-  "reporters": ["json"],
+  "reporters": [
+    "json"
+  ],
   "silent": true
 }

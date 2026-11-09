@@ -108,6 +108,7 @@ never grow:
 | Python complexity (ruff `C901`, `PLR0912`, `PLR0915`) | complexity 15, 15 branches, 60 statements | `pyproject.toml` |
 | Frontend complexity (oxlint) | complexity 15, 150 lines per function, nesting depth 4, React hook rules | `frontend/.oxlintrc.json` |
 | Duplication (jscpd) | no new copy-pasted blocks of 8+ lines | `.jscpd.json` |
+| Untyped API responses | every JSON response declares a Pydantic model (no `dict[str, Any]`) | `scripts/quality_ratchet.py` |
 
 - **The check fails (`WORSE`)**: you made a file bigger or more complex than its
   recorded baseline, or added a new file over a limit. Don't raise the baseline:
@@ -118,6 +119,20 @@ never grow:
   mode and fails until you do.
 - The pre-commit hook (`make hooks`) runs the file-size part, which only needs
   `python3`.
+
+### API types
+
+The frontend doesn't re-declare the API's shapes: they are generated from the
+backend's Pydantic schemas into `frontend/src/lib/generated/apiTypes.ts`, and
+`frontend/src/lib/types.ts` aliases them (`export type Topic = Api.Topic;`).
+
+- After changing a schema in `precursor/backend/schemas` (or a route's
+  `response_model`), run `make api-types` and commit the regenerated file. CI
+  fails when it is out of date.
+- Never edit the generated file. If a generated type is too loose (for example
+  `string` where only a few values are valid), tighten the Pydantic field with a
+  `Literal`, then regenerate.
+- Write a type by hand in `types.ts` only when it exists only in the frontend.
 
 For sidebar or section-routing changes, build the SPA and run the seeded demo
 with `scripts/seed_demo.py` and `scripts/demo_server.sh` (see the screenshot

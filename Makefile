@@ -1,4 +1,4 @@
-.PHONY: help hooks sync dev backend frontend docs build wheel check lockcheck ratchet ratchet-update test migration migrate
+.PHONY: help hooks sync dev backend frontend docs build wheel check lockcheck ratchet ratchet-update api-types test migration migrate
 
 # Lockfiles are resolved by CI, never locally: a corporate package mirror
 # rewrites artifact URLs and weakens their integrity metadata. UV_FROZEN keeps
@@ -55,6 +55,7 @@ wheel: build docs  ## Build the distributable wheel + sdist (uv)
 
 # Quality gates — mirrors CI (.github/workflows/ci.yml).
 check: lockcheck ratchet  ## Run all backend + frontend quality gates
+	uv run python scripts/gen_api_types.py --check
 	uv run ruff check .
 	uv run ruff format --check .
 	uv run mypy precursor
@@ -72,6 +73,10 @@ ratchet:  ## Fail if complexity/size/duplication got worse than the baseline
 
 ratchet-update:  ## Record improved complexity/size/duplication numbers
 	uv run python scripts/quality_ratchet.py --update
+
+# Frontend API types come from the backend's Pydantic schemas (OpenAPI).
+api-types:  ## Regenerate frontend/src/lib/generated/apiTypes.ts
+	uv run python scripts/gen_api_types.py
 
 test:  ## Run the backend test suite (uv)
 	uv run pytest -q $(PYTEST_ARGS)

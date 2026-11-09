@@ -20,6 +20,10 @@ Checks (each yields ``{key: count}``):
 ``oxlint``       Frontend complexity, function length and hook rules
                  (``frontend/.oxlintrc.json``), counted per file and rule.
 ``duplication``  Total copy-pasted lines found by jscpd (``.jscpd.json``).
+``untyped-responses``  JSON responses with no real schema (``dict[str, Any]``,
+                 no ``response_model``): the frontend can't get generated types
+                 for them (see ``scripts/gen_api_types.py``). Needs the app's
+                 dependencies installed.
 
 Usage::
 
@@ -44,6 +48,7 @@ import tempfile
 from collections import Counter
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 BASELINE_PATH = REPO_ROOT / "scripts" / "quality_baseline.json"
@@ -51,7 +56,7 @@ FRONTEND = REPO_ROOT / "frontend"
 
 MAX_FILE_LINES = 800
 SOURCE_SUFFIXES = (".py", ".ts", ".tsx")
-SIZE_EXCLUDED_PARTS = ("alembic/versions/",)
+SIZE_EXCLUDED_PARTS = ("alembic/versions/", "/generated/")
 
 RUFF_RULES = "C901,PLR0912,PLR0915"
 
@@ -161,11 +166,66 @@ def check_duplication() -> Counts:
     return {"duplicated-lines": int(report["statistics"]["total"]["duplicatedLines"])}
 
 
+_EXPORT_OPENAPI = """
+import json, sys
+from precursor.backend.main import create_app
+with open(sys.argv[1], "w") as fh:
+    json.dump(create_app().openapi(), fh)
+"""
+
+
+def _is_loose(schema: object) -> bool:
+    """True when a response schema says nothing useful about its shape."""
+    if not isinstance(schema, dict) or not schema:
+        return True
+    if "anyOf" in schema:
+        return any(_is_loose(s) for s in schema["anyOf"] if s.get("type") != "null")
+    if schema.get("type") == "array":
+        return _is_loose(schema.get("items"))
+    if schema.get("type") == "object" and not schema.get("properties"):
+        extra = schema.get("additionalProperties", True)
+        return _is_loose(extra) if isinstance(extra, dict) else extra is True
+    return False
+
+
+def untyped_responses(openapi: dict[str, Any]) -> Counts:
+    counts: Counts = {}
+    for path, operations in openapi.get("paths", {}).items():
+        for method, operation in operations.items():
+            for code, response in operation.get("responses", {}).items():
+                content = response.get("content", {}).get("application/json")
+                if (
+                    code.startswith("2")
+                    and content is not None
+                    and _is_loose(content.get("schema"))
+                ):
+                    counts[f"{method.upper()} {path}"] = 1
+    return counts
+
+
+def check_untyped_responses() -> Counts:
+    with tempfile.TemporaryDirectory() as out_dir:
+        out = Path(out_dir) / "openapi.json"
+        proc = subprocess.run(
+            [sys.executable, "-c", _EXPORT_OPENAPI, str(out)],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc.returncode != 0:
+            if "ModuleNotFoundError" in proc.stderr:
+                raise ToolMissingError("the app's dependencies are not installed")
+            raise RuntimeError(f"exporting the OpenAPI schema failed:\n{proc.stderr[-2000:]}")
+        return untyped_responses(json.loads(out.read_text()))
+
+
 CHECKS: dict[str, Callable[[], Counts]] = {
     "file-size": check_file_size,
     "ruff": check_ruff,
     "oxlint": check_oxlint,
     "duplication": check_duplication,
+    "untyped-responses": check_untyped_responses,
 }
 
 

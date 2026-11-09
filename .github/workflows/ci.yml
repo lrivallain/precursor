@@ -28,7 +28,7 @@ jobs:
   # every PR (no backend scope gate): it covers backend and frontend at once.
   # See scripts/quality_ratchet.py and CONTRIBUTING.md > Quality ratchet.
   quality:
-    name: Quality ratchet (complexity · size · duplication)
+    name: Quality ratchet (complexity · size · duplication · API types)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -41,9 +41,10 @@ jobs:
       - name: Set up Python
         run: uv python install 3.12
 
-      # Only the dev tools (ruff); the ratchet never imports the app.
-      - name: Sync dev tools
-        run: uv sync --locked --only-group dev
+      # The full environment: the untyped-responses check and the API-types
+      # drift check build the app's OpenAPI schema.
+      - name: Sync dependencies
+        run: uv sync --locked
 
       - name: Set up Node
         uses: actions/setup-node@v7
@@ -59,6 +60,10 @@ jobs:
 
       - name: Quality ratchet
         run: uv run --no-sync python scripts/quality_ratchet.py --strict --require-tools
+
+      # frontend/src/lib/generated/apiTypes.ts must match the backend schemas.
+      - name: API types up to date
+        run: uv run --no-sync python scripts/gen_api_types.py --check
 
   backend:
     name: Backend (lint · types · tests)
