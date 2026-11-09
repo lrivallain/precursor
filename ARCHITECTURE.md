@@ -32,6 +32,7 @@ frontend/src/
     generated/       apiTypes.ts, generated from the backend (never edit)
   components/        React components; a feature with several files gets a folder
     settings/        the settings panel's tabs, their state hooks and cards
+    agent/           the agent cockpit (AgentView): timeline, panes, insights rail, start form
 tests/               pytest suite (backend); frontend unit tests sit next to the code (*.test.ts)
 scripts/             CI and maintenance scripts (stdlib-only where they run in hooks)
 ```
@@ -76,6 +77,9 @@ Conventions that keep this reusable:
 | Hover hints | `data-tooltip="..."` (not `title`) | `components/Tooltip.tsx` |
 | A confirmation dialog | `useConfirm()` | `components/ConfirmDialog.tsx` |
 | A dropdown | `Select` | `components/Select.tsx` |
+| An async action with a busy flag and an inline error | `useBusyAction()` | `lib/useBusyAction.ts` |
+| A "Copied!" style feedback that clears itself | `useFlash(ms)` | `lib/useFlash.ts` |
+| Agent timeline rows, exchanges and folds | `buildRows`, `buildCockpitTimeline` | `lib/agentWorkflow.ts`, `lib/agentCockpitTimeline.ts` |
 | A settings tab | a component in `components/settings/` taking `{ s }` from its own `use<Tab>Settings` hook, called in `SettingsPanel` (only the active tab is mounted); the hook returns a `SettingsSection` (`hydrate`, `payload`, `snapshot`, `onSaved`) that `useSettingsForm` merges into the one Save and the unsaved-changes check | `components/settings/settingsSection.ts`, `components/settings/useSettingsForm.ts` |
 
 Conventions that keep this reusable:
