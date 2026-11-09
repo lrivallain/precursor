@@ -73,6 +73,10 @@ dependencies = [
     # Windows ships no IANA time-zone database, so ``zoneinfo`` (used by the
     # ``get_datetime`` / ``convert_timezone`` MCP tools) needs this package there.
     "tzdata>=2024.1; sys_platform == 'win32'",
+    # Claude deployments on Azure AI Foundry are called through the native
+    # Messages API (``AsyncAnthropicFoundry``) so prompt caching works. 2.x is
+    # built on ``httpx2``, which MCP 2 already pulls in.
+    "anthropic>=2.3,<3",
 ]
 
 [project.optional-dependencies]

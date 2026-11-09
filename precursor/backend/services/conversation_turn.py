@@ -57,6 +57,7 @@ from precursor.backend.services.app_settings import (
     resolve_llm_reasoning_effort,
     resolve_llm_tool_result_keep_turns,
     resolve_max_tool_rounds,
+    resolve_mcp_tool_policy,
 )
 from precursor.backend.services.attachment_extraction import warm_attachment_text_cache
 from precursor.backend.services.context_budget import elide_stale_tool_results
@@ -73,6 +74,7 @@ from precursor.backend.services.model_fallbacks import (
     selected_category_presets,
 )
 from precursor.backend.services.note_drafts import consume_note_draft_attachments_to_message
+from precursor.backend.services.tool_loading import ToolLoadingPolicy
 from precursor.backend.services.turn_engine import (
     ContainerKind,
     ToolAuthRequired,
@@ -119,6 +121,8 @@ class TurnSettings:
     gate: approval_service.ApprovalGate | None = None
     # An unattended run keeps only Precursor's workspace tools (see ``run_topic_turn``).
     restrict_precursor: bool = False
+    # On-demand MCP tool loading; ``None`` sends every tool definition up front.
+    tool_policy: ToolLoadingPolicy | None = None
 
 
 async def resolve_turn_settings(
@@ -175,6 +179,7 @@ async def _resolve_base_settings(
             provider=resolved.provider,
             github_token=await resolve_github_token(session),
             enabled_servers=enabled,
+            tool_policy=await resolve_mcp_tool_policy(session),
         )
     category = await resolve_model_category(session) if not model_override else None
     provider = (
@@ -199,6 +204,7 @@ async def _resolve_base_settings(
         provider=provider,
         github_token=await resolve_github_token(session),
         enabled_servers=enabled,
+        tool_policy=await resolve_mcp_tool_policy(session),
     )
 
 
@@ -419,6 +425,7 @@ def _turn_events(
         gate=settings.gate,
         restrict_precursor=settings.restrict_precursor,
         source_message_id=source_message_id,
+        tool_policy=settings.tool_policy,
     )
 
 

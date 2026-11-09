@@ -19,6 +19,7 @@ from precursor.backend.models import AppSetting
 from precursor.backend.services import cmd_runner
 from precursor.backend.services.cmd_runner import CmdRunnerConfig
 from precursor.backend.services.model_catalog import offered_model_ids
+from precursor.backend.services.tool_loading import ToolLoadingPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -849,6 +850,23 @@ async def resolve_mcp_enabled(session: AsyncSession) -> dict[str, bool]:
     if isinstance(db_value, dict):
         return {str(k): bool(v) for k, v in db_value.items()}
     return {}
+
+
+async def resolve_mcp_tool_policy(session: AsyncSession) -> ToolLoadingPolicy:
+    """On-demand MCP tool loading: the global switch and the per-server pins.
+
+    On by default: only a small set of tools is sent with each request and the
+    model loads the rest by name (``services/tool_loading.py``). Servers pinned
+    in ``mcp_always_load`` always have all their tools sent.
+    """
+    defer = await resolve(session, SettingSpec("mcp_defer_tools", _boolean, default=True))
+    pins = await _get_db_value(session, "mcp_always_load")
+    always = (
+        frozenset(str(k) for k, v in pins.items() if v is True)
+        if isinstance(pins, dict)
+        else frozenset()
+    )
+    return ToolLoadingPolicy(defer=defer, always_load=always)
 
 
 async def resolve_agents_enabled(session: AsyncSession) -> bool:

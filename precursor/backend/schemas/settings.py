@@ -70,6 +70,10 @@ class SettingsPayload(BaseModel):
     chat_autoname_model: str | None = None
     # Map of Precursor capability section -> exposed over the built-in MCP server.
     mcp_expose: dict[str, bool] | None = None
+    # Load MCP tool definitions on demand instead of sending all of them with
+    # every request, and the servers whose tools are always sent regardless.
+    mcp_defer_tools: bool | None = None
+    mcp_always_load: dict[str, bool] | None = None
     # Serve the built-in 'precursor' MCP server over HTTP (localhost) too.
     mcp_http_enabled: bool | None = None
     plugin_install_enabled: bool | None = None
@@ -196,6 +200,9 @@ class SettingsRead(BaseModel):
     chat_autoname_model: str = ""
     # Which Precursor capability sections the built-in MCP server exposes.
     mcp_expose: dict[str, bool] = Field(default_factory=dict)
+    # On-demand MCP tool loading (on by default) and per-server "always load" pins.
+    mcp_defer_tools: bool = True
+    mcp_always_load: dict[str, bool] = Field(default_factory=dict)
     # HTTP transport for the built-in 'precursor' MCP server.
     mcp_http_enabled: bool = False
     plugin_install_enabled: bool = False

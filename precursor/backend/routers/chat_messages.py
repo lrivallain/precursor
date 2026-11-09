@@ -68,6 +68,7 @@ from precursor.backend.services.llm.one_shot import complete_once
 from precursor.backend.services.turn_engine import (
     apply_chat_system_prompt,
     build_chat_system_context,
+    cancel_running_turns,
 )
 
 logger = logging.getLogger(__name__)
@@ -98,6 +99,8 @@ async def clear_messages(
     session: AsyncSession = Depends(get_session),
 ) -> None:
     """Wipe the transcript for a chat. The chat row itself is kept."""
+    # A reply still generating would otherwise land after the wipe.
+    await cancel_running_turns("chat", chat_id)
     await clear_container_messages(session, "chat", chat_id)
 
 
@@ -171,6 +174,18 @@ async def context_estimate(
     return await estimate_context(session, "chat", chat_id)
 
 
+@router.post(
+    "/stop", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(get_chat_or_404)]
+)
+async def stop_turn(chat_id: int) -> None:
+    """Stop the turn generating in this chat.
+
+    A turn runs on when its stream's client goes away (a reload must not lose
+    it), so stopping one is this explicit request rather than a disconnect.
+    """
+    await cancel_running_turns("chat", chat_id)
+
+
 @router.post("/stopped", response_model=list[MessageRead])
 async def save_stopped_turn(
     chat_id: int,
@@ -180,6 +195,8 @@ async def save_stopped_turn(
     """Persist the partial reply and the in-flight tool calls when the user stops."""
     if await session.get(Chat, chat_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Chat not found")
+    # The turn itself must be gone before its partial reply is saved.
+    await cancel_running_turns("chat", chat_id)
     return await save_stopped_container_turn(
         session, "chat", chat_id, payload.content, payload.tool_call_ids, payload.reasoning
     )

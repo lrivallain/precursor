@@ -534,6 +534,9 @@ export function useConversation({
     const stoppedCalls = streamStore.stop(streamKey);
     void (async () => {
       try {
+        // The turn runs server-side independently of this stream: stop it
+        // there too (saveStopped does as well, but only runs with a partial).
+        await containerApi.stop();
         if (partial || stoppedCalls.length > 0) {
           await containerApi.saveStopped({
             ...(partial ? { content: `${partial}\n\n_(stopped)_` } : {}),

@@ -142,6 +142,8 @@ def _as_read(
         ),
         mcp_enabled=data.get("mcp_enabled", {}),
         mcp_servers=data.get("mcp_servers", {}),
+        mcp_defer_tools=bool(data.get("mcp_defer_tools", True)),
+        mcp_always_load={str(k): bool(v) for k, v in (data.get("mcp_always_load") or {}).items()},
         api_keys_present={k: bool(v) for k, v in api_keys.items()},
         issue_associations_enabled=bool(
             data.get("issue_associations_enabled", DEFAULT_ISSUE_ASSOCIATIONS_ENABLED)

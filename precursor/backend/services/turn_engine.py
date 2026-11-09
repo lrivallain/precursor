@@ -50,6 +50,7 @@ from precursor.backend.services.attachment_extraction import (
 from precursor.backend.services.collections import resolve_topic_github_repo
 from precursor.backend.services.context_budget import strip_inline_binaries, trim_messages
 from precursor.backend.services.events import (
+    bind_client_detached,
     publish_approval_changed,
     publish_message_changed,
     publish_message_changed_chat,
@@ -87,6 +88,11 @@ from precursor.backend.services.message_links import (
 )
 from precursor.backend.services.roles import resolve_role_prompt
 from precursor.backend.services.suggestions import SUGGESTIONS_INSTRUCTION, split_suggestions
+from precursor.backend.services.tool_loading import (
+    SEARCH_TOOLS_NAME,
+    ToolLoadingPolicy,
+    build_loadout,
+)
 from precursor.backend.services.usage_stats import record_usage
 from precursor.backend.services.workspaces import WORKSPACE_READ_TOOLS, WORKSPACE_WRITE_TOOLS
 
@@ -982,6 +988,7 @@ async def run_tool_loop(
     wrap_up: str | None = None,
     source_message: tuple[ContainerKind, int, int] | None = None,
     required_history_message: ChatMessage | None = None,
+    tool_policy: ToolLoadingPolicy | None = None,
 ) -> AsyncIterator[TurnEvent]:
     """Drive the provider + MCP tool loop, yielding semantic turn events.
 
@@ -1012,28 +1019,48 @@ async def run_tool_loop(
     round, so the model answers instead of hitting the cap.
     ``required_history_message`` makes a bounded caller fail rather than review
     without its input if normal context trimming would discard that message.
+    ``tool_policy`` turns on on-demand MCP tool loading (see
+    ``services/tool_loading.py``); ``None`` advertises every tool up front.
     """
     if extra_permissions and gate is not None and decline_note is None:
         raise ValueError("Gated extra tools require a decline handler.")
     tool_to_server = active.tool_to_server  # qualified -> (server, raw_name)
     extra_names = {t.name for t in extra_tools}
-    provider_tools = [
-        *extra_tools,
-        *(t for t in mcp_tools_to_provider(active.tools) if t.name not in extra_names),
-    ]
     tool_defs = {t.qualified_name: t for t in active.tools}
-    if gate is not None and gate.offers_intent and decline_note is None:
-        provider_tools = [*provider_tools, approval_service.REQUEST_APPROVAL_DEF]
+    offers_intent = gate is not None and gate.offers_intent and decline_note is None
+    if offers_intent:
         system_prompt = f"{system_prompt}\n\n{approval_service.APPROVAL_PROMPT}"
+    loadout = build_loadout(
+        active, policy=tool_policy, history=history, system_prompt=system_prompt
+    )
+
+    def round_tools() -> list[ToolDef]:
+        # Rebuilt each round: tools loaded on demand join from the next round.
+        return [
+            *extra_tools,
+            *loadout.provider_tools(exclude=extra_names),
+            *([approval_service.REQUEST_APPROVAL_DEF] if offers_intent else []),
+            *loadout.meta_tools(),
+        ]
 
     system_prompt = f"{system_prompt}\n\n{MESSAGE_LINK_INSTRUCTION}"
-    references = message_reference_context(history)
-    if references:
-        system_prompt = f"{system_prompt}\n\n{references}"
+    tool_index = loadout.index()
+    if tool_index:
+        system_prompt = f"{system_prompt}\n\n{tool_index}"
     messages: list[ChatMessage] = [
         ChatMessage(role="system", content=system_prompt),
         *history,
     ]
+    # The references change every turn, so they sit just before the newest user
+    # message instead of in the system prompt: a stable prompt + history prefix
+    # is what provider prompt caching reuses from one turn to the next.
+    references = message_reference_context(history)
+    if references:
+        note = ChatMessage(role="system", content=references)
+        if history and history[-1].role == "user":
+            messages.insert(len(messages) - 1, note)
+        else:
+            messages.append(note)
 
     for _round in range(max_tool_rounds):
         last_round = wrap_up is not None and _round == max_tool_rounds - 1
@@ -1042,6 +1069,7 @@ async def run_tool_loop(
         text_chunks: list[str] = []
         reasoning_chunks: list[str] = []
         tool_calls: list[Any] = []
+        provider_content: list[dict[str, Any]] | None = None
         round_usage: UsageEvent | None = None
 
         trimmed = trim_messages(
@@ -1060,7 +1088,7 @@ async def run_tool_loop(
         async for event in provider.stream_chat_with_tools(
             model=model,
             messages=trimmed,
-            tools=[] if last_round else provider_tools,
+            tools=[] if last_round else round_tools(),
             reasoning_effort=reasoning_effort,
         ):
             if isinstance(event, TextDeltaEvent):
@@ -1071,6 +1099,7 @@ async def run_tool_loop(
                 yield AssistantReasoningDelta(event.content)
             elif isinstance(event, ToolCallsEvent):
                 tool_calls = event.calls
+                provider_content = event.provider_content
             elif isinstance(event, UsageEvent):
                 round_usage = event
             elif isinstance(event, TurnDoneEvent):
@@ -1119,11 +1148,24 @@ async def run_tool_loop(
                 role="assistant",
                 content=assistant_text,
                 tool_calls=openai_tool_calls,
+                # Replayed as the model wrote it, before ``_ground_plan_calls``:
+                # Claude rejects a signed turn whose blocks were edited.
+                provider_content=provider_content,
             )
         )
 
         parked: list[approval_service.PendingCall] = []
         for call in tool_calls:
+            if loadout.deferred and call.name == SEARCH_TOOLS_NAME and call.name not in extra_names:
+                found = loadout.search(call.arguments)
+                yield ToolResultTurn(call, found, False, None)
+                messages.append(
+                    ChatMessage(role="tool", content=found, tool_call_id=call.id, name=call.name)
+                )
+                continue
+            # A tool named straight from the on-demand index runs (routing has
+            # the full catalogue) and stays loaded for the rest of the turn.
+            loadout.load([call.name])
             is_extra = run_extra is not None and call.name in extra_names
             extra_def = (extra_permissions or {}).get(call.name) if is_extra else None
             if is_extra:
@@ -1216,6 +1258,17 @@ async def run_tool_loop(
 # by the time a streaming generator gets here.
 
 
+# (kind, container id) -> the latest metered round of that conversation, for the
+# context panel's cache figures. In memory only: it describes the live provider
+# cache, which doesn't outlive a few minutes (or a restart) either.
+_LAST_ROUND_USAGE: dict[tuple[str, int], UsageEvent] = {}
+
+
+def last_round_usage(kind: ContainerKind, container_id: int) -> UsageEvent | None:
+    """The latest model round's usage for a conversation, if one ran since startup."""
+    return _LAST_ROUND_USAGE.get((kind, container_id))
+
+
 async def record_round_usage(
     usage: UsageEvent | None,
     *,
@@ -1231,6 +1284,16 @@ async def record_round_usage(
     """
     if usage is None:
         return
+    logger.debug(
+        "model round usage model=%s prompt=%d cache_read=%d cache_write=%d completion=%d",
+        model,
+        usage.prompt_tokens,
+        usage.cache_read_tokens,
+        usage.cache_write_tokens,
+        usage.completion_tokens,
+    )
+    if kind is not None and container_id is not None:
+        _LAST_ROUND_USAGE[(kind, container_id)] = usage
     owner = (
         container_message_kwargs(kind, container_id)
         if kind is not None and container_id is not None
@@ -1366,6 +1429,8 @@ def usage_event(message_id: int, usage: UsageEvent) -> dict[str, str]:
                 "prompt_tokens": usage.prompt_tokens,
                 "completion_tokens": usage.completion_tokens,
                 "total_tokens": usage.total_tokens,
+                "cache_read_tokens": usage.cache_read_tokens,
+                "cache_write_tokens": usage.cache_write_tokens,
             }
         ),
     }
@@ -1393,6 +1458,7 @@ async def run_message_stream(
     gate: approval_service.ApprovalGate | None = None,
     restrict_precursor: bool = False,
     source_message_id: int | None = None,
+    tool_policy: ToolLoadingPolicy | None = None,
 ) -> AsyncIterator[dict[str, str]]:
     """Container-agnostic SSE generator shared by topic and chat streaming.
 
@@ -1460,6 +1526,7 @@ async def run_message_stream(
                 source_message=(kind, container_id, source_message_id)
                 if source_message_id is not None
                 else None,
+                tool_policy=tool_policy,
             ):
                 if isinstance(ev, AssistantTextDelta):
                     yield {
@@ -1606,25 +1673,98 @@ async def run_message_stream(
             yield {"event": "error", "data": json.dumps({"message": str(exc)})}
 
 
+# Turns running in the background, per container. A turn is not tied to the
+# request that started it: closing or reloading the page only stops the relay of
+# its events, while the turn itself runs on and persists its result. Stopping
+# one is explicit (``cancel_running_turns``).
+_RUNNING_TURNS: dict[tuple[str, int], set[asyncio.Task[None]]] = {}
+_END_OF_TURN: dict[str, str] = {"event": "__end__"}
+
+
+def running_turns() -> list[tuple[str, int]]:
+    """Containers with a turn still generating."""
+    return [key for key, tasks in _RUNNING_TURNS.items() if tasks]
+
+
+async def cancel_running_turns(kind: ContainerKind, container_id: int) -> bool:
+    """Stop the turns generating in a container; True when one was running.
+
+    Waits (briefly) for them to unwind, so the caller can persist what the user
+    kept without racing the turn's own final write.
+    """
+    tasks = [t for t in _RUNNING_TURNS.get((kind, container_id), ()) if not t.done()]
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        await asyncio.wait(tasks, timeout=10)
+    return bool(tasks)
+
+
 def lifecycle_stream(
     kind: ContainerKind,
     container_id: int,
     inner: AsyncIterator[dict[str, str]],
 ) -> AsyncIterator[dict[str, str]]:
-    """Wrap an event stream with stream.started / stream.ended publishing."""
+    """Run a turn in the background and relay its events to the caller.
 
-    async def gen() -> AsyncIterator[dict[str, str]]:
+    The turn is framed by stream.started / stream.ended publishing. It runs in a
+    task of its own, so a client that disconnects (a page reload, a closed tab)
+    no longer cancels it: the relay stops, the turn finishes and persists. From
+    then on its bus events go to every window, the originating one included —
+    that window, reloaded, has the same client id and would otherwise ignore the
+    message.changed / stream.ended that bring the result in.
+    """
+    key = (kind, container_id)
+
+    async def run(queue: asyncio.Queue[dict[str, str]], listener: dict[str, bool]) -> None:
+        # The task runs in its own context copy: this binding is the turn's own.
+        bind_client_detached(listener)
         if kind == "topic":
             await publish_stream_started(container_id)
         else:
             await publish_stream_started_chat(container_id)
         try:
-            async for evt in inner:
-                yield evt
+            try:
+                async for evt in inner:
+                    if not listener["detached"]:
+                        queue.put_nowait(evt)
+            finally:
+                # Close the turn's generator here, in its own task, so its
+                # cleanup runs now rather than whenever it is collected.
+                aclose = getattr(inner, "aclose", None)
+                if aclose is not None:
+                    await aclose()
         finally:
             if kind == "topic":
                 await publish_stream_ended(container_id)
             else:
                 await publish_stream_ended_chat(container_id)
+            queue.put_nowait(_END_OF_TURN)
 
-    return gen()
+    def forget(task: asyncio.Task[None]) -> None:
+        tasks = _RUNNING_TURNS.get(key)
+        if tasks is not None:
+            tasks.discard(task)
+            if not tasks:
+                _RUNNING_TURNS.pop(key, None)
+        if not task.cancelled() and task.exception() is not None:
+            logger.error("Turn in %s %s failed", kind, container_id, exc_info=task.exception())
+
+    async def relay() -> AsyncIterator[dict[str, str]]:
+        queue: asyncio.Queue[dict[str, str]] = asyncio.Queue()
+        listener = {"detached": False}
+        task = asyncio.create_task(run(queue, listener), name=f"turn-{kind}-{container_id}")
+        _RUNNING_TURNS.setdefault(key, set()).add(task)
+        task.add_done_callback(forget)
+        try:
+            while True:
+                evt = await queue.get()
+                if evt is _END_OF_TURN:
+                    return
+                yield evt
+        finally:
+            # Detach only: the turn carries on without a listener, and its
+            # events from now on reach every window.
+            listener["detached"] = True
+
+    return relay()

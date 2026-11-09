@@ -56,12 +56,37 @@ otherwise identical normalized or shortened names. Calls still reach the
 original MCP server and tool; server IDs and saved enable toggles are unchanged.
 
 ::: tip Narrow the catalogue per workflow step
-Enabling a server here offers it to everything. Tool schemas are re-sent on
-every turn, so a large registry is a standing context cost. A
+Enabling a server here offers it to everything. A
 [workflow](/features/workflows/steps#picking-which-tool-servers-a-step-gets) step can
 name the handful of servers it may use — the rest are never attached to that
 step's session.
 :::
+
+### Tools loaded on demand
+
+A few large servers (GitHub, Azure, Teams…) easily add up to hundreds of tools
+and ~100k tokens of JSON schemas. Sending all of them with every request makes
+even a one-line question expensive and slow, and can exceed the whole
+tokens-per-minute quota of a small model deployment.
+
+So by default a chat or topic turn sends only a small set of tool definitions:
+
+- tools the system prompt itself refers to (for example Precursor's step-plan
+  tools);
+- every tool of a server marked **always load** in **Settings → MCP servers**;
+- tools the conversation called recently, so a follow-up doesn't need to look
+  them up again.
+
+Every other enabled tool is listed **by name only** in a compact *Tools available
+on demand* section of the system prompt. When the model needs one, it calls
+`search_tools` — with exact names or a keyword query — and the matching tools
+become callable from its next step. A tool the model calls straight from the
+list runs too. When the whole catalogue is small, everything is sent as before.
+
+Turn **Load tools on demand** off in **Settings → MCP servers** to send every
+tool definition with every request again, or tick **always load** on the
+servers whose tools you want offered up front. Workflow step assessments always
+receive their full tool list.
 
 ### Startup and the first prompt
 

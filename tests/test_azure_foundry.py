@@ -15,6 +15,13 @@ from precursor.backend.services.llm.base import LLMError, TextDeltaEvent
 from precursor.backend.services.llm.registry import PROVIDERS
 
 
+@pytest.fixture(autouse=True)
+def _fresh_surface_memory() -> None:
+    # The working API surface is remembered per endpoint across provider
+    # instances; tests share endpoints, so each starts from a clean slate.
+    azure_foundry._SURFACE_MEMORY.clear()
+
+
 @pytest.mark.parametrize(
     ("deployment", "expected"),
     [
@@ -432,3 +439,82 @@ async def _refuse(**_: object) -> AsyncIterator[TextDeltaEvent]:
 
     raise LLMError("not supported")
     yield  # pragma: no cover
+
+
+def _claude_surfaces(monkeypatch: pytest.MonkeyPatch, *, working: str, calls: list[str]) -> None:
+    """Fake all three API surfaces; only ``working`` answers, the others 404."""
+
+    def make(name: str):  # type: ignore[no-untyped-def]
+        async def run(**_: object) -> AsyncIterator[TextDeltaEvent]:
+            calls.append(name)
+            if name != working:
+                cause = RuntimeError("404")
+                cause.status_code = 404  # type: ignore[attr-defined]
+                raise LLMError("not here") from cause
+            yield TextDeltaEvent(content=name)
+
+        return run
+
+    monkeypatch.setattr(azure_foundry, "stream_anthropic_tools", make("messages"))
+    monkeypatch.setattr(azure_foundry, "stream_responses_tools", make("responses"))
+    monkeypatch.setattr(azure_foundry, "stream_openai_tools", make("chat"))
+
+
+@pytest.mark.parametrize(
+    ("working", "expected_calls"),
+    [("messages", ["messages"]), ("chat", ["messages", "chat"])],
+)
+async def test_claude_deployments_try_the_native_messages_api_first(
+    working: str, expected_calls: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[str] = []
+    _claude_surfaces(monkeypatch, working=working, calls=calls)
+    provider = _classic_provider(monkeypatch)
+    assert await _turn(provider, model="claude-opus-5-5") == [TextDeltaEvent(content=working)]
+    assert calls == expected_calls
+    calls.clear()
+    # Remembered across provider instances: the registry builds one per request.
+    assert await _turn(_classic_provider(monkeypatch), model="claude-opus-5-5") == [
+        TextDeltaEvent(content=working)
+    ]
+    assert calls == [working]
+
+
+async def test_other_deployments_never_use_the_messages_api(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    _claude_surfaces(monkeypatch, working="chat", calls=calls)
+    assert await _turn(_classic_provider(monkeypatch), model="gpt-6") == [
+        TextDeltaEvent(content="chat")
+    ]
+    assert calls == ["chat"]
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    ["https://res.openai.azure.com", "https://res.openai.azure.com/openai/v1"],
+)
+def test_messages_client_targets_the_resource_root_and_ignores_sdk_env(
+    endpoint: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A Claude Code install on Foundry exports these; they must not leak in.
+    monkeypatch.setenv("ANTHROPIC_FOUNDRY_RESOURCE", "someone-else")
+    monkeypatch.setenv("ANTHROPIC_FOUNDRY_BASE_URL", "https://elsewhere.example/anthropic/")
+    provider = azure_foundry.AzureFoundryProvider(endpoint=endpoint, api_key="k")
+    client = provider._messages_client
+    assert client is not None
+    assert str(client.base_url) == "https://res.openai.azure.com/anthropic/"
+    assert azure_foundry.os.environ["ANTHROPIC_FOUNDRY_RESOURCE"] == "someone-else"
+
+
+async def test_claude_deployments_advertise_effort_levels(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(azure_foundry, "AsyncAzureOpenAI", lambda **_: SimpleNamespace())
+    provider = azure_foundry.AzureFoundryProvider(
+        endpoint="https://res.openai.azure.com", api_key="k", deployment="claude-opus-5-5, gpt-6"
+    )
+    models = {m.id: m for m in await provider.list_models()}
+    assert models["claude-opus-5-5"].supported_reasoning_efforts == azure_foundry.CLAUDE_EFFORTS
+    assert models["gpt-6"].supported_reasoning_efforts == []
