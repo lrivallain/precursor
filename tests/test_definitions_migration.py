@@ -617,7 +617,7 @@ async def test_the_watchdog_reads_the_timeout_from_the_file(
 ) -> None:
     from precursor.backend.db import SessionLocal
     from precursor.backend.models import Workflow
-    from precursor.backend.services.agents import workflow as wf_mod
+    from precursor.backend.services.agents.workflow_engine import sweep as sweep_mod
 
     ids = await _seed()
     with TestClient(create_app()) as client:
@@ -633,15 +633,15 @@ async def test_the_watchdog_reads_the_timeout_from_the_file(
     assert await _raw("workflows", ids["workflow"], "step_timeout_seconds") == (None,)
 
     considered: list[int] = []
-    real_lock = wf_mod._workflow_lock
+    real_lock = sweep_mod._workflow_lock
 
     def spy(workflow_id: int):  # type: ignore[no-untyped-def]
         considered.append(workflow_id)
         return real_lock(workflow_id)
 
-    monkeypatch.setattr(wf_mod, "_workflow_lock", spy)
+    monkeypatch.setattr(sweep_mod, "_workflow_lock", spy)
     async with SessionLocal() as session:
-        await wf_mod.sweep_stalled_steps(session, object())  # type: ignore[arg-type]
+        await sweep_mod.sweep_stalled_steps(session, object())  # type: ignore[arg-type]
     assert considered == [ids["workflow"]]
 
 
