@@ -1,8 +1,8 @@
 import { FONT_OPTIONS } from "../../lib/font";
 import { FONT_PREVIEW_STACKS } from "./panelConfig";
-import type { SettingsPanelState } from "./useSettingsPanelState";
+import type { AppearanceSettings } from "./useAppearanceSettings";
 
-export function AppearanceTab({ s }: { s: SettingsPanelState }) {
+export function AppearanceTab({ s }: { s: AppearanceSettings }) {
   const {
     theme,
     setThemeState,

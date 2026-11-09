@@ -1,10 +1,10 @@
 import { Select } from "../Select";
 import { STT_LANGUAGES } from "./panelConfig";
-import type { SettingsPanelState } from "./useSettingsPanelState";
+import type { Settings } from "../../lib/types";
+import type { SpeechSettings, SttTestState } from "./useSpeechSettings";
 
-export function SpeechTab({ s }: { s: SettingsPanelState }) {
+export function SpeechTab({ s, settings }: { s: SpeechSettings; settings: Settings | null }) {
   const {
-    settings,
     azureEndpoint,
     setAzureEndpoint,
     azureLanguage,
@@ -15,6 +15,7 @@ export function SpeechTab({ s }: { s: SettingsPanelState }) {
     setSttTest,
     testStt,
   } = s;
+  const keyPresent = settings?.api_keys_present?.azure_speech_key;
   return (
     <section>
       <p className="text-sm text-muted mb-3">
@@ -22,17 +23,7 @@ export function SpeechTab({ s }: { s: SettingsPanelState }) {
         Configure an <strong>Azure AI Speech</strong> resource to
         enable speech-to-text. Without it, the mic button is hidden.
       </p>
-      <div
-        className={`mb-4 text-[11px] px-2 py-1.5 rounded border ${
-          settings?.stt_azure_ready
-            ? "border-green-600/40 text-green-500"
-            : "border-border text-muted"
-        }`}
-      >
-        {settings?.stt_azure_ready
-          ? "Azure Speech is configured — dictation is enabled."
-          : "Azure Speech not configured — the mic button is hidden."}
-      </div>
+      <SpeechStatus ready={settings?.stt_azure_ready ?? false} />
 
       <label className="block text-xs text-muted mb-1">Endpoint URL</label>
       <input
@@ -65,7 +56,7 @@ export function SpeechTab({ s }: { s: SettingsPanelState }) {
 
       <label className="block text-xs text-muted mt-4 mb-1">
         Subscription key{" "}
-        {settings?.api_keys_present?.azure_speech_key && (
+        {keyPresent && (
           <span className="text-green-500">(configured)</span>
         )}
       </label>
@@ -77,7 +68,7 @@ export function SpeechTab({ s }: { s: SettingsPanelState }) {
           setSttTest({ state: "idle" });
         }}
         placeholder={
-          settings?.api_keys_present?.azure_speech_key
+          keyPresent
             ? "••••••••••••••••"
             : "Azure Speech key"
         }
@@ -89,26 +80,58 @@ export function SpeechTab({ s }: { s: SettingsPanelState }) {
         the saved key.
       </p>
 
-      <div className="flex items-center gap-2 mt-3">
-        <button
-          type="button"
-          onClick={() => void testStt()}
-          disabled={!azureEndpoint || sttTest.state === "testing"}
-          className="px-3 py-1.5 rounded text-xs border border-border hover:bg-bg disabled:opacity-50"
-        >
-          {sttTest.state === "testing" ? "Testing…" : "Test connection"}
-        </button>
-        {sttTest.state === "ok" && (
-          <span className="text-[11px] text-green-500">
-            {sttTest.detail ?? "Connection OK."}
-          </span>
-        )}
-        {sttTest.state === "error" && (
-          <span className="text-[11px] text-red-500">
-            {sttTest.detail ?? "Test failed."}
-          </span>
-        )}
-      </div>
+      <SttTestRow
+        state={sttTest}
+        disabled={!azureEndpoint}
+        onTest={() => void testStt()}
+      />
     </section>
+  );
+}
+
+function SpeechStatus({ ready }: { ready: boolean }) {
+  return (
+    <div
+      className={`mb-4 text-[11px] px-2 py-1.5 rounded border ${
+        ready ? "border-green-600/40 text-green-500" : "border-border text-muted"
+      }`}
+    >
+      {ready
+        ? "Azure Speech is configured — dictation is enabled."
+        : "Azure Speech not configured — the mic button is hidden."}
+    </div>
+  );
+}
+
+function SttTestRow({
+  state,
+  disabled,
+  onTest,
+}: {
+  state: SttTestState;
+  disabled: boolean;
+  onTest: () => void;
+}) {
+  return (
+    <div className="flex items-center gap-2 mt-3">
+      <button
+        type="button"
+        onClick={onTest}
+        disabled={disabled || state.state === "testing"}
+        className="px-3 py-1.5 rounded text-xs border border-border hover:bg-bg disabled:opacity-50"
+      >
+        {state.state === "testing" ? "Testing…" : "Test connection"}
+      </button>
+      {state.state === "ok" && (
+        <span className="text-[11px] text-green-500">
+          {state.detail ?? "Connection OK."}
+        </span>
+      )}
+      {state.state === "error" && (
+        <span className="text-[11px] text-red-500">
+          {state.detail ?? "Test failed."}
+        </span>
+      )}
+    </div>
   );
 }

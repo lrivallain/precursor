@@ -1,9 +1,9 @@
 import { GitHubStatusBanner } from "./GitHubStatusBanner";
-import type { SettingsPanelState } from "./useSettingsPanelState";
+import type { Settings } from "../../lib/types";
+import type { GitHubSettings } from "./useGitHubSettings";
 
-export function GitHubTab({ s }: { s: SettingsPanelState }) {
+export function GitHubTab({ s, settings }: { s: GitHubSettings; settings: Settings | null }) {
   const {
-    settings,
     repo,
     setRepo,
     githubToken,
