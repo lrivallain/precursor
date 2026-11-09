@@ -10,39 +10,19 @@ and the parent session row survives the cleanup.
 from __future__ import annotations
 
 import asyncio
-import json
 from datetime import UTC, datetime, timedelta
 
-from fastapi.testclient import TestClient
 from sqlalchemy import delete, func, select
 
 from precursor.backend.db import SessionLocal
-from precursor.backend.main import create_app
 from precursor.backend.models import (
-    AppSetting,
     MeetingAttachment,
     MeetingInsight,
     MeetingSegment,
     MeetingSession,
 )
 from precursor.backend.services.live_transcript_retention import prune_expired_live_transcripts
-
-
-def _init_db() -> None:
-    # Lifespan runs init_db (alembic upgrade head) before we touch the tables.
-    with TestClient(create_app()):
-        pass
-
-
-async def _set_retention(days: int) -> None:
-    async with SessionLocal() as session:
-        row = await session.get(AppSetting, "live_transcript_retention_days")
-        encoded = json.dumps(days)
-        if row is None:
-            session.add(AppSetting(key="live_transcript_retention_days", value=encoded))
-        else:
-            row.value = encoded
-        await session.commit()
+from tests.support import init_db, set_app_setting
 
 
 async def _seed() -> dict[str, int]:
@@ -92,10 +72,10 @@ async def _segment_count(session_id: int) -> int:
 
 
 def test_retention_disabled_is_noop() -> None:
-    _init_db()
+    init_db()
 
     async def _run() -> None:
-        await _set_retention(0)
+        await set_app_setting("live_transcript_retention_days", 0)
         ids = await _seed()
         assert (await prune_expired_live_transcripts()).rows == 0
         assert await _segment_count(ids["old"]) == 2
@@ -104,10 +84,10 @@ def test_retention_disabled_is_noop() -> None:
 
 
 def test_prunes_only_long_ended_sessions() -> None:
-    _init_db()
+    init_db()
 
     async def _run() -> None:
-        await _set_retention(30)
+        await set_app_setting("live_transcript_retention_days", 30)
         ids = await _seed()
         # Two segments belong to the old-ended session.
         assert (await prune_expired_live_transcripts()).rows == 2
@@ -123,10 +103,10 @@ def test_prunes_only_long_ended_sessions() -> None:
 
 
 def test_idempotent_second_run() -> None:
-    _init_db()
+    init_db()
 
     async def _run() -> None:
-        await _set_retention(30)
+        await set_app_setting("live_transcript_retention_days", 30)
         await _seed()
         assert (await prune_expired_live_transcripts()).rows == 2
         assert (await prune_expired_live_transcripts()).rows == 0

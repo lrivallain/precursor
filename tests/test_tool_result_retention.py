@@ -15,33 +15,14 @@ import asyncio
 import json
 from datetime import UTC, datetime, timedelta
 
-from fastapi.testclient import TestClient
-
 from precursor.backend.db import SessionLocal
-from precursor.backend.main import create_app
-from precursor.backend.models import AppSetting, Attachment, Message, MessageRole, Topic
+from precursor.backend.models import Attachment, Message, MessageRole, Topic
 from precursor.backend.services.tool_result_retention import (
     PRUNED_PLACEHOLDER,
     prune_expired_tool_results,
 )
 from precursor.backend.services.turn_engine import hydrate_history
-
-
-def _init_db() -> None:
-    # Lifespan runs init_db (alembic upgrade head) before we touch the tables.
-    with TestClient(create_app()):
-        pass
-
-
-async def _set_retention(days: int) -> None:
-    async with SessionLocal() as session:
-        row = await session.get(AppSetting, "tool_result_retention_days")
-        encoded = json.dumps(days)
-        if row is None:
-            session.add(AppSetting(key="tool_result_retention_days", value=encoded))
-        else:
-            row.value = encoded
-        await session.commit()
+from tests.support import init_db, set_app_setting
 
 
 async def _seed(topic_title: str) -> int:
@@ -110,10 +91,10 @@ async def _content_by_role(tid: int) -> dict[str, list[str]]:
 
 
 def test_retention_disabled_is_noop() -> None:
-    _init_db()
+    init_db()
 
     async def _run() -> None:
-        await _set_retention(0)
+        await set_app_setting("tool_result_retention_days", 0)
         tid = await _seed("disabled")
         assert (await prune_expired_tool_results()).rows == 0
         by_role = await _content_by_role(tid)
@@ -123,10 +104,10 @@ def test_retention_disabled_is_noop() -> None:
 
 
 def test_prunes_old_tool_rows_only() -> None:
-    _init_db()
+    init_db()
 
     async def _run() -> None:
-        await _set_retention(30)
+        await set_app_setting("tool_result_retention_days", 30)
         tid = await _seed("prune")
         assert (await prune_expired_tool_results()).rows == 1
         by_role = await _content_by_role(tid)
@@ -141,10 +122,10 @@ def test_prunes_old_tool_rows_only() -> None:
 
 
 def test_idempotent_second_run() -> None:
-    _init_db()
+    init_db()
 
     async def _run() -> None:
-        await _set_retention(30)
+        await set_app_setting("tool_result_retention_days", 30)
         await _seed("idempotent")
         assert (await prune_expired_tool_results()).rows == 1
         assert (await prune_expired_tool_results()).rows == 0
@@ -153,13 +134,13 @@ def test_idempotent_second_run() -> None:
 
 
 def test_pruned_row_still_hydrates_pairing() -> None:
-    _init_db()
+    init_db()
 
     async def _run() -> list[object]:
         from sqlalchemy import select
         from sqlalchemy.orm import selectinload
 
-        await _set_retention(30)
+        await set_app_setting("tool_result_retention_days", 30)
         tid = await _seed("pairing")
         await prune_expired_tool_results()
         async with SessionLocal() as session:
@@ -187,7 +168,7 @@ def test_pruned_row_still_hydrates_pairing() -> None:
 
 
 def test_clears_expired_thinking_only() -> None:
-    _init_db()
+    init_db()
 
     async def _run() -> None:
         from sqlalchemy import delete, select
@@ -226,10 +207,10 @@ def test_clears_expired_thinking_only() -> None:
                 found = await session.execute(select(Message).order_by(Message.id))
                 return [(m.content, m.reasoning) for m in found.scalars()]
 
-        await _set_retention(0)
+        await set_app_setting("tool_result_retention_days", 0)
         assert (await prune_expired_tool_results()).rows == 0
 
-        await _set_retention(30)
+        await set_app_setting("tool_result_retention_days", 30)
         preview = await prune_expired_tool_results(dry_run=True)
         # Thinking is dropped outright, so all of it counts as reclaimed.
         assert (preview.rows, preview.bytes) == (1, 500)

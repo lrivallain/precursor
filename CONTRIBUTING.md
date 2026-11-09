@@ -69,6 +69,13 @@ uv run precursor tray
 ```
 
 
+## Architecture and reuse
+
+[`ARCHITECTURE.md`](ARCHITECTURE.md) maps where code goes and lists the shared
+building blocks (lookups, background jobs, retention sweeps, stores, resize
+hooks, settings tabs, MCP tool groups). Reuse or extend one before writing a
+new helper, and add yours to the map when others should reuse it.
+
 ## Quality gates
 
 Before opening a PR, run the full gate set (mirrors CI):
@@ -87,6 +94,7 @@ uv run mypy precursor
 uv run pytest -n auto --dist loadgroup   # parallel, as in CI; drop -n to debug serially
 
 npm --prefix frontend run typecheck
+npm --prefix frontend test              # Vitest unit tests (src/**/*.test.ts)
 npm --prefix frontend run build
 
 make ratchet                             # complexity / size / duplication ratchet

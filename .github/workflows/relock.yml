@@ -95,7 +95,7 @@ jobs:
 
       - name: Verify the frontend lockfile builds
         if: env.TARGETS == 'all' || env.TARGETS == 'frontend'
-        run: npm ci && npm run typecheck && npm run build
+        run: npm ci && npm run typecheck && npm test && npm run build
         working-directory: frontend
 
       - name: Verify the website lockfile builds

@@ -11,25 +11,18 @@ import asyncio
 
 import pytest
 from fastapi import HTTPException
-from fastapi.testclient import TestClient
 
 from precursor.backend.db import SessionLocal
 from precursor.backend.lookups import get_or_404
-from precursor.backend.main import create_app
 from precursor.backend.models import Topic
 from precursor.backend.services.background_poll import BackgroundPoll
 from precursor.backend.services.backup_ticker import BackupTicker, get_backup_ticker
 from precursor.backend.services.reminder_ticker import get_reminder_ticker
-
-
-def _init_db() -> None:
-    # Lifespan runs init_db (alembic upgrade head) before we touch the tables.
-    with TestClient(create_app()):
-        pass
+from tests.support import init_db
 
 
 def test_get_or_404_returns_the_row() -> None:
-    _init_db()
+    init_db()
 
     async def run() -> str:
         async with SessionLocal() as session:
@@ -47,7 +40,7 @@ def test_get_or_404_returns_the_row() -> None:
     [(None, "Topic not found"), ("No such topic here", "No such topic here")],
 )
 def test_get_or_404_raises_with_detail(detail: str | None, expected: str) -> None:
-    _init_db()
+    init_db()
 
     async def run() -> None:
         async with SessionLocal() as session:

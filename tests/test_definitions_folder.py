@@ -24,6 +24,7 @@ from precursor.backend.services.definitions import cli
 from precursor.backend.services.definitions.checker import InstanceNames, build_report
 from precursor.backend.services.definitions.loader import load_definitions
 from tests.definitions_support import mark_database, restore_database
+from tests.support import unique_id
 
 AGENT = "kind: agent\nid: {id}\ntitle: {title}\n"
 
@@ -279,18 +280,12 @@ async def _setup(enabled: bool = True) -> None:
         await session.commit()
 
 
-def _uid() -> str:
-    # Starts with a letter: an all-digit id written unquoted into YAML (as some
-    # tests do) would parse as a number and fail validation.
-    return "t" + uuid.uuid4().hex[:8]
-
-
 async def _seed() -> tuple[dict[str, int], str]:
     """A reusable agent, an ad-hoc one, and a workflow exercising every step shape."""
     from precursor.backend.db import SessionLocal
     from precursor.backend.models import AgentSession, Chat, Role, Workflow, WorkflowStep
 
-    tag = _uid()
+    tag = unique_id()
     async with SessionLocal() as session:
         role = Role(name=f"Analyst {tag}", system_prompt="be sharp")
         chat = Chat(title="c", slug=f"defs-chat-{tag}")
@@ -524,7 +519,7 @@ async def test_export_never_reuses_a_summary_templates_id(api_root: Path) -> Non
 
     await _setup()
     ids, _ = await _seed()
-    taken = _uid()
+    taken = unique_id()
     _write(
         api_root, "summaries/t.summary.yaml", f"kind: summary\nid: {taken}\nname: T\nprompt: t\n"
     )
@@ -548,7 +543,7 @@ async def test_a_step_with_a_deleted_agent_is_written_and_flagged(api_root: Path
 
     await _setup()
     async with SessionLocal() as session:
-        wf = Workflow(name=f"Broken {_uid()}", status="idle")
+        wf = Workflow(name=f"Broken {unique_id()}", status="idle")
         session.add(wf)
         await session.flush()
         session.add(WorkflowStep(workflow_id=wf.id, position=0, agent_id=None, name="Gone"))
@@ -577,7 +572,7 @@ async def test_hidden_agent_settings_are_only_flagged_when_they_would_stop_apply
     from precursor.backend.models import AgentSession, Role, Workflow, WorkflowStep
 
     await _setup()
-    tag = _uid()
+    tag = unique_id()
     async with SessionLocal() as session:
         role = Role(name=f"Persona {tag}", system_prompt="")
         session.add(role)
@@ -660,7 +655,9 @@ async def test_check_reports_rows_without_a_file(api_root: Path) -> None:
 
 async def test_check_flags_unknown_roles_against_the_database(api_root: Path) -> None:
     await _setup()
-    _write(api_root, "agents/a.agent.yaml", AGENT.format(id=_uid(), title="A") + "role: Ghost\n")
+    _write(
+        api_root, "agents/a.agent.yaml", AGENT.format(id=unique_id(), title="A") + "role: Ghost\n"
+    )
     with TestClient(create_app()) as client:
         report = client.get("/api/definitions/check").json()
     assert any(
@@ -738,7 +735,7 @@ async def test_export_writes_step_references_by_key(api_root: Path) -> None:
         vessel_b = AgentSession(title="B", task_prompt="check it", status="waiting", inline=True)
         session.add_all([vessel_a, vessel_b])
         await session.flush()
-        wf = Workflow(name=f"Refs {_uid()}", status="idle")
+        wf = Workflow(name=f"Refs {unique_id()}", status="idle")
         session.add(wf)
         await session.flush()
         session.add_all(

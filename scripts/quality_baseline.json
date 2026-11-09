@@ -39,7 +39,7 @@
     "scripts/seed_demo.py": 2120,
     "tests/test_agents.py": 8313,
     "tests/test_app.py": 1109,
-    "tests/test_definitions_files_mode.py": 1585,
+    "tests/test_definitions_files_mode.py": 1581,
     "tests/test_definitions_migration.py": 840,
     "tests/test_live_sessions.py": 1624,
     "tests/test_model_fallbacks.py": 1159,
@@ -324,7 +324,7 @@
     "frontend/src/lib/workflows.ts::eslint(complexity)": 2
   },
   "duplication": {
-    "duplicated-lines": 2618
+    "duplicated-lines": 2594
   },
   "untyped-responses": {
     "DELETE /api/plugins/installed/{plugin_id}": 1,

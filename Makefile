@@ -61,6 +61,7 @@ check: lockcheck ratchet  ## Run all backend + frontend quality gates
 	uv run mypy precursor
 	uv run pytest -q $(PYTEST_ARGS)
 	npm --prefix frontend run typecheck
+	npm --prefix frontend test
 	npm --prefix frontend run build
 
 lockcheck:  ## Verify lockfiles pin public artifacts with strong hashes

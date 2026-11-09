@@ -1,7 +1,9 @@
 # Copilot / agent instructions for Precursor
 
 Use these notes to stay aligned with the project's conventions when working in
-this repo.
+this repo. [`ARCHITECTURE.md`](../ARCHITECTURE.md) maps where code goes and
+lists the building blocks to reuse; check it before writing a new helper,
+store, hook, background job or MCP tool.
 
 ## Architecture in one paragraph
 
@@ -46,7 +48,12 @@ plus a frontend extension registry.
   `.dark` on `<html>` (see `lib/theme.ts`).
 - All HTTP goes through `src/lib/api.ts`. Streaming chat goes through
   `src/lib/sse.ts` (we don't use `EventSource` because we POST a JSON body).
-- Keep type definitions in `src/lib/types.ts` mirrored to the Pydantic schemas.
+- API types are generated from the Pydantic schemas into
+  `src/lib/generated/apiTypes.ts` (`make api-types`); `src/lib/types.ts`
+  aliases them (`export type X = Api.X;`). Hand-write a type there only for a
+  frontend-only shape, and never edit the generated file.
+- Shared stores build on `lib/externalStore.ts` (`VersionedStore`, `Emitter`,
+  `ListResourceStore`) rather than a hand-rolled listener set.
 - Side panels and split panes must be user-resizable: use
   `lib/useResizableWidth.ts` + `components/ResizeHandle.tsx` (width persisted
   under a `precursor.*` localStorage key), as `LivePanel`, `WorkspaceDiscussion`
@@ -69,8 +76,9 @@ plus a frontend extension registry.
 
 ## When making changes
 
-1. Update both the Pydantic schema **and** the TS `types.ts` for any API
-   change.
+1. For any API change, update the Pydantic schema (with a `response_model`
+   on the route), then run `make api-types` and commit the regenerated
+   `frontend/src/lib/generated/apiTypes.ts`.
 2. When models change, generate a migration with `make migration m="…"`
    (Alembic autogenerate), review it, and commit it. Alembic is the single
    source of truth: `init_db` runs `alembic upgrade head` on startup for dev and
@@ -80,7 +88,10 @@ plus a frontend extension registry.
 4. **Assess documentation impact** — every user-facing change must update the
    docs in the same PR (see [Documentation](#documentation) below). Treat "docs
    updated" as part of the definition of done, not a follow-up.
-5. Run the quality gates (`make check`, listed in `CONTRIBUTING.md`).
+5. Reuse before writing: look up the building blocks in `ARCHITECTURE.md`,
+   and stay under its limits. `make ratchet` fails when a file or function
+   grows past its recorded baseline or new code crosses a limit.
+6. Run the quality gates (`make check`, listed in `CONTRIBUTING.md`).
 
 ## Documentation
 
