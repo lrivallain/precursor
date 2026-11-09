@@ -39,6 +39,7 @@ from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
+from precursor.backend.lookups import get_or_404
 from precursor.backend.models import (
     Chat,
     Message,
@@ -154,9 +155,7 @@ CONSOLIDATION_CHAT_TITLE = "Consolidation"
 
 
 async def get_plan(session: AsyncSession, plan_id: int) -> StepPlan:
-    plan = await session.get(StepPlan, plan_id)
-    if plan is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Plan not found")
+    plan = await get_or_404(session, StepPlan, plan_id, "Plan not found")
     return plan
 
 
@@ -191,9 +190,7 @@ async def sync_delegation_policy(session: AsyncSession, plan: StepPlan) -> bool:
 
 
 async def get_step(session: AsyncSession, step_id: int) -> Step:
-    step = await session.get(Step, step_id)
-    if step is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Step not found")
+    step = await get_or_404(session, Step, step_id, "Step not found")
     return step
 
 
@@ -636,13 +633,9 @@ async def _source_for(
     topic = None
     chat = None
     if payload.topic_id is not None:
-        topic = await session.get(Topic, payload.topic_id)
-        if topic is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
+        topic = await get_or_404(session, Topic, payload.topic_id, "Topic not found")
     if payload.chat_id is not None:
-        chat = await session.get(Chat, payload.chat_id)
-        if chat is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Chat not found")
+        chat = await get_or_404(session, Chat, payload.chat_id, "Chat not found")
         if chat.step_id is not None or chat.step_plan_id is not None:
             raise HTTPException(
                 status.HTTP_409_CONFLICT, "A plan's own discussion cannot be its source chat."
@@ -822,9 +815,7 @@ async def update_plan(session: AsyncSession, plan_id: int, payload: StepPlanUpda
             plan.source_chat_id = None
     if "source_chat_id" in fields and payload.source_chat_id != plan.source_chat_id:
         if payload.source_chat_id is not None:
-            source_chat = await session.get(Chat, payload.source_chat_id)
-            if source_chat is None:
-                raise HTTPException(status.HTTP_404_NOT_FOUND, "Chat not found")
+            source_chat = await get_or_404(session, Chat, payload.source_chat_id, "Chat not found")
             if source_chat.step_id is not None or source_chat.step_plan_id is not None:
                 raise HTTPException(
                     status.HTTP_409_CONFLICT, "A plan's own discussion cannot be its source chat."

@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import shutil
-import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -22,10 +21,7 @@ from sqlalchemy import select, text
 
 from precursor.backend.main import create_app
 from tests.definitions_support import isolated_migration_database
-
-
-def _uid() -> str:
-    return "t" + uuid.uuid4().hex[:8]
+from tests.support import unique_id
 
 
 @pytest.fixture
@@ -76,7 +72,7 @@ async def _seed() -> dict[str, Any]:
     from precursor.backend.db import SessionLocal
     from precursor.backend.models import AgentSession, Workflow, WorkflowStep
 
-    tag = _uid()
+    tag = unique_id()
     async with SessionLocal() as session:
         writer = AgentSession(
             title=f"Writer {tag}",
@@ -167,7 +163,7 @@ async def test_a_user_workspace_cannot_take_the_reserved_slug(env: Path) -> None
 async def test_the_definitions_workspace_is_not_deleted_with_its_files(env: Path) -> None:
     with TestClient(create_app()) as client:
         builtin = next(w for w in client.get("/api/workspaces").json() if w["hosts_definitions"])
-        _write(env, "agents/keep.agent.yaml", {"kind": "agent", "id": _uid(), "title": "Keep"})
+        _write(env, "agents/keep.agent.yaml", {"kind": "agent", "id": unique_id(), "title": "Keep"})
         resp = client.delete(f"/api/workspaces/{builtin['id']}")
     assert resp.status_code == 409
     assert "definition files" in resp.json()["detail"]
@@ -209,7 +205,9 @@ async def test_the_preview_says_what_happens_to_each_file(env: Path) -> None:
         _write(env, reviewer["path"], {"kind": "agent", "id": reviewer_id, "titel": "typo"})
         _write(env, "agents/garbled.agent.yaml", "kind: agent\nid: [broken\n")
         _write(
-            env, "agents/visitor.agent.yaml", {"kind": "agent", "id": _uid(), "title": "Visitor"}
+            env,
+            "agents/visitor.agent.yaml",
+            {"kind": "agent", "id": unique_id(), "title": "Visitor"},
         )
         # A row created after the export.
         from precursor.backend.db import SessionLocal
@@ -242,7 +240,7 @@ async def test_the_preview_lists_blockers(env: Path) -> None:
         assert wf is not None
         wf.status = "running"
         await session.commit()
-    ident = _uid()
+    ident = unique_id()
     _write(env, "agents/a.agent.yaml", {"kind": "agent", "id": ident, "title": "A"})
     _write(env, "agents/b.agent.yaml", {"kind": "agent", "id": ident, "title": "B"})
     with TestClient(create_app()) as client:
@@ -310,7 +308,9 @@ async def test_migrating_switches_to_files_without_changing_anything(env: Path) 
         # A file that drifted: the database wins before the switch.
         _write(env, writer["path"], {**_load(env, writer["path"]), "title": "Drifted"})
         _write(
-            env, "agents/visitor.agent.yaml", {"kind": "agent", "id": _uid(), "title": "Visitor"}
+            env,
+            "agents/visitor.agent.yaml",
+            {"kind": "agent", "id": unique_id(), "title": "Visitor"},
         )
 
         resp = client.post("/api/definitions/migrate", json={"acknowledge": True})
@@ -599,7 +599,7 @@ async def test_a_blueprint_agent_gets_its_file_in_files_mode(
     monkeypatch.setattr(runtime, "agents_available", lambda: (True, "test"))
     await _seed()
     async with SessionLocal() as session:
-        bp = AgentBlueprint(name=f"BP {_uid()}", task_prompt="from a blueprint")
+        bp = AgentBlueprint(name=f"BP {unique_id()}", task_prompt="from a blueprint")
         session.add(bp)
         await session.commit()
         bp_id = bp.id
@@ -715,7 +715,7 @@ async def test_the_preview_lists_roles_and_their_files(env: Path) -> None:
     from precursor.backend.models import Role
 
     async with SessionLocal() as session:
-        session.add(Role(name=f"Mig {_uid()}", system_prompt="Be terse."))
+        session.add(Role(name=f"Mig {unique_id()}", system_prompt="Be terse."))
         await session.commit()
     with TestClient(create_app()) as client:
         items = client.get("/api/definitions/migration").json()["items"]
@@ -798,7 +798,7 @@ async def test_roles_of_an_install_already_in_files_mode_get_files(env: Path) ->
     from precursor.backend.db import SessionLocal
     from precursor.backend.services.definitions import overlay
 
-    name = f"Persona {_uid()}"
+    name = f"Persona {unique_id()}"
     await _add_role_row(name, "Keep me.")
     async with SessionLocal() as session:
         await overlay.persist_source(session, "files")
@@ -816,7 +816,7 @@ async def test_roles_of_an_install_already_in_files_mode_get_files(env: Path) ->
 
 
 async def test_backfilling_role_files_does_nothing_in_database_mode(env: Path) -> None:
-    await _add_role_row(f"Persona {_uid()}", "Stay in the table.")
+    await _add_role_row(f"Persona {unique_id()}", "Stay in the table.")
     assert await _backfill() == 0
     assert not (env / "roles").exists()
 

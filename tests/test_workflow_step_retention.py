@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
@@ -11,21 +10,12 @@ from sqlalchemy import delete, select
 
 from precursor.backend.db import SessionLocal
 from precursor.backend.main import create_app
-from precursor.backend.models import AppSetting, Workflow, WorkflowRun, WorkflowRunStep
+from precursor.backend.models import Workflow, WorkflowRun, WorkflowRunStep
 from precursor.backend.services.workflow_step_retention import (
     PRUNED_PLACEHOLDER,
     prune_expired_workflow_step_inputs,
 )
-
-
-async def _set(days: int) -> None:
-    async with SessionLocal() as session:
-        row = await session.get(AppSetting, "workflow_step_retention_days")
-        if row is None:
-            session.add(AppSetting(key="workflow_step_retention_days", value=json.dumps(days)))
-        else:
-            row.value = json.dumps(days)
-        await session.commit()
+from tests.support import set_app_setting
 
 
 async def _seed() -> dict[str, int]:
@@ -69,10 +59,10 @@ def test_prunes_only_inputs_of_long_finished_runs() -> None:
         pass
     ids = asyncio.run(_seed())
 
-    asyncio.run(_set(0))
+    asyncio.run(set_app_setting("workflow_step_retention_days", 0))
     assert asyncio.run(prune_expired_workflow_step_inputs()).rows == 0
 
-    asyncio.run(_set(30))
+    asyncio.run(set_app_setting("workflow_step_retention_days", 30))
     preview = asyncio.run(prune_expired_workflow_step_inputs(dry_run=True))
     assert preview.rows == 1 and preview.bytes > 4000
     assert asyncio.run(_inputs(ids))["old"] == "x" * 5000

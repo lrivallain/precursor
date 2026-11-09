@@ -8,7 +8,7 @@ opinionated — issues and small focused PRs are the easiest way to land changes
 > Only want to *use* Precursor? The
 > [one-command install](https://precursor.vuptime.io/guide/installation) is much
 > shorter — a source checkout is the contributor path and additionally needs
-> Node.js for the frontend toolchain.
+> Node.js 24 LTS (or 22.12+) for the frontend toolchain.
 
 Precursor uses **[uv](https://docs.astral.sh/uv/)** for the Python toolchain
 (env, run, build, release). Install it once, then:
@@ -69,6 +69,13 @@ uv run precursor tray
 ```
 
 
+## Architecture and reuse
+
+[`ARCHITECTURE.md`](ARCHITECTURE.md) maps where code goes and lists the shared
+building blocks (lookups, background jobs, retention sweeps, stores, resize
+hooks, settings tabs, MCP tool groups). Reuse or extend one before writing a
+new helper, and add yours to the map when others should reuse it.
+
 ## Quality gates
 
 Before opening a PR, run the full gate set (mirrors CI):
@@ -87,11 +94,53 @@ uv run mypy precursor
 uv run pytest -n auto --dist loadgroup   # parallel, as in CI; drop -n to debug serially
 
 npm --prefix frontend run typecheck
+npm --prefix frontend test              # Vitest unit tests (src/**/*.test.ts)
 npm --prefix frontend run build
+
+make ratchet                             # complexity / size / duplication ratchet
 ```
 </details>
 
 All of these run in CI (`.github/workflows/ci.yml`) on every PR and must pass.
+
+### Quality ratchet
+
+The codebase carries some complexity debt: very large files, very complex
+functions, copy-pasted blocks. `scripts/quality_ratchet.py` measures that debt
+per file and compares it with `scripts/quality_baseline.json`. Debt may shrink,
+never grow:
+
+| Check | Limit for new code | Configured in |
+| --- | --- | --- |
+| File size (`.py`, `.ts`, `.tsx`) | 800 lines | `scripts/quality_ratchet.py` |
+| Python complexity (ruff `C901`, `PLR0912`, `PLR0915`) | complexity 15, 15 branches, 60 statements | `pyproject.toml` |
+| Frontend complexity (oxlint) | complexity 15, 150 lines per function, nesting depth 4, React hook rules | `frontend/.oxlintrc.json` |
+| Duplication (jscpd) | no new copy-pasted blocks of 8+ lines | `.jscpd.json` |
+| Untyped API responses | every JSON response declares a Pydantic model (no `dict[str, Any]`) | `scripts/quality_ratchet.py` |
+
+- **The check fails (`WORSE`)**: you made a file bigger or more complex than its
+  recorded baseline, or added a new file over a limit. Don't raise the baseline:
+  extract a module, hook, component or helper instead, and reuse an existing
+  one when it exists.
+- **The check reports `better`**: run `make ratchet-update` and commit the
+  updated baseline, so the improvement can't be undone later. CI runs in strict
+  mode and fails until you do.
+- The pre-commit hook (`make hooks`) runs the file-size part, which only needs
+  `python3`.
+
+### API types
+
+The frontend doesn't re-declare the API's shapes: they are generated from the
+backend's Pydantic schemas into `frontend/src/lib/generated/apiTypes.ts`, and
+`frontend/src/lib/types.ts` aliases them (`export type Topic = Api.Topic;`).
+
+- After changing a schema in `precursor/backend/schemas` (or a route's
+  `response_model`), run `make api-types` and commit the regenerated file. CI
+  fails when it is out of date.
+- Never edit the generated file. If a generated type is too loose (for example
+  `string` where only a few values are valid), tighten the Pydantic field with a
+  `Literal`, then regenerate.
+- Write a type by hand in `types.ts` only when it exists only in the frontend.
 
 For sidebar or section-routing changes, build the SPA and run the seeded demo
 with `scripts/seed_demo.py` and `scripts/demo_server.sh` (see the screenshot

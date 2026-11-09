@@ -16,6 +16,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.db import get_session
+from precursor.backend.lookups import get_or_404
 from precursor.backend.models import Collection, Topic
 from precursor.backend.models.collection import DEFAULT_COLLECTION_NAME
 from precursor.backend.schemas import CollectionCreate, CollectionRead, CollectionUpdate
@@ -122,9 +123,7 @@ async def create_collection(
 async def get_collection(
     collection_id: int, session: AsyncSession = Depends(get_session)
 ) -> CollectionRead:
-    collection = await session.get(Collection, collection_id)
-    if collection is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Collection not found")
+    collection = await get_or_404(session, Collection, collection_id, "Collection not found")
     return _to_read(collection, await topic_counts_by_collection(session))
 
 
@@ -134,9 +133,7 @@ async def update_collection(
     payload: CollectionUpdate,
     session: AsyncSession = Depends(get_session),
 ) -> CollectionRead:
-    collection = await session.get(Collection, collection_id)
-    if collection is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Collection not found")
+    collection = await get_or_404(session, Collection, collection_id, "Collection not found")
 
     data = payload.model_dump(exclude_unset=True)
     if "default_role" in data:
@@ -180,9 +177,7 @@ async def delete_collection(
     ),
     session: AsyncSession = Depends(get_session),
 ) -> None:
-    collection = await session.get(Collection, collection_id)
-    if collection is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Collection not found")
+    collection = await get_or_404(session, Collection, collection_id, "Collection not found")
     if collection.is_default:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST, "The default collection cannot be deleted."
@@ -194,13 +189,14 @@ async def delete_collection(
                 status.HTTP_400_BAD_REQUEST,
                 "Topics cannot be reassigned to the collection being deleted.",
             )
-        destination = await session.get(Collection, reassign_to)
-        if destination is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Destination collection not found")
+        destination = await get_or_404(
+            session, Collection, reassign_to, "Destination collection not found"
+        )
     else:
-        destination = await get_default_collection(session)
-        if destination is None:
+        default = await get_default_collection(session)
+        if default is None:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "No destination collection available.")
+        destination = default
 
     # Move the topics explicitly rather than relying on the DB FK: SQLite does
     # not enforce ON DELETE SET NULL unless the foreign_keys pragma is on, and

@@ -21,7 +21,7 @@ from pathlib import Path
 from precursor.backend.config import Settings
 from precursor.backend.schemas.settings import SettingsPayload
 
-_SETTINGS_PANEL = Path(__file__).resolve().parents[1] / "frontend/src/components/SettingsPanel.tsx"
+_SYSTEM_TAB = Path(__file__).resolve().parents[1] / "frontend/src/components/settings/SystemTab.tsx"
 
 # The two deliberate exceptions. Both describe *the machine or tenant the app runs
 # in* rather than a preference, both are documented (reference/configuration.md,
@@ -61,10 +61,9 @@ def test_system_panel_copy_does_not_point_at_the_environment() -> None:
     the server's environment / .env" — including the ``PRECURSOR_CMD_RUNNER_*``
     twins that were removed precisely because they could switch the sandbox off.
     """
-    source = _SETTINGS_PANEL.read_text(encoding="utf-8")
+    source = _SYSTEM_TAB.read_text(encoding="utf-8")
     start = source.index("function SystemTab(")
-    end = source.index("\nfunction ", start + 1)
-    system_tab = re.sub(r"\s+", " ", source[start:end])
+    system_tab = re.sub(r"\s+", " ", source[start:])
 
     env_claim = re.compile(
         r"\b(defaults?|falls? back|comes?)\s+(to|from)\s+(the\s+)?(server'?s\s+)?"

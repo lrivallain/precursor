@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.db import get_session
+from precursor.backend.schemas.settings import GitHubTokenSource
 from precursor.backend.services.github_auth import (
     github_token_source,
     resolve_github_token,
@@ -55,7 +56,7 @@ class CopilotQuota(BaseModel):
 
 class Me(BaseModel):
     github: GitHubIdentity | None = None
-    github_token_source: str = "none"
+    github_token_source: GitHubTokenSource = "none"
     # Display-only name from an authenticating reverse proxy's X-Forwarded-User
     # header; never used for access decisions.
     proxy_user: str | None = None

@@ -11,6 +11,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.db import SessionLocal
+from precursor.backend.lookups import get_or_404
 from precursor.backend.models import Chat, Message, MessageRole, Topic
 from precursor.backend.schemas.message import MessageRead
 from precursor.backend.services.compaction import chunk_blocks, render_transcript
@@ -38,9 +39,7 @@ closing remarks — output only the note."""
 
 
 async def _linked_chat(session: AsyncSession, chat_id: int) -> tuple[Chat, Topic]:
-    chat = await session.get(Chat, chat_id)
-    if chat is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Chat not found")
+    chat = await get_or_404(session, Chat, chat_id, "Chat not found")
     topic = await session.get(Topic, chat.parent_topic_id) if chat.parent_topic_id else None
     if topic is None:
         raise HTTPException(status.HTTP_409_CONFLICT, "This chat isn't linked to a topic any more.")

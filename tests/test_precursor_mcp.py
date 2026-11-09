@@ -15,6 +15,7 @@ from precursor.backend.services.app_settings import (
     MCP_EXPOSE_SECTIONS,
     resolve_mcp_expose,
 )
+from precursor.backend.services.links import app_base_url
 from precursor.backend.services.mcp import precursor_server as ps
 
 
@@ -554,7 +555,7 @@ def test_app_base_url_maps_a_wildcard_bind_to_localhost(monkeypatch) -> None:  #
     cfg = _get_settings()
     monkeypatch.setattr(cfg, "host", "0.0.0.0", raising=False)
     monkeypatch.setattr(cfg, "port", 9000, raising=False)
-    assert ps.app_base_url() == "http://localhost:9000"
+    assert app_base_url() == "http://localhost:9000"
 
 
 async def test_create_schedule_homes_its_topic_in_a_collection() -> None:

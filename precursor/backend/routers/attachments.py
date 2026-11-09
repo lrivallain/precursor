@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.db import get_session
+from precursor.backend.lookups import get_or_404
 from precursor.backend.models import Attachment, Chat, NoteDraftAttachment, Topic
 from precursor.backend.schemas import AttachmentRead
 from precursor.backend.services.blob_store import blob_path, write_blob
@@ -87,9 +88,7 @@ async def get_attachment(
     attachment_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> FileResponse:
-    att = await session.get(Attachment, attachment_id)
-    if att is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Attachment not found")
+    att = await get_or_404(session, Attachment, attachment_id, "Attachment not found")
     return _serve_blob(att.sha256, att.mime)
 
 
@@ -98,9 +97,7 @@ async def get_note_draft_attachment(
     attachment_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> FileResponse:
-    att = await session.get(NoteDraftAttachment, attachment_id)
-    if att is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Attachment not found")
+    att = await get_or_404(session, NoteDraftAttachment, attachment_id, "Attachment not found")
     return _serve_blob(att.sha256, att.mime)
 
 
@@ -126,9 +123,7 @@ async def delete_attachment(
     deleting the message itself (CASCADE). This avoids leaving messages whose
     rendered images suddenly 404.
     """
-    att = await session.get(Attachment, attachment_id)
-    if att is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Attachment not found")
+    att = await get_or_404(session, Attachment, attachment_id, "Attachment not found")
     if att.message_id is not None:
         raise HTTPException(
             status.HTTP_409_CONFLICT,

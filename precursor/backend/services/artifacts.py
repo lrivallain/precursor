@@ -18,6 +18,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.db import SessionLocal
+from precursor.backend.lookups import get_or_404
 from precursor.backend.models import (
     ARTIFACT_SOURCE_ASSISTANT,
     Chat,
@@ -96,9 +97,7 @@ async def attach(
     require_file: bool = True,
 ) -> ConversationArtifact:
     """Attach ``path`` to the container, or refresh the link when it already exists."""
-    ws = await session.get(Workspace, workspace_id)
-    if ws is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Workspace not found")
+    ws = await get_or_404(session, Workspace, workspace_id, "Workspace not found")
     clean = normalize_path(path)
     if not clean:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "A file path is required.")

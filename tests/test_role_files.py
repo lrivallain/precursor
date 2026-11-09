@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import shutil
-import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
@@ -21,10 +20,7 @@ from tests.definitions_support import (
     mark_database,
     restore_database,
 )
-
-
-def _uid() -> str:
-    return "r" + uuid.uuid4().hex[:8]
+from tests.support import unique_id
 
 
 def _role_doc(ident: str, name: str, prompt: str = "Be brief.") -> dict[str, Any]:
@@ -117,7 +113,7 @@ def test_the_default_role_file_is_seeded_at_startup(files_mode: Path) -> None:
 
 
 def test_the_role_api_edits_the_files(files_mode: Path) -> None:
-    name = f"Persona {_uid()}"
+    name = f"Persona {unique_id('r')}"
     with TestClient(create_app()) as client:
         created = client.post("/api/roles", json={"name": name, "system_prompt": "First."})
         assert created.status_code == 201, created.text
@@ -136,7 +132,7 @@ def test_the_role_api_edits_the_files(files_mode: Path) -> None:
 
 
 def test_deleting_a_role_file_clears_what_referred_to_it(files_mode: Path) -> None:
-    name = f"Persona {_uid()}"
+    name = f"Persona {unique_id('r')}"
     with TestClient(create_app()) as client:
         client.post("/api/roles", json={"name": name, "system_prompt": "x"})
         topic = client.post("/api/topics", json={"title": "t", "role": name}).json()
@@ -219,8 +215,8 @@ async def test_deletion_clears_agent_and_workflow_roles_durably(
     from precursor.backend.services.definitions import overlay
 
     monkeypatch.setattr(get_settings(), "definitions_source", source)
-    name = f"Researcher {_uid()}"
-    agent_key, workflow_key = _uid(), _uid()
+    name = f"Researcher {unique_id('r')}"
+    agent_key, workflow_key = unique_id("r"), unique_id("r")
     with TestClient(create_app()) as client:
         assert client.post("/api/roles", json={"name": name}).status_code == 201
         async with SessionLocal() as session:
@@ -260,13 +256,13 @@ async def test_deletion_clears_agent_and_workflow_roles_durably(
             },
             "agents/unadopted.agent.yaml": {
                 "kind": "agent",
-                "id": _uid(),
+                "id": unique_id("r"),
                 "title": "Not adopted",
                 "role": name,
             },
             "workflows/unadopted.workflow.yaml": {
                 "kind": "workflow",
-                "id": _uid(),
+                "id": unique_id("r"),
                 "name": "Not adopted",
                 "role": name,
             },
@@ -279,7 +275,7 @@ async def test_deletion_clears_agent_and_workflow_roles_durably(
                 "agents/other.agent.yaml",
                 {
                     "kind": "agent",
-                    "id": _uid(),
+                    "id": unique_id("r"),
                     "title": "Other",
                     "role": "Other persona",
                 },
@@ -325,10 +321,10 @@ def test_unsafe_definition_cleanup_keeps_the_role(
     from precursor.backend.services.definitions import overlay, writer
     from precursor.backend.services.definitions.loader import LoadedFile
 
-    name = f"Researcher {_uid()}"
+    name = f"Researcher {unique_id('r')}"
     with TestClient(create_app()) as client:
         role = client.post("/api/roles", json={"name": name}).json()
-        doc = {"kind": "agent", "id": _uid(), "title": "Task", "role": name}
+        doc = {"kind": "agent", "id": unique_id("r"), "title": "Task", "role": name}
         _put(files_mode, "agents/research.agent.yaml", doc)
         if problem == "invalid":
             doc["unknown"] = True
@@ -360,7 +356,7 @@ def test_unsafe_definition_cleanup_keeps_the_role(
                 "agents/first.agent.yaml",
                 {
                     "kind": "agent",
-                    "id": _uid(),
+                    "id": unique_id("r"),
                     "title": "First",
                     "role": name,
                 },
@@ -391,7 +387,7 @@ async def test_deleting_role_updates_only_the_role_in_a_running_workflow_snapsho
     from precursor.backend.services.definitions import anchors, overlay
     from precursor.backend.services.definitions.exporter import render_document
 
-    name, ident = f"Researcher {_uid()}", _uid()
+    name, ident = f"Researcher {unique_id('r')}", unique_id("r")
     rel = "workflows/pinned.workflow.yaml"
     original = {
         "kind": "workflow",
@@ -477,7 +473,7 @@ async def _roles_filed_marker() -> bool:
 async def test_migrating_writes_the_roles_and_reverting_brings_them_back(
     database_mode: Path,
 ) -> None:
-    name = f"Persona {_uid()}"
+    name = f"Persona {unique_id('r')}"
     await _add_role(name, "Original.")
     with TestClient(create_app()) as client:
         preview = client.get("/api/definitions/migration").json()
@@ -513,7 +509,7 @@ async def test_an_install_migrated_before_roles_were_files_can_still_revert(
     from precursor.backend.db import SessionLocal
     from precursor.backend.services.definitions import migration, overlay
 
-    name = f"Persona {_uid()}"
+    name = f"Persona {unique_id('r')}"
     await _add_role(name, "Held in the table.")
     async with SessionLocal() as session:
         await overlay.persist_source(session, "files")
@@ -533,7 +529,7 @@ async def test_an_install_migrated_before_roles_were_files_can_still_clean_up(
     from precursor.backend.db import SessionLocal
     from precursor.backend.services.definitions import overlay
 
-    name = f"Persona {_uid()}"
+    name = f"Persona {unique_id('r')}"
     await _add_role(name, "Held in the table.")
     async with SessionLocal() as session:
         await overlay.persist_source(session, "files")
@@ -544,7 +540,7 @@ async def test_an_install_migrated_before_roles_were_files_can_still_clean_up(
 
 
 async def test_cleaning_up_blanks_the_role_prompts_in_the_table(database_mode: Path) -> None:
-    name = f"Persona {_uid()}"
+    name = f"Persona {unique_id('r')}"
     await _add_role(name, "Kept in the file.")
     with TestClient(create_app()) as client:
         assert (

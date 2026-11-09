@@ -1,4 +1,12 @@
-export type MessageRole = "user" | "assistant" | "system" | "tool";
+// Shapes the API exchanges come from the backend's Pydantic schemas, generated
+// into ./generated/apiTypes.ts (`make api-types`). Alias them here
+// (`export type X = Api.X;`) instead of re-declaring them; only frontend-only
+// types should be written by hand below. A field that is too loose in the
+// generated type (e.g. `string` instead of a union) is fixed in the backend
+// schema with a `Literal`, not here.
+import type * as Api from "./generated/apiTypes";
+
+export type MessageRole = Api.MessageRole;
 
 // Running app version (CalVer), surfaced by GET /api/version.
 export interface AppVersion {
@@ -9,13 +17,7 @@ export interface AppVersion {
 
 export type TopicKind = "standard";
 
-export interface ConversationLLMSelection {
-  provider: string;
-  model: string;
-  category: ModelCategory | null;
-  reasoning_effort: "" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
-  context_tokens: number;
-}
+export type ConversationLLMSelection = Api.ConversationLLMSelection;
 
 export interface Topic {
   llm_selection: ConversationLLMSelection | null;
@@ -49,31 +51,11 @@ export interface Topic {
 // One "when to run" clause of a schedule (mirrors backend RecurrenceRule). A
 // schedule fires at the earliest next occurrence across all of its rules, so
 // "every day at 07:00" + "every weekday at 12:00" gives both.
-export interface RecurrenceRule {
-  interval_seconds: number;
-  days_of_week: number;
-  run_at_minute: number | null;
-  timezone: string;
-}
+export type RecurrenceRule = Api.RecurrenceRule;
 
 // Lightweight schedule view embedded in the sidebar tree (mirrors backend
 // ScheduleSummary). Datetimes are ISO-8601 UTC strings.
-export interface ScheduleSummary {
-  enabled: boolean;
-  // The primary rule, kept flat for backwards compatibility. `rules` is the
-  // complete set (primary first) and is what the editors read.
-  interval_seconds: number;
-  days_of_week: number;
-  run_at_minute: number | null;
-  timezone: string;
-  rules: RecurrenceRule[];
-  clear_context: boolean;
-  /** Minutes an unanswered tool approval waits before it is auto-denied. Null inherits the global setting; 0 never expires. */
-  approval_timeout_minutes: number | null;
-  next_run_at: string | null;
-  last_run_at: string | null;
-  status: string;
-}
+export type ScheduleSummary = Api.ScheduleSummary;
 
 // Full schedule record (mirrors backend ScheduleRead).
 export interface Schedule extends ScheduleSummary {
@@ -87,29 +69,9 @@ export interface Schedule extends ScheduleSummary {
 
 // Attach a recurrence to an existing topic (no title — the topic owns it).
 // Send either the flat fields or `rules`; `rules` wins when both are present.
-export interface TopicScheduleCreate {
-  prompt: string;
-  interval_seconds?: number;
-  days_of_week?: number;
-  run_at_minute?: number | null;
-  timezone?: string;
-  rules?: RecurrenceRule[];
-  clear_context?: boolean;
-  approval_timeout_minutes?: number | null;
-  enabled?: boolean;
-}
+export type TopicScheduleCreate = Api.TopicScheduleCreate;
 
-export interface ScheduleUpdate {
-  prompt?: string;
-  interval_seconds?: number;
-  days_of_week?: number;
-  run_at_minute?: number | null;
-  timezone?: string;
-  rules?: RecurrenceRule[];
-  clear_context?: boolean;
-  approval_timeout_minutes?: number | null;
-  enabled?: boolean;
-}
+export type ScheduleUpdate = Api.ScheduleUpdate;
 
 export interface TopicNode extends Topic {
   children: TopicNode[];
@@ -151,55 +113,14 @@ export interface Chat {
 
 // A side chat as listed in its parent topic's right panel. Mirrors the
 // backend SideChatItem schema.
-export interface SideChatItem {
-  id: number;
-  slug: string;
-  title: string;
-  parent_message_id: number | null;
-  from_reply: boolean;
-  unread_count: number;
-  pending_approvals?: number;
-  message_count: number;
-  last_message_at: string | null;
-  created_at: string;
-  reminder: { remind_at: string; status: string } | null;
-}
+export type SideChatItem = Api.SideChatItem;
 
 // A side chat's outcome, drafted for its parent topic. Mirrors TopicNoteDraft.
-export interface TopicNoteDraft {
-  text: string;
-  topic_id: number;
-  topic_title: string;
-}
+export type TopicNoteDraft = Api.TopicNoteDraft;
 
-export interface ChatCreate {
-  llm_selection?: ConversationLLMSelection | null;
-  title: string;
-  description?: string | null;
-  description_as_system_prompt?: boolean;
-  pinned?: boolean;
-  slug?: string | null;
-  /** Assistant Role to assign at creation. Null/omitted = the default role. */
-  role?: string | null;
-  approval_policy?: ConversationApprovalPolicy | null;
-  /**
-   * Declares `title` a placeholder the client picked rather than something the
-   * user typed, letting the server replace it with one derived from the first
-   * message. See `services/chat_autoname.py`.
-   */
-  autoname?: boolean;
-}
+export type ChatCreate = Api.ChatCreate;
 
-export interface ChatUpdate {
-  llm_selection?: ConversationLLMSelection | null;
-  title?: string;
-  description?: string | null;
-  description_as_system_prompt?: boolean;
-  pinned?: boolean;
-  slug?: string | null;
-  role?: string | null;
-  approval_policy?: ConversationApprovalPolicy | null;
-}
+export type ChatUpdate = Api.ChatUpdate;
 
 // One-shot date/time reminder for a topic or chat. Datetimes are ISO-8601 UTC.
 export type ReminderContainer = "topic" | "chat";
@@ -217,16 +138,9 @@ export interface Reminder {
 }
 
 // A fired reminder enriched with its container's identity (sidebar list).
-export interface ReminderItem extends Reminder {
-  container: ReminderContainer;
-  title: string;
-  slug: string;
-}
+export type ReminderItem = Api.ReminderItem;
 
-export interface ReminderCreate {
-  remind_at: string;
-  note?: string | null;
-}
+export type ReminderCreate = Api.ReminderCreate;
 
 // --- Agents mode (Copilot SDK) ---
 
@@ -443,28 +357,11 @@ export interface WorkflowState {
 
 // The parked approval blocking a live agent (mirrors backend
 // AgentPendingPermission).
-export interface AgentPendingPermission {
-  request_id: string | null;
-  title: string | null;
-  /** Full request payload, so a non-timeline surface can render the card. */
-  data: Record<string, unknown> | null;
-}
+export type AgentPendingPermission = Api.AgentPendingPermission;
 
 // Lightweight schedule view embedded in AgentSession (mirrors backend
 // AgentScheduleSummary). Datetimes are ISO-8601 UTC strings.
-export interface AgentScheduleSummary {
-  enabled: boolean;
-  // Primary rule, kept flat for backwards compatibility; `rules` is the set.
-  interval_seconds: number;
-  days_of_week: number;
-  run_at_minute: number | null;
-  timezone: string;
-  rules: RecurrenceRule[];
-  clear_context: boolean;
-  next_run_at: string | null;
-  last_run_at: string | null;
-  status: string;
-}
+export type AgentScheduleSummary = Api.AgentScheduleSummary;
 
 // Full agent schedule record (mirrors backend AgentScheduleRead).
 export interface AgentSchedule extends AgentScheduleSummary {
@@ -476,190 +373,52 @@ export interface AgentSchedule extends AgentScheduleSummary {
 }
 
 // Send either the flat fields or `rules`; `rules` wins when both are present.
-export interface AgentScheduleCreate {
-  interval_seconds?: number;
-  days_of_week?: number;
-  run_at_minute?: number | null;
-  timezone?: string;
-  rules?: RecurrenceRule[];
-  clear_context?: boolean;
-  enabled?: boolean;
-}
+export type AgentScheduleCreate = Api.AgentScheduleCreate;
 
-export interface AgentScheduleUpdate {
-  interval_seconds?: number;
-  days_of_week?: number;
-  run_at_minute?: number | null;
-  timezone?: string;
-  rules?: RecurrenceRule[];
-  clear_context?: boolean;
-  enabled?: boolean;
-}
+export type AgentScheduleUpdate = Api.AgentScheduleUpdate;
 
-export interface AgentSessionCreate {
-  task: string;
-  title?: string | null;
-  model?: string | null;
-  topic_id?: number | null;
-  chat_id?: number | null;
-  role?: string | null;
-  autonomy_enabled?: boolean;
-  max_steps?: number;
-  approval_policy?: AgentApprovalPolicy | null;
-  // Fleet governance (all optional; omit to leave unset/ungoverned).
-  token_budget?: number | null;
-  max_retries?: number;
-  // Stamp from a blueprint (fields above still override).
-  blueprint_id?: number | null;
-  // Launch immediately (default). `false` parks it in the `waiting` state until
-  // a trigger fires (a parent completing, a webhook, or a manual "Start now").
-  start?: boolean;
-}
+export type AgentSessionCreate = Api.AgentSessionCreate;
 
 // A normalised SDK event, shaped for the workflow-step timeline.
-export interface AgentEvent {
-  kind: string;
-  text: string | null;
-  tool_name: string | null;
-  tool_status: string | null;
-  request_id: string | null;
-  data: Record<string, unknown> | null;
-  at: string | null;
-  // Which execution produced this event, so a shared agent's concurrent runs can
-  // be read one at a time instead of interleaved.
-  agent_run_id: number | null;
-  // The SDK id of a user prompt: what a rewind truncates from. Absent on other
-  // events and on prompts archived before rewind existed.
-  event_id?: string | null;
-  link_id?: string | null;
-}
+export type AgentEvent = Api.AgentEvent;
 
 // One incremental read of an agent's transcript (mirrors AgentEventPage).
 // The archived timeline is append-only, so a live view sends back the previous
 // `cursor` as `after` and receives only what it hasn't seen.
 // The model's thinking for the round in flight, streamed but not yet archived.
 // Mirrors backend AgentLiveThinking.
-export interface AgentLiveThinking {
-  text: string;
-  // Still thinking: nothing of the answer or a tool call has streamed since.
-  active: boolean;
-}
+export type AgentLiveThinking = Api.AgentLiveThinking;
 
-export interface AgentEventPage {
-  // The delta after the requested cursor — or the whole transcript when `reset`.
-  events: AgentEvent[];
-  // Unresolved approval cards. Never archived and they vanish once answered, so
-  // they sit outside the cursor and replace the previous tail on every read.
-  pending: AgentEvent[];
-  // The thinking being streamed right now. Volatile like `pending`: replaced on
-  // every read, and gone once the round's complete reasoning event lands.
-  thinking?: AgentLiveThinking | null;
-  // Send this back as `after` on the next read.
-  cursor: number;
-  // The cursor no longer addresses this transcript (cleared, rewound, pruned, or
-  // taken against another run): replace what you hold instead of appending to it.
-  reset: boolean;
-  // Names the archive the cursor counts into; send it back with `after`.
-  epoch?: string;
-  /**
-   * Runs whose prompts a rewind can cut: the current run and earlier runs of the
-   * same SDK session. Empty while a workflow step drives the current run.
-   */
-  rewindable_run_ids?: number[];
-}
+export type AgentEventPage = Api.AgentEventPage;
 
 export type AgentRewindMode = "conversation" | "conversation-and-files";
 
 /** Mirrors `AgentRewindSkippedFile` in `schemas/agent.py`. */
-export interface AgentRewindSkippedFile {
-  path: string;
-  /** `user-modified` (changed since the agent edited it) or `skipped-capture`. */
-  reason: string;
-}
+export type AgentRewindSkippedFile = Api.AgentRewindSkippedFile;
 
 /** Mirrors `AgentRewindResult` in `schemas/agent.py`. */
-export interface AgentRewindResult {
-  events_removed: number;
-  sdk_events_removed: number | null;
-  outcome?: string;
-  restored_files?: string[];
-  skipped_files?: AgentRewindSkippedFile[];
-}
+export type AgentRewindResult = Api.AgentRewindResult;
 
 /** Mirrors `AgentRewindFile` in `schemas/agent.py`. */
-export interface AgentRewindFile {
-  path: string;
-  /** created | modified | deleted */
-  change_type: string;
-  lines_added: number;
-  lines_removed: number;
-}
+export type AgentRewindFile = Api.AgentRewindFile;
 
 /** Mirrors `AgentRewindPreview` in `schemas/agent.py`. */
-export interface AgentRewindPreview {
-  event_id: string;
-  /** The SDK session captured file changes from its first turn. */
-  file_tracking: boolean;
-  /** Authoritative for offering file restore; see `unavailable_reason` when false. */
-  files_available: boolean;
-  unavailable_reason: string | null;
-  file_count: number;
-  files: AgentRewindFile[];
-}
+export type AgentRewindPreview = Api.AgentRewindPreview;
 
 export type AgentPermissionDecisionValue = "approve-once" | "approve-always" | "deny";
 
 // A model exposed by the agents runtime, for the default-model picker.
-export interface AgentModelInfo {
-  id: string;
-  name: string;
-  context_window?: number | null;
-  supported_reasoning_efforts?: string[];
-}
+export type AgentModelInfo = Api.AgentModelInfo;
 
 // An active "approve for session" grant, shown in the Settings security recap.
-export interface AgentPermissionGrant {
-  agent_id: number;
-  // Grants are held per execution, so two concurrent runs of a shared agent
-  // never inherit each other's approvals.
-  agent_run_id: number | null;
-  type: string;
-  title: string | null;
-  target: string | null;
-  at: string | null;
-}
+export type AgentPermissionGrant = Api.AgentPermissionGrant;
 
 // An in-flight (or last finished) Copilot CLI provisioning attempt.
-export interface AgentProvisionJob {
-  state: "running" | "succeeded" | "failed";
-  detail: string;
-  // The failure as the SDK reported it, so the panel shows a real cause.
-  error: string | null;
-  cli_path: string | null;
-  // True when the runtime came up in-process, so no restart is needed.
-  runtime_started: boolean;
-  started_at: number;
-  finished_at: number | null;
-}
+export type AgentProvisionJob = Api.AgentProvisionJob;
 
 // Everything Settings → Agents needs to explain — and fix — the runtime.
 // Answers "why not, and what can I do about it", not just "is it on".
-export interface AgentRuntimeStatus {
-  available: boolean;
-  unavailable_reason: string | null;
-  runtime_started: boolean;
-  sdk_installed: boolean;
-  cli_path: string | null;
-  can_install_cli: boolean;
-  install_blocked_reason: string | null;
-  can_restart: boolean;
-  restart_blocked_reason: string | null;
-  // Whether any archived agent timeline survives on disk — the retention levers
-  // stay reachable with Agents off only when there is history the sweep is
-  // still pruning.
-  has_archived_events: boolean;
-  job: AgentProvisionJob | null;
-}
+export type AgentRuntimeStatus = Api.AgentRuntimeStatus;
 
 export interface AgentLink {
   topic_id?: number | null;
@@ -686,87 +445,26 @@ export interface AgentBlueprint {
   updated_at: string;
 }
 
-export interface AgentBlueprintCreate {
-  name: string;
-  description?: string | null;
-  task_prompt?: string;
-  model?: string | null;
-  role?: string | null;
-  approval_policy?: AgentApprovalPolicy | null;
-  autonomy_enabled?: boolean;
-  max_steps?: number;
-  token_budget?: number | null;
-  max_retries?: number;
-  icon?: string | null;
-  color?: string | null;
-}
+export type AgentBlueprintCreate = Api.AgentBlueprintCreate;
 
-export interface AgentBlueprintInstantiate {
-  title?: string | null;
-  task?: string | null;
-  topic_id?: number | null;
-  chat_id?: number | null;
-  start?: boolean;
-}
+export type AgentBlueprintInstantiate = Api.AgentBlueprintInstantiate;
 
 // Partial update payload for a blueprint (mirrors backend AgentBlueprintUpdate).
-export interface AgentBlueprintUpdate {
-  name?: string;
-  description?: string | null;
-  task_prompt?: string;
-  model?: string | null;
-  role?: string | null;
-  approval_policy?: AgentApprovalPolicy | null;
-  autonomy_enabled?: boolean;
-  max_steps?: number;
-  token_budget?: number | null;
-  max_retries?: number;
-  icon?: string | null;
-  color?: string | null;
-}
+export type AgentBlueprintUpdate = Api.AgentBlueprintUpdate;
 
 // Attach an external trigger to an agent (mirrors backend AgentTriggerCreate).
-export interface AgentTriggerCreate {
-  type?: "webhook";
-  enabled?: boolean;
-}
+export type AgentTriggerCreate = Api.AgentTriggerCreate;
 
 // One thing waiting on a human (mirrors backend AgentInboxItem).
-export interface AgentInboxItem {
-  agent_id: number;
-  title: string;
-  kind: "blocked" | "needs_approval" | "budget";
-  detail: string | null;
-  request_id: string | null;
-  at: string | null;
-}
+export type AgentInboxItem = Api.AgentInboxItem;
 
-export interface AgentStatusCount {
-  status: AgentStatus;
-  count: number;
-}
+export type AgentStatusCount = Api.AgentStatusCount;
 
 // Fleet-wide rollup for the dashboard header (mirrors backend AgentMetrics).
-export interface AgentMetrics {
-  total: number;
-  active: number;
-  waiting: number;
-  completed: number;
-  failed: number;
-  by_status: AgentStatusCount[];
-  total_input_tokens: number;
-  total_output_tokens: number;
-  running_now: number;
-  max_concurrent: number;
-}
+export type AgentMetrics = Api.AgentMetrics;
 
 // A published artifact create payload (mirrors backend AgentArtifactCreate).
-export interface AgentArtifactCreate {
-  title: string;
-  content?: string;
-  kind?: "text" | "markdown" | "json" | "link";
-  key?: string | null;
-}
+export type AgentArtifactCreate = Api.AgentArtifactCreate;
 
 // --- Workflows (reusable agent-sequence orchestrator) ---
 // A workflow owns the *chaining* of otherwise-independent agents. It serialises
@@ -785,32 +483,7 @@ export type WorkflowStatus =
   | "cancelled";
 
 // Just enough of a step's agent to render its node + drive the strip.
-export interface WorkflowAgentSummary {
-  id: number;
-  public_id: string | null;
-  title: string;
-  status: string;
-  /** The agent's objective — lets an inline step be edited from the board. */
-  task_prompt: string;
-  /** True when this agent is a step's private vessel, not a reusable unit. */
-  inline: boolean;
-  progress: number | null;
-  progress_label: string | null;
-  result_summary: string | null;
-  active_narration: string | null;
-  /** Tail of the thinking the step's agent is streaming right now. */
-  active_thinking: string | null;
-  /** What the agent asked when it parked itself (`status === "blocked"`). */
-  blocked_question: string | null;
-  /**
-   * The tool-permission request parking this step, lifted from the live runtime.
-   * The board has to offer the decision: a gate on an *inline* step is
-   * otherwise unanswerable, since its vessel is hidden from the Agents roster.
-   */
-  pending_permission: AgentPendingPermission | null;
-  finished_at: string | null;
-  updated_at: string;
-}
+export type WorkflowAgentSummary = Api.WorkflowAgentSummary;
 
 /**
  * What a step *is*. `task` runs a reusable agent you picked; `inline` runs a
@@ -927,26 +600,10 @@ export interface WorkflowRun {
  * card. Null until the workflow has ever run. Mirrors the backend
  * `WorkflowRunProgress`.
  */
-export interface WorkflowRunProgress {
-  run_id: number;
-  run_number: number;
-  status: string;
-  /** Distinct positions that resolved; gate loop-backs and replays don't count. */
-  done: number;
-  total: number;
-  /** Position the run is sitting on right now; null once nothing is running. */
-  current_position: number | null;
-  started_at: string | null;
-  finished_at: string | null;
-}
+export type WorkflowRunProgress = Api.WorkflowRunProgress;
 
 /** Just enough of a workflow to name and link it from another surface. */
-export interface WorkflowSummary {
-  id: number;
-  name: string;
-  icon: string | null;
-  status: WorkflowStatus;
-}
+export type WorkflowSummary = Api.WorkflowSummary;
 
 export interface Workflow {
   id: number;
@@ -995,69 +652,13 @@ export interface Workflow {
 
 // One step in a create/replace payload. Either reference an existing agent by
 // `agent_id` OR create one inline from `task` (+ optional title/model).
-export interface WorkflowStepInput {
-  agent_id?: number | null;
-  name?: string | null;
-  task?: string | null;
-  title?: string | null;
-  model?: string | null;
-  // For a step that authors its own prompt: true mints a reusable agent listed
-  // in the Agents section, false (default) a private vessel owned by the step.
-  reusable?: boolean;
-  kind?: WorkflowStepKind;
-  on_fail_position?: number | null;
-  instructions?: string | null;
-  on_error?: WorkflowStepErrorPolicy;
-  max_retries?: number;
-  on_reject?: WorkflowStepRejectPolicy;
-  context_mode?: WorkflowStepContextMode;
-  context_sources?: string | null;
-  use_mcp?: boolean | null;
-  use_skills?: boolean | null;
-  use_memory?: boolean | null;
-  // Null (or omitted) = every enabled server; "" = none at all.
-  mcp_servers?: string | null;
-}
+export type WorkflowStepInput = Api.WorkflowStepInput;
 
-export interface WorkflowCreate {
-  name: string;
-  description?: string | null;
-  icon?: string | null;
-  color?: string | null;
-  clear_artifacts?: boolean;
-  max_loops?: number;
-  step_timeout_seconds?: number | null;
-  role?: string | null;
-  approval_policy?: AgentApprovalPolicy | null;
-  steps?: WorkflowStepInput[];
-}
+export type WorkflowCreate = Api.WorkflowCreate;
 
-export interface WorkflowUpdate {
-  name?: string | null;
-  description?: string | null;
-  icon?: string | null;
-  color?: string | null;
-  clear_artifacts?: boolean | null;
-  max_loops?: number | null;
-  /** Seconds before the stall watchdog fires; 0 disables it. */
-  step_timeout_seconds?: number | null;
-  /** Assistant Role for the whole workflow; 0 clears it. */
-  role?: string | null;
-  /** Tool-approval policy for every step; null means inherit each agent's own. */
-  approval_policy?: AgentApprovalPolicy | null;
-  /** When provided, replaces the entire ordered step list. Omit to leave untouched. */
-  steps?: WorkflowStepInput[] | null;
-}
+export type WorkflowUpdate = Api.WorkflowUpdate;
 
-export interface WorkflowScheduleUpdate {
-  schedule_enabled?: boolean | null;
-  interval_seconds?: number | null;
-  run_at_minute?: number | null;
-  timezone?: string | null;
-  days_of_week?: number | null;
-  /** Replaces the whole recurrence set. Wins over the flat fields above. */
-  rules?: RecurrenceRule[];
-}
+export type WorkflowScheduleUpdate = Api.WorkflowScheduleUpdate;
 
 // --- YAML transfer (export / import of agents and workflows) ----------------
 // A transfer document is the shareable form of one agent or one workflow: its
@@ -1070,51 +671,15 @@ export type TransferKind = "agent" | "workflow";
 /** What to do with an incoming object whose name already exists here. */
 export type ConflictAction = "replace" | "create" | "link";
 
-export interface TransferConflict {
-  kind: "agent" | "workflow";
-  /** Index into the document's agent list; null for the workflow itself. */
-  index: number | null;
-  name: string;
-  existing_id: number;
-  existing_title: string;
-  /** True when this really is the object the file was exported from. */
-  same_object: boolean;
-  /** Live workflows already using the existing agent — the blast radius of a replace. */
-  workflow_count: number;
-  allowed: ConflictAction[];
-  default: ConflictAction;
-}
+export type TransferConflict = Api.TransferConflict;
 
-export interface TransferWarning {
-  code: string;
-  message: string;
-}
+export type TransferWarning = Api.TransferWarning;
 
-export interface TransferPreview {
-  kind: TransferKind;
-  name: string;
-  agent_count: number;
-  step_count: number;
-  conflicts: TransferConflict[];
-  warnings: TransferWarning[];
-}
+export type TransferPreview = Api.TransferPreview;
 
-export interface TransferResolution {
-  kind: "agent" | "workflow";
-  index: number | null;
-  action: ConflictAction;
-}
+export type TransferResolution = Api.TransferResolution;
 
-export interface TransferImportResult {
-  kind: TransferKind;
-  workflow_id: number | null;
-  agent_id: number | null;
-  name: string;
-  created_agent_ids: number[];
-  replaced_agent_ids: number[];
-  linked_agent_ids: number[];
-  warnings: TransferWarning[];
-}
+export type TransferImportResult = Api.TransferImportResult;
 
 // --- Definition files (work in progress) ------------------------------------
 // Agents and workflows declared in *.agent.yaml / *.workflow.yaml files, with
@@ -1132,127 +697,35 @@ export type DefinitionFileKind = DefinitionKind | "summary" | "role";
  * `file` = declared by `path`; `invalid` = `path` has errors, so it can't run;
  * `none` = no file carries its id, so it still runs from the database.
  */
-export interface DefinitionSource {
-  state: "file" | "invalid" | "none";
-  path: string | null;
-  message: string | null;
-  /** Permissions the file grants beyond what was accepted; blocks runs until accepted. */
-  review?: string[];
-  /** SHA-256 of the file as reported, so Accept applies to exactly this version. */
-  content_hash?: string | null;
-}
+export type DefinitionSource = Api.DefinitionSource;
 
-export interface DefinitionIssue {
-  severity: "error" | "warning";
-  /** Relative to the definitions folder; null for folder-wide findings. */
-  path: string | null;
-  /** Where in the file, e.g. `steps[brief].context.from`. */
-  location: string | null;
-  message: string;
-  /**
-   * Where that is in the text: 1-based, end exclusive, UTF-16 columns (as in
-   * Monaco). Only set by `/file-issues`; null when unknown.
-   */
-  line?: number | null;
-  column?: number | null;
-  end_line?: number | null;
-  end_column?: number | null;
-}
+export type DefinitionIssue = Api.DefinitionIssue;
 
-export interface DefinitionFileSummary {
-  path: string;
-  kind: DefinitionFileKind;
-  id: string | null;
-  name: string | null;
-  valid: boolean;
-  content_hash: string;
-  /** Whether a database row carries this id; null when checked without a database. */
-  linked: boolean | null;
-}
+export type DefinitionFileSummary = Api.DefinitionFileSummary;
 
-export interface DefinitionsDatabaseLinks {
-  linked_agents: number;
-  linked_workflows: number;
-  unlinked_agents: { id: number; public_id: string; title: string; archived: boolean }[];
-  unlinked_workflows: { id: number; name: string; archived: boolean }[];
-}
+export type DefinitionsDatabaseLinks = Api.DefinitionsDatabaseLinks;
 
-export interface DefinitionsCheckReport {
-  root: string;
-  exists: boolean;
-  ok: boolean;
-  error_count: number;
-  warning_count: number;
-  files: DefinitionFileSummary[];
-  issues: DefinitionIssue[];
-  database: DefinitionsDatabaseLinks | null;
-}
+export type DefinitionsCheckReport = Api.DefinitionsCheckReport;
 
-export interface ExportedDefinition {
-  kind: DefinitionKind;
-  path: string;
-  id: string;
-  name: string;
-  source_id: number;
-}
+export type ExportedDefinition = Api.ExportedDefinition;
 
 /** What the check says about one file opened in the Files section. */
-export interface DefinitionFileReport {
-  /** False when the file isn't a definition file inside the definitions folder. */
-  in_definitions: boolean;
-  path: string | null;
-  kind: DefinitionFileKind | null;
-  valid: boolean | null;
-  issues: DefinitionIssue[];
-}
+export type DefinitionFileReport = Api.DefinitionFileReport;
 
 // --- Migration (database → files, and back) ---------------------------------
 
 /** Cheap summary for the Agents and Workflows homes: anything left to migrate? */
-export interface DefinitionsStatus {
-  stage: "database" | "files" | "finalized";
-  forced: boolean;
-  /** Active agents / workflows still declared by the database. */
-  agents: number;
-  workflows: number;
-}
+export type DefinitionsStatus = Api.DefinitionsStatus;
 
-export interface DefinitionsWorkspaceRef {
-  id: number;
-  slug: string;
-  name: string;
-}
+export type DefinitionsWorkspaceRef = Api.DefinitionsWorkspaceRef;
 
 export type MigrationAction = "create" | "regenerate" | "unchanged" | "new_from_disk";
 
-export interface MigrationItem {
-  kind: MigrationKind;
-  id: number | null;
-  name: string;
-  path: string | null;
-  action: MigrationAction;
-  reason: string | null;
-}
+export type MigrationItem = Api.MigrationItem;
 
-export interface MigrationRecord {
-  at: string;
-  snapshot: string | null;
-  created: number;
-  regenerated: number;
-  unchanged: number;
-  added_from_disk: number;
-  roles?: number;
-}
+export type MigrationRecord = Api.MigrationRecord;
 
-export interface FinalizedRecord {
-  at: string;
-  snapshot: string | null;
-  agents: number;
-  step_prompts: number;
-  workflows: number;
-  steps: number;
-  roles?: number;
-}
+export type FinalizedRecord = Api.FinalizedRecord;
 
 export interface CleanupPreview {
   ready: boolean;
@@ -1290,55 +763,16 @@ export interface MigrationPreview {
   needs_confirmation: boolean;
 }
 
-export interface MigrationResult {
-  ok: boolean;
-  source: "database" | "files";
-  snapshot: string | null;
-  created: number;
-  regenerated: number;
-  unchanged: number;
-  added_from_disk: number;
-  roles?: number;
-  issues: DefinitionIssue[];
-  mismatches: string[];
-}
+export type MigrationResult = Api.MigrationResult;
 
 /** The actual content behind one migration preview line. */
-export interface MigrationItemDetail {
-  kind: MigrationKind;
-  id: number;
-  name: string;
-  action: "create" | "regenerate" | "unchanged";
-  path: string | null;
-  /** The file as the migration would write it. */
-  proposed: string;
-  /** The file on disk now; null when there is none yet. */
-  current: string | null;
-}
+export type MigrationItemDetail = Api.MigrationItemDetail;
 
-export interface FinalizeResult {
-  ok: boolean;
-  finalized: FinalizedRecord | null;
-  written: number;
-  issues: DefinitionIssue[];
-}
+export type FinalizeResult = Api.FinalizeResult;
 
-export interface RevertResult {
-  ok: boolean;
-  source: "database" | "files";
-  snapshot: string | null;
-  agents: number;
-  workflows: number;
-  roles?: number;
-  skipped: string[];
-}
+export type RevertResult = Api.RevertResult;
 
-export interface DefinitionsExportResult {
-  root: string;
-  written: ExportedDefinition[];
-  skipped: ExportedDefinition[];
-  issues: DefinitionIssue[];
-}
+export type DefinitionsExportResult = Api.DefinitionsExportResult;
 
 export interface Attachment {
   id: number;
@@ -1423,11 +857,7 @@ export interface ContextEstimate {
   last_cache_write_tokens?: number;
 }
 
-export interface StoppedTurn {
-  content?: string;
-  tool_call_ids?: string[];
-  reasoning?: string;
-}
+export type StoppedTurn = Api.StoppedTurn;
 
 /**
  * One turn of the transcript timeline: a user prompt and every row up to the
@@ -1446,9 +876,7 @@ export interface TurnIndexItem {
 }
 
 /** Mirrors `RewindResult` in `schemas/message.py`. */
-export interface RewindResult {
-  deleted: number;
-}
+export type RewindResult = Api.RewindResult;
 
 /**
  * The editable status brief shown above a topic's transcript. Mirrors
@@ -1489,11 +917,7 @@ export interface TopicSummaryHunk {
 }
 
 /** Omit reviewed to resolve the entire proposal; otherwise decide only those hunks. */
-export interface TopicSummaryResolve {
-  revision: string;
-  accepted: number[];
-  reviewed?: number[] | null;
-}
+export type TopicSummaryResolve = Api.TopicSummaryResolve;
 
 export interface NotesDraft {
   text: string | null;
@@ -1543,21 +967,10 @@ export interface ToolApproval {
   expires_at: string | null;
 }
 
-export interface ToolApprovalDecision {
-  approve: boolean;
-  /** `conversation` / `global` also save an allow rule for this tool. */
-  scope?: "once" | "conversation" | "global";
-  /** Narrows the saved rule to calls whose arguments match. */
-  arg_match?: ArgClause[];
-  feedback?: string | null;
-}
+export type ToolApprovalDecision = Api.ToolApprovalDecision;
 
 /** One condition on a tool call's arguments; all clauses of a rule must hold. */
-export interface ArgClause {
-  arg: string;
-  op: "equals" | "glob" | "under";
-  value: string;
-}
+export type ArgClause = Api.ArgClause;
 
 export type ApprovalRuleEffect = "allow" | "ask";
 export type ApprovalRuleScope = "global" | "topic" | "chat";
@@ -1580,45 +993,17 @@ export interface ApprovalRule {
   created_at: string | null;
 }
 
-export interface ApprovalRuleCreate {
-  effect: ApprovalRuleEffect;
-  server?: string;
-  tool?: string;
-  arg_match?: ArgClause[];
-  scope?: ApprovalRuleScope;
-  topic_id?: number | null;
-  chat_id?: number | null;
-  note?: string | null;
-}
+export type ApprovalRuleCreate = Api.ApprovalRuleCreate;
 
-export type ApprovalRuleUpdate = Partial<
-  Pick<ApprovalRule, "effect" | "server" | "tool" | "arg_match" | "enabled" | "note">
->;
+export type ApprovalRuleUpdate = Api.ApprovalRuleUpdate;
 
-export interface ApprovalDecisionResult {
-  approval: ToolApproval;
-  /** Approvals still waiting; resume the turn once this hits 0. */
-  pending: number;
-}
+export type ApprovalDecisionResult = Api.ApprovalDecisionResult;
 
-export interface ModelPreset {
-  // An LLM provider id, or "agents" for the Copilot SDK runtime.
-  provider: string;
-  model: string;
-  reasoning_effort: "" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
-  context_tokens: number;
-  context_tier: "default" | "long_context";
-}
+export type ModelPreset = Api.ModelPreset;
 
 export type ModelCategory = string;
-export interface ModelCategoryDef {
-  id: ModelCategory;
-  label: string;
-  presets: ModelPreset[];
-}
-export interface ModelCategories {
-  categories: ModelCategoryDef[];
-}
+export type ModelCategoryDef = Api.ModelCategoryDef;
+export type ModelCategories = Api.ModelCategories;
 
 export interface Settings {
   theme: "light" | "dark" | "system";
@@ -1848,10 +1233,7 @@ export interface BackupRunResult {
   definitions_archive: string | null;
 }
 
-export interface IssueLabel {
-  name: string;
-  color: string;
-}
+export type IssueLabel = Api.IssueLabel;
 
 export interface GitHubIssue {
   number: number;
@@ -1867,26 +1249,9 @@ export interface GitHubIssue {
 // The Projects v2 board models live with the kanban plugin, in its own
 // repository (github.com/lrivallain/precursor-kanban).
 
-export interface IssueComment {
-  id: number;
-  user: string;
-  body: string;
-  created_at?: string | null;
-  updated_at: string;
-}
+export type IssueComment = Api.IssueComment;
 
-export interface IssueDetail {
-  number: number;
-  title: string;
-  state: string;
-  url: string | null;
-  body: string;
-  labels: IssueLabel[];
-  updated_at: string | null;
-  comments: IssueComment[];
-  linked_topic_id: number | null;
-  linked_topic_title: string | null;
-}
+export type IssueDetail = Api.IssueDetail;
 
 export interface MCPTool {
   name: string;
@@ -1999,26 +1364,9 @@ export interface LLMProviderSpec {
   /** Non-empty => upstream is gone; the text explains what to use instead. */
 }
 
-export interface IssueSummary {
-  repo: string;
-  issue_number: number;
-  issue_title: string;
-  issue_state: string;
-  issue_url: string | null;
-  labels: IssueLabel[];
-  summary: string;
-  model: string;
-  fetched_at: string;
-  cached: boolean;
-}
+export type IssueSummary = Api.IssueSummary;
 
-export interface IssuePushResult {
-  repo: string;
-  issue_number: number;
-  issue_title: string;
-  issue_state: string;
-  issue_url: string | null;
-}
+export type IssuePushResult = Api.IssuePushResult;
 
 export interface CommentDraft {
   draft: string;
@@ -2218,33 +1566,14 @@ export interface CatalogPlugin {
   installed_version: string | null;
 }
 
-export interface GitHubIdentity {
-  login: string;
-  name: string | null;
-  avatar_url: string | null;
-  html_url: string | null;
-}
+export type GitHubIdentity = Api.GitHubIdentity;
 
-export interface Me {
-  github: GitHubIdentity | null;
-  github_token_source: "env" | "gh-cli" | "settings" | "none";
-  // X-Forwarded-User from an authenticating reverse proxy (display only).
-  proxy_user: string | null;
-}
+export type Me = Api.Me;
 
 // Copilot "AI credits" (premium interactions) allowance for the connected
 // account. Mirrors the CopilotQuota Pydantic model. `percent_used` drives the
 // persona progress bar; `unlimited` plans have nothing to fill.
-export interface CopilotQuota {
-  plan: string | null;
-  unlimited: boolean;
-  percent_used: number;
-  percent_remaining: number;
-  used: number;
-  entitlement: number;
-  remaining: number;
-  reset_date: string | null;
-}
+export type CopilotQuota = Api.CopilotQuota;
 
 export interface Skill {
   name: string;
@@ -2258,18 +1587,9 @@ export interface Skill {
   legacy: boolean;
 }
 
-export interface SkillCreate {
-  name: string;
-  description?: string | null;
-  instructions: string;
-}
+export type SkillCreate = Api.SkillCreate;
 
-export interface SkillUpdate {
-  name?: string;
-  description?: string | null;
-  instructions?: string;
-  enabled?: boolean;
-}
+export type SkillUpdate = Api.SkillUpdate;
 
 // Assistant Role — a persistent persona (system prompt) attached to a
 // discussion. Mirrors the backend RoleRead schema.
@@ -2283,16 +1603,9 @@ export interface Role {
   path?: string | null;
 }
 
-export interface RoleCreate {
-  name: string;
-  system_prompt?: string;
-}
+export type RoleCreate = Api.RoleCreate;
 
-export interface RoleUpdate {
-  // Renaming isn't supported: a different name is refused.
-  name?: string;
-  system_prompt?: string;
-}
+export type RoleUpdate = Api.RoleUpdate;
 
 // Collection — a named set of topics that filters the sidebar tree. Mirrors the
 // backend CollectionRead schema.
@@ -2323,23 +1636,9 @@ export type CollectionAccent =
   | "cyan"
   | "slate";
 
-export interface CollectionCreate {
-  name: string;
-  description?: string | null;
-  github_repo?: string | null;
-  accent?: CollectionAccent;
-  icon?: string | null;
-  default_role?: string | null;
-}
+export type CollectionCreate = Api.CollectionCreate;
 
-export interface CollectionUpdate {
-  name?: string;
-  description?: string | null;
-  github_repo?: string | null;
-  accent?: CollectionAccent;
-  icon?: string | null;
-  default_role?: string | null;
-}
+export type CollectionUpdate = Api.CollectionUpdate;
 
 export interface Memory {
   id: number;
@@ -2349,15 +1648,9 @@ export interface Memory {
   updated_at: string;
 }
 
-export interface MemoryCreate {
-  kind: string;
-  content: string;
-}
+export type MemoryCreate = Api.MemoryCreate;
 
-export interface MemoryUpdate {
-  kind?: string;
-  content?: string;
-}
+export type MemoryUpdate = Api.MemoryUpdate;
 
 export type WorkspaceKind = "git" | "local";
 
@@ -2377,14 +1670,7 @@ export interface Workspace {
   updated_at: string;
 }
 
-export interface WorkspaceCreate {
-  name: string;
-  kind?: WorkspaceKind;
-  repo_url?: string | null;
-  branch?: string;
-  subdir?: string | null;
-  slug?: string | null;
-}
+export type WorkspaceCreate = Api.WorkspaceCreate;
 
 export interface WorkspaceFileNode {
   path: string;
@@ -2397,226 +1683,63 @@ export interface WorkspaceFileContent {
   content: string;
 }
 
-export interface GitFileStatus {
-  /** Relative to the repository root. */
-  path: string;
-  /** Two-letter porcelain code, e.g. " M", "??", "A ", "UU". */
-  code: string;
-  /** A rename's previous path. */
-  orig_path?: string | null;
-  /** Unmerged: git stopped on a conflict in this file. */
-  conflicted?: boolean;
-  /** Relative to the workspace's subdir, as the file tree lists it; null outside it. */
-  browse_path?: string | null;
-}
+export type GitFileStatus = Api.GitFileStatus;
 
-export interface GitStatus {
-  /** The checked-out branch; "HEAD" when detached. */
-  branch: string;
-  /** The commit checked out; null before the first commit. */
-  head?: string | null;
-  detached?: boolean;
-  /** e.g. "origin/main"; null while the branch isn't published. */
-  upstream?: string | null;
-  ahead: number | null;
-  behind: number | null;
-  dirty: boolean;
-  /** A merge stopped on conflicts. */
-  merging?: boolean;
-  files: GitFileStatus[];
-}
+export type GitStatus = Api.GitStatus;
 
-export interface GitActionResult {
-  ok: boolean;
-  detail: string;
-  needs_manual_merge: boolean;
-  local_path: string | null;
-  status: GitStatus | null;
-}
+export type GitActionResult = Api.GitActionResult;
 
-export interface FileDiff {
-  path: string;
-  diff: string;
-  binary: boolean;
-}
+export type FileDiff = Api.FileDiff;
 
 /** A conflicted file's three versions (null where that side has none). */
-export interface GitConflict {
-  path: string;
-  kind:
-    | "both_modified"
-    | "both_added"
-    | "deleted_by_us"
-    | "deleted_by_them"
-    | "added_by_us"
-    | "added_by_them"
-    | "both_deleted";
-  base: string | null;
-  ours: string | null;
-  theirs: string | null;
-  has_base: boolean;
-  has_ours: boolean;
-  has_theirs: boolean;
-  binary: boolean;
-  too_large: boolean;
-}
+export type GitConflict = Api.GitConflict;
 
-export interface GitBranch {
-  name: string;
-  /** Its upstream on origin; null while unpublished. */
-  upstream: string | null;
-}
+export type GitBranch = Api.GitBranch;
 
-export interface GitBranches {
-  /** The checked-out branch; null on a detached HEAD. */
-  current: string | null;
-  local: GitBranch[];
-  /** Branch names on origin (local or not). */
-  remote: string[];
-  /** Why the remote's branches couldn't be listed. */
-  remote_error: string | null;
-}
+export type GitBranches = Api.GitBranches;
 
-export interface GitCommit {
-  sha: string;
-  short_sha: string;
-  author: string;
-  /** Author date, ISO 8601. */
-  date: string;
-  subject: string;
-  /** More than one: a merge. */
-  parents: string[];
-}
+export type GitCommit = Api.GitCommit;
 
-export interface GitLog {
-  commits: GitCommit[];
-  has_more: boolean;
-}
+export type GitLog = Api.GitLog;
 
-export interface GitCommitFile {
-  /** A, M, D, R (renamed), C (copied), T (type changed). */
-  status: string;
-  path: string;
-  orig_path: string | null;
-}
+export type GitCommitFile = Api.GitCommitFile;
 
-export interface GitCommitDetail extends GitCommit {
-  /** The message after its subject line. */
-  body: string;
-  /** What `files` are compared with: the first parent; null for a root commit. */
-  parent: string | null;
-  files: GitCommitFile[];
-}
+export type GitCommitDetail = Api.GitCommitDetail;
 
 /** Both sides of one file's diff; null where the file doesn't exist. */
-export interface FileVersions {
-  path: string;
-  original: string | null;
-  modified: string | null;
-  binary: boolean;
-  /** Over 2 MB: no content is sent. */
-  too_large: boolean;
-}
+export type FileVersions = Api.FileVersions;
 
-export interface LocalPath {
-  path: string;
-}
+export type LocalPath = Api.LocalPath;
 
 /** State of the on-demand draw.io webapp install (schemas/drawio.py). */
-export interface DrawioStatus {
-  version: string;
-  installed: boolean;
-  step: "idle" | "download" | "extract";
-  downloaded_bytes: number;
-  total_bytes: number;
-  error: string | null;
-  path: string;
-}
+export type DrawioStatus = Api.DrawioStatus;
 
-export interface UsageBucket {
-  period: string;
-  prompt_tokens: number;
-  completion_tokens: number;
-  total_tokens: number;
-  message_count: number;
-}
+export type UsageBucket = Api.UsageBucket;
 
-export interface UsageStats {
-  totals: UsageBucket;
-  weekly: UsageBucket[];
-  monthly: UsageBucket[];
-  yearly: UsageBucket[];
-}
+export type UsageStats = Api.UsageStats;
 
-export interface TableStat {
-  name: string;
-  row_count: number;
-  size_bytes: number | null;
-}
+export type TableStat = Api.TableStat;
 
-export interface DatabaseStats {
-  engine: string;
-  size_bytes: number | null;
-  path: string | null;
-  tables: TableStat[];
-}
+export type DatabaseStats = Api.DatabaseStats;
 
-export interface BlobStats {
-  count: number;
-  size_bytes: number;
-  path: string | null;
-}
+export type BlobStats = Api.BlobStats;
 
-export interface IssueStats {
-  configured: boolean;
-  repo: string | null;
-  open: number | null;
-  closed: number | null;
-  error: string | null;
-}
+export type IssueStats = Api.IssueStats;
 
-export interface EntityCounts {
-  topics: number;
-  chats: number;
-  agents: number;
-  workspaces: number;
-}
+export type EntityCounts = Api.EntityCounts;
 
-export interface SystemStats {
-  database: DatabaseStats;
-  blobs: BlobStats;
-  issues: IssueStats;
-  entities: EntityCounts;
-}
+export type SystemStats = Api.SystemStats;
 
-export interface CleanupTargetStat {
-  key: string;
-  label: string;
-  description: string;
-  setting: string;
-  table: string;
-  rows: number;
-  bytes: number;
-}
+export type CleanupTargetStat = Api.CleanupTargetStat;
 
 export interface CleanupPreview {
   targets: CleanupTargetStat[];
   total_bytes: number;
 }
 
-export interface CleanupRunResult {
-  key: string;
-  rows: number;
-  bytes: number;
-}
+export type CleanupRunResult = Api.CleanupRunResult;
 
-export interface CompactResult {
-  supported: boolean;
-  size_before: number | null;
-  size_after: number | null;
-  reclaimed_bytes: number;
-  error: string | null;
-}
+export type CompactResult = Api.CompactResult;
 
 /** A workspace file attached to a topic or chat. */
 export interface ConversationArtifact {
@@ -2648,54 +1771,25 @@ export interface WorkspaceDiscussion {
 }
 
 /** Where a turn is held from: the workspace (and file) being viewed. */
-export interface WorkspaceTurnContext {
-  workspace_id: number;
-  path?: string | null;
-}
+export type WorkspaceTurnContext = Api.WorkspaceTurnContext;
 
 // ---- Live meeting assistant --------------------------------------------
 export type MeetingStatus = "active" | "ended";
 
-export interface AgendaAttendee {
-  name: string;
-  email: string | null;
-}
+export type AgendaAttendee = Api.AgendaAttendee;
 
-export interface AgendaEvent {
-  id: string | null;
-  subject: string;
-  start: string | null;
-  end: string | null;
-  organizer: string | null;
-  attendees: AgendaAttendee[];
-  is_online: boolean;
-  // Teams join URL — used to locate the meeting transcript for summaries.
-  join_url?: string | null;
-  body_preview: string | null;
-}
+export type AgendaEvent = Api.AgendaEvent;
 
-export interface AgendaResponse {
-  available: boolean;
-  events: AgendaEvent[];
-  detail: string | null;
-}
+export type AgendaResponse = Api.AgendaResponse;
 
 /**
  * One Teams transcription session of a linked meeting. Teams produces one per
  * start/stop of transcription ("Partie 1", "Partie 2", …), so a meeting that
  * got cut has several; `ended_at` is absent on older transcripts.
  */
-export interface MeetingTranscriptPart {
-  id: string;
-  created_at: string | null;
-  ended_at: string | null;
-}
+export type MeetingTranscriptPart = Api.MeetingTranscriptPart;
 
-export interface MeetingTranscriptListResult {
-  available: boolean;
-  parts: MeetingTranscriptPart[];
-  detail: string | null;
-}
+export type MeetingTranscriptListResult = Api.MeetingTranscriptListResult;
 
 /** How to write a recap; an omitted field falls back to the one last used. */
 export interface MeetingSummaryOptions {
@@ -2705,17 +1799,9 @@ export interface MeetingSummaryOptions {
   language?: string;
 }
 
-export interface MeetingSummaryResult {
-  summary: string;
-  model: string;
-  /** The template and language it was written with (`""` = the session's). */
-  template: string;
-  language: string;
-}
+export type MeetingSummaryResult = Api.MeetingSummaryResult;
 
-export interface MeetingTranscriptSummaryResult extends MeetingSummaryResult {
-  transcript_ids: string[];
-}
+export type MeetingTranscriptSummaryResult = Api.MeetingTranscriptSummaryResult;
 
 export interface SummaryTemplate {
   id: string;
@@ -2728,36 +1814,11 @@ export interface SummaryTemplate {
   overrides_builtin: boolean;
 }
 
-export interface SummaryLanguage {
-  code: string;
-  name: string;
-}
+export type SummaryLanguage = Api.SummaryLanguage;
 
-export interface SummaryTemplateCatalog {
-  templates: SummaryTemplate[];
-  /** Template files left out because of errors (or ids used twice). */
-  problems: DefinitionIssue[];
-  languages: SummaryLanguage[];
-  /** What the last recap was written with: the picker starts there. */
-  last_template: string;
-  last_language: string;
-  /** The definitions folder, and the workspace showing it in Files (if any). */
-  folder: string;
-  workspace: DefinitionsWorkspaceRef | null;
-}
+export type SummaryTemplateCatalog = Api.SummaryTemplateCatalog;
 
-export interface SummaryTemplateFileResult {
-  /** The template the file declares: a new id for a duplicate. */
-  id: string;
-  /** Relative to the definitions folder. */
-  path: string;
-  /** False when the template already had its file. */
-  created: boolean;
-  folder: string;
-  workspace: DefinitionsWorkspaceRef | null;
-  /** The same file, relative to the workspace's Files root. */
-  workspace_path: string | null;
-}
+export type SummaryTemplateFileResult = Api.SummaryTemplateFileResult;
 
 export interface ExternalMeeting {
   id?: string | null;
@@ -2824,23 +1885,9 @@ export interface MeetingSession {
   updated_at: string;
 }
 
-export interface MeetingSessionCreate {
-  title?: string | null;
-  language?: string | null;
-  topic_id?: number | null;
-  slug?: string | null;
-}
+export type MeetingSessionCreate = Api.MeetingSessionCreate;
 
-export interface MeetingSessionUpdate {
-  title?: string | null;
-  language?: string | null;
-  topic_id?: number | null;
-  role?: string | null;
-  status?: MeetingStatus;
-  notes?: string | null;
-  summary?: string | null;
-  features?: string[];
-}
+export type MeetingSessionUpdate = Api.MeetingSessionUpdate;
 
 export interface MeetingAttachment {
   id: number;
@@ -2859,15 +1906,9 @@ export interface MeetingSegment {
   created_at: string;
 }
 
-export interface MeetingSegmentCreate {
-  text: string;
-  speaker_label?: string | null;
-  offset_ms?: number | null;
-}
+export type MeetingSegmentCreate = Api.MeetingSegmentCreate;
 
-export interface MeetingSegmentUpdate {
-  text: string;
-}
+export type MeetingSegmentUpdate = Api.MeetingSegmentUpdate;
 
 export interface MeetingInsight {
   id: number;
@@ -2893,104 +1934,31 @@ export type SearchField =
   | "notes"
   | "summary";
 
-export interface SearchResult {
-  section: SearchSection;
-  field: SearchField;
-  is_title: boolean;
-  entity_id: number;
-  // Navigation handle: a topic/chat/live slug or an agent's public id.
-  ref: string | null;
-  title: string;
-  snippet: string;
-  role: string | null;
-  updated_at: string | null;
-}
+export type SearchResult = Api.SearchResult;
 
-export interface SearchResponse {
-  query: string;
-  results: SearchResult[];
-}
+export type SearchResponse = Api.SearchResponse;
 
 // Precursor IQ — mirrors precursor/backend/schemas/iq.py.
 export type IQSection = SearchSection | "memory";
 
 export type IQField = SearchField | "brief" | "attachment" | "memory";
 
-export interface IQHit {
-  // Citation number: the answer cites this hit as [^id].
-  id: number;
-  section: IQSection;
-  field: IQField;
-  source_kind: string;
-  entity_id: number;
-  ref: string | null;
-  // Topics only: root-first slug path.
-  path: string | null;
-  title: string;
-  snippet: string;
-  excerpt: string;
-  role: string | null;
-  is_title: boolean;
-  score: number;
-  updated_at: string | null;
-  url: string | null;
-}
+export type IQHit = Api.IQHit;
 
-export interface IQRetrieveResponse {
-  query: string;
-  hits: IQHit[];
-  markdown: string;
-  lexical_backend: string;
-  semantic: boolean;
-  pending: number;
-}
+export type IQRetrieveResponse = Api.IQRetrieveResponse;
 
-export interface IQAskResponse {
-  question: string;
-  answer: string;
-  model: string | null;
-  citations: IQHit[];
-  sources: IQHit[];
-}
+export type IQAskResponse = Api.IQAskResponse;
 
-export interface IQStatus {
-  enabled: boolean;
-  chunks: number;
-  pending: number;
-  sections: Record<string, number>;
-  lexical_backend: string;
-  embeddings_enabled: boolean;
-  embeddings_available: boolean;
-  embedding_model: string;
-  embedding_provider: string;
-  embedded: number;
-  reconciled_at: string | null;
-}
+export type IQStatus = Api.IQStatus;
 
-export interface IQEmbeddingTestResponse {
-  ok: boolean;
-  provider: string;
-  model: string;
-  dimensions: number | null;
-  latency_ms: number | null;
-  detail: string | null;
-}
+export type IQEmbeddingTestResponse = Api.IQEmbeddingTestResponse;
 
 // ── Refine with AI ──────────────────────────────────────────────────────────
 // Mirrors precursor/backend/schemas/refine.py
 
-export interface RefineRequest {
-  text: string;
-  // Context hint that tailors the rewrite (e.g. "system_prompt", "note").
-  kind?: string;
-  // Optional freeform steer ("make it shorter", "more formal").
-  instruction?: string;
-}
+export type RefineRequest = Api.RefineRequest;
 
-export interface RefineResponse {
-  text: string;
-  model: string;
-}
+export type RefineResponse = Api.RefineResponse;
 
 // ── Step by step ────────────────────────────────────────────────────────────
 // Mirrors precursor/backend/schemas/step_plan.py
@@ -3013,15 +1981,7 @@ export interface StepPlanAmendmentTraceData {
   prompt: string;
 }
 
-export interface StepPlanAmendment {
-  revision: number;
-  request: string;
-  output_instructions: string | null;
-  added_step_ids: number[];
-  base_final_version: number;
-  created_at: string;
-  author: "user" | "model";
-}
+export type StepPlanAmendment = Api.StepPlanAmendment;
 
 export type StepPlanStatus = "drafting" | "active" | "consolidating" | "done" | "cancelled";
 
@@ -3041,35 +2001,10 @@ export type AutomationMode = "manual" | "assisted" | "auto";
 export type AutoState = "idle" | "running" | "paused";
 
 /** One fact the app measured itself for an assessment (a file exists, a slide count). */
-export interface AssessmentCheck {
-  label: string;
-  ok: boolean;
-}
+export type AssessmentCheck = Api.AssessmentCheck;
 
 /** A model's self-assessment of a result. Not a calibrated probability. */
-export interface Assessment {
-  /** 0-100: how well the result seems to answer what it was asked. */
-  score: number;
-  summary: string;
-  covered: string[];
-  evidence: string[];
-  assumptions: string[];
-  /** Model-reported non-blocking issues, not unmet requirements. */
-  observations: string[];
-  gaps: string[];
-  /** Incompatible statements within the result or against an applicable requirement. */
-  contradictions: string[];
-  /**
-   * Plan level only: what was read. "steps" is readiness of the plan before
-   * any final output exists (it does not assess a final deliverable); "final"
-   * is the final output's text against the ask.
-   */
-  scope?: "steps" | "final";
-  /** Measured by the app for a file deliverable; a failed one caps the score. */
-  checks?: AssessmentCheck[];
-  /** What the assessor opened with its read-only tools (a file, a tool's output). */
-  inspected?: string[];
-}
+export type Assessment = Api.Assessment;
 
 export interface Step {
   id: number;
@@ -3096,12 +2031,7 @@ export interface Step {
 }
 
 /** One line of the plan's activity feed (a step trace written by the run). */
-export interface ActivityNote {
-  id: number;
-  text: string;
-  step_id: number | null;
-  created_at: string;
-}
+export type ActivityNote = Api.ActivityNote;
 
 export interface StepPlan {
   id: number;
@@ -3144,72 +2074,19 @@ export interface StepPlan {
   updated_at: string;
 }
 
-export interface StepPlanItem {
-  id: number;
-  title: string;
-  status: StepPlanStatus;
-  archived_at: string | null;
-  source_topic_id: number | null;
-  source_topic_title: string | null;
-  source_chat_id: number | null;
-  source_chat_title: string | null;
-  step_count: number;
-  validated_count: number;
-  final_stale: boolean;
-  created_at: string;
-  updated_at: string;
-}
+export type StepPlanItem = Api.StepPlanItem;
 
-export interface StepPlanCreate {
-  title?: string | null;
-  topic_id?: number | null;
-  chat_id?: number | null;
-  message_id?: number | null;
-  source_text?: string | null;
-  role?: string | null;
-  /** Ask the model for the initial step list (slow). Defaults to true server-side. */
-  propose?: boolean;
-  automation_mode?: AutomationMode;
-  llm_selection?: ConversationLLMSelection | null;
-}
+export type StepPlanCreate = Api.StepPlanCreate;
 
-export interface StepPlanUpdate {
-  title?: string;
-  automation_mode?: AutomationMode;
-  source_text?: string;
-  role?: string | null;
-  output_instructions?: string | null;
-  /** Link the plan to a topic, or `null` to unlink it. */
-  source_topic_id?: number | null;
-  source_chat_id?: number | null;
-  llm_selection?: ConversationLLMSelection | null;
-}
+export type StepPlanUpdate = Api.StepPlanUpdate;
 
-export interface StepPlanAmendRequest {
-  request: string;
-  steps: StepCreate[];
-  expected_state_token: string;
-  output_instructions?: string | null;
-  topic_id?: number | null;
-  chat_id?: number | null;
-}
+export type StepPlanAmendRequest = Api.StepPlanAmendRequest;
 
-export interface StepCreate {
-  title: string;
-  instruction?: string;
-  parent_step_id?: number | null;
-  position?: number | null;
-}
+export type StepCreate = Api.StepCreate;
 
-export interface StepUpdate {
-  title?: string;
-  instruction?: string;
-}
+export type StepUpdate = Api.StepUpdate;
 
-export interface StepMove {
-  parent_step_id: number | null;
-  position: number;
-}
+export type StepMove = Api.StepMove;
 
 export interface StepArtifactVersion {
   version: number;
@@ -3227,16 +2104,8 @@ export interface FinalVersion extends StepArtifactVersion {
 /** What a model draft turned into: saved as a version, kept in the discussion, or paused. */
 export type DraftOutcome = "published" | "discussion" | "awaiting_approval";
 
-export interface ArtifactDraftResult {
-  step: Step;
-  outcome: DraftOutcome;
-}
+export type ArtifactDraftResult = Api.ArtifactDraftResult;
 
-export interface FinalDraftResult {
-  plan: StepPlan;
-  outcome: DraftOutcome;
-}
+export type FinalDraftResult = Api.FinalDraftResult;
 
-export interface StepPlanReview {
-  text: string;
-}
+export type StepPlanReview = Api.StepPlanReview;

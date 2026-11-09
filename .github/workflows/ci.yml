@@ -24,6 +24,47 @@ jobs:
       - name: Check lockfiles
         run: python3 scripts/check_lockfiles.py
 
+  # Complexity, file-size and duplication debt may shrink, never grow. Runs on
+  # every PR (no backend scope gate): it covers backend and frontend at once.
+  # See scripts/quality_ratchet.py and CONTRIBUTING.md > Quality ratchet.
+  quality:
+    name: Quality ratchet (complexity · size · duplication · API types)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      # The full environment: the untyped-responses check and the API-types
+      # drift check build the app's OpenAPI schema.
+      - name: Sync dependencies
+        run: uv sync --locked
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # oxlint + jscpd, pinned in frontend/package.json.
+      - name: Install frontend tools
+        run: npm ci
+        working-directory: frontend
+
+      - name: Quality ratchet
+        run: uv run --no-sync python scripts/quality_ratchet.py --strict --require-tools
+
+      # frontend/src/lib/generated/apiTypes.ts must match the backend schemas.
+      - name: API types up to date
+        run: uv run --no-sync python scripts/gen_api_types.py --check
+
   backend:
     name: Backend (lint · types · tests)
     runs-on: ubuntu-latest
@@ -134,7 +175,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
           cache-dependency-path: |
             frontend/package-lock.json
@@ -339,7 +380,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
@@ -348,6 +389,9 @@ jobs:
 
       - name: Typecheck
         run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
 
       - name: Build
         run: npm run build
@@ -364,7 +408,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
           cache-dependency-path: website/package-lock.json
 

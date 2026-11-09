@@ -30,11 +30,4 @@ class ReminderTicker(BackgroundPoll):
             await fire_due(session)
 
 
-_ticker: ReminderTicker | None = None
-
-
-def get_reminder_ticker() -> ReminderTicker:
-    global _ticker
-    if _ticker is None:
-        _ticker = ReminderTicker()
-    return _ticker
+get_reminder_ticker = ReminderTicker.instance

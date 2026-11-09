@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import delete, select, update
@@ -11,7 +9,6 @@ from sqlalchemy import delete, select, update
 from precursor.backend.db import SessionLocal, init_db
 from precursor.backend.main import create_app
 from precursor.backend.models import (
-    AppSetting,
     Chat,
     IQChunk,
     IQDirty,
@@ -27,21 +24,12 @@ from precursor.backend.services.iq.ask import ask, cited_numbers
 from precursor.backend.services.iq.retrieve import query_tokens, retrieve
 from precursor.backend.services.iq.sources import CHUNK_CHARS, chunk_text
 from precursor.backend.services.mcp import precursor_server as ps
+from tests.support import set_app_setting
 
 
 @pytest.fixture(autouse=True)
 async def _migrated() -> None:
     await init_db()
-
-
-async def _set(key: str, value: object) -> None:
-    async with SessionLocal() as session:
-        row = await session.get(AppSetting, key)
-        if row is None:
-            session.add(AppSetting(key=key, value=json.dumps(value)))
-        else:
-            row.value = json.dumps(value)
-        await session.commit()
 
 
 async def _topic(title: str, *, description: str = "", messages: tuple[str, ...] = ()) -> int:
@@ -257,7 +245,7 @@ async def test_gates_filter_by_exposure_section() -> None:
 
 async def test_embeddings_add_semantic_candidates() -> None:
     tid = await _topic("Xylophonic", messages=("The xylophonics clustering jobs finished",))
-    await _set("iq_embeddings_enabled", True)
+    await set_app_setting("iq_embeddings_enabled", True)
     try:
         await _indexed()
         for _ in range(50):
@@ -279,7 +267,7 @@ async def test_embeddings_add_semantic_candidates() -> None:
         assert status["embeddings_enabled"] is True
         assert status["embedded"] > 0
     finally:
-        await _set("iq_embeddings_enabled", False)
+        await set_app_setting("iq_embeddings_enabled", False)
 
 
 # -- ask --------------------------------------------------------------------
@@ -301,41 +289,41 @@ async def test_ask_grounds_on_retrieved_sources() -> None:
 
 async def test_ask_serves_the_answer_model_from_its_own_provider() -> None:
     await _topic("Narwhal rollout", messages=("narwhal rollout starts monday",))
-    await _set("iq_ask_provider", "mock")
-    await _set("iq_ask_model", "my-answer-model")
+    await set_app_setting("iq_ask_provider", "mock")
+    await set_app_setting("iq_ask_model", "my-answer-model")
     try:
         result = await ask("When does the narwhal rollout start?")
         assert result.sources
         assert result.answer
     finally:
-        await _set("iq_ask_provider", "")
-        await _set("iq_ask_model", "")
+        await set_app_setting("iq_ask_provider", "")
+        await set_app_setting("iq_ask_model", "")
 
 
 # -- MCP --------------------------------------------------------------------
 
 
 async def test_mcp_retrieve_and_ask_are_gated() -> None:
-    await _set("mcp_expose", {})
+    await set_app_setting("mcp_expose", {})
     assert "not exposed" in (await ps.retrieve("anything"))["error"]
     assert "not exposed" in (await ps.ask("anything"))["error"]
 
 
 async def test_mcp_retrieve_only_returns_exposed_sections() -> None:
     tid = await _topic("Mcpwidget topic", messages=("mcpwidget private discussion",))
-    await _set("mcp_expose", {"iq": True, "topics": True})
+    await set_app_setting("mcp_expose", {"iq": True, "topics": True})
     try:
         out = await ps.retrieve("mcpwidget")
         assert out["count"] >= 1
         assert all(h["source_kind"] != "message" for h in out["hits"])
         assert any(h["entity_id"] == tid for h in out["hits"])
         assert out["markdown"].startswith("Precursor results")
-        await _set("mcp_expose", {"iq": True, "topics": True, "messages": True})
+        await set_app_setting("mcp_expose", {"iq": True, "topics": True, "messages": True})
         out = await ps.retrieve("mcpwidget private", sources=["messages"])
         assert out["hits"] and all(h["source_kind"] == "message" for h in out["hits"])
         assert "error" in await ps.retrieve("mcpwidget", sources=["nope"])
     finally:
-        await _set("mcp_expose", {})
+        await set_app_setting("mcp_expose", {})
 
 
 # -- REST -------------------------------------------------------------------

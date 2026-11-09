@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 import shutil
-import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
@@ -22,6 +21,7 @@ from sqlalchemy import select, text
 
 from precursor.backend.main import create_app
 from tests.definitions_support import mark_database, restore_database
+from tests.support import unique_id
 
 _created_workflows: list[int] = []
 
@@ -41,12 +41,6 @@ class _FakeManager:
 
     def enqueue(self, item) -> None:  # type: ignore[no-untyped-def]
         pass
-
-
-def _uid() -> str:
-    # Starts with a letter: an all-digit id written unquoted into YAML (as some
-    # tests do) would parse as a number and fail validation.
-    return "t" + uuid.uuid4().hex[:8]
 
 
 @pytest.fixture
@@ -115,7 +109,7 @@ async def test_a_linked_agent_is_declared_by_its_file(files_mode: Path) -> None:
     from precursor.backend.db import SessionLocal
     from precursor.backend.models import AgentSession
 
-    ident = _uid()
+    ident = unique_id()
     agent_id = await _agent_row(
         title="DB title", task_prompt="db prompt", model="db-model", export_id=ident
     )
@@ -173,7 +167,7 @@ async def test_database_mode_ignores_the_files(
     from precursor.backend.db import SessionLocal
     from precursor.backend.models import AgentSession
 
-    ident = _uid()
+    ident = unique_id()
     agent_id = await _agent_row(title="DB title", task_prompt="p", export_id=ident)
     _write(files_mode, "agents/a.agent.yaml", {"kind": "agent", "id": ident, "title": "File"})
     monkeypatch.setattr(get_settings(), "definitions_source", "database")
@@ -187,7 +181,7 @@ async def test_an_agent_without_a_file_keeps_its_database_values(files_mode: Pat
     from precursor.backend.models import AgentSession
     from precursor.backend.services.definitions import overlay
 
-    agent_id = await _agent_row(title="Only in DB", task_prompt="p", export_id=_uid())
+    agent_id = await _agent_row(title="Only in DB", task_prompt="p", export_id=unique_id())
     async with SessionLocal() as session:
         agent = await session.get(AgentSession, agent_id)
         assert agent is not None and agent.title == "Only in DB"
@@ -200,7 +194,7 @@ async def test_a_broken_file_is_not_projected_and_refuses_to_run(files_mode: Pat
     from precursor.backend.models import AgentSession
     from precursor.backend.services.definitions import overlay
 
-    ident = _uid()
+    ident = unique_id()
     agent_id = await _agent_row(title="DB", task_prompt="p", export_id=ident)
     _write(files_mode, "agents/a.agent.yaml", {"kind": "agent", "id": ident, "titel": "x"})
     async with SessionLocal() as session:
@@ -215,7 +209,7 @@ async def test_runs_record_the_file_they_ran_from(files_mode: Path) -> None:
     from precursor.backend.models import AgentSession
     from precursor.backend.services.definitions import overlay
 
-    ident = _uid()
+    ident = unique_id()
     agent_id = await _agent_row(title="t", task_prompt="p", export_id=ident)
     _write(files_mode, "agents/a.agent.yaml", {"kind": "agent", "id": ident, "title": "T"})
     async with SessionLocal() as session:
@@ -230,7 +224,7 @@ async def test_roles_come_from_role_files_and_match_by_name(files_mode: Path) ->
     from precursor.backend.models import AgentSession
     from precursor.backend.services import roles as roles_service
 
-    ident, name = _uid(), f"Persona {_uid()}"
+    ident, name = unique_id(), f"Persona {unique_id()}"
     agent_id = await _agent_row(title="t", task_prompt="p", export_id=ident)
     _write(
         files_mode,
@@ -246,7 +240,7 @@ async def test_roles_come_from_role_files_and_match_by_name(files_mode: Path) ->
     _write(
         files_mode,
         "roles/persona.role.yaml",
-        {"kind": "role", "id": _uid(), "name": name, "prompt": "Be a persona."},
+        {"kind": "role", "id": unique_id(), "name": name, "prompt": "Be a persona."},
     )
     async with SessionLocal() as session:
         assert await roles_service.resolve_role_prompt(session, name.upper()) == "Be a persona."
@@ -259,7 +253,7 @@ async def _exported_workflow() -> dict[str, Any]:
     from precursor.backend.models import AgentSession, Workflow, WorkflowStep
     from precursor.backend.services.definitions.exporter import export_definitions
 
-    tag = _uid()
+    tag = unique_id()
     async with SessionLocal() as session:
         writer = AgentSession(title=f"Writer {tag}", task_prompt="write", status="waiting")
         vessel = AgentSession(title="Check", task_prompt="judge it", status="waiting", inline=True)
@@ -333,7 +327,7 @@ async def test_step_rows_follow_the_file(files_mode: Path) -> None:
     with TestClient(create_app()) as client:
         client.get(f"/api/workflows/{wf['workflow']}")  # adopt
 
-        new_agent_id = _uid()
+        new_agent_id = unique_id()
         _write(
             files_mode,
             "agents/new-helper.agent.yaml",
@@ -523,7 +517,7 @@ async def test_export_cannot_overwrite_files_in_files_mode(files_mode: Path) -> 
 
 
 async def test_a_hand_written_agent_file_joins_the_roster(files_mode: Path) -> None:
-    ident = _uid()
+    ident = unique_id()
     _write(
         files_mode,
         "agents/team/scout.agent.yaml",
@@ -540,7 +534,7 @@ async def test_a_hand_written_agent_file_joins_the_roster(files_mode: Path) -> N
 
 
 async def test_moving_a_file_keeps_the_same_agent(files_mode: Path) -> None:
-    ident = _uid()
+    ident = unique_id()
     agent_id = await _agent_row(title="t", task_prompt="p", export_id=ident)
     doc = {"kind": "agent", "id": ident, "title": "Mover"}
     _write(files_mode, "agents/mover.agent.yaml", doc)
@@ -557,8 +551,8 @@ async def test_moving_a_file_keeps_the_same_agent(files_mode: Path) -> None:
 
 
 async def test_the_api_says_when_there_is_no_file_or_a_broken_one(files_mode: Path) -> None:
-    orphan = await _agent_row(title="No file", task_prompt="p", export_id=_uid())
-    ident = _uid()
+    orphan = await _agent_row(title="No file", task_prompt="p", export_id=unique_id())
+    ident = unique_id()
     broken = await _agent_row(title="Broken", task_prompt="p", export_id=ident)
     _write(files_mode, "agents/broken.agent.yaml", {"kind": "agent", "id": ident})
     with TestClient(create_app()) as client:
@@ -585,7 +579,7 @@ async def test_a_hand_written_workflow_file_becomes_a_runnable_workflow(files_mo
     from precursor.backend.models import Workflow
     from precursor.backend.services.definitions import anchors
 
-    ident, agent_ident = _uid(), _uid()
+    ident, agent_ident = unique_id(), unique_id()
     _write(
         files_mode,
         "agents/helper.agent.yaml",
@@ -642,7 +636,7 @@ def runtime_up(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 async def test_editing_a_linked_agent_writes_its_file(files_mode: Path, runtime_up: None) -> None:
-    ident = _uid()
+    ident = unique_id()
     agent_id = await _agent_row(title="t", task_prompt="p", export_id=ident)
     _write(
         files_mode,
@@ -676,7 +670,7 @@ async def test_editing_a_linked_agent_writes_its_file(files_mode: Path, runtime_
 
 
 async def test_editing_an_agent_without_a_file_creates_it(files_mode: Path) -> None:
-    agent_id = await _agent_row(title=f"Fresh {_uid()}", task_prompt="p", chat_id=None)
+    agent_id = await _agent_row(title=f"Fresh {unique_id()}", task_prompt="p", chat_id=None)
     with TestClient(create_app()) as client:
         resp = client.patch(f"/api/agents/{agent_id}", json={"max_steps": 7})
         assert resp.status_code == 200, resp.text
@@ -688,7 +682,7 @@ async def test_editing_an_agent_without_a_file_creates_it(files_mode: Path) -> N
 
 
 async def test_a_broken_file_is_never_overwritten_from_the_app(files_mode: Path) -> None:
-    ident = _uid()
+    ident = unique_id()
     agent_id = await _agent_row(title="t", task_prompt="p", export_id=ident)
     broken = f"kind: agent\nid: {ident}\ntitel: half-typed\n"
     (files_mode / "agents").mkdir(parents=True, exist_ok=True)
@@ -746,7 +740,7 @@ async def test_workflow_settings_and_steps_saved_in_the_app_reach_the_file(
 
 async def test_deleting_in_the_app_removes_the_file(files_mode: Path) -> None:
     wf = await _exported_workflow()
-    agent_ident = _uid()
+    agent_ident = unique_id()
     agent_id = await _agent_row(title="Doomed", task_prompt="p", export_id=agent_ident)
     _write(
         files_mode, "agents/doomed.agent.yaml", {"kind": "agent", "id": agent_ident, "title": "D"}
@@ -763,7 +757,7 @@ async def test_deleting_in_the_app_removes_the_file(files_mode: Path) -> None:
 
 
 async def test_creating_a_workflow_in_the_app_writes_a_file(files_mode: Path) -> None:
-    name = f"Made in app {_uid()}"
+    name = f"Made in app {unique_id()}"
     with TestClient(create_app()) as client:
         resp = client.post(
             "/api/workflows",
@@ -790,7 +784,7 @@ async def _exported_agent(**columns: Any) -> dict[str, Any]:
     from precursor.backend.db import SessionLocal
     from precursor.backend.services.definitions.exporter import export_definitions
 
-    agent_id = await _agent_row(title=f"Trusted {_uid()}", task_prompt="p", **columns)
+    agent_id = await _agent_row(title=f"Trusted {unique_id()}", task_prompt="p", **columns)
     async with SessionLocal() as session:
         result = await export_definitions(session, Path(get_settings().definitions_dir))
     [entry] = [e for e in result.written if e.kind == "agent" and e.source_id == agent_id]
@@ -845,7 +839,7 @@ async def test_a_held_agent_cannot_start(files_mode: Path) -> None:
 
 
 async def test_a_file_from_elsewhere_needs_acceptance_once(files_mode: Path) -> None:
-    ident = _uid()
+    ident = unique_id()
     _write(
         files_mode,
         "agents/visitor.agent.yaml",
@@ -864,7 +858,7 @@ async def test_a_file_from_elsewhere_needs_acceptance_once(files_mode: Path) -> 
 
 
 async def test_a_legacy_link_is_compared_with_the_database_values(files_mode: Path) -> None:
-    ident = _uid()
+    ident = unique_id()
     agent_id = await _agent_row(
         title="Legacy", task_prompt="p", export_id=ident, approval_policy="manual"
     )
@@ -946,7 +940,7 @@ async def _workspace_holding(files_mode: Path, monkeypatch: pytest.MonkeyPatch) 
     from precursor.backend.models import Workspace
     from precursor.backend.services.definitions import overlay
 
-    slug = f"defs-{_uid()}"
+    slug = f"defs-{unique_id()}"
     async with SessionLocal() as session:
         ws = Workspace(name="Definitions", slug=slug, kind="folder")
         session.add(ws)
@@ -963,13 +957,15 @@ async def test_files_shows_the_check_for_a_definition_file(
     files_mode: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     ws_id, root = await _workspace_holding(files_mode, monkeypatch)
-    _write(root / "defs", "agents/ok.agent.yaml", {"kind": "agent", "id": _uid(), "title": "Ok"})
+    _write(
+        root / "defs", "agents/ok.agent.yaml", {"kind": "agent", "id": unique_id(), "title": "Ok"}
+    )
     _write(
         root / "defs",
         "workflows/w.workflow.yaml",
         {
             "kind": "workflow",
-            "id": _uid(),
+            "id": unique_id(),
             "name": "W",
             "steps": [{"key": "a", "agent": "agents/missing.agent.yaml"}],
         },
@@ -1010,7 +1006,7 @@ async def test_saving_a_definition_in_files_applies_at_once(
     files_mode: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     ws_id, root = await _workspace_holding(files_mode, monkeypatch)
-    ident = _uid()
+    ident = unique_id()
     agent_id = await _agent_row(title="t", task_prompt="p", export_id=ident)
     _write(root / "defs", "agents/a.agent.yaml", {"kind": "agent", "id": ident, "title": "One"})
     with TestClient(create_app()) as client:
@@ -1036,7 +1032,7 @@ async def test_a_pull_applies_new_files_at_once(
     _ws_id, root = await _workspace_holding(files_mode, monkeypatch)
     assert _holds_definitions(root)
     assert not _holds_definitions(root.parent / "elsewhere")
-    ident = _uid()
+    ident = unique_id()
     _write(root / "defs", "agents/pulled.agent.yaml", {"kind": "agent", "id": ident, "title": "P"})
     async with SessionLocal() as session:
         await anchors.refresh(session)  # what git_pull runs after a successful pull
@@ -1050,7 +1046,7 @@ async def test_a_pull_applies_new_files_at_once(
 async def test_the_assistant_cannot_write_definitions_in_a_workspace(
     files_mode: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from precursor.backend.services.mcp import precursor_server as srv
+    from precursor.backend.services.mcp.precursor_tools import workspaces as srv
 
     async def _open(_section: str) -> None:
         return None
@@ -1084,7 +1080,7 @@ async def test_two_lists_racing_to_adopt_a_file_do_not_fail(files_mode: Path) ->
     from precursor.backend.models import AgentSession
     from precursor.backend.services.definitions import anchors
 
-    ident = _uid()
+    ident = unique_id()
     _write(files_mode, "agents/racy.agent.yaml", {"kind": "agent", "id": ident, "title": "Racy"})
 
     async def adopt() -> bool:

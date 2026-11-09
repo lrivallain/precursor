@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { Emitter } from "./externalStore";
 
 /**
  * Expanded-sidebar section navigation style. "rail" shows an always-visible
@@ -16,12 +17,8 @@ function readInitial(): NavStyle {
 // Module-level store so every consumer (the sidebar toggle, the home rail)
 // reflects the same choice live within a tab — not just after a remount.
 let current: NavStyle = readInitial();
-const listeners = new Set<() => void>();
-
-function subscribe(cb: () => void): () => void {
-  listeners.add(cb);
-  return () => listeners.delete(cb);
-}
+const changes = new Emitter();
+const { subscribe } = changes;
 
 function getSnapshot(): NavStyle {
   return current;
@@ -37,7 +34,7 @@ export function setSidebarNavStyle(next: NavStyle): void {
       /* ignore quota / privacy-mode failures */
     }
   }
-  listeners.forEach((cb) => cb());
+  changes.emit();
 }
 
 /** Read the persisted nav style plus a setter; stays in sync across instances. */

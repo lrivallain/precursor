@@ -79,11 +79,4 @@ class IQTicker(BackgroundPoll):
             self._busy = False
 
 
-_ticker: IQTicker | None = None
-
-
-def get_iq_ticker() -> IQTicker:
-    global _ticker
-    if _ticker is None:
-        _ticker = IQTicker()
-    return _ticker
+get_iq_ticker = IQTicker.instance

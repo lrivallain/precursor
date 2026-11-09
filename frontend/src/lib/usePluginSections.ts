@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import type { SidebarMode } from "../components/Sidebar";
-import { pluginSettingsTab } from "../components/SettingsPanel";
+import { pluginSettingsTab } from "../components/settings/panelConfig";
 import type { SectionHost, SectionPlugin } from "./plugins";
 import {
   isPluginMode,

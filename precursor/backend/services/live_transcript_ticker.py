@@ -27,11 +27,4 @@ class LiveTranscriptTicker(BackgroundPoll):
         await prune_expired_live_transcripts()
 
 
-_ticker: LiveTranscriptTicker | None = None
-
-
-def get_live_transcript_ticker() -> LiveTranscriptTicker:
-    global _ticker
-    if _ticker is None:
-        _ticker = LiveTranscriptTicker()
-    return _ticker
+get_live_transcript_ticker = LiveTranscriptTicker.instance

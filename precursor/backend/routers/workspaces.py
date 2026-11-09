@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.config import get_settings
 from precursor.backend.db import get_session
+from precursor.backend.lookups import get_or_404
 from precursor.backend.models import Workspace
 from precursor.backend.schemas import (
     BranchRequest,
@@ -77,9 +78,7 @@ async def get_workspace_by_slug(slug: str, session: AsyncSession) -> Workspace |
 
 
 async def _get_workspace(workspace_id: int, session: AsyncSession) -> Workspace:
-    ws = await session.get(Workspace, workspace_id)
-    if ws is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Workspace not found")
+    ws = await get_or_404(session, Workspace, workspace_id, "Workspace not found")
     return ws
 
 

@@ -66,7 +66,7 @@ def test_frontend_and_prose_skip(path: str) -> None:
         "precursor/backend/skills/README.md",
         "frontend/package.json",
         "frontend/package-lock.json",
-        "frontend/src/components/SettingsPanel.tsx",
+        "frontend/src/components/settings/SystemTab.tsx",
         "something-new/at-the-root.txt",
     ],
 )

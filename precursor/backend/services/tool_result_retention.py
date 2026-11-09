@@ -16,19 +16,13 @@ dropped outright rather than replaced, and the reply simply loses its collapsed
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
-from contextlib import AbstractAsyncContextManager
-from datetime import UTC, datetime, timedelta
-from typing import Any, cast
 
-from sqlalchemy import func, select, update
-from sqlalchemy.engine import CursorResult
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.sql import ColumnElement
+from sqlalchemy import func
 
 from precursor.backend.db import SessionLocal
 from precursor.backend.models import Message, MessageRole
 from precursor.backend.services.app_settings import resolve_tool_result_retention_days
+from precursor.backend.services.retention_sweep import SessionFactory, cutoff, replace_column
 from precursor.backend.services.sweep_result import SweepResult
 
 logger = logging.getLogger(__name__)
@@ -42,22 +36,8 @@ PRUNED_PLACEHOLDER = "[Tool result pruned to save space]"
 _MIN_CONTENT_LEN = 200
 
 
-async def _measure(
-    session: AsyncSession, column: Any, criteria: tuple[ColumnElement[bool], ...]
-) -> tuple[int, int]:
-    """Rows matching ``criteria`` and the total length of ``column`` across them."""
-    measured = (
-        await session.execute(
-            select(func.count(Message.id), func.coalesce(func.sum(func.length(column)), 0)).where(
-                *criteria
-            )
-        )
-    ).one()
-    return int(measured[0] or 0), int(measured[1] or 0)
-
-
 async def prune_expired_tool_results(
-    session_factory: Callable[[], AbstractAsyncContextManager[AsyncSession]] = SessionLocal,
+    session_factory: SessionFactory = SessionLocal,
     *,
     dry_run: bool = False,
 ) -> SweepResult:
@@ -73,45 +53,35 @@ async def prune_expired_tool_results(
         retention_days = await resolve_tool_result_retention_days(session)
         if retention_days <= 0:
             return SweepResult()
-        cutoff = datetime.now(UTC) - timedelta(days=retention_days)
-        tool_criteria = (
-            Message.role == MessageRole.TOOL,
-            Message.created_at < cutoff,
-            func.length(Message.content) > _MIN_CONTENT_LEN,
-            Message.content != PRUNED_PLACEHOLDER,
+        expired = Message.created_at < cutoff(retention_days)
+        tool = await replace_column(
+            session,
+            Message.content,
+            (
+                Message.role == MessageRole.TOOL,
+                expired,
+                func.length(Message.content) > _MIN_CONTENT_LEN,
+                Message.content != PRUNED_PLACEHOLDER,
+            ),
+            replacement=PRUNED_PLACEHOLDER,
+            dry_run=dry_run,
         )
-        thinking_criteria = (
-            Message.reasoning.is_not(None),
-            Message.created_at < cutoff,
+        thinking = await replace_column(
+            session,
+            Message.reasoning,
+            (Message.reasoning.is_not(None), expired),
+            replacement=None,
+            dry_run=dry_run,
         )
-        tool_rows, tool_chars = await _measure(session, Message.content, tool_criteria)
-        thinking_rows, thinking_chars = await _measure(
-            session, Message.reasoning, thinking_criteria
-        )
-        # Each tool row keeps the placeholder, so only the excess is reclaimed.
-        tool_freed = max(tool_chars - tool_rows * len(PRUNED_PLACEHOLDER), 0)
-        freed = tool_freed + thinking_chars
-        if dry_run or not (tool_rows or thinking_rows):
-            return SweepResult(rows=tool_rows + thinking_rows, bytes=freed)
-
-        pruned = cleared = 0
-        if tool_rows:
-            result = await session.execute(
-                update(Message).where(*tool_criteria).values(content=PRUNED_PLACEHOLDER)
-            )
-            pruned = int(cast("CursorResult[Any]", result).rowcount or 0)
-        if thinking_rows:
-            result = await session.execute(
-                update(Message).where(*thinking_criteria).values(reasoning=None)
-            )
-            cleared = int(cast("CursorResult[Any]", result).rowcount or 0)
+        if dry_run:
+            return tool + thinking
         await session.commit()
-        if pruned or cleared:
+        if tool.rows or thinking.rows:
             logger.info(
                 "Pruned %d expired tool result(s) and cleared %d model thinking "
                 "block(s) older than %d day(s)",
-                pruned,
-                cleared,
+                tool.rows,
+                thinking.rows,
                 retention_days,
             )
-        return SweepResult(rows=pruned + cleared, bytes=freed)
+        return tool + thinking

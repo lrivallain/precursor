@@ -7,12 +7,11 @@ import json
 from typing import ClassVar
 
 import pytest
-from fastapi.testclient import TestClient
 
 from precursor.backend.db import SessionLocal
-from precursor.backend.main import create_app
 from precursor.backend.models import AppSetting
 from precursor.backend.services.mcp import agent365, workiq_preview
+from tests.support import init_db
 
 TENANT = "72f988bf-86f1-41af-91ab-2d7cd011db47"
 
@@ -232,12 +231,6 @@ async def test_configure_agent365_servers_points_at_the_tenant(
     ]
 
 
-def _init_db() -> None:
-    # Lifespan runs init_db (alembic upgrade head) before we touch the tables.
-    with TestClient(create_app()):
-        pass
-
-
 async def _settings_value(key: str) -> str | None:
     async with SessionLocal() as session:
         row = await session.get(AppSetting, key)
@@ -261,7 +254,7 @@ async def _seed(rows: dict[str, str]) -> None:
 
 
 async def test_adopt_legacy_tokens_promotes_a_per_server_sign_in() -> None:
-    _init_db()
+    init_db()
     await _seed(
         {
             "workiq_teams_oauth_tokens": '{"access_token": "abc"}',
@@ -278,7 +271,7 @@ async def test_adopt_legacy_tokens_promotes_a_per_server_sign_in() -> None:
 
 
 async def test_adopt_legacy_tokens_prunes_stale_rows_once_shared() -> None:
-    _init_db()
+    init_db()
     await _seed(
         {
             agent365.AGENT365_TOKENS_KEY: '{"access_token": "shared"}',
@@ -293,7 +286,7 @@ async def test_adopt_legacy_tokens_prunes_stale_rows_once_shared() -> None:
 
 
 async def test_adopt_legacy_tokens_is_a_noop_without_any_sign_in() -> None:
-    _init_db()
+    init_db()
     await _seed({})
 
     await agent365._adopt_legacy_tokens()

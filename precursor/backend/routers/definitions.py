@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.config import Settings, get_settings
 from precursor.backend.db import get_session
+from precursor.backend.lookups import get_or_404
 from precursor.backend.models import AgentSession, Workflow, Workspace
 from precursor.backend.routers.workspaces import browse_root
 from precursor.backend.schemas.definitions import definition_json_schema
@@ -142,9 +143,7 @@ async def definition_file_issues(
     Only a definition file inside the definitions folder has any; cross-file
     findings (a dangling agent path, a duplicate id) are included.
     """
-    ws = await session.get(Workspace, workspace_id)
-    if ws is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Workspace not found")
+    ws = await get_or_404(session, Workspace, workspace_id, "Workspace not found")
     try:
         target = fs.safe_join(browse_root(ws), path)
     except fs.UnsafePathError as exc:
