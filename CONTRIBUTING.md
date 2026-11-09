@@ -88,10 +88,36 @@ uv run pytest -n auto --dist loadgroup   # parallel, as in CI; drop -n to debug 
 
 npm --prefix frontend run typecheck
 npm --prefix frontend run build
+
+make ratchet                             # complexity / size / duplication ratchet
 ```
 </details>
 
 All of these run in CI (`.github/workflows/ci.yml`) on every PR and must pass.
+
+### Quality ratchet
+
+The codebase carries some complexity debt: very large files, very complex
+functions, copy-pasted blocks. `scripts/quality_ratchet.py` measures that debt
+per file and compares it with `scripts/quality_baseline.json`. Debt may shrink,
+never grow:
+
+| Check | Limit for new code | Configured in |
+| --- | --- | --- |
+| File size (`.py`, `.ts`, `.tsx`) | 800 lines | `scripts/quality_ratchet.py` |
+| Python complexity (ruff `C901`, `PLR0912`, `PLR0915`) | complexity 15, 15 branches, 60 statements | `pyproject.toml` |
+| Frontend complexity (oxlint) | complexity 15, 150 lines per function, nesting depth 4, React hook rules | `frontend/.oxlintrc.json` |
+| Duplication (jscpd) | no new copy-pasted blocks of 8+ lines | `.jscpd.json` |
+
+- **The check fails (`WORSE`)**: you made a file bigger or more complex than its
+  recorded baseline, or added a new file over a limit. Don't raise the baseline:
+  extract a module, hook, component or helper instead, and reuse an existing
+  one when it exists.
+- **The check reports `better`**: run `make ratchet-update` and commit the
+  updated baseline, so the improvement can't be undone later. CI runs in strict
+  mode and fails until you do.
+- The pre-commit hook (`make hooks`) runs the file-size part, which only needs
+  `python3`.
 
 For sidebar or section-routing changes, build the SPA and run the seeded demo
 with `scripts/seed_demo.py` and `scripts/demo_server.sh` (see the screenshot
