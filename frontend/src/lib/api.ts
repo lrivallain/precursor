@@ -1,280 +1,100 @@
 import type {
-  FinalVersion,
-  Step,
-  StepArtifactVersion,
-  StepCreate,
-  StepMove,
-  StepPlan,
-  StepPlanAmendRequest,
-  StepPlanCreate,
-  StepPlanItem,
-  StepPlanReview,
-  ArtifactDraftResult,
-  FinalDraftResult,
-  StepPlanUpdate,
-  SettableStepStatus,
-  StepUpdate,
-  AgentArtifact,
-  ContextEstimate,
-  RewindResult,
-  TurnIndexItem,
+  AgendaEvent,
+  AgentApprovalPolicy,
   AgentArtifactCreate,
-  AgentBlueprint,
   AgentBlueprintCreate,
   AgentBlueprintInstantiate,
   AgentBlueprintUpdate,
-  AgentEvent,
-  AgentEventPage,
-  AgentInboxItem,
   AgentLink,
-  AgentMetrics,
-  AgentModelInfo,
   AgentPermissionDecisionValue,
-  AgentPermissionGrant,
   AgentRewindMode,
-  AgentRewindPreview,
-  AgentRewindResult,
-  AgentRun,
-  AgentRuntimeStatus,
-  AgentSchedule,
-  AgentApprovalPolicy,
-  ApprovalDecisionResult,
-  ToolApproval,
-  ToolApprovalDecision,
-  ApprovalRule,
-  ApprovalRuleCreate,
-  ApprovalRuleUpdate,
   AgentScheduleCreate,
   AgentScheduleUpdate,
   AgentSession,
   AgentSessionCreate,
-  AgentState,
-  AgentTrigger,
   AgentTriggerCreate,
-  AppVersion,
-  BackupRunResult,
+  ApprovalDecisionResult,
+  ApprovalRuleCreate,
+  ApprovalRuleUpdate,
   Attachment,
-  Chat,
+  BackupRunResult,
+  CatalogPlugin,
   ChatCreate,
   ChatUpdate,
+  CleanupPreview,
+  CollectionCreate,
+  CollectionUpdate,
   CommentDraft,
-  CommentPostResult,
+  ContextEstimate,
+  ConversationArtifact,
   DefinitionFileKind,
-  DefinitionFileReport,
   DefinitionKind,
-  MigrationKind,
-  DefinitionsCheckReport,
-  DefinitionsExportResult,
-  DefinitionsStatus,
-  DefinitionSource,
-  FinalizeResult,
-  MigrationItemDetail,
-  MigrationPreview,
-  MigrationResult,
-  RevertResult,
-  DrawioStatus,
-  GhCloseResult,
-  GhCreateDraft,
-  GhCreatePostResult,
-  GhSyncResult,
-  FileDiff,
-  FileVersions,
-  GitActionResult,
-  GitBranches,
-  GitCommitDetail,
-  GitConflict,
   GitHubIssue,
-  GitLog,
-  GitStatus,
-  IssueComment,
+  IQSection,
+  InstalledPlugin,
   IssueLabel,
-  IssuePushResult,
-  IssueSummary,
-  LLMModel,
-  LLMProviderSpec,
-  LocalPath,
   MCPServerCreate,
   MCPServerStatus,
   MCPServerUpdate,
   McpAuthDiagnostics,
-  Me,
-  Memory,
-  MemoryCreate,
-  MemoryUpdate,
-  AgendaEvent,
-  AgendaResponse,
-  MeetingAttachment,
-  MeetingInsight,
-  MeetingSegment,
   MeetingSegmentCreate,
   MeetingSegmentUpdate,
   MeetingSession,
   MeetingSessionCreate,
   MeetingSessionUpdate,
   MeetingSummaryOptions,
-  MeetingSummaryResult,
-  MeetingTranscriptListResult,
-  MeetingTranscriptSummaryResult,
+  MemoryCreate,
+  MemoryUpdate,
   Message,
-  SideChatItem,
-  StoppedTurn,
-  TopicNoteDraft,
-  NotesDraft,
+  MigrationKind,
+  MigrationPreview,
   NoteDraftAttachment,
-  InstalledPlugin,
-  CatalogPlugin,
+  NotesDraft,
   PluginDescriptor,
   PluginEnvironment,
   PluginInstallResult,
   PluginUpdate,
   PluginVersions,
-  IssueDetail,
+  RefineRequest,
   Reminder,
   ReminderContainer,
   ReminderCreate,
-  ReminderItem,
-  RefineRequest,
-  RefineResponse,
-  Collection,
-  CollectionCreate,
-  CollectionUpdate,
-  CopilotQuota,
-  Role,
+  RewindResult,
   RoleCreate,
   RoleUpdate,
-  Schedule,
   ScheduleUpdate,
-  TopicScheduleCreate,
-  SearchResponse,
-  IQAskResponse,
-  IQRetrieveResponse,
-  IQSection,
-  IQEmbeddingTestResponse,
-  IQStatus,
+  SettableStepStatus,
   Settings,
   SettingsUpdate,
-  Skill,
   SkillCreate,
   SkillUpdate,
-  SummaryTemplateCatalog,
-  SummaryTemplateFileResult,
-  SystemStats,
-  CleanupPreview,
-  CleanupRunResult,
-  CompactResult,
+  StepCreate,
+  StepMove,
+  StepPlanAmendRequest,
+  StepPlanCreate,
+  StepPlanUpdate,
+  StepUpdate,
+  StoppedTurn,
+  ToolApproval,
+  ToolApprovalDecision,
   Topic,
   TopicNode,
-  TopicSummary,
+  TopicScheduleCreate,
   TopicSummaryResolve,
-  TransferImportResult,
-  TransferPreview,
   TransferResolution,
-  UsageStats,
-  Workflow,
+  TurnIndexItem,
   WorkflowCreate,
-  WorkflowRun,
   WorkflowScheduleUpdate,
-  WorkflowState,
   WorkflowStepRejectPolicy,
-  WorkflowSummary,
   WorkflowUpdate,
-  ConversationArtifact,
   Workspace,
-  WorkspaceDiscussion,
   WorkspaceCreate,
-  WorkspaceFileContent,
-  WorkspaceFileNode,
 } from "./types";
+import type * as Api from "./generated/apiTypes";
 import { CLIENT_ID } from "./clientId";
+import { call, httpError, untyped } from "./apiClient";
 
-/**
- * Issue a JSON API request with the shared headers + error unwrapping. Re-exported
- * through `@precursor/host` so plugin bundles can call their own backend routes
- * without re-implementing the transport.
- */
-export async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, {
-    headers: {
-      "Content-Type": "application/json",
-      "X-Client-Id": CLIENT_ID,
-      ...(init?.headers ?? {}),
-    },
-    ...init,
-  });
-  if (!res.ok) {
-    throw await httpError(res);
-  }
-  if (res.status === 204) return undefined as T;
-  return res.json() as Promise<T>;
-}
-
-// Pull a human-readable message out of an error response body. FastAPI wraps
-// errors as `{"detail": "..."}` (or, for validation errors, a list of
-// `{"msg", "loc"}` objects); return just that so the UI never shows the raw JSON
-// envelope. Returns null when the body carries no usable detail.
-function parseDetail(body: string): string | null {
-  if (!body) return null;
-  try {
-    const parsed: unknown = JSON.parse(body);
-    if (parsed && typeof parsed === "object" && "detail" in parsed) {
-      const detail = (parsed as { detail: unknown }).detail;
-      if (typeof detail === "string") return detail.trim() || null;
-      if (Array.isArray(detail)) {
-        const msgs = detail
-          .map((d) =>
-            d && typeof d === "object" && typeof (d as { msg?: unknown }).msg === "string"
-              ? (d as { msg: string }).msg
-              : null,
-          )
-          .filter((m): m is string => m !== null);
-        if (msgs.length) return msgs.join("; ");
-      }
-    }
-  } catch {
-    /* body isn't JSON — no detail to extract */
-  }
-  return null;
-}
-
-// Build an Error from a failed response: prefer the server's `detail` message
-// (clean, user-facing) and fall back to the HTTP status when there's none.
-export async function httpError(res: Response): Promise<Error> {
-  const body = await res.text().catch(() => "");
-  const detail = parseDetail(body);
-  const err = new Error(
-    detail ??
-      (body ? `${res.status} ${res.statusText}: ${body}` : `${res.status} ${res.statusText}`),
-  );
-  // Lets callers tell an expected conflict (e.g. 409) from a real failure.
-  return Object.assign(err, { status: res.status });
-}
-
-// FastAPI errors surface through `request`/`postForm` already reduced to their
-// `detail` message. This helper stays as a safety net for any Error whose
-// message still carries the "<status> <statusText>: <body>" envelope (e.g. from
-// other call sites): it strips the prefix and returns the JSON detail if present.
-export function apiErrorMessage(e: unknown, fallback = "Something went wrong"): string {
-  if (!(e instanceof Error)) return fallback;
-  const idx = e.message.indexOf(": ");
-  const body = idx >= 0 ? e.message.slice(idx + 2) : e.message;
-  return parseDetail(body) ?? (e.message || fallback);
-}
-
-// Multipart POST for single-file uploads. Shared by every attachment endpoint,
-// which differ only in URL and response shape.
-async function postForm<T>(path: string, file: File): Promise<T> {
-  const form = new FormData();
-  form.append("file", file, file.name);
-  const res = await fetch(path, {
-    method: "POST",
-    headers: { "X-Client-Id": CLIENT_ID },
-    body: form,
-  });
-  if (!res.ok) {
-    throw await httpError(res);
-  }
-  return (await res.json()) as T;
-}
+export { apiErrorMessage, call, httpError, request } from "./apiClient";
 
 /** Options for windowed (cursor-paginated) message listing. */
 export interface MessageWindow {
@@ -284,13 +104,8 @@ export interface MessageWindow {
   beforeId?: number;
 }
 
-function messageWindowQuery(opts?: MessageWindow): string {
-  if (!opts) return "";
-  const params = new URLSearchParams();
-  if (opts.limit != null) params.set("limit", String(opts.limit));
-  if (opts.beforeId != null) params.set("before_id", String(opts.beforeId));
-  const qs = params.toString();
-  return qs ? `?${qs}` : "";
+function messageWindow(opts?: MessageWindow) {
+  return { query: { limit: opts?.limit, before_id: opts?.beforeId } };
 }
 
 /**
@@ -344,329 +159,276 @@ export interface ContainerApi {
   };
 }
 
-function rewindContainer(
-  base: string,
-  fromMessageId: number,
-  throughMessageId?: number,
-): Promise<RewindResult> {
-  return request<RewindResult>(`${base}/rewind`, {
-    method: "POST",
-    body: JSON.stringify({
-      from_message_id: fromMessageId,
-      through_message_id: throughMessageId ?? null,
-    }),
-  });
+function rewindBody(fromMessageId: number, throughMessageId?: number) {
+  return { from_message_id: fromMessageId, through_message_id: throughMessageId ?? null };
 }
 
-function decideApproval(
-  url: string,
-  decision: ToolApprovalDecision,
-): Promise<ApprovalDecisionResult> {
-  return request<ApprovalDecisionResult>(url, {
-    method: "POST",
-    body: JSON.stringify(decision),
-  });
-}
-
-function compactContainer(base: string, instructions?: string): Promise<Message> {
-  return request<Message>(`${base}/compact`, {
-    method: "POST",
-    body: JSON.stringify({ instructions: instructions?.trim() || null }),
-  });
+function compactBody(instructions?: string) {
+  return { instructions: instructions?.trim() || null };
 }
 
 export const api = {
   topics: {
     // Topics
-    list: (q?: string, collectionId?: number | null) => {
-      const params = new URLSearchParams();
-      if (q) params.set("q", q);
-      if (collectionId != null) params.set("collection_id", String(collectionId));
-      const qs = params.toString();
-      return request<Topic[]>(`/api/topics${qs ? `?${qs}` : ""}`);
-    },
+    list: (q?: string, collectionId?: number | null) =>
+      call("GET /api/topics", {
+        query: { q: q || undefined, collection_id: collectionId },
+      }) as Promise<Topic[]>,
     tree: (collectionId?: number | null) =>
-      request<TopicNode[]>(
-        collectionId == null
-          ? `/api/topics/tree`
-          : `/api/topics/tree?collection_id=${collectionId}`,
-      ),
-    get: (id: number) => request<Topic>(`/api/topics/${id}`),
+      call("GET /api/topics/tree", {
+        query: { collection_id: collectionId },
+      }) as Promise<TopicNode[]>,
+    get: (id: number) =>
+      call("GET /api/topics/{topic_id}", { path: { topic_id: id } }) as Promise<Topic>,
     getBySlug: (slug: string) =>
-      request<Topic>(`/api/topics/by-slug/${encodeURIComponent(slug)}`),
+      call("GET /api/topics/by-slug/{slug}", { path: { slug } }) as Promise<Topic>,
     // Resolve the immutable `/topics/id/<uuid>` permalink (also legacy `/t/`).
     getByPublicId: (publicId: string) =>
-      request<Topic>(`/api/topics/by-public-id/${encodeURIComponent(publicId)}`),
-    create: (data: Partial<Topic> & { create_linked_issue?: boolean }) =>
-      request<Topic>(`/api/topics`, { method: "POST", body: JSON.stringify(data) }),
+      call("GET /api/topics/by-public-id/{public_id}", {
+        path: { public_id: publicId },
+      }) as Promise<Topic>,
+    create: (data: Api.TopicCreate) => call("POST /api/topics", { body: data }) as Promise<Topic>,
     update: (id: number, data: Partial<Topic>) =>
-      request<Topic>(`/api/topics/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+      call("PATCH /api/topics/{topic_id}", {
+        path: { topic_id: id },
+        body: data,
+      }) as Promise<Topic>,
     // /suggest-name — re-derive the topic's title from its transcript. Renames
     // the topic server-side and returns the new title ("" when unusable).
     suggestName: (id: number) =>
-      request<{ title: string }>(`/api/topics/${id}/commands/suggest-name`, {
-        method: "POST",
-      }),
-    remove: (id: number) => request<void>(`/api/topics/${id}`, { method: "DELETE" }),
-    markRead: (id: number) =>
-      request<void>(`/api/topics/${id}/read`, { method: "POST" }),
+      call("POST /api/topics/{topic_id}/commands/suggest-name", { path: { topic_id: id } }),
+    remove: (id: number) => call("DELETE /api/topics/{topic_id}", { path: { topic_id: id } }),
+    markRead: (id: number) => call("POST /api/topics/{topic_id}/read", { path: { topic_id: id } }),
     markUnread: (id: number) =>
-      request<void>(`/api/topics/${id}/unread`, { method: "POST" }),
+      call("POST /api/topics/{topic_id}/unread", { path: { topic_id: id } }),
     listArchived: (collectionId?: number | null) =>
-      request<Topic[]>(
-        collectionId == null
-          ? `/api/topics/archived`
-          : `/api/topics/archived?collection_id=${collectionId}`,
-      ),
+      call("GET /api/topics/archived", {
+        query: { collection_id: collectionId },
+      }) as Promise<Topic[]>,
     // `sideChatsToo` archives the topic's open side chats with it; restoring
     // the topic brings those back.
     archive: (id: number, opts?: { sideChatsToo?: boolean }) =>
-      request<Topic>(
-        `/api/topics/${id}/archive${opts?.sideChatsToo ? "?side_chats_too=true" : ""}`,
-        { method: "POST" },
-      ),
+      call("POST /api/topics/{topic_id}/archive", {
+        path: { topic_id: id },
+        query: { side_chats_too: opts?.sideChatsToo || undefined },
+      }) as Promise<Topic>,
     unarchive: (id: number) =>
-      request<Topic>(`/api/topics/${id}/unarchive`, { method: "POST" }),
+      call("POST /api/topics/{topic_id}/unarchive", { path: { topic_id: id } }) as Promise<Topic>,
 
     // Topic schedules (run a topic's prompt on a recurrence). Keyed by topic id;
     // mirror the agent schedule endpoints.
     getSchedule: (topicId: number) =>
-      request<Schedule>(`/api/topics/${topicId}/schedule`),
+      call("GET /api/topics/{topic_id}/schedule", { path: { topic_id: topicId } }),
     createSchedule: (topicId: number, data: TopicScheduleCreate) =>
-      request<Schedule>(`/api/topics/${topicId}/schedule`, {
-        method: "POST",
-        body: JSON.stringify(data),
-      }),
+      call("POST /api/topics/{topic_id}/schedule", { path: { topic_id: topicId }, body: data }),
     updateSchedule: (topicId: number, data: ScheduleUpdate) =>
-      request<Schedule>(`/api/topics/${topicId}/schedule`, {
-        method: "PATCH",
-        body: JSON.stringify(data),
-      }),
+      call("PATCH /api/topics/{topic_id}/schedule", { path: { topic_id: topicId }, body: data }),
     deleteSchedule: (topicId: number) =>
-      request<void>(`/api/topics/${topicId}/schedule`, { method: "DELETE" }),
+      call("DELETE /api/topics/{topic_id}/schedule", { path: { topic_id: topicId } }),
     runScheduleNow: (topicId: number) =>
-      request<Schedule>(`/api/topics/${topicId}/schedule/run`, { method: "POST" }),
+      call("POST /api/topics/{topic_id}/schedule/run", { path: { topic_id: topicId } }),
   },
 
   sideChats: {
     // Chats started from a topic, or from one of its assistant replies.
-    list: (topicId: number) => request<SideChatItem[]>(`/api/topics/${topicId}/chats`),
+    list: (topicId: number) =>
+      call("GET /api/topics/{topic_id}/chats", { path: { topic_id: topicId } }),
     // `quote` narrows the copied reply to an excerpt of it (a text selection).
     create: (topicId: number, messageId?: number | null, quote?: string | null) =>
-      request<Chat>(`/api/topics/${topicId}/chats`, {
-        method: "POST",
-        body: JSON.stringify({ message_id: messageId ?? null, quote: quote ?? null }),
+      call("POST /api/topics/{topic_id}/chats", {
+        path: { topic_id: topicId },
+        body: { message_id: messageId ?? null, quote: quote ?? null },
       }),
     // Delete a side chat left untouched; rejects (409) when it was used.
     discard: (chatId: number) =>
-      request<void>(`/api/chats/${chatId}/discard`, { method: "POST" }),
+      call("POST /api/chats/{chat_id}/discard", { path: { chat_id: chatId } }),
     // Have the model sum up a side chat for its parent topic (nothing saved).
     draftTopicNote: (chatId: number, instructions?: string) =>
-      request<TopicNoteDraft>(`/api/chats/${chatId}/topic-note/draft`, {
-        method: "POST",
-        body: JSON.stringify({ instructions: instructions || null }),
+      call("POST /api/chats/{chat_id}/topic-note/draft", {
+        path: { chat_id: chatId },
+        body: { instructions: instructions || null },
       }),
     sendTopicNote: (chatId: number, text: string) =>
-      request<Message>(`/api/chats/${chatId}/topic-note`, {
-        method: "POST",
-        body: JSON.stringify({ text }),
-      }),
+      call("POST /api/chats/{chat_id}/topic-note", { path: { chat_id: chatId }, body: { text } }),
   },
   chats: {
     // Chats (flat conversation sessions — no tree, no GitHub link)
-    list: (q?: string) =>
-      request<Chat[]>(`/api/chats${q ? `?q=${encodeURIComponent(q)}` : ""}`),
-    listArchived: () => request<Chat[]>(`/api/chats/archived`),
-    get: (id: number) => request<Chat>(`/api/chats/${id}`),
-    getBySlug: (slug: string) =>
-      request<Chat>(`/api/chats/by-slug/${encodeURIComponent(slug)}`),
+    list: (q?: string) => call("GET /api/chats", { query: { q: q || undefined } }),
+    listArchived: () => call("GET /api/chats/archived"),
+    get: (id: number) => call("GET /api/chats/{chat_id}", { path: { chat_id: id } }),
+    getBySlug: (slug: string) => call("GET /api/chats/by-slug/{slug}", { path: { slug } }),
     getByPublicId: (publicId: string) =>
-      request<Chat>(`/api/chats/by-public-id/${encodeURIComponent(publicId)}`),
-    create: (data: ChatCreate) =>
-      request<Chat>(`/api/chats`, { method: "POST", body: JSON.stringify(data) }),
+      call("GET /api/chats/by-public-id/{public_id}", { path: { public_id: publicId } }),
+    create: (data: ChatCreate) => call("POST /api/chats", { body: data }),
     update: (id: number, data: ChatUpdate) =>
-      request<Chat>(`/api/chats/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
-    remove: (id: number) => request<void>(`/api/chats/${id}`, { method: "DELETE" }),
-    markRead: (id: number) => request<void>(`/api/chats/${id}/read`, { method: "POST" }),
-    markUnread: (id: number) =>
-      request<void>(`/api/chats/${id}/unread`, { method: "POST" }),
-    archive: (id: number) =>
-      request<Chat>(`/api/chats/${id}/archive`, { method: "POST" }),
+      call("PATCH /api/chats/{chat_id}", { path: { chat_id: id }, body: data }),
+    remove: (id: number) => call("DELETE /api/chats/{chat_id}", { path: { chat_id: id } }),
+    markRead: (id: number) => call("POST /api/chats/{chat_id}/read", { path: { chat_id: id } }),
+    markUnread: (id: number) => call("POST /api/chats/{chat_id}/unread", { path: { chat_id: id } }),
+    archive: (id: number) => call("POST /api/chats/{chat_id}/archive", { path: { chat_id: id } }),
     unarchive: (id: number) =>
-      request<Chat>(`/api/chats/${id}/unarchive`, { method: "POST" }),
+      call("POST /api/chats/{chat_id}/unarchive", { path: { chat_id: id } }),
     // Promote a flat chat into a full topic (moves the transcript over). Chats
     // have no collection, so the caller names the one it is looking at.
-    promote: (id: number, collectionId?: number | null, parentId?: number | null) => {
-      const qs = new URLSearchParams();
-      if (collectionId != null) qs.set("collection_id", String(collectionId));
-      if (parentId != null) qs.set("parent_id", String(parentId));
-      const q = qs.toString();
-      return request<Topic>(`/api/chats/${id}/promote${q ? `?${q}` : ""}`, { method: "POST" });
-    },
+    promote: (id: number, collectionId?: number | null, parentId?: number | null) =>
+      call("POST /api/chats/{chat_id}/promote", {
+        path: { chat_id: id },
+        query: { collection_id: collectionId, parent_id: parentId },
+      }) as Promise<Topic>,
 
     // Chat messages (mirror topic message endpoints)
     listMessages: (chatId: number, opts?: MessageWindow) =>
-      request<Message[]>(`/api/chats/${chatId}/messages${messageWindowQuery(opts)}`),
+      call("GET /api/chats/{chat_id}/messages", {
+        path: { chat_id: chatId },
+        ...messageWindow(opts),
+      }),
     clearMessages: (chatId: number) =>
-      request<void>(`/api/chats/${chatId}/messages`, { method: "DELETE" }),
+      call("DELETE /api/chats/{chat_id}/messages", { path: { chat_id: chatId } }),
     deleteMessage: (chatId: number, messageId: number) =>
-      request<void>(`/api/chats/${chatId}/messages/${messageId}`, { method: "DELETE" }),
+      call("DELETE /api/chats/{chat_id}/messages/{message_id}", {
+        path: { chat_id: chatId, message_id: messageId },
+      }),
     editMessage: (chatId: number, messageId: number, content: string) =>
-      request<Message>(`/api/chats/${chatId}/messages/${messageId}`, {
-        method: "PATCH",
-        body: JSON.stringify({ content }),
+      call("PATCH /api/chats/{chat_id}/messages/{message_id}", {
+        path: { chat_id: chatId, message_id: messageId },
+        body: { content },
       }),
     saveStoppedMessage: (chatId: number, turn: StoppedTurn) =>
-      request<Message[]>(`/api/chats/${chatId}/messages/stopped`, {
-        method: "POST",
-        body: JSON.stringify(turn),
-      }),
+      call("POST /api/chats/{chat_id}/messages/stopped", { path: { chat_id: chatId }, body: turn }),
     stopTurn: (chatId: number) =>
-      request<void>(`/api/chats/${chatId}/messages/stop`, { method: "POST" }),
+      call("POST /api/chats/{chat_id}/messages/stop", { path: { chat_id: chatId } }),
     // /suggest-name — re-derive the chat's title from its transcript.
     suggestName: (chatId: number) =>
-      request<{ title: string }>(`/api/chats/${chatId}/messages/suggest-name`, {
-        method: "POST",
-      }),
+      call("POST /api/chats/{chat_id}/messages/suggest-name", { path: { chat_id: chatId } }),
     // /notes for chats (no GitHub comment option)
     rephraseNotes: (chatId: number, text: string, instruction?: string) =>
-      request<{ text: string }>(`/api/chats/${chatId}/messages/notes/rephrase`, {
-        method: "POST",
-        body: JSON.stringify({ text, instruction: instruction ?? null }),
+      call("POST /api/chats/{chat_id}/messages/notes/rephrase", {
+        path: { chat_id: chatId },
+        body: { text, instruction: instruction ?? null },
       }),
     appendNotes: (chatId: number, text: string, attachmentIds: number[] = []) =>
-      request<{ message: Message }>(`/api/chats/${chatId}/messages/notes/append`, {
-        method: "POST",
-        body: JSON.stringify({ text, attachment_ids: attachmentIds }),
+      call("POST /api/chats/{chat_id}/messages/notes/append", {
+        path: { chat_id: chatId },
+        body: { text, attachment_ids: attachmentIds },
       }),
     getNotesDraft: (chatId: number) =>
-      request<NotesDraft>(`/api/chats/${chatId}/messages/notes/draft`),
+      call("GET /api/chats/{chat_id}/messages/notes/draft", { path: { chat_id: chatId } }),
     saveNotesDraft: (chatId: number, text: string) =>
-      request<NotesDraft>(`/api/chats/${chatId}/messages/notes/draft`, {
-        method: "PUT",
-        body: JSON.stringify({ text }),
+      call("PUT /api/chats/{chat_id}/messages/notes/draft", {
+        path: { chat_id: chatId },
+        body: { text },
       }),
     clearNotesDraft: (chatId: number) =>
-      request<void>(`/api/chats/${chatId}/messages/notes/draft`, { method: "DELETE" }),
+      call("DELETE /api/chats/{chat_id}/messages/notes/draft", { path: { chat_id: chatId } }),
     listNoteAttachments: (chatId: number) =>
-      request<NoteDraftAttachment[]>(`/api/chats/${chatId}/messages/notes/attachments`),
-    uploadNoteAttachment: (chatId: number, file: File): Promise<NoteDraftAttachment> =>
-      postForm<NoteDraftAttachment>(
-        `/api/chats/${chatId}/messages/notes/attachments`,
-        file,
-      ),
+      call("GET /api/chats/{chat_id}/messages/notes/attachments", { path: { chat_id: chatId } }),
+    uploadNoteAttachment: (chatId: number, file: File) =>
+      call("POST /api/chats/{chat_id}/messages/notes/attachments", {
+        path: { chat_id: chatId },
+        form: { file },
+      }),
     deleteNoteAttachment: (chatId: number, attachmentId: number) =>
-      request<void>(`/api/chats/${chatId}/messages/notes/attachments/${attachmentId}`, {
-        method: "DELETE",
+      call("DELETE /api/chats/{chat_id}/messages/notes/attachments/{attachment_id}", {
+        path: { chat_id: chatId, attachment_id: attachmentId },
       }),
   },
 
   reminders: {
     // Reminders (one-shot date/time). Keyed by container kind + id; shared by
     // topics and chats. listReminders returns only fired (awaiting acknowledgment).
-    list: () => request<ReminderItem[]>(`/api/reminders`),
+    list: () => call("GET /api/reminders"),
     // Resolves to null when the conversation has no reminder (a 200, not a 404).
     get: (container: ReminderContainer, id: number) =>
-      request<Reminder | null>(`/api/reminders/${container}/${id}`),
+      call("GET /api/reminders/{container}/{container_id}", {
+        path: { container, container_id: id },
+      }) as Promise<Reminder | null>,
     set: (container: ReminderContainer, id: number, data: ReminderCreate) =>
-      request<Reminder>(`/api/reminders/${container}/${id}`, {
-        method: "PUT",
-        body: JSON.stringify(data),
-      }),
+      call("PUT /api/reminders/{container}/{container_id}", {
+        path: { container, container_id: id },
+        body: data,
+      }) as Promise<Reminder>,
     // Used for both /reminder-cancel (pending) and /done (fired) — both delete.
     clear: (container: ReminderContainer, id: number) =>
-      request<void>(`/api/reminders/${container}/${id}`, { method: "DELETE" }),
+      call("DELETE /api/reminders/{container}/{container_id}", {
+        path: { container, container_id: id },
+      }),
   },
 
   agents: {
     // Agents mode (Copilot SDK). Long-running agent sessions, optionally attached
     // to a topic/chat. Live progress arrives via the `agent.changed` SSE event;
     // the step timeline is re-fetched from `/events` on each signal.
-    list: (filter?: { topicId?: number; chatId?: number }) => {
-      const qs = new URLSearchParams();
-      if (filter?.topicId != null) qs.set("topic_id", String(filter.topicId));
-      if (filter?.chatId != null) qs.set("chat_id", String(filter.chatId));
-      const suffix = qs.toString() ? `?${qs.toString()}` : "";
-      return request<AgentSession[]>(`/api/agents${suffix}`);
-    },
-    get: (id: number | string) => request<AgentSession>(`/api/agents/${id}`),
+    list: (filter?: { topicId?: number; chatId?: number }) =>
+      call("GET /api/agents", { query: { topic_id: filter?.topicId, chat_id: filter?.chatId } }),
+    get: (id: number | string) =>
+      untyped<AgentSession>(call("GET /api/agents/{agent_id}", { path: { agent_id: id } })),
     markRead: (id: number | string) =>
-      request<void>(`/api/agents/${id}/read`, { method: "POST" }),
+      call("POST /api/agents/{agent_id}/read", { path: { agent_id: id } }),
     markUnread: (id: number | string) =>
-      request<void>(`/api/agents/${id}/unread`, { method: "POST" }),
-    create: (data: AgentSessionCreate) =>
-      request<AgentSession>(`/api/agents`, {
-        method: "POST",
-        body: JSON.stringify(data),
-      }),
+      call("POST /api/agents/{agent_id}/unread", { path: { agent_id: id } }),
+    create: (data: AgentSessionCreate) => call("POST /api/agents", { body: data }),
     // `agentRunId` narrows the transcript to one execution — without it a
     // reusable agent driven by two workflows at once reads as one conversation.
     // `after` is the cursor from the previous read: the timeline only grows
     // between rewinds, so a live view asks only for the events it hasn't seen.
     // `epoch` from that read resets the cursor when a rewind happened since.
     // Omit both for the whole transcript.
-    getEvents: (id: number, agentRunId?: number | null, after = 0, epoch?: string | null) => {
-      const qs = new URLSearchParams();
-      if (agentRunId != null) qs.set("agent_run_id", String(agentRunId));
-      if (after > 0) qs.set("after", String(after));
-      if (after > 0 && epoch) qs.set("epoch", epoch);
-      const suffix = qs.toString() ? `?${qs.toString()}` : "";
-      return request<AgentEventPage>(`/api/agents/${id}/events${suffix}`);
-    },
+    getEvents: (id: number, agentRunId?: number | null, after = 0, epoch?: string | null) =>
+      call("GET /api/agents/{agent_id}/events", {
+        path: { agent_id: id },
+        query: {
+          agent_run_id: agentRunId,
+          after: after > 0 ? after : undefined,
+          epoch: after > 0 && epoch ? epoch : undefined,
+        },
+      }),
     // Drop the prompt `eventId` (an `AgentEvent.event_id`) of the current run
     // and everything after it, in the SDK session and the transcript. Irreversible.
     // `conversation-and-files` also restores the files the dropped turns changed.
     rewind: (id: number, eventId: string, mode: AgentRewindMode = "conversation") =>
-      request<AgentRewindResult>(`/api/agents/${id}/rewind`, {
-        method: "POST",
-        body: JSON.stringify({ event_id: eventId, mode }),
+      call("POST /api/agents/{agent_id}/rewind", {
+        path: { agent_id: id },
+        body: { event_id: eventId, mode },
       }),
     // Checks a rewind to `eventId` and lists the files it could restore. Changes nothing.
     previewRewind: (id: number, eventId: string) =>
-      request<AgentRewindPreview>(
-        `/api/agents/${id}/rewind/preview?${new URLSearchParams({ event_id: eventId })}`,
-      ),
-    listModels: () => request<AgentModelInfo[]>(`/api/agents/models`),
+      call("GET /api/agents/{agent_id}/rewind/preview", {
+        path: { agent_id: id },
+        query: { event_id: eventId },
+      }),
+    listModels: () => call("GET /api/agents/models"),
     // Runtime capability + provisioning. Unlike the rest of this namespace these
     // stay reachable when the runtime is down — they are how it gets fixed.
-    getRuntime: () => request<AgentRuntimeStatus>(`/api/agents/runtime`),
-    installCli: () =>
-      request<AgentRuntimeStatus>(`/api/agents/runtime/cli`, { method: "POST" }),
-    restartForRuntime: () =>
-      request<void>(`/api/agents/runtime/restart`, { method: "POST" }),
-    listPermissions: () => request<AgentPermissionGrant[]>(`/api/agents/permissions`),
+    getRuntime: () => call("GET /api/agents/runtime"),
+    installCli: () => call("POST /api/agents/runtime/cli"),
+    restartForRuntime: () => call("POST /api/agents/runtime/restart") as Promise<void>,
+    listPermissions: () => call("GET /api/agents/permissions"),
     resetPermissions: () =>
-      request<{ cleared: number }>(`/api/agents/permissions/reset`, { method: "POST" }),
+      call("POST /api/agents/permissions/reset") as Promise<{ cleared: number }>,
     send: (id: number | string, message: string) =>
-      request<AgentSession>(`/api/agents/${id}/send`, {
-        method: "POST",
-        body: JSON.stringify({ message }),
-      }),
+      call("POST /api/agents/{agent_id}/send", { path: { agent_id: id }, body: { message } }),
     cancel: (id: number) =>
-      request<AgentSession>(`/api/agents/${id}/cancel`, { method: "POST" }),
+      untyped<AgentSession>(call("POST /api/agents/{agent_id}/cancel", { path: { agent_id: id } })),
     start: (id: number | string) =>
-      request<AgentSession>(`/api/agents/${id}/start`, { method: "POST" }),
+      call("POST /api/agents/{agent_id}/start", { path: { agent_id: id } }),
     resume: (id: number | string) =>
-      request<AgentSession>(`/api/agents/${id}/resume`, { method: "POST" }),
+      call("POST /api/agents/{agent_id}/resume", { path: { agent_id: id } }),
     resolvePermission: (
       id: number,
       requestId: string,
       decision: AgentPermissionDecisionValue,
     ) =>
-      request<AgentSession>(`/api/agents/${id}/permission`, {
-        method: "POST",
-        body: JSON.stringify({ request_id: requestId, decision }),
+      call("POST /api/agents/{agent_id}/permission", {
+        path: { agent_id: id },
+        body: { request_id: requestId, decision },
       }),
     link: (id: number, link: AgentLink) =>
-      request<AgentSession>(`/api/agents/${id}/link`, {
-        method: "PATCH",
-        body: JSON.stringify({ topic_id: link.topic_id ?? null, chat_id: link.chat_id ?? null }),
+      call("PATCH /api/agents/{agent_id}/link", {
+        path: { agent_id: id },
+        body: { topic_id: link.topic_id ?? null, chat_id: link.chat_id ?? null },
       }),
     rename: (id: number, title: string) =>
-      request<AgentSession>(`/api/agents/${id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ title }),
-      }),
+      call("PATCH /api/agents/{agent_id}", { path: { agent_id: id }, body: { title } }),
     update: (
       id: number,
       payload: {
@@ -685,123 +447,100 @@ export const api = {
          *  sent rather than omitted; omit the key entirely to leave unchanged. */
         mcp_servers?: string | null;
       },
-    ) =>
-      request<AgentSession>(`/api/agents/${id}`, {
-        method: "PATCH",
-        body: JSON.stringify(payload),
-      }),
-    remove: (id: number) => request<void>(`/api/agents/${id}`, { method: "DELETE" }),
-    listArchived: () => request<AgentSession[]>(`/api/agents/archived`),
+    ) => call("PATCH /api/agents/{agent_id}", { path: { agent_id: id }, body: payload }),
+    remove: (id: number) => call("DELETE /api/agents/{agent_id}", { path: { agent_id: id } }),
+    listArchived: () => call("GET /api/agents/archived"),
     /** Workflows that reference this agent (archived ones excluded). */
-    workflows: (id: number) => request<WorkflowSummary[]>(`/api/agents/${id}/workflows`),
+    workflows: (id: number) =>
+      call("GET /api/agents/{agent_id}/workflows", { path: { agent_id: id } }),
     /**
      * This agent's execution history, newest first. An agent is a reusable
      * definition, so "what did it do, driven by what, and what did that cost"
      * is a per-run question.
      */
-    runs: (id: number | string, opts?: { workflowRunId?: number; limit?: number }) => {
-      const q = new URLSearchParams();
-      if (opts?.workflowRunId != null) q.set("workflow_run_id", String(opts.workflowRunId));
-      if (opts?.limit != null) q.set("limit", String(opts.limit));
-      const suffix = q.toString() ? `?${q}` : "";
-      return request<AgentRun[]>(`/api/agents/${id}/runs${suffix}`);
-    },
+    runs: (id: number | string, opts?: { workflowRunId?: number; limit?: number }) =>
+      call("GET /api/agents/{agent_id}/runs", {
+        path: { agent_id: id },
+        query: { workflow_run_id: opts?.workflowRunId, limit: opts?.limit },
+      }),
     run: (id: number | string, runId: number) =>
-      request<AgentRun>(`/api/agents/${id}/runs/${runId}`),
+      call("GET /api/agents/{agent_id}/runs/{run_id}", { path: { agent_id: id, run_id: runId } }),
     archive: (id: number) =>
-      request<AgentSession>(`/api/agents/${id}/archive`, { method: "POST" }),
+      call("POST /api/agents/{agent_id}/archive", { path: { agent_id: id } }),
     unarchive: (id: number) =>
-      request<AgentSession>(`/api/agents/${id}/unarchive`, { method: "POST" }),
+      call("POST /api/agents/{agent_id}/unarchive", { path: { agent_id: id } }),
 
     // Agent schedules (recurring auto-re-run of an agent's task). Keyed by the
     // agent's id or public uuid; mirror the topic schedule endpoints.
     getSchedule: (id: number | string) =>
-      request<AgentSchedule>(`/api/agents/${id}/schedule`),
+      call("GET /api/agents/{agent_id}/schedule", { path: { agent_id: id } }),
     createSchedule: (id: number | string, data: AgentScheduleCreate) =>
-      request<AgentSchedule>(`/api/agents/${id}/schedule`, {
-        method: "POST",
-        body: JSON.stringify(data),
-      }),
+      call("POST /api/agents/{agent_id}/schedule", { path: { agent_id: id }, body: data }),
     updateSchedule: (id: number | string, data: AgentScheduleUpdate) =>
-      request<AgentSchedule>(`/api/agents/${id}/schedule`, {
-        method: "PATCH",
-        body: JSON.stringify(data),
-      }),
+      call("PATCH /api/agents/{agent_id}/schedule", { path: { agent_id: id }, body: data }),
     deleteSchedule: (id: number | string) =>
-      request<void>(`/api/agents/${id}/schedule`, { method: "DELETE" }),
+      call("DELETE /api/agents/{agent_id}/schedule", { path: { agent_id: id } }),
     runScheduleNow: (id: number | string) =>
-      request<AgentSchedule>(`/api/agents/${id}/schedule/run`, { method: "POST" }),
+      call("POST /api/agents/{agent_id}/schedule/run", { path: { agent_id: id } }),
 
     // --- Orchestrator: aggregate observability + unified inbox -------------
     // Fleet-wide rollup (status counts, token totals, concurrency headroom).
-    metrics: () => request<AgentMetrics>(`/api/agents/metrics`),
+    metrics: () => call("GET /api/agents/metrics"),
     // Everything waiting on a human: raised questions, permission gates, budget parks.
-    inbox: () => request<AgentInboxItem[]>(`/api/agents/inbox`),
+    inbox: () => call("GET /api/agents/inbox"),
 
     // --- Blueprints (reusable agent templates) ----------------------------
-    listBlueprints: () => request<AgentBlueprint[]>(`/api/agents/blueprints`),
+    listBlueprints: () => call("GET /api/agents/blueprints"),
     createBlueprint: (data: AgentBlueprintCreate) =>
-      request<AgentBlueprint>(`/api/agents/blueprints`, {
-        method: "POST",
-        body: JSON.stringify(data),
-      }),
+      call("POST /api/agents/blueprints", { body: data }),
     updateBlueprint: (id: number, data: AgentBlueprintUpdate) =>
-      request<AgentBlueprint>(`/api/agents/blueprints/${id}`, {
-        method: "PATCH",
-        body: JSON.stringify(data),
+      call("PATCH /api/agents/blueprints/{blueprint_id}", {
+        path: { blueprint_id: id },
+        body: data,
       }),
     deleteBlueprint: (id: number) =>
-      request<void>(`/api/agents/blueprints/${id}`, { method: "DELETE" }),
+      call("DELETE /api/agents/blueprints/{blueprint_id}", { path: { blueprint_id: id } }),
     instantiateBlueprint: (id: number, data: AgentBlueprintInstantiate) =>
-      request<AgentSession>(`/api/agents/blueprints/${id}/instantiate`, {
-        method: "POST",
-        body: JSON.stringify(data),
+      call("POST /api/agents/blueprints/{blueprint_id}/instantiate", {
+        path: { blueprint_id: id },
+        body: data,
       }),
 
     // --- Shared artifacts / blackboard ------------------------------------
     listArtifacts: (id: number) =>
-      request<AgentArtifact[]>(`/api/agents/${id}/artifacts`),
+      call("GET /api/agents/{agent_id}/artifacts", { path: { agent_id: id } }),
     getArtifact: (id: number, artifactId: number) =>
-      request<AgentArtifact>(`/api/agents/${id}/artifacts/${artifactId}`),
+      call("GET /api/agents/{agent_id}/artifacts/{artifact_id}", {
+        path: { agent_id: id, artifact_id: artifactId },
+      }),
     // Browser-openable URL for an artifact's raw body (kind-appropriate
     // content-type; a `link` artifact redirects to its URL). Used for the
     // "Open raw" affordance and programmatic/download access.
     rawArtifactUrl: (id: number, artifactId: number) =>
       `/api/agents/${id}/artifacts/${artifactId}/raw`,
     createArtifact: (id: number, data: AgentArtifactCreate) =>
-      request<AgentArtifact>(`/api/agents/${id}/artifacts`, {
-        method: "POST",
-        body: JSON.stringify(data),
-      }),
+      call("POST /api/agents/{agent_id}/artifacts", { path: { agent_id: id }, body: data }),
 
     // --- State (private cross-run scratchpad) -----------------------------
     // Distinct from artifacts: state is private bookkeeping that *survives*
     // re-runs, so this surface is mostly for inspecting (or resetting) a
     // recurring agent's saved cursor.
-    listState: (id: number) => request<AgentState[]>(`/api/agents/${id}/state`),
+    listState: (id: number) => call("GET /api/agents/{agent_id}/state", { path: { agent_id: id } }),
     setState: (id: number, key: string, value: string) =>
-      request<AgentState>(`/api/agents/${id}/state`, {
-        method: "PUT",
-        body: JSON.stringify({ key, value }),
-      }),
+      call("PUT /api/agents/{agent_id}/state", { path: { agent_id: id }, body: { key, value } }),
     deleteState: (id: number, key: string) =>
-      request<void>(`/api/agents/${id}/state/${encodeURIComponent(key)}`, {
-        method: "DELETE",
-      }),
+      call("DELETE /api/agents/{agent_id}/state/{key}", { path: { agent_id: id, key } }),
     clearState: (id: number) =>
-      request<void>(`/api/agents/${id}/state`, { method: "DELETE" }),
+      call("DELETE /api/agents/{agent_id}/state", { path: { agent_id: id } }),
 
     // --- Triggers (external webhooks) -------------------------------------
     listTriggers: (id: number) =>
-      request<AgentTrigger[]>(`/api/agents/${id}/triggers`),
+      call("GET /api/agents/{agent_id}/triggers", { path: { agent_id: id } }),
     createTrigger: (id: number, data: AgentTriggerCreate = {}) =>
-      request<AgentTrigger>(`/api/agents/${id}/triggers`, {
-        method: "POST",
-        body: JSON.stringify(data),
-      }),
+      call("POST /api/agents/{agent_id}/triggers", { path: { agent_id: id }, body: data }),
     deleteTrigger: (id: number, triggerId: number) =>
-      request<void>(`/api/agents/${id}/triggers/${triggerId}`, {
-        method: "DELETE",
+      call("DELETE /api/agents/{agent_id}/triggers/{trigger_id}", {
+        path: { agent_id: id, trigger_id: triggerId },
       }),
   },
 
@@ -811,206 +550,174 @@ export const api = {
     // one final output. Model-backed calls (create with propose, propose,
     // suggest-*, generate) are slow and answer 502 when the model fails.
     list: (topicId?: number, chatId?: number) =>
-      request<StepPlanItem[]>(
-        `/api/step-plans${topicId != null ? `?topic_id=${topicId}` : chatId != null ? `?chat_id=${chatId}` : ""}`,
-      ),
-    listArchived: () => request<StepPlanItem[]>(`/api/step-plans/archived`),
-    create: (payload: StepPlanCreate) =>
-      request<StepPlan>(`/api/step-plans`, { method: "POST", body: JSON.stringify(payload) }),
+      call("GET /api/step-plans", {
+        query: topicId != null ? { topic_id: topicId } : { chat_id: chatId },
+      }),
+    listArchived: () => call("GET /api/step-plans/archived"),
+    create: (payload: StepPlanCreate) => call("POST /api/step-plans", { body: payload }),
     get: (id: number, signal?: AbortSignal) =>
-      request<StepPlan>(`/api/step-plans/${id}`, { signal }),
+      call("GET /api/step-plans/{plan_id}", { path: { plan_id: id }, signal }),
     update: (id: number, payload: StepPlanUpdate) =>
-      request<StepPlan>(`/api/step-plans/${id}`, {
-        method: "PATCH",
-        body: JSON.stringify(payload),
-      }),
+      call("PATCH /api/step-plans/{plan_id}", { path: { plan_id: id }, body: payload }),
     amend: (id: number, payload: StepPlanAmendRequest) =>
-      request<StepPlan>(`/api/step-plans/${id}/amend`, {
-        method: "POST",
-        body: JSON.stringify(payload),
-      }),
+      call("POST /api/step-plans/{plan_id}/amend", { path: { plan_id: id }, body: payload }),
     archive: (id: number) =>
-      request<StepPlan>(`/api/step-plans/${id}/archive`, { method: "POST" }),
+      call("POST /api/step-plans/{plan_id}/archive", { path: { plan_id: id } }),
     unarchive: (id: number) =>
-      request<StepPlan>(`/api/step-plans/${id}/unarchive`, { method: "POST" }),
-    remove: (id: number) => request<void>(`/api/step-plans/${id}`, { method: "DELETE" }),
+      call("POST /api/step-plans/{plan_id}/unarchive", { path: { plan_id: id } }),
+    remove: (id: number) => call("DELETE /api/step-plans/{plan_id}", { path: { plan_id: id } }),
     propose: (id: number, instructions?: string) =>
-      request<StepPlan>(`/api/step-plans/${id}/propose`, {
-        method: "POST",
-        body: JSON.stringify({ instructions: instructions || null }),
+      call("POST /api/step-plans/{plan_id}/propose", {
+        path: { plan_id: id },
+        body: { instructions: instructions || null },
       }),
     suggestMissing: (id: number, instructions?: string) =>
-      request<StepPlan>(`/api/step-plans/${id}/suggest-missing`, {
-        method: "POST",
-        body: JSON.stringify({ instructions: instructions || null }),
+      call("POST /api/step-plans/{plan_id}/suggest-missing", {
+        path: { plan_id: id },
+        body: { instructions: instructions || null },
       }),
     start: (id: number, acceptProposed = true) =>
-      request<StepPlan>(`/api/step-plans/${id}/start`, {
-        method: "POST",
-        body: JSON.stringify({ accept_proposed: acceptProposed }),
+      call("POST /api/step-plans/{plan_id}/start", {
+        path: { plan_id: id },
+        body: { accept_proposed: acceptProposed },
       }),
     startAuto: (id: number) =>
-      request<StepPlan>(`/api/step-plans/${id}/auto/start`, { method: "POST" }),
+      call("POST /api/step-plans/{plan_id}/auto/start", { path: { plan_id: id } }),
     launch: (id: number) =>
-      request<StepPlan>(`/api/step-plans/${id}/launch`, { method: "POST" }),
+      call("POST /api/step-plans/{plan_id}/launch", { path: { plan_id: id } }),
     pauseAuto: (id: number) =>
-      request<StepPlan>(`/api/step-plans/${id}/auto/pause`, { method: "POST" }),
+      call("POST /api/step-plans/{plan_id}/auto/pause", { path: { plan_id: id } }),
     assessPlan: (id: number) =>
-      request<StepPlan>(`/api/step-plans/${id}/assess`, { method: "POST" }),
+      call("POST /api/step-plans/{plan_id}/assess", { path: { plan_id: id } }),
     assessStep: (stepId: number) =>
-      request<Step>(`/api/steps/${stepId}/assess`, { method: "POST" }),
+      call("POST /api/steps/{step_id}/assess", { path: { step_id: stepId } }),
     review: (id: number) =>
-      request<StepPlanReview>(`/api/step-plans/${id}/review`, { method: "POST" }),
+      call("POST /api/step-plans/{plan_id}/review", { path: { plan_id: id } }),
     createStep: (id: number, payload: StepCreate) =>
-      request<Step>(`/api/step-plans/${id}/steps`, {
-        method: "POST",
-        body: JSON.stringify(payload),
-      }),
+      call("POST /api/step-plans/{plan_id}/steps", { path: { plan_id: id }, body: payload }),
     consolidationChat: (id: number) =>
-      request<Chat>(`/api/step-plans/${id}/consolidation/chat`, { method: "POST" }),
+      call("POST /api/step-plans/{plan_id}/consolidation/chat", { path: { plan_id: id } }),
     generateFinal: (id: number, opts?: { instructions?: string; force?: boolean }) =>
-      request<FinalDraftResult>(`/api/step-plans/${id}/consolidate/generate`, {
-        method: "POST",
-        body: JSON.stringify({
-          instructions: opts?.instructions || null,
-          force: opts?.force ?? false,
-        }),
+      call("POST /api/step-plans/{plan_id}/consolidate/generate", {
+        path: { plan_id: id },
+        body: { instructions: opts?.instructions || null, force: opts?.force ?? false, },
       }),
     writeFinal: (id: number, content: string) =>
-      request<StepPlan>(`/api/step-plans/${id}/final`, {
-        method: "PUT",
-        body: JSON.stringify({ content }),
-      }),
+      call("PUT /api/step-plans/{plan_id}/final", { path: { plan_id: id }, body: { content } }),
     finalVersions: (id: number) =>
-      request<FinalVersion[]>(`/api/step-plans/${id}/final/versions`),
+      call("GET /api/step-plans/{plan_id}/final/versions", { path: { plan_id: id } }),
     revertFinal: (id: number, version: number) =>
-      request<StepPlan>(`/api/step-plans/${id}/final/revert`, {
-        method: "POST",
-        body: JSON.stringify({ version }),
+      call("POST /api/step-plans/{plan_id}/final/revert", {
+        path: { plan_id: id },
+        body: { version },
       }),
     finalFromMessage: (id: number, messageId: number) =>
-      request<StepPlan>(`/api/step-plans/${id}/final/from-message`, {
-        method: "POST",
-        body: JSON.stringify({ message_id: messageId }),
+      call("POST /api/step-plans/{plan_id}/final/from-message", {
+        path: { plan_id: id },
+        body: { message_id: messageId },
       }),
     complete: (id: number) =>
-      request<StepPlan>(`/api/step-plans/${id}/complete`, { method: "POST" }),
+      call("POST /api/step-plans/{plan_id}/complete", { path: { plan_id: id } }),
     sendToTopic: (id: number, text?: string, force = false) =>
-      request<Message>(`/api/step-plans/${id}/send-to-topic`, {
-        method: "POST",
-        body: JSON.stringify({ text: text ?? null, force }),
+      call("POST /api/step-plans/{plan_id}/send-to-topic", {
+        path: { plan_id: id },
+        body: { text: text ?? null, force },
       }),
     sendToSource: (id: number, text?: string, force = false) =>
-      request<Message>(`/api/step-plans/${id}/send-to-source`, {
-        method: "POST",
-        body: JSON.stringify({ text: text ?? null, force }),
+      call("POST /api/step-plans/{plan_id}/send-to-source", {
+        path: { plan_id: id },
+        body: { text: text ?? null, force },
       }),
     updateStep: (stepId: number, payload: StepUpdate) =>
-      request<Step>(`/api/steps/${stepId}`, {
-        method: "PATCH",
-        body: JSON.stringify(payload),
-      }),
-    removeStep: (stepId: number) => request<void>(`/api/steps/${stepId}`, { method: "DELETE" }),
+      call("PATCH /api/steps/{step_id}", { path: { step_id: stepId }, body: payload }),
+    removeStep: (stepId: number) =>
+      call("DELETE /api/steps/{step_id}", { path: { step_id: stepId } }),
     moveStep: (stepId: number, payload: StepMove) =>
-      request<Step>(`/api/steps/${stepId}/move`, {
-        method: "POST",
-        body: JSON.stringify(payload),
-      }),
+      call("POST /api/steps/{step_id}/move", { path: { step_id: stepId }, body: payload }),
     acceptStep: (stepId: number) =>
-      request<Step>(`/api/steps/${stepId}/accept`, { method: "POST" }),
+      call("POST /api/steps/{step_id}/accept", { path: { step_id: stepId } }),
     setStepStatus: (stepId: number, status: SettableStepStatus) =>
-      request<Step>(`/api/steps/${stepId}/status`, {
-        method: "POST",
-        body: JSON.stringify({ status }),
-      }),
+      call("POST /api/steps/{step_id}/status", { path: { step_id: stepId }, body: { status } }),
     writeArtifact: (stepId: number, content: string) =>
-      request<Step>(`/api/steps/${stepId}/artifact`, {
-        method: "PUT",
-        body: JSON.stringify({ content }),
-      }),
+      call("PUT /api/steps/{step_id}/artifact", { path: { step_id: stepId }, body: { content } }),
     versions: (stepId: number) =>
-      request<StepArtifactVersion[]>(`/api/steps/${stepId}/versions`),
+      call("GET /api/steps/{step_id}/versions", { path: { step_id: stepId } }),
     revertArtifact: (stepId: number, version: number) =>
-      request<Step>(`/api/steps/${stepId}/artifact/revert`, {
-        method: "POST",
-        body: JSON.stringify({ version }),
+      call("POST /api/steps/{step_id}/artifact/revert", {
+        path: { step_id: stepId },
+        body: { version },
       }),
     generateArtifact: (stepId: number, instructions?: string) =>
-      request<ArtifactDraftResult>(`/api/steps/${stepId}/artifact/generate`, {
-        method: "POST",
-        body: JSON.stringify({ instructions: instructions || null }),
+      call("POST /api/steps/{step_id}/artifact/generate", {
+        path: { step_id: stepId },
+        body: { instructions: instructions || null },
       }),
     artifactFromMessage: (stepId: number, messageId: number) =>
-      request<Step>(`/api/steps/${stepId}/artifact/from-message`, {
-        method: "POST",
-        body: JSON.stringify({ message_id: messageId }),
+      call("POST /api/steps/{step_id}/artifact/from-message", {
+        path: { step_id: stepId },
+        body: { message_id: messageId },
       }),
     suggestSubsteps: (stepId: number, instructions?: string) =>
-      request<StepPlan>(`/api/steps/${stepId}/suggest-substeps`, {
-        method: "POST",
-        body: JSON.stringify({ instructions: instructions || null }),
+      call("POST /api/steps/{step_id}/suggest-substeps", {
+        path: { step_id: stepId },
+        body: { instructions: instructions || null },
       }),
     stepChat: (stepId: number) =>
-      request<Chat>(`/api/steps/${stepId}/chat`, { method: "POST" }),
+      call("POST /api/steps/{step_id}/chat", { path: { step_id: stepId } }),
   },
 
   workflows: {
     // Workflows: reusable, named sequences of independent agents. The *workflow*
     // owns the chaining (not agent-to-agent dependencies). Live progress arrives
     // via the `workflow.changed` SSE event.
-    list: (opts?: { includeArchived?: boolean }) => {
-      const qs = opts?.includeArchived ? "?include_archived=true" : "";
-      return request<Workflow[]>(`/api/workflows${qs}`);
-    },
-    get: (id: number) => request<Workflow>(`/api/workflows/${id}`),
+    list: (opts?: { includeArchived?: boolean }) =>
+      call("GET /api/workflows", {
+        query: { include_archived: opts?.includeArchived || undefined },
+      }),
+    get: (id: number) => call("GET /api/workflows/{workflow_id}", { path: { workflow_id: id } }),
     // Durable run history (newest first), each with its per-step attempt traces.
-    runs: (id: number, limit?: number) => {
-      const qs = limit ? `?limit=${limit}` : "";
-      return request<WorkflowRun[]>(`/api/workflows/${id}/runs${qs}`);
-    },
+    runs: (id: number, limit?: number) =>
+      call("GET /api/workflows/{workflow_id}/runs", {
+        path: { workflow_id: id },
+        query: { limit: limit || undefined },
+      }),
     // The agent's activity for one step *attempt* — tool calls, reasoning,
     // errors. Sliced to the attempt's window, so an agent re-driven several
     // times doesn't replay its whole history under every trace row.
     stepEvents: (id: number, stepRunId: number) =>
-      request<AgentEvent[]>(`/api/workflows/${id}/run-steps/${stepRunId}/events`),
-    create: (data: WorkflowCreate) =>
-      request<Workflow>(`/api/workflows`, {
-        method: "POST",
-        body: JSON.stringify(data),
+      call("GET /api/workflows/{workflow_id}/run-steps/{step_run_id}/events", {
+        path: { workflow_id: id, step_run_id: stepRunId },
       }),
+    create: (data: WorkflowCreate) => call("POST /api/workflows", { body: data }),
     update: (id: number, data: WorkflowUpdate) =>
-      request<Workflow>(`/api/workflows/${id}`, {
-        method: "PATCH",
-        body: JSON.stringify(data),
-      }),
-    remove: (id: number) => request<void>(`/api/workflows/${id}`, { method: "DELETE" }),
+      call("PATCH /api/workflows/{workflow_id}", { path: { workflow_id: id }, body: data }),
+    remove: (id: number) =>
+      call("DELETE /api/workflows/{workflow_id}", { path: { workflow_id: id } }),
     // Lifecycle controls — the workflow coordinates its step agents.
     run: (id: number, input?: string | null) =>
-      request<Workflow>(`/api/workflows/${id}/run`, {
-        method: "POST",
-        body: JSON.stringify({ input: input?.trim() ? input.trim() : null }),
+      call("POST /api/workflows/{workflow_id}/run", {
+        path: { workflow_id: id },
+        body: { input: input?.trim() ? input.trim() : null },
       }),
     approve: (id: number, note?: string | null) =>
-      request<Workflow>(`/api/workflows/${id}/approve`, {
-        method: "POST",
-        body: JSON.stringify({ note: note?.trim() ? note.trim() : null }),
+      call("POST /api/workflows/{workflow_id}/approve", {
+        path: { workflow_id: id },
+        body: { note: note?.trim() ? note.trim() : null },
       }),
     reject: (id: number, note?: string | null, action?: WorkflowStepRejectPolicy | null) =>
-      request<Workflow>(`/api/workflows/${id}/reject`, {
-        method: "POST",
-        body: JSON.stringify({
-          note: note?.trim() ? note.trim() : null,
-          action: action ?? null,
-        }),
+      call("POST /api/workflows/{workflow_id}/reject", {
+        path: { workflow_id: id },
+        body: { note: note?.trim() ? note.trim() : null, action: action ?? null, },
       }),
-    pause: (id: number) => request<Workflow>(`/api/workflows/${id}/pause`, { method: "POST" }),
+    pause: (id: number) =>
+      call("POST /api/workflows/{workflow_id}/pause", { path: { workflow_id: id } }),
     // Resume a paused run. `input` answers whatever parked it — when the pause
     // came from a step's agent blocking on a question, re-driving it blind would
     // just hit the same question again.
     resume: (id: number, input?: string | null) =>
-      request<Workflow>(`/api/workflows/${id}/resume`, {
-        method: "POST",
-        body: JSON.stringify({ input: input?.trim() ? input.trim() : null }),
+      call("POST /api/workflows/{workflow_id}/resume", {
+        path: { workflow_id: id },
+        body: { input: input?.trim() ? input.trim() : null },
       }),
     // Answer the tool-permission gate parking a step. Goes through the workflow
     // (not the agent) because resolving it must also un-pause the run: the block
@@ -1021,62 +728,60 @@ export const api = {
       requestId: string,
       decision: AgentPermissionDecisionValue,
     ) =>
-      request<Workflow>(`/api/workflows/${id}/permission`, {
-        method: "POST",
-        body: JSON.stringify({ request_id: requestId, decision }),
+      call("POST /api/workflows/{workflow_id}/permission", {
+        path: { workflow_id: id },
+        body: { request_id: requestId, decision },
       }),
     // Re-drive one step of a stopped run as a fresh attempt, in place — instead
     // of re-running the whole pipeline and paying for the good steps twice.
     // Omit `position` to retry the step whose failure stopped the run.
     retry: (id: number, opts?: { position?: number | null; input?: string | null }) =>
-      request<Workflow>(`/api/workflows/${id}/retry`, {
-        method: "POST",
-        body: JSON.stringify({
+      call("POST /api/workflows/{workflow_id}/retry", {
+        path: { workflow_id: id },
+        body: {
           position: opts?.position ?? null,
           input: opts?.input?.trim() ? opts.input.trim() : null,
-        }),
+        },
       }),
-    cancel: (id: number) => request<Workflow>(`/api/workflows/${id}/cancel`, { method: "POST" }),
+    cancel: (id: number) =>
+      call("POST /api/workflows/{workflow_id}/cancel", { path: { workflow_id: id } }),
     // Run one recorded step attempt again, alone, on the input it first saw.
     // Unlike `retry` this advances nothing — so it works on a run that
     // succeeded, when you just want another take on one step.
     replayStep: (id: number, stepRunId: number) =>
-      request<Workflow>(`/api/workflows/${id}/run-steps/${stepRunId}/replay`, {
-        method: "POST",
+      call("POST /api/workflows/{workflow_id}/run-steps/{step_run_id}/replay", {
+        path: { workflow_id: id, step_run_id: stepRunId },
       }),
-    listArchived: () => request<Workflow[]>(`/api/workflows/archived`),
-    archive: (id: number) => request<Workflow>(`/api/workflows/${id}/archive`, { method: "POST" }),
+    listArchived: () => call("GET /api/workflows/archived"),
+    archive: (id: number) =>
+      call("POST /api/workflows/{workflow_id}/archive", { path: { workflow_id: id } }),
     unarchive: (id: number) =>
-      request<Workflow>(`/api/workflows/${id}/unarchive`, { method: "POST" }),
+      call("POST /api/workflows/{workflow_id}/unarchive", { path: { workflow_id: id } }),
     // Recurrence config (PUT replaces the whole schedule block).
     setSchedule: (id: number, data: WorkflowScheduleUpdate) =>
-      request<Workflow>(`/api/workflows/${id}/schedule`, {
-        method: "PUT",
-        body: JSON.stringify(data),
-      }),
+      call("PUT /api/workflows/{workflow_id}/schedule", { path: { workflow_id: id }, body: data }),
     // Webhook trigger: mint returns the workflow with `webhook_token` populated.
     mintWebhook: (id: number) =>
-      request<Workflow>(`/api/workflows/${id}/webhook`, { method: "POST" }),
+      call("POST /api/workflows/{workflow_id}/webhook", { path: { workflow_id: id } }),
     revokeWebhook: (id: number) =>
-      request<Workflow>(`/api/workflows/${id}/webhook`, { method: "DELETE" }),
+      call("DELETE /api/workflows/{workflow_id}/webhook", { path: { workflow_id: id } }),
     // Public webhook URL to copy (fires the workflow when POSTed to).
     webhookUrl: (token: string) => `/api/workflows/hooks/${token}`,
 
     // --- State (the pipeline's own memory) --------------------------------
     // Named values shared by every step and kept across runs. Setting one by
     // hand is how you seed a pipeline's first run (e.g. its starting cursor).
-    listState: (id: number) => request<WorkflowState[]>(`/api/workflows/${id}/state`),
+    listState: (id: number) =>
+      call("GET /api/workflows/{workflow_id}/state", { path: { workflow_id: id } }),
     setState: (id: number, key: string, value: string) =>
-      request<WorkflowState>(`/api/workflows/${id}/state`, {
-        method: "PUT",
-        body: JSON.stringify({ key, value }),
+      call("PUT /api/workflows/{workflow_id}/state", {
+        path: { workflow_id: id },
+        body: { key, value },
       }),
     deleteState: (id: number, key: string) =>
-      request<void>(`/api/workflows/${id}/state/${encodeURIComponent(key)}`, {
-        method: "DELETE",
-      }),
+      call("DELETE /api/workflows/{workflow_id}/state/{key}", { path: { workflow_id: id, key } }),
     clearState: (id: number) =>
-      request<void>(`/api/workflows/${id}/state`, { method: "DELETE" }),
+      call("DELETE /api/workflows/{workflow_id}/state", { path: { workflow_id: id } }),
   },
 
   transfer: {
@@ -1085,82 +790,67 @@ export const api = {
     // can only be offered once `preview` has reported the collisions.
     exportWorkflowUrl: (id: number) => `/api/transfer/workflows/${id}`,
     exportAgentUrl: (id: number | string) => `/api/transfer/agents/${id}`,
-    preview: (content: string) =>
-      request<TransferPreview>(`/api/transfer/preview`, {
-        method: "POST",
-        body: JSON.stringify({ content }),
-      }),
+    preview: (content: string) => call("POST /api/transfer/preview", { body: { content } }),
     import: (content: string, resolutions: TransferResolution[] = []) =>
-      request<TransferImportResult>(`/api/transfer/import`, {
-        method: "POST",
-        body: JSON.stringify({ content, resolutions }),
-      }),
+      call("POST /api/transfer/import", { body: { content, resolutions } }),
   },
 
   definitions: {
     // Work in progress (docs/definitions.md): the folder check and the one-shot
     // export of database agents/workflows into definition files.
-    check: () => request<DefinitionsCheckReport>(`/api/definitions/check`),
+    check: () => call("GET /api/definitions/check"),
     // The migration from database-declared to file-declared agents and workflows.
-    status: () => request<DefinitionsStatus>(`/api/definitions/status`),
-    migration: () => request<MigrationPreview>(`/api/definitions/migration`),
+    status: () => call("GET /api/definitions/status"),
+    migration: () => call("GET /api/definitions/migration") as Promise<MigrationPreview>,
     migrate: (acknowledge: boolean) =>
-      request<MigrationResult>(`/api/definitions/migrate`, {
-        method: "POST",
-        body: JSON.stringify({ acknowledge }),
-      }),
-    revert: () => request<RevertResult>(`/api/definitions/revert`, { method: "POST" }),
+      call("POST /api/definitions/migrate", { body: { acknowledge } }),
+    revert: () => call("POST /api/definitions/revert"),
     migrationItem: (kind: MigrationKind, id: number) =>
-      request<MigrationItemDetail>(`/api/definitions/migration/items/${kind}/${id}`),
-    // The last, irreversible step: clears the declarations out of the database.
-    finalize: () =>
-      request<FinalizeResult>(`/api/definitions/finalize`, {
-        method: "POST",
-        body: JSON.stringify({ confirm: true }),
+      call("GET /api/definitions/migration/items/{kind}/{item_id}", {
+        path: { kind, item_id: id },
       }),
+    // The last, irreversible step: clears the declarations out of the database.
+    finalize: () => call("POST /api/definitions/finalize", { body: { confirm: true } }),
     fileIssues: (workspaceId: number, path: string) =>
-      request<DefinitionFileReport>(
-        `/api/definitions/file-issues?workspace_id=${workspaceId}&path=${encodeURIComponent(path)}`,
-      ),
+      call("GET /api/definitions/file-issues", { query: { workspace_id: workspaceId, path } }),
     // The JSON Schema of a kind of definition file, for the Files editor.
     schema: (kind: DefinitionFileKind) =>
-      request<Record<string, unknown>>(`/api/definitions/schema/${kind}`),
+      call("GET /api/definitions/schema/{kind}", { path: { kind } }),
     // Files mode: accept the permissions an agent's or workflow's file grants now.
     accept: (kind: DefinitionKind, id: number | string, contentHash?: string | null) =>
-      request<DefinitionSource>(`/api/definitions/accept`, {
-        method: "POST",
-        body: JSON.stringify({ kind, id, content_hash: contentHash ?? null }),
+      call("POST /api/definitions/accept", {
+        body: { kind, id, content_hash: contentHash ?? null },
       }),
     export: (overwrite = false) =>
-      request<DefinitionsExportResult>(
-        `/api/definitions/export${overwrite ? "?overwrite=true" : ""}`,
-        { method: "POST" },
-      ),
+      call("POST /api/definitions/export", { query: { overwrite: overwrite || undefined } }),
   },
 
   messages: {
     // Messages
     list: (topicId: number, opts?: MessageWindow) =>
-      request<Message[]>(`/api/topics/${topicId}/messages${messageWindowQuery(opts)}`),
+      call("GET /api/topics/{topic_id}/messages", {
+        path: { topic_id: topicId },
+        ...messageWindow(opts),
+      }),
     clear: (topicId: number) =>
-      request<void>(`/api/topics/${topicId}/messages`, { method: "DELETE" }),
+      call("DELETE /api/topics/{topic_id}/messages", { path: { topic_id: topicId } }),
     remove: (topicId: number, messageId: number) =>
-      request<void>(`/api/topics/${topicId}/messages/${messageId}`, {
-        method: "DELETE",
+      call("DELETE /api/topics/{topic_id}/messages/{message_id}", {
+        path: { topic_id: topicId, message_id: messageId },
       }),
     edit: (topicId: number, messageId: number, content: string) =>
-      request<Message>(`/api/topics/${topicId}/messages/${messageId}`, {
-        method: "PATCH",
-        body: JSON.stringify({ content }),
+      call("PATCH /api/topics/{topic_id}/messages/{message_id}", {
+        path: { topic_id: topicId, message_id: messageId },
+        body: { content },
       }),
     // Persist a partial assistant reply when the user stops generation.
     saveStopped: (topicId: number, turn: StoppedTurn) =>
-      request<Message[]>(`/api/topics/${topicId}/messages/stopped`, {
-        method: "POST",
-        body: JSON.stringify(turn),
+      call("POST /api/topics/{topic_id}/messages/stopped", {
+        path: { topic_id: topicId },
+        body: turn,
       }),
     stopTurn: (topicId: number) =>
-      request<void>(`/api/topics/${topicId}/messages/stop`, { method: "POST" }),
+      call("POST /api/topics/{topic_id}/messages/stop", { path: { topic_id: topicId } }),
   },
 
   container: (kind: ReminderContainer, id: number): ContainerApi =>
@@ -1172,15 +862,28 @@ export const api = {
           clearMessages: () => api.messages.clear(id),
           saveStopped: (turn) => api.messages.saveStopped(id, turn),
           stop: () => api.messages.stopTurn(id),
-          compact: (instructions) => compactContainer(`/api/topics/${id}/messages`, instructions),
+          compact: (instructions) =>
+            call("POST /api/topics/{topic_id}/messages/compact", {
+              path: { topic_id: id },
+              body: compactBody(instructions),
+            }),
           contextEstimate: () =>
-            request<ContextEstimate>(`/api/topics/${id}/messages/context`),
-          listTurns: () => request<TurnIndexItem[]>(`/api/topics/${id}/messages/turns`),
+            call("GET /api/topics/{topic_id}/messages/context", { path: { topic_id: id } }),
+          listTurns: () =>
+            call("GET /api/topics/{topic_id}/messages/turns", { path: { topic_id: id } }),
           rewind: (fromId, throughId) =>
-            rewindContainer(`/api/topics/${id}/messages`, fromId, throughId),
+            call("POST /api/topics/{topic_id}/messages/rewind", {
+              path: { topic_id: id },
+              body: rewindBody(fromId, throughId),
+            }),
           uploadAttachment: (file) => api.attachments.uploadForTopic(id, file),
-          listApprovals: () => request<ToolApproval[]>(`/api/topics/${id}/approvals`),
-          decideApproval: (aid, decision) => decideApproval(`/api/topics/${id}/approvals/${aid}`, decision),
+          listApprovals: () =>
+            call("GET /api/topics/{topic_id}/approvals", { path: { topic_id: id } }),
+          decideApproval: (aid, decision) =>
+            call("POST /api/topics/{topic_id}/approvals/{approval_id}", {
+              path: { topic_id: id, approval_id: aid },
+              body: decision,
+            }),
           notes: {
             getDraft: () => api.notes.getDraft(id),
             saveDraft: (text) => api.notes.saveDraft(id, text),
@@ -1198,15 +901,28 @@ export const api = {
           clearMessages: () => api.chats.clearMessages(id),
           saveStopped: (turn) => api.chats.saveStoppedMessage(id, turn),
           stop: () => api.chats.stopTurn(id),
-          compact: (instructions) => compactContainer(`/api/chats/${id}/messages`, instructions),
+          compact: (instructions) =>
+            call("POST /api/chats/{chat_id}/messages/compact", {
+              path: { chat_id: id },
+              body: compactBody(instructions),
+            }),
           contextEstimate: () =>
-            request<ContextEstimate>(`/api/chats/${id}/messages/context`),
-          listTurns: () => request<TurnIndexItem[]>(`/api/chats/${id}/messages/turns`),
+            call("GET /api/chats/{chat_id}/messages/context", { path: { chat_id: id } }),
+          listTurns: () =>
+            call("GET /api/chats/{chat_id}/messages/turns", { path: { chat_id: id } }),
           rewind: (fromId, throughId) =>
-            rewindContainer(`/api/chats/${id}/messages`, fromId, throughId),
+            call("POST /api/chats/{chat_id}/messages/rewind", {
+              path: { chat_id: id },
+              body: rewindBody(fromId, throughId),
+            }),
           uploadAttachment: (file) => api.attachments.uploadForChat(id, file),
-          listApprovals: () => request<ToolApproval[]>(`/api/chats/${id}/approvals`),
-          decideApproval: (aid, decision) => decideApproval(`/api/chats/${id}/approvals/${aid}`, decision),
+          listApprovals: () =>
+            call("GET /api/chats/{chat_id}/approvals", { path: { chat_id: id } }),
+          decideApproval: (aid, decision) =>
+            call("POST /api/chats/{chat_id}/approvals/{approval_id}", {
+              path: { chat_id: id, approval_id: aid },
+              body: decision,
+            }),
           notes: {
             getDraft: () => api.chats.getNotesDraft(id),
             saveDraft: (text) => api.chats.saveNotesDraft(id, text),
@@ -1225,526 +941,438 @@ export const api = {
       return response.text();
     },
     // Attachments (images + selected documents)
-    uploadForTopic: (topicId: number, file: File): Promise<Attachment> =>
-      postForm<Attachment>(`/api/topics/${topicId}/attachments`, file),
-    uploadForChat: (chatId: number, file: File): Promise<Attachment> =>
-      postForm<Attachment>(`/api/chats/${chatId}/attachments`, file),
+    uploadForTopic: (topicId: number, file: File) =>
+      call("POST /api/topics/{topic_id}/attachments", {
+        path: { topic_id: topicId },
+        form: { file },
+      }),
+    uploadForChat: (chatId: number, file: File) =>
+      call("POST /api/chats/{chat_id}/attachments", { path: { chat_id: chatId }, form: { file } }),
     remove: (attachmentId: number) =>
-      request<void>(`/api/attachments/${attachmentId}`, { method: "DELETE" }),
+      call("DELETE /api/attachments/{attachment_id}", { path: { attachment_id: attachmentId } }),
     url: (attachmentId: number) => `/api/attachments/${attachmentId}`,
   },
 
   settings: {
     // Settings
-    get: () => request<Settings>(`/api/settings`),
+    get: () => call("GET /api/settings") as Promise<Settings>,
     update: (data: SettingsUpdate) =>
-      request<Settings>(`/api/settings`, { method: "PUT", body: JSON.stringify(data) }),
-    runBackupNow: () =>
-      request<BackupRunResult>(`/api/settings/backup/run`, { method: "POST" }),
+      call("PUT /api/settings", { body: data }) as Promise<Settings>,
+    runBackupNow: () => untyped<BackupRunResult>(call("POST /api/settings/backup/run")),
     regenerateOpenAIProxyKey: () =>
-      request<{ key: string }>(`/api/settings/openai-proxy/key`, { method: "POST" }),
+      untyped<{ key: string }>(call("POST /api/settings/openai-proxy/key")),
   },
 
   stt: {
     // Speech-to-text (Azure token broker)
-    getToken: () =>
-      request<{ token: string; endpoint: string; language: string }>(`/api/stt/token`),
+    getToken: () => call("GET /api/stt/token"),
     testConnection: (endpoint: string, key?: string) =>
-      request<{ ok: boolean; detail: string | null }>(`/api/stt/test`, {
-        method: "POST",
-        body: JSON.stringify({ endpoint, key: key || null }),
-      }),
+      call("POST /api/stt/test", { body: { endpoint, key: key || null } }),
   },
 
   github: {
     // GitHub
-    listIssues: (repo?: string, q?: string) => {
-      const params = new URLSearchParams();
-      if (repo) params.set("repo", repo);
-      if (q) params.set("q", q);
-      const qs = params.toString();
-      return request<GitHubIssue[]>(`/api/github/issues${qs ? `?${qs}` : ""}`);
-    },
+    listIssues: (repo?: string, q?: string) =>
+      untyped<GitHubIssue[]>(
+        call("GET /api/github/issues", { query: { repo: repo || undefined, q: q || undefined } }),
+      ),
     createIssue: (data: { repo?: string; title: string; body?: string; labels?: string[] }) =>
-      request<GitHubIssue>(`/api/github/issues`, {
-        method: "POST",
-        body: JSON.stringify(data),
-      }),
+      untyped<GitHubIssue>(call("POST /api/github/issues", { body: data })),
 
-    getIssue: (number: number, repo?: string) => {
-      const qs = repo ? `?repo=${encodeURIComponent(repo)}` : "";
-      return request<IssueDetail>(`/api/github/issues/${number}${qs}`);
-    },
+    getIssue: (number: number, repo?: string) =>
+      call("GET /api/github/issues/{number}", {
+        path: { number },
+        query: { repo: repo || undefined },
+      }),
     addIssueComment: (number: number, body: string, repo?: string) =>
-      request<IssueComment>(`/api/github/issues/${number}/comments`, {
-        method: "POST",
-        body: JSON.stringify({ body, repo }),
-      }),
+      call("POST /api/github/issues/{number}/comments", { path: { number }, body: { body, repo } }),
     setIssueLabels: (number: number, labels: string[], repo?: string) =>
-      request<IssueLabel[]>(`/api/github/issues/${number}/labels`, {
-        method: "PUT",
-        body: JSON.stringify({ labels, repo }),
-      }),
-    listLabels: (repo?: string) => {
-      const qs = repo ? `?repo=${encodeURIComponent(repo)}` : "";
-      return request<IssueLabel[]>(`/api/github/labels${qs}`);
-    },
+      call("PUT /api/github/issues/{number}/labels", { path: { number }, body: { labels, repo } }),
+    listLabels: (repo?: string) =>
+      untyped<IssueLabel[]>(call("GET /api/github/labels", { query: { repo: repo || undefined } })),
     // Summaries
     summarizeIssue: (topicId: number, opts: { force?: boolean } = {}) =>
-      request<IssueSummary>(
-        `/api/topics/${topicId}/summary${opts.force ? "?force=true" : ""}`,
-        { method: "POST" },
-      ),
+      call("POST /api/topics/{topic_id}/summary", {
+        path: { topic_id: topicId },
+        query: { force: opts.force || undefined },
+      }),
 
     // Push the topic title/description back to the linked GitHub issue.
     pushIssue: (topicId: number) =>
-      request<IssuePushResult>(`/api/topics/${topicId}/issue/push`, { method: "POST" }),
+      call("POST /api/topics/{topic_id}/issue/push", { path: { topic_id: topicId } }),
 
     // Slash commands
     draftUpdate: (topicId: number, text?: string) =>
-      request<CommentDraft>(`/api/topics/${topicId}/commands/gh-update/draft`, {
-        method: "POST",
-        body: JSON.stringify({ text: text ?? null }),
-      }),
+      call("POST /api/topics/{topic_id}/commands/gh-update/draft", {
+        path: { topic_id: topicId },
+        body: { text: text ?? null },
+      }) as Promise<CommentDraft>,
     postUpdate: (topicId: number, body: string, noteAttachmentIds: number[] = []) =>
-      request<CommentPostResult>(`/api/topics/${topicId}/commands/gh-update/post`, {
-        method: "POST",
-        body: JSON.stringify({ body, note_attachment_ids: noteAttachmentIds }),
+      call("POST /api/topics/{topic_id}/commands/gh-update/post", {
+        path: { topic_id: topicId },
+        body: { body, note_attachment_ids: noteAttachmentIds },
       }),
     sync: (topicId: number) =>
-      request<GhSyncResult>(`/api/topics/${topicId}/commands/gh-sync`, {
-        method: "POST",
-      }),
+      call("POST /api/topics/{topic_id}/commands/gh-sync", { path: { topic_id: topicId } }),
     draftCreate: (topicId: number, text?: string) =>
-      request<GhCreateDraft>(`/api/topics/${topicId}/commands/gh-create/draft`, {
-        method: "POST",
-        body: JSON.stringify({ text: text ?? null }),
+      call("POST /api/topics/{topic_id}/commands/gh-create/draft", {
+        path: { topic_id: topicId },
+        body: { text: text ?? null },
       }),
     postCreate: (topicId: number, title: string, body: string) =>
-      request<GhCreatePostResult>(`/api/topics/${topicId}/commands/gh-create/post`, {
-        method: "POST",
-        body: JSON.stringify({ title, body }),
+      call("POST /api/topics/{topic_id}/commands/gh-create/post", {
+        path: { topic_id: topicId },
+        body: { title, body },
       }),
     draftClose: (topicId: number, text?: string) =>
-      request<CommentDraft>(`/api/topics/${topicId}/commands/gh-close/draft`, {
-        method: "POST",
-        body: JSON.stringify({ text: text ?? null }),
-      }),
+      call("POST /api/topics/{topic_id}/commands/gh-close/draft", {
+        path: { topic_id: topicId },
+        body: { text: text ?? null },
+      }) as Promise<CommentDraft>,
     postClose: (
       topicId: number,
       body: string,
       stateReason: "completed" | "not_planned" = "completed",
     ) =>
-      request<GhCloseResult>(`/api/topics/${topicId}/commands/gh-close/post`, {
-        method: "POST",
-        body: JSON.stringify({ body, state_reason: stateReason }),
+      call("POST /api/topics/{topic_id}/commands/gh-close/post", {
+        path: { topic_id: topicId },
+        body: { body, state_reason: stateReason },
       }),
   },
 
   approvalRules: {
-    list: (owner?: { topicId?: number; chatId?: number }) => {
-      const qs = new URLSearchParams();
-      if (owner?.topicId != null) qs.set("topic_id", String(owner.topicId));
-      if (owner?.chatId != null) qs.set("chat_id", String(owner.chatId));
-      else if (owner?.topicId == null) qs.set("scope", "global");
-      return request<ApprovalRule[]>(`/api/approval-rules?${qs}`);
-    },
-    create: (body: ApprovalRuleCreate) =>
-      request<ApprovalRule>("/api/approval-rules", { method: "POST", body: JSON.stringify(body) }),
-    update: (id: number, body: ApprovalRuleUpdate) =>
-      request<ApprovalRule>(`/api/approval-rules/${id}`, {
-        method: "PATCH",
-        body: JSON.stringify(body),
+    list: (owner?: { topicId?: number; chatId?: number }) =>
+      call("GET /api/approval-rules", {
+        query: {
+          topic_id: owner?.topicId,
+          chat_id: owner?.chatId,
+          scope: owner?.topicId == null && owner?.chatId == null ? "global" : undefined,
+        },
       }),
-    remove: (id: number) => request<void>(`/api/approval-rules/${id}`, { method: "DELETE" }),
+    create: (body: ApprovalRuleCreate) => call("POST /api/approval-rules", { body }),
+    update: (id: number, body: ApprovalRuleUpdate) =>
+      call("PATCH /api/approval-rules/{rule_id}", { path: { rule_id: id }, body }),
+    remove: (id: number) => call("DELETE /api/approval-rules/{rule_id}", { path: { rule_id: id } }),
   },
 
   mcp: {
     // MCP
     list: (probe = true) =>
-      request<MCPServerStatus[]>(`/api/mcp/servers?probe=${probe}`),
+      untyped<MCPServerStatus[]>(call("GET /api/mcp/servers", { query: { probe } })),
     probe: (name: string) =>
-      request<MCPServerStatus>(`/api/mcp/servers/${name}/probe`, { method: "POST" }),
+      untyped<MCPServerStatus>(call("POST /api/mcp/servers/{name}/probe", { path: { name } })),
     connect: (name: string) =>
-      request<MCPServerStatus>(`/api/mcp/servers/${name}/connect`, { method: "POST" }),
+      untyped<MCPServerStatus>(call("POST /api/mcp/servers/{name}/connect", { path: { name } })),
     disconnect: (name: string) =>
-      request<MCPServerStatus>(`/api/mcp/servers/${name}/disconnect`, { method: "POST" }),
+      untyped<MCPServerStatus>(call("POST /api/mcp/servers/{name}/disconnect", { path: { name } })),
     refresh: (name: string) =>
-      request<MCPServerStatus>(`/api/mcp/servers/${name}/refresh`, { method: "POST" }),
+      untyped<MCPServerStatus>(call("POST /api/mcp/servers/{name}/refresh", { path: { name } })),
     setWorkiqPreview: (enabled: boolean) =>
-      request<MCPServerStatus>(`/api/mcp/servers/workiq/preview`, {
-        method: "POST",
-        body: JSON.stringify({ enabled }),
-      }),
+      untyped<MCPServerStatus>(call("POST /api/mcp/servers/workiq/preview", { body: { enabled } })),
     // Drive the browser sign-in for an OAuth-protected server: the hosted
     // WorkIQ preview, or any of the Agent 365 workiq-* endpoints.
     reauthenticateWorkiq: (
       name = "workiq",
       opts?: { usePopup?: boolean; silentOnly?: boolean; auto?: boolean },
-    ) => {
-      const params = new URLSearchParams();
-      if (opts?.usePopup) params.set("use_popup", "true");
-      if (opts?.silentOnly) params.set("silent_only", "true");
-      if (opts?.auto) params.set("auto", "true");
-      const qs = params.toString();
-      return request<
-        MCPServerStatus & { interaction_required?: boolean; auth_episode?: string | null }
-      >(`/api/mcp/servers/${name}/reauthenticate${qs ? `?${qs}` : ""}`, { method: "POST" });
-    },
+    ) =>
+      untyped<MCPServerStatus & { interaction_required?: boolean; auth_episode?: string | null }>(
+        call("POST /api/mcp/servers/{name}/reauthenticate", {
+          path: { name },
+          query: {
+            use_popup: opts?.usePopup || undefined,
+            silent_only: opts?.silentOnly || undefined,
+            auto: opts?.auto || undefined,
+          },
+        }),
+      ),
     // Abort an in-flight interactive sign-in so the backend releases that
     // server's fixed OAuth loopback port at once (see workiqSignIn.ts).
     cancelReauthenticateWorkiq: (name = "workiq") =>
-      request<{ cancelled: boolean }>(`/api/mcp/servers/${name}/reauthenticate/cancel`, {
-        method: "POST",
-      }),
+      untyped<{ cancelled: boolean }>(
+        call("POST /api/mcp/servers/{name}/reauthenticate/cancel", { path: { name } }),
+      ),
     // Everything the backend knows about the WorkIQ credentials — settings in
     // force, per-credential token/idle/state facts, and its own auth trace.
     // Read on demand by ``window.precursorWorkiqAuthReport()``.
     authDiagnostics: (limit = 300) =>
-      request<McpAuthDiagnostics>(`/api/mcp/auth/diagnostics?limit=${limit}`),
+      untyped<McpAuthDiagnostics>(call("GET /api/mcp/auth/diagnostics", { query: { limit } })),
     create: (data: MCPServerCreate) =>
-      request<MCPServerStatus>(`/api/mcp/servers/user`, {
-        method: "POST",
-        body: JSON.stringify(data),
-      }),
+      untyped<MCPServerStatus>(call("POST /api/mcp/servers/user", { body: data })),
     update: (id: number, data: MCPServerUpdate) =>
-      request<MCPServerStatus>(`/api/mcp/servers/user/${id}`, {
-        method: "PATCH",
-        body: JSON.stringify(data),
-      }),
+      untyped<MCPServerStatus>(
+        call("PATCH /api/mcp/servers/user/{server_id}", { path: { server_id: id }, body: data }),
+      ),
     remove: (id: number) =>
-      request<void>(`/api/mcp/servers/user/${id}`, { method: "DELETE" }),
+      call("DELETE /api/mcp/servers/user/{server_id}", { path: { server_id: id } }),
   },
 
   llm: {
     // LLM
     listModels: (provider?: string) =>
-      request<LLMModel[]>(
-        `/api/llm/models${provider ? `?provider=${encodeURIComponent(provider)}` : ""}`,
-      ),
+      call("GET /api/llm/models", { query: { provider: provider || undefined } }),
     listProviders: (includeDisabled = false) =>
-      request<LLMProviderSpec[]>(`/api/llm/providers${includeDisabled ? "?include_disabled=true" : ""}`),
+      call("GET /api/llm/providers", { query: { include_disabled: includeDisabled || undefined } }),
   },
 
   notes: {
     // /notes — freeform note capture
     rephrase: (topicId: number, text: string, instruction?: string) =>
-      request<{ text: string }>(
-        `/api/topics/${topicId}/commands/notes/rephrase`,
-        {
-          method: "POST",
-          body: JSON.stringify({ text, instruction: instruction ?? null }),
-        },
-      ),
+      call("POST /api/topics/{topic_id}/commands/notes/rephrase", {
+        path: { topic_id: topicId },
+        body: { text, instruction: instruction ?? null },
+      }),
     append: (topicId: number, text: string, attachmentIds: number[] = []) =>
-      request<{ message: Message }>(
-        `/api/topics/${topicId}/commands/notes/append`,
-        { method: "POST", body: JSON.stringify({ text, attachment_ids: attachmentIds }) },
-      ),
+      call("POST /api/topics/{topic_id}/commands/notes/append", {
+        path: { topic_id: topicId },
+        body: { text, attachment_ids: attachmentIds },
+      }),
     getDraft: (topicId: number) =>
-      request<NotesDraft>(`/api/topics/${topicId}/commands/notes/draft`),
+      call("GET /api/topics/{topic_id}/commands/notes/draft", { path: { topic_id: topicId } }),
     saveDraft: (topicId: number, text: string) =>
-      request<NotesDraft>(`/api/topics/${topicId}/commands/notes/draft`, {
-        method: "PUT",
-        body: JSON.stringify({ text }),
+      call("PUT /api/topics/{topic_id}/commands/notes/draft", {
+        path: { topic_id: topicId },
+        body: { text },
       }),
     clearDraft: (topicId: number) =>
-      request<void>(`/api/topics/${topicId}/commands/notes/draft`, { method: "DELETE" }),
+      call("DELETE /api/topics/{topic_id}/commands/notes/draft", { path: { topic_id: topicId } }),
     listAttachments: (topicId: number) =>
-      request<NoteDraftAttachment[]>(`/api/topics/${topicId}/commands/notes/attachments`),
-    uploadAttachment: (topicId: number, file: File): Promise<NoteDraftAttachment> =>
-      postForm<NoteDraftAttachment>(
-        `/api/topics/${topicId}/commands/notes/attachments`,
-        file,
-      ),
+      call("GET /api/topics/{topic_id}/commands/notes/attachments", {
+        path: { topic_id: topicId },
+      }),
+    uploadAttachment: (topicId: number, file: File) =>
+      call("POST /api/topics/{topic_id}/commands/notes/attachments", {
+        path: { topic_id: topicId },
+        form: { file },
+      }),
     deleteAttachment: (topicId: number, attachmentId: number) =>
-      request<void>(`/api/topics/${topicId}/commands/notes/attachments/${attachmentId}`, {
-        method: "DELETE",
+      call("DELETE /api/topics/{topic_id}/commands/notes/attachments/{attachment_id}", {
+        path: { topic_id: topicId, attachment_id: attachmentId },
       }),
     attachmentUrl: (attachmentId: number) => `/api/notes/attachments/${attachmentId}`,
   },
 
   plugins: {
     /** Frontend extension descriptors from every enabled plugin. */
-    list: () => request<PluginDescriptor[]>(`/api/plugins`),
+    list: () => untyped<PluginDescriptor[]>(call("GET /api/plugins")),
     /** Every installed plugin, enabled or not, for the Settings panel. */
-    installed: () => request<InstalledPlugin[]>(`/api/plugins/installed`),
+    installed: () => untyped<InstalledPlugin[]>(call("GET /api/plugins/installed")),
     /** The curated directory of installable plugins, bundled with Precursor. */
-    catalog: () => request<CatalogPlugin[]>(`/api/plugins/catalog`),
+    catalog: () => untyped<CatalogPlugin[]>(call("GET /api/plugins/catalog")),
     setEnabled: (id: string, enabled: boolean) =>
-      request<{ id: string; enabled: boolean }>(
-        `/api/plugins/installed/${encodeURIComponent(id)}`,
-        { method: "PUT", body: JSON.stringify({ enabled }) },
-      ),
+      call("PUT /api/plugins/installed/{plugin_id}", {
+        path: { plugin_id: id },
+        body: { enabled },
+      }) as Promise<{ id: string; enabled: boolean }>,
     /** How to install into this instance (and whether the app may do it). */
-    environment: () => request<PluginEnvironment>(`/api/plugins/environment`),
+    environment: () => untyped<PluginEnvironment>(call("GET /api/plugins/environment")),
     /**
      * Install a package name, a GitHub repository link or any requirement.
      * `version` picks a release for the first two; omitted, a name installs
      * unpinned and a repository installs its newest release.
      */
     install: (pkg: string, version?: string | null) =>
-      request<PluginInstallResult>(
-        `/api/plugins/install`,
-        {
-          method: "POST",
-          body: JSON.stringify(version ? { package: pkg, version } : { package: pkg }),
-        },
+      untyped<PluginInstallResult>(
+        call("POST /api/plugins/install", {
+          body: version ? { package: pkg, version } : { package: pkg },
+        }),
       ),
     /** Move an installed plugin to `version`, or to its newest release. */
     upgrade: (id: string, version?: string | null) =>
-      request<PluginInstallResult>(
-        `/api/plugins/installed/${encodeURIComponent(id)}/upgrade`,
-        { method: "POST", body: JSON.stringify(version ? { version } : {}) },
+      untyped<PluginInstallResult>(
+        call("POST /api/plugins/installed/{plugin_id}/upgrade", {
+          path: { plugin_id: id },
+          body: version ? { version } : {},
+        }),
       ),
     /** Every release of a package name or GitHub repository link. */
     versions: (pkg: string, refresh = false) =>
-      request<PluginVersions>(
-        `/api/plugins/versions?${new URLSearchParams({
-          package: pkg,
-          ...(refresh ? { refresh: "true" } : {}),
-        })}`,
+      untyped<PluginVersions>(
+        call("GET /api/plugins/versions", {
+          query: { package: pkg, refresh: refresh || undefined },
+        }),
       ),
     /** The newest release of each installed plugin, from where it came from. */
     updates: (refresh = false) =>
-      request<PluginUpdate[]>(`/api/plugins/updates${refresh ? "?refresh=true" : ""}`),
+      untyped<PluginUpdate[]>(
+        call("GET /api/plugins/updates", { query: { refresh: refresh || undefined } }),
+      ),
     uninstall: (id: string) =>
-      request<PluginInstallResult>(
-        `/api/plugins/installed/${encodeURIComponent(id)}`,
-        { method: "DELETE" },
+      untyped<PluginInstallResult>(
+        call("DELETE /api/plugins/installed/{plugin_id}", { path: { plugin_id: id } }),
       ),
     /** Restart the server so plugin discovery runs again. */
-    restart: () =>
-      request<{ status: string }>(`/api/plugins/restart`, { method: "POST" }),
+    restart: () => untyped<{ status: string }>(call("POST /api/plugins/restart")),
     /** A plugin's own settings blob — opaque to core. */
     settings: {
       get: (id: string) =>
-        request<Record<string, unknown>>(
-          `/api/plugins/installed/${encodeURIComponent(id)}/settings`,
-        ),
+        call("GET /api/plugins/installed/{plugin_id}/settings", { path: { plugin_id: id } }),
       put: (id: string, values: Record<string, unknown>) =>
-        request<Record<string, unknown>>(
-          `/api/plugins/installed/${encodeURIComponent(id)}/settings`,
-          { method: "PUT", body: JSON.stringify(values) },
-        ),
+        call("PUT /api/plugins/installed/{plugin_id}/settings", {
+          path: { plugin_id: id },
+          body: values,
+        }),
     },
   },
 
   skills: {
     // Skills
-    list: () => request<Skill[]>(`/api/skills`),
-    create: (data: SkillCreate) =>
-      request<Skill>(`/api/skills`, { method: "POST", body: JSON.stringify(data) }),
+    list: () => call("GET /api/skills"),
+    create: (data: SkillCreate) => call("POST /api/skills", { body: data }),
     update: (name: string, data: SkillUpdate) =>
-      request<Skill>(`/api/skills/${encodeURIComponent(name)}`, {
-        method: "PATCH",
-        body: JSON.stringify(data),
-      }),
-    migrate: (name: string) =>
-      request<Skill>(`/api/skills/${encodeURIComponent(name)}/migrate`, {
-        method: "POST",
-      }),
-    remove: (name: string) =>
-      request<void>(`/api/skills/${encodeURIComponent(name)}`, { method: "DELETE" }),
+      call("PATCH /api/skills/{name}", { path: { name }, body: data }),
+    migrate: (name: string) => call("POST /api/skills/{name}/migrate", { path: { name } }),
+    remove: (name: string) => call("DELETE /api/skills/{name}", { path: { name } }),
     exportUrl: (name: string) =>
       `/api/skills/${encodeURIComponent(name)}/export`,
   },
 
   roles: {
     // Roles (Assistant personas)
-    list: () => request<Role[]>(`/api/roles`),
-    create: (data: RoleCreate) =>
-      request<Role>(`/api/roles`, { method: "POST", body: JSON.stringify(data) }),
+    list: () => call("GET /api/roles"),
+    create: (data: RoleCreate) => call("POST /api/roles", { body: data }),
     update: (name: string, data: RoleUpdate) =>
-      request<Role>(`/api/roles/${encodeURIComponent(name)}`, {
-        method: "PATCH",
-        body: JSON.stringify(data),
-      }),
-    remove: (name: string) =>
-      request<void>(`/api/roles/${encodeURIComponent(name)}`, { method: "DELETE" }),
+      call("PATCH /api/roles/{name}", { path: { name }, body: data }),
+    remove: (name: string) => call("DELETE /api/roles/{name}", { path: { name } }),
   },
 
   collections: {
     // Collections (topic groupings that filter the sidebar tree)
-    list: () => request<Collection[]>(`/api/collections`),
-    create: (data: CollectionCreate) =>
-      request<Collection>(`/api/collections`, {
-        method: "POST",
-        body: JSON.stringify(data),
-      }),
+    list: () => call("GET /api/collections"),
+    create: (data: CollectionCreate) => call("POST /api/collections", { body: data }),
     update: (id: number, data: CollectionUpdate) =>
-      request<Collection>(`/api/collections/${id}`, {
-        method: "PATCH",
-        body: JSON.stringify(data),
-      }),
+      call("PATCH /api/collections/{collection_id}", { path: { collection_id: id }, body: data }),
     // Topics are never deleted with the collection — they move to `reassignTo`
     // (or the built-in default when omitted).
     remove: (id: number, reassignTo?: number | null) =>
-      request<void>(
-        reassignTo == null
-          ? `/api/collections/${id}`
-          : `/api/collections/${id}?reassign_to=${reassignTo}`,
-        { method: "DELETE" },
-      ),
+      call("DELETE /api/collections/{collection_id}", {
+        path: { collection_id: id },
+        query: { reassign_to: reassignTo },
+      }),
   },
 
   memories: {
     // Memories
-    list: () => request<Memory[]>(`/api/memories`),
-    create: (data: MemoryCreate) =>
-      request<Memory>(`/api/memories`, {
-        method: "POST",
-        body: JSON.stringify(data),
-      }),
+    list: () => call("GET /api/memories"),
+    create: (data: MemoryCreate) => call("POST /api/memories", { body: data }),
     update: (id: number, data: MemoryUpdate) =>
-      request<Memory>(`/api/memories/${id}`, {
-        method: "PATCH",
-        body: JSON.stringify(data),
-      }),
-    remove: (id: number) =>
-      request<void>(`/api/memories/${id}`, { method: "DELETE" }),
+      call("PATCH /api/memories/{memory_id}", { path: { memory_id: id }, body: data }),
+    remove: (id: number) => call("DELETE /api/memories/{memory_id}", { path: { memory_id: id } }),
   },
 
   me: {
     // Current user
-    get: () => request<Me>(`/api/me`),
+    get: () => call("GET /api/me"),
     // Copilot AI-credit usage for the persona menu (null when unavailable).
-    copilot: () => request<CopilotQuota | null>(`/api/me/copilot`),
+    copilot: () => call("GET /api/me/copilot"),
   },
 
   meetings: {
     // Live meeting sessions
-    listSessions: () => request<MeetingSession[]>(`/api/live`),
+    listSessions: () => call("GET /api/live") as Promise<MeetingSession[]>,
     getSession: (id: number) =>
-      request<MeetingSession>(`/api/live/${id}`),
+      call("GET /api/live/{session_id}", { path: { session_id: id } }) as Promise<MeetingSession>,
     createSession: (data: MeetingSessionCreate) =>
-      request<MeetingSession>(`/api/live`, {
-        method: "POST",
-        body: JSON.stringify(data),
-      }),
+      call("POST /api/live", { body: data }) as Promise<MeetingSession>,
     updateSession: (id: number, data: MeetingSessionUpdate) =>
-      request<MeetingSession>(`/api/live/${id}`, {
-        method: "PATCH",
-        body: JSON.stringify(data),
-      }),
+      call("PATCH /api/live/{session_id}", {
+        path: { session_id: id },
+        body: data,
+      }) as Promise<MeetingSession>,
     deleteSession: (id: number) =>
-      request<void>(`/api/live/${id}`, { method: "DELETE" }),
-    listArchivedSessions: () => request<MeetingSession[]>(`/api/live/archived`),
+      call("DELETE /api/live/{session_id}", { path: { session_id: id } }),
+    listArchivedSessions: () => call("GET /api/live/archived") as Promise<MeetingSession[]>,
     archiveSession: (id: number) =>
-      request<MeetingSession>(`/api/live/${id}/archive`, { method: "POST" }),
+      call("POST /api/live/{session_id}/archive", {
+        path: { session_id: id },
+      }) as Promise<MeetingSession>,
     unarchiveSession: (id: number) =>
-      request<MeetingSession>(`/api/live/${id}/unarchive`, { method: "POST" }),
+      call("POST /api/live/{session_id}/unarchive", {
+        path: { session_id: id },
+      }) as Promise<MeetingSession>,
     listSegments: (id: number) =>
-      request<MeetingSegment[]>(`/api/live/${id}/segments`),
+      call("GET /api/live/{session_id}/segments", { path: { session_id: id } }),
     appendSegment: (id: number, data: MeetingSegmentCreate) =>
-      request<MeetingSegment>(`/api/live/${id}/segments`, {
-        method: "POST",
-        body: JSON.stringify(data),
-      }),
+      call("POST /api/live/{session_id}/segments", { path: { session_id: id }, body: data }),
     updateSegment: (id: number, segmentId: number, data: MeetingSegmentUpdate) =>
-      request<MeetingSegment>(`/api/live/${id}/segments/${segmentId}`, {
-        method: "PATCH",
-        body: JSON.stringify(data),
+      call("PATCH /api/live/{session_id}/segments/{segment_id}", {
+        path: { session_id: id, segment_id: segmentId },
+        body: data,
       }),
     renameSpeaker: (id: number, label: string, name: string) =>
-      request<MeetingSession>(`/api/live/${id}/speakers`, {
-        method: "POST",
-        body: JSON.stringify({ label, name }),
-      }),
+      call("POST /api/live/{session_id}/speakers", {
+        path: { session_id: id },
+        body: { label, name },
+      }) as Promise<MeetingSession>,
     markSpeakerMe: (id: number, label: string, me: boolean) =>
-      request<MeetingSession>(`/api/live/${id}/speakers/me`, {
-        method: "POST",
-        body: JSON.stringify({ label, me }),
-      }),
+      call("POST /api/live/{session_id}/speakers/me", {
+        path: { session_id: id },
+        body: { label, me },
+      }) as Promise<MeetingSession>,
     setAttendees: (id: number, attendees: string[]) =>
-      request<MeetingSession>(`/api/live/${id}/attendees`, {
-        method: "PUT",
-        body: JSON.stringify({ attendees }),
-      }),
+      call("PUT /api/live/{session_id}/attendees", {
+        path: { session_id: id },
+        body: { attendees },
+      }) as Promise<MeetingSession>,
     addContextNote: (id: number, text: string) =>
-      request<MeetingSession>(`/api/live/${id}/context-notes`, {
-        method: "POST",
-        body: JSON.stringify({ text }),
-      }),
+      call("POST /api/live/{session_id}/context-notes", {
+        path: { session_id: id },
+        body: { text },
+      }) as Promise<MeetingSession>,
     setContextNotes: (id: number, notes: string[]) =>
-      request<MeetingSession>(`/api/live/${id}/context-notes`, {
-        method: "PUT",
-        body: JSON.stringify({ notes }),
-      }),
-    uploadAttachment: (id: number, file: File): Promise<MeetingAttachment> =>
-      postForm<MeetingAttachment>(`/api/live/${id}/attachments`, file),
-    ensureChat: (id: number) => request<Chat>(`/api/live/${id}/chat`, { method: "POST" }),
+      call("PUT /api/live/{session_id}/context-notes", {
+        path: { session_id: id },
+        body: { notes },
+      }) as Promise<MeetingSession>,
+    uploadAttachment: (id: number, file: File) =>
+      call("POST /api/live/{session_id}/attachments", { path: { session_id: id }, form: { file } }),
+    ensureChat: (id: number) =>
+      call("POST /api/live/{session_id}/chat", { path: { session_id: id } }),
     setFeatures: (id: number, features: string[]) =>
-      request<MeetingSession>(`/api/live/${id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ features }),
-      }),
+      call("PATCH /api/live/{session_id}", {
+        path: { session_id: id },
+        body: { features },
+      }) as Promise<MeetingSession>,
     translate: (id: number, targetLang: string, texts?: string[]) =>
-      request<{ text: string; lines: string[]; target_lang: string; model: string }>(
-        `/api/live/${id}/translate`,
-        {
-          method: "POST",
-          body: JSON.stringify({ target_lang: targetLang, texts }),
-        },
-      ),
+      call("POST /api/live/{session_id}/translate", {
+        path: { session_id: id },
+        body: { target_lang: targetLang, texts },
+      }),
     listInsights: (id: number) =>
-      request<MeetingInsight[]>(`/api/live/${id}/insights`),
+      call("GET /api/live/{session_id}/insights", { path: { session_id: id } }),
     analyze: (id: number) =>
-      request<{ insights: MeetingInsight[]; suggestion: string }>(`/api/live/${id}/analyze`, {
-        method: "POST",
-      }),
+      call("POST /api/live/{session_id}/analyze", { path: { session_id: id } }),
     summarize: (id: number, options: MeetingSummaryOptions = {}) =>
-      request<MeetingSummaryResult>(`/api/live/${id}/summary`, {
-        method: "POST",
-        body: JSON.stringify(options),
-      }),
+      call("POST /api/live/{session_id}/summary", { path: { session_id: id }, body: options }),
     /** Summary templates (built in + definition files), languages, last used. */
-    summaryTemplates: () => request<SummaryTemplateCatalog>("/api/live/summary-templates"),
+    summaryTemplates: () => call("GET /api/live/summary-templates"),
     /**
      * The definition file to edit a template in — a built-in is saved to the
      * folder first; `duplicate` saves it as a new template instead.
      */
     /** Remember the picker's template + language for the next recap. */
     selectSummaryTemplate: (template: string, language: string) =>
-      request<void>("/api/live/summary-templates/selection", {
-        method: "PUT",
-        body: JSON.stringify({ template, language }),
-      }),
+      call("PUT /api/live/summary-templates/selection", { body: { template, language } }),
     summaryTemplateFile: (template: string, duplicate = false) =>
-      request<SummaryTemplateFileResult>("/api/live/summary-templates/files", {
-        method: "POST",
-        body: JSON.stringify({ template, duplicate }),
-      }),
+      call("POST /api/live/summary-templates/files", { body: { template, duplicate } }),
     /** The linked Teams meeting's transcription sessions (fail-closed). */
     listTranscripts: (id: number) =>
-      request<MeetingTranscriptListResult>(`/api/live/${id}/transcripts`),
+      call("GET /api/live/{session_id}/transcripts", { path: { session_id: id } }),
     summarizeFromTranscript: (
       id: number,
       transcriptIds?: string[],
       options: MeetingSummaryOptions = {},
     ) =>
-      request<MeetingTranscriptSummaryResult>(`/api/live/${id}/summary/from-transcript`, {
-        method: "POST",
-        body: JSON.stringify({ transcript_ids: transcriptIds ?? [], ...options }),
+      call("POST /api/live/{session_id}/summary/from-transcript", {
+        path: { session_id: id },
+        body: { transcript_ids: transcriptIds ?? [], ...options },
       }),
     postSummary: (id: number, summary: string) =>
-      request<{
-        topic_id: number;
-        message_id: number;
-        posted_at: string;
-        issue_number: number | null;
-        issue_comment_url: string | null;
-      }>(
-        `/api/live/${id}/summary/post`,
-        {
-          method: "POST",
-          body: JSON.stringify({ summary }),
-        },
-      ),
-    topicContextSummary: (id: number) =>
-      request<{ summary: string; model: string }>(`/api/live/${id}/topic-summary`, {
-        method: "POST",
+      call("POST /api/live/{session_id}/summary/post", {
+        path: { session_id: id },
+        body: { summary },
       }),
+    topicContextSummary: (id: number) =>
+      call("POST /api/live/{session_id}/topic-summary", { path: { session_id: id } }),
     getAgenda: (pastDays = 7) => {
       // The agenda window: from local midnight ``pastDays`` ago through the next
       // local midnight, so past meetings (for a "record from a past meeting"
@@ -1753,15 +1381,12 @@ export const api = {
       const now = new Date();
       const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - pastDays);
       const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
-      const qs = `?start=${encodeURIComponent(start.toISOString())}&end=${encodeURIComponent(
-        end.toISOString(),
-      )}`;
-      return request<AgendaResponse>(`/api/live/m365/agenda${qs}`);
+      return call("GET /api/live/m365/agenda", {
+        query: { start: start.toISOString(), end: end.toISOString() },
+      });
     },
     link: (id: number, event: AgendaEvent) =>
-      request<MeetingSession>(`/api/live/${id}/meeting`, {
-        method: "POST",
-        body: JSON.stringify({
+      call("POST /api/live/{session_id}/meeting", { path: { session_id: id }, body: {
           id: event.id,
           subject: event.subject,
           start: event.start,
@@ -1771,124 +1396,127 @@ export const api = {
           is_online: event.is_online,
           join_url: event.join_url,
           body_preview: event.body_preview,
-        }),
-      }),
+        } }) as Promise<MeetingSession>,
     unlink: (id: number) =>
-      request<MeetingSession>(`/api/live/${id}/meeting`, { method: "DELETE" }),
+      call("DELETE /api/live/{session_id}/meeting", {
+        path: { session_id: id },
+      }) as Promise<MeetingSession>,
     postToTopic: (id: number) =>
-      request<{ topic_id: number; message_id: number }>(`/api/live/${id}/meeting/post`, {
-        method: "POST",
-      }),
+      call("POST /api/live/{session_id}/meeting/post", { path: { session_id: id } }),
   },
 
   artifacts: {
     // Workspace files attached to a topic or chat.
     list: (kind: ReminderContainer, id: number) =>
-      request<ConversationArtifact[]>(`/api/${kind === "topic" ? "topics" : "chats"}/${id}/artifacts`),
+      (kind === "topic"
+        ? call("GET /api/topics/{topic_id}/artifacts", { path: { topic_id: id } })
+        : call("GET /api/chats/{chat_id}/artifacts", { path: { chat_id: id } })
+      ) as Promise<ConversationArtifact[]>,
     attach: (
       kind: ReminderContainer,
       id: number,
       data: { workspace_id: number; path: string; source?: "manual" | "opened" },
     ) =>
-      request<ConversationArtifact>(
-        `/api/${kind === "topic" ? "topics" : "chats"}/${id}/artifacts`,
-        { method: "POST", body: JSON.stringify(data) },
-      ),
+      (kind === "topic"
+        ? call("POST /api/topics/{topic_id}/artifacts", { path: { topic_id: id }, body: data })
+        : call("POST /api/chats/{chat_id}/artifacts", { path: { chat_id: id }, body: data })
+      ) as Promise<ConversationArtifact>,
     detach: (kind: ReminderContainer, id: number, artifactId: number) =>
-      request<void>(
-        `/api/${kind === "topic" ? "topics" : "chats"}/${id}/artifacts/${artifactId}`,
-        { method: "DELETE" },
-      ),
+      kind === "topic"
+        ? call("DELETE /api/topics/{topic_id}/artifacts/{artifact_id}", {
+            path: { topic_id: id, artifact_id: artifactId },
+          })
+        : call("DELETE /api/chats/{chat_id}/artifacts/{artifact_id}", {
+            path: { chat_id: id, artifact_id: artifactId },
+          }),
     // Topics and chats attaching files of a workspace; the ones on `path` lead.
     discussions: (workspaceId: number, path?: string | null) =>
-      request<WorkspaceDiscussion[]>(
-        `/api/workspaces/${workspaceId}/discussions${path ? `?path=${encodeURIComponent(path)}` : ""}`,
-      ),
+      call("GET /api/workspaces/{workspace_id}/discussions", {
+        path: { workspace_id: workspaceId },
+        query: { path: path || undefined },
+      }),
   },
 
   workspaces: {
     // Workspaces
-    list: () => request<Workspace[]>(`/api/workspaces`),
+    list: () => call("GET /api/workspaces") as Promise<Workspace[]>,
     create: (data: WorkspaceCreate) =>
-      request<Workspace>(`/api/workspaces`, {
-        method: "POST",
-        body: JSON.stringify(data),
-      }),
+      call("POST /api/workspaces", { body: data }) as Promise<Workspace>,
     remove: (id: number) =>
-      request<void>(`/api/workspaces/${id}`, { method: "DELETE" }),
+      call("DELETE /api/workspaces/{workspace_id}", { path: { workspace_id: id } }),
     listFiles: (workspaceId: number) =>
-      request<WorkspaceFileNode[]>(`/api/workspaces/${workspaceId}/files`),
+      call("GET /api/workspaces/{workspace_id}/files", { path: { workspace_id: workspaceId } }),
     readFile: (workspaceId: number, path: string) =>
-      request<WorkspaceFileContent>(
-        `/api/workspaces/${workspaceId}/file?path=${encodeURIComponent(path)}`,
-      ),
+      call("GET /api/workspaces/{workspace_id}/file", {
+        path: { workspace_id: workspaceId },
+        query: { path },
+      }),
     writeFile: (workspaceId: number, path: string, content: string) =>
-      request<WorkspaceFileContent>(
-        `/api/workspaces/${workspaceId}/file?path=${encodeURIComponent(path)}`,
-        { method: "PUT", body: JSON.stringify({ content }) },
-      ),
+      call("PUT /api/workspaces/{workspace_id}/file", {
+        path: { workspace_id: workspaceId },
+        query: { path },
+        body: { content },
+      }),
     createFile: (workspaceId: number, path: string, content = "") =>
-      request<WorkspaceFileContent>(`/api/workspaces/${workspaceId}/file`, {
-        method: "POST",
-        body: JSON.stringify({ path, content }),
+      call("POST /api/workspaces/{workspace_id}/file", {
+        path: { workspace_id: workspaceId },
+        body: { path, content },
       }),
     createFolder: (workspaceId: number, path: string) =>
-      request<WorkspaceFileNode>(`/api/workspaces/${workspaceId}/folder`, {
-        method: "POST",
-        body: JSON.stringify({ path }),
+      call("POST /api/workspaces/{workspace_id}/folder", {
+        path: { workspace_id: workspaceId },
+        body: { path },
       }),
     deleteFile: (workspaceId: number, path: string) =>
-      request<void>(
-        `/api/workspaces/${workspaceId}/file?path=${encodeURIComponent(path)}`,
-        { method: "DELETE" },
-      ),
+      call("DELETE /api/workspaces/{workspace_id}/file", {
+        path: { workspace_id: workspaceId },
+        query: { path },
+      }),
     // A folder and everything in it (never the workspace's own folder).
     deleteFolder: (workspaceId: number, path: string) =>
-      request<void>(
-        `/api/workspaces/${workspaceId}/folder?path=${encodeURIComponent(path)}`,
-        { method: "DELETE" },
-      ),
+      call("DELETE /api/workspaces/{workspace_id}/folder", {
+        path: { workspace_id: workspaceId },
+        query: { path },
+      }),
     renameEntry: (workspaceId: number, path: string, newPath: string) =>
-      request<WorkspaceFileNode>(`/api/workspaces/${workspaceId}/rename`, {
-        method: "POST",
-        body: JSON.stringify({ path, new_path: newPath }),
+      call("POST /api/workspaces/{workspace_id}/rename", {
+        path: { workspace_id: workspaceId },
+        body: { path, new_path: newPath },
       }),
     gitStatus: (workspaceId: number) =>
-      request<GitStatus>(`/api/workspaces/${workspaceId}/git/status`),
+      call("GET /api/workspaces/{workspace_id}/git/status", {
+        path: { workspace_id: workspaceId },
+      }),
     // Updates the remote-tracking branch (ahead/behind); changes no file.
     gitFetch: (workspaceId: number) =>
-      request<GitActionResult>(`/api/workspaces/${workspaceId}/git/fetch`, {
-        method: "POST",
+      call("POST /api/workspaces/{workspace_id}/git/fetch", {
+        path: { workspace_id: workspaceId },
       }),
     gitPull: (workspaceId: number) =>
-      request<GitActionResult>(`/api/workspaces/${workspaceId}/git/pull`, {
-        method: "POST",
-      }),
+      call("POST /api/workspaces/{workspace_id}/git/pull", { path: { workspace_id: workspaceId } }),
     // Commit locally; `paths` selects files, otherwise every change.
     gitCommit: (workspaceId: number, message: string, paths?: string[]) =>
-      request<GitActionResult>(`/api/workspaces/${workspaceId}/git/commit`, {
-        method: "POST",
-        body: JSON.stringify(paths ? { message, paths } : { message }),
+      call("POST /api/workspaces/{workspace_id}/git/commit", {
+        path: { workspace_id: workspaceId },
+        body: paths ? { message, paths } : { message },
       }),
     // Push the checked-out branch, publishing it the first time.
     gitPush: (workspaceId: number) =>
-      request<GitActionResult>(`/api/workspaces/${workspaceId}/git/push`, {
-        method: "POST",
-      }),
+      call("POST /api/workspaces/{workspace_id}/git/push", { path: { workspace_id: workspaceId } }),
     gitCommitPush: (
       workspaceId: number,
       message: string,
       paths?: string[],
     ) =>
-      request<GitActionResult>(`/api/workspaces/${workspaceId}/git/commit-push`, {
-        method: "POST",
-        body: JSON.stringify(paths ? { message, paths } : { message }),
+      call("POST /api/workspaces/{workspace_id}/git/commit-push", {
+        path: { workspace_id: workspaceId },
+        body: paths ? { message, paths } : { message },
       }),
     gitDiscard: (workspaceId: number, path: string) =>
-      request<GitStatus>(
-        `/api/workspaces/${workspaceId}/git/discard?path=${encodeURIComponent(path)}`,
-        { method: "POST" },
-      ),
+      call("POST /api/workspaces/{workspace_id}/git/discard", {
+        path: { workspace_id: workspaceId },
+        query: { path },
+      }),
     // A file at `base` (HEAD) and in the working copy — or at `head` — for the
     // diff editor. `originalPath` is a rename's old name.
     // With `head` and no `base` (a root commit), the original side is empty.
@@ -1896,179 +1524,176 @@ export const api = {
       workspaceId: number,
       path: string,
       opts: { originalPath?: string | null; base?: string | null; head?: string } = {},
-    ) => {
-      const q = new URLSearchParams({ path });
-      if (opts.originalPath) q.set("original_path", opts.originalPath);
-      if (opts.base) q.set("base", opts.base);
-      if (opts.head) q.set("head", opts.head);
-      return request<FileVersions>(`/api/workspaces/${workspaceId}/git/file-versions?${q}`);
-    },
+    ) =>
+      call("GET /api/workspaces/{workspace_id}/git/file-versions", {
+        path: { workspace_id: workspaceId },
+        query: {
+          path,
+          original_path: opts.originalPath || undefined,
+          base: opts.base || undefined,
+          head: opts.head || undefined,
+        },
+      }),
     // A page of history, newest first; `path` limits it to one file (by its
     // repository path), following renames.
-    gitLog: (workspaceId: number, opts: { limit?: number; skip?: number; path?: string | null } = {}) => {
-      const q = new URLSearchParams();
-      if (opts.limit) q.set("limit", String(opts.limit));
-      if (opts.skip) q.set("skip", String(opts.skip));
-      if (opts.path) q.set("path", opts.path);
-      return request<GitLog>(`/api/workspaces/${workspaceId}/git/log?${q}`);
-    },
+    gitLog: (workspaceId: number, opts: { limit?: number; skip?: number; path?: string | null } = {}) =>
+      call("GET /api/workspaces/{workspace_id}/git/log", {
+        path: { workspace_id: workspaceId },
+        query: {
+          limit: opts.limit || undefined,
+          skip: opts.skip || undefined,
+          path: opts.path || undefined,
+        },
+      }),
     // Local branches and the remote's (asked of the remote itself).
     gitBranches: (workspaceId: number) =>
-      request<GitBranches>(`/api/workspaces/${workspaceId}/git/branches`),
+      call("GET /api/workspaces/{workspace_id}/git/branches", {
+        path: { workspace_id: workspaceId },
+      }),
     // Check out a branch (local, or only on the remote). 409 names what stands
     // in the way: nothing is ever forced or stashed.
     gitSwitch: (workspaceId: number, name: string) =>
-      request<GitActionResult>(`/api/workspaces/${workspaceId}/git/switch`, {
-        method: "POST",
-        body: JSON.stringify({ name }),
+      call("POST /api/workspaces/{workspace_id}/git/switch", {
+        path: { workspace_id: workspaceId },
+        body: { name },
       }),
     // Create a branch from HEAD and check it out (unpublished until pushed).
     gitCreateBranch: (workspaceId: number, name: string) =>
-      request<GitActionResult>(`/api/workspaces/${workspaceId}/git/branches`, {
-        method: "POST",
-        body: JSON.stringify({ name }),
+      call("POST /api/workspaces/{workspace_id}/git/branches", {
+        path: { workspace_id: workspaceId },
+        body: { name },
       }),
     // Merge the remote's branch; `ok: false` with `status.merging` means it
     // stopped on conflicts.
     gitMerge: (workspaceId: number) =>
-      request<GitActionResult>(`/api/workspaces/${workspaceId}/git/merge`, { method: "POST" }),
+      call("POST /api/workspaces/{workspace_id}/git/merge", {
+        path: { workspace_id: workspaceId },
+      }),
     gitConflict: (workspaceId: number, path: string) =>
-      request<GitConflict>(
-        `/api/workspaces/${workspaceId}/git/conflict?path=${encodeURIComponent(path)}`,
-      ),
+      call("GET /api/workspaces/{workspace_id}/git/conflict", {
+        path: { workspace_id: workspaceId },
+        query: { path },
+      }),
     // Mark a conflict resolved: as edited (refused while markers remain), or
     // by keeping one side.
     gitResolve: (workspaceId: number, path: string, side?: "ours" | "theirs") =>
-      request<GitStatus>(`/api/workspaces/${workspaceId}/git/resolve`, {
-        method: "POST",
-        body: JSON.stringify(side ? { path, side } : { path }),
+      call("POST /api/workspaces/{workspace_id}/git/resolve", {
+        path: { workspace_id: workspaceId },
+        body: side ? { path, side } : { path },
       }),
     gitMergeComplete: (workspaceId: number) =>
-      request<GitActionResult>(`/api/workspaces/${workspaceId}/git/merge/complete`, {
-        method: "POST",
+      call("POST /api/workspaces/{workspace_id}/git/merge/complete", {
+        path: { workspace_id: workspaceId },
       }),
     gitMergeAbort: (workspaceId: number) =>
-      request<GitActionResult>(`/api/workspaces/${workspaceId}/git/merge/abort`, {
-        method: "POST",
+      call("POST /api/workspaces/{workspace_id}/git/merge/abort", {
+        path: { workspace_id: workspaceId },
       }),
     // One commit: message, first parent and changed files.
     gitCommitDetail: (workspaceId: number, sha: string) =>
-      request<GitCommitDetail>(`/api/workspaces/${workspaceId}/git/commits/${sha}`),
+      call("GET /api/workspaces/{workspace_id}/git/commits/{sha}", {
+        path: { workspace_id: workspaceId, sha },
+      }),
     gitDiff: (workspaceId: number, path: string) =>
-      request<FileDiff>(
-        `/api/workspaces/${workspaceId}/git/diff?path=${encodeURIComponent(path)}`,
-      ),
+      call("GET /api/workspaces/{workspace_id}/git/diff", {
+        path: { workspace_id: workspaceId },
+        query: { path },
+      }),
     localPath: (workspaceId: number) =>
-      request<LocalPath>(`/api/workspaces/${workspaceId}/local-path`),
+      call("GET /api/workspaces/{workspace_id}/local-path", {
+        path: { workspace_id: workspaceId },
+      }),
   },
 
   drawio: {
     // Self-hosted diagrams.net webapp, downloaded on demand into the data dir.
-    status: () => request<DrawioStatus>(`/api/drawio/status`),
-    install: () =>
-      request<DrawioStatus>(`/api/drawio/install`, { method: "POST" }),
+    status: () => call("GET /api/drawio/status"),
+    install: () => call("POST /api/drawio/install"),
   },
 
   system: {
     // Version
-    getVersion: () => request<AppVersion>(`/api/version`),
+    getVersion: () => call("GET /api/version"),
 
     // Usage statistics
-    getUsageStats: () => request<UsageStats>(`/api/stats/usage`),
-    getSystemStats: () => request<SystemStats>(`/api/stats/system`),
+    getUsageStats: () => call("GET /api/stats/usage"),
+    getSystemStats: () => call("GET /api/stats/system"),
 
     // Storage cockpit: what each retention sweep would free, running one on
     // demand, and returning freed pages to the filesystem.
-    getCleanupPreview: () => request<CleanupPreview>(`/api/stats/cleanup`),
-    runCleanup: (key: string) =>
-      request<CleanupRunResult>(`/api/stats/cleanup/${encodeURIComponent(key)}`, {
-        method: "POST",
-      }),
-    compactDatabase: () =>
-      request<CompactResult>(`/api/stats/compact`, { method: "POST" }),
+    getCleanupPreview: () => call("GET /api/stats/cleanup") as Promise<CleanupPreview>,
+    runCleanup: (key: string) => call("POST /api/stats/cleanup/{key}", { path: { key } }),
+    compactDatabase: () => call("POST /api/stats/compact"),
   },
 
   search: {
     // Cross-entity content search backing the ⌘K palette.
-    query: (q: string, limit = 40) =>
-      request<SearchResponse>(
-        `/api/search?q=${encodeURIComponent(q)}&limit=${limit}`,
-      ),
+    query: (q: string, limit = 40) => call("GET /api/search", { query: { q, limit } }),
   },
 
   iq: {
     // Precursor IQ: ranked retrieval (the ⌘K palette), cited answers, index state.
     retrieve: (q: string, sections: IQSection[] = [], limit = 20) =>
-      request<IQRetrieveResponse>(
-        `/api/iq/retrieve?q=${encodeURIComponent(q)}&limit=${limit}` +
-          (sections.length ? `&sections=${sections.join(",")}` : ""),
-      ),
-    ask: (question: string, sections?: IQSection[]) =>
-      request<IQAskResponse>(`/api/iq/ask`, {
-        method: "POST",
-        body: JSON.stringify({ question, sections: sections ?? null }),
+      call("GET /api/iq/retrieve", {
+        query: { q, limit, sections: sections.length ? sections.join(",") : undefined },
       }),
-    status: () => request<IQStatus>(`/api/iq/status`),
-    reindex: () => request<IQStatus>(`/api/iq/reindex`, { method: "POST" }),
+    ask: (question: string, sections?: IQSection[]) =>
+      call("POST /api/iq/ask", { body: { question, sections: sections ?? null } }),
+    status: () => call("GET /api/iq/status"),
+    reindex: () => call("POST /api/iq/reindex"),
     // Tries the unsaved provider/model; omitted fields fall back to the saved ones.
     testEmbeddings: (provider?: string, model?: string) =>
-      request<IQEmbeddingTestResponse>(`/api/iq/embeddings/test`, {
-        method: "POST",
-        body: JSON.stringify({ provider, model }),
-      }),
+      call("POST /api/iq/embeddings/test", { body: { provider, model } }),
   },
 
   topicSummary: {
     // The topic's editable status brief (issue #316). Resolves to null while the
     // topic has never had one — generation is always user-initiated.
     get: (topicId: number) =>
-      request<TopicSummary | null>(`/api/topics/${topicId}/topic-summary`),
+      call("GET /api/topics/{topic_id}/topic-summary", { path: { topic_id: topicId } }),
     save: (topicId: number, content: string, revision: string) =>
-      request<TopicSummary>(`/api/topics/${topicId}/topic-summary`, {
-        method: "PUT",
-        body: JSON.stringify({ content, revision }),
+      call("PUT /api/topics/{topic_id}/topic-summary", {
+        path: { topic_id: topicId },
+        body: { content, revision },
       }),
     // Hiding a topic that never had a summary resolves to null: nothing is
     // created just to be collapsed.
     setVisible: (topicId: number, visible: boolean) =>
-      request<TopicSummary | null>(`/api/topics/${topicId}/topic-summary/visibility`, {
-        method: "POST",
-        body: JSON.stringify({ visible }),
+      call("POST /api/topics/{topic_id}/topic-summary/visibility", {
+        path: { topic_id: topicId },
+        body: { visible },
       }),
     // Regenerates from the conversation, notes and attachments. When the
     // summary was hand-edited the answer comes back as `suggestion` to review
     // instead of replacing `content`.
     generate: (topicId: number, instruction?: string) =>
-      request<TopicSummary>(`/api/topics/${topicId}/topic-summary/generate`, {
-        method: "POST",
-        body: JSON.stringify({ instruction: instruction ?? null }),
+      call("POST /api/topics/{topic_id}/topic-summary/generate", {
+        path: { topic_id: topicId },
+        body: { instruction: instruction ?? null },
       }),
     resolve: (topicId: number, accepted: number[], revision: string, reviewed?: number[]) => {
       const payload: TopicSummaryResolve = { accepted, revision, reviewed };
-      return request<TopicSummary>(`/api/topics/${topicId}/topic-summary/resolve`, {
-        method: "POST",
-        body: JSON.stringify(payload),
+      return call("POST /api/topics/{topic_id}/topic-summary/resolve", {
+        path: { topic_id: topicId },
+        body: payload,
       });
     },
     addItem: (topicId: number, kind: "todo" | "important", text: string) =>
-      request<TopicSummary>(`/api/topics/${topicId}/topic-summary/items`, {
-        method: "POST",
-        body: JSON.stringify({ kind, text }),
+      call("POST /api/topics/{topic_id}/topic-summary/items", {
+        path: { topic_id: topicId },
+        body: { kind, text },
       }),
     remove: (topicId: number, revision: string) =>
-      request<void>(`/api/topics/${topicId}/topic-summary?revision=${encodeURIComponent(revision)}`, {
-        method: "DELETE",
+      call("DELETE /api/topics/{topic_id}/topic-summary", {
+        path: { topic_id: topicId },
+        query: { revision },
       }),
   },
 
   ai: {
     // Rewrite a block of user-authored text. Backs the "Refine with AI"
     // affordance on textareas across the app.
-    refine: (data: RefineRequest) =>
-      request<RefineResponse>(`/api/refine`, {
-        method: "POST",
-        body: JSON.stringify(data),
-      }),
+    refine: (data: RefineRequest) => call("POST /api/refine", { body: data }),
   },
 };
 
