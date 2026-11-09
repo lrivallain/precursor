@@ -232,6 +232,7 @@ async def _run(
             # rather than parking the run for the full interactive window.
             auth_wait_timeout=0.0,
             gate=settings.gate,
+            tool_policy=settings.tool_policy,
         ):
             if isinstance(ev, AssistantTextDelta):
                 # Headless runs don't stream deltas; they persist whole turns.

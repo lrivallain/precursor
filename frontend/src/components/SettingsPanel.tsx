@@ -317,6 +317,8 @@ export function SettingsPanel({ onClose: closeNow, initialCategory, onCollection
   const [expose, setExpose] = useState<Record<string, boolean>>({});
   // HTTP (localhost) transport for the built-in "precursor" MCP server.
   const [httpEnabled, setHttpEnabled] = useState(false);
+  const [deferTools, setDeferTools] = useState(true);
+  const [alwaysLoad, setAlwaysLoad] = useState<Record<string, boolean>>({});
   const [workiqTenant, setWorkiqTenant] = useState("");
   // Browser channel the built-in Playwright MCP server drives (MCP tab).
   const [playwrightBrowser, setPlaywrightBrowser] = useState("msedge");
@@ -463,6 +465,8 @@ export function SettingsPanel({ onClose: closeNow, initialCategory, onCollection
       setDockerAvailable(s.docker_available);
       setExpose(s.mcp_expose ?? {});
       setHttpEnabled(s.mcp_http_enabled);
+      setDeferTools(s.mcp_defer_tools ?? true);
+      setAlwaysLoad(s.mcp_always_load ?? {});
       // A discovered tenant shows as a placeholder rather than typed input, so
       // saving doesn't silently pin it into the database.
       setWorkiqTenant(s.workiq_tenant_discovered ? "" : s.workiq_tenant_id);
@@ -566,6 +570,8 @@ export function SettingsPanel({ onClose: closeNow, initialCategory, onCollection
         chat_autoname_model: chatAutonameModel,
         mcp_expose: expose,
         mcp_http_enabled: httpEnabled,
+        mcp_defer_tools: deferTools,
+        mcp_always_load: alwaysLoad,
         workiq_tenant_id: workiqTenant.trim(),
         playwright_browser: playwrightBrowser,
         backup_enabled: backupEnabled,
@@ -1747,6 +1753,24 @@ export function SettingsPanel({ onClose: closeNow, initialCategory, onCollection
                   browser={playwrightBrowser}
                   setBrowser={setPlaywrightBrowser}
                 />
+                <label className="flex items-start gap-2 mb-3 text-xs cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={deferTools}
+                    onChange={(e) => setDeferTools(e.target.checked)}
+                    className="accent-accent mt-0.5"
+                  />
+                  <span>
+                    <span className="font-medium">Load tools on demand</span>
+                    <span className="block text-[11px] text-muted">
+                      Send only a few tool definitions with each request and let
+                      the assistant load the others by name when it needs them.
+                      Requests get much smaller and faster, which matters on
+                      deployments with a low tokens-per-minute quota. Tick
+                      "always load" on a server to send all its tools every time.
+                    </span>
+                  </span>
+                </label>
                 <div className="flex items-center justify-between mb-3">
                   <p className="text-[11px] text-muted">
                     Enable an MCP server to expose its tools to the chat. The
@@ -1776,6 +1800,15 @@ export function SettingsPanel({ onClose: closeNow, initialCategory, onCollection
                         key={s.name}
                         server={s}
                         onToggle={() => void toggleMcp(s.name, s.enabled)}
+                        alwaysLoad={
+                          deferTools ? (alwaysLoad[s.name] ?? false) : undefined
+                        }
+                        onToggleAlwaysLoad={() =>
+                          setAlwaysLoad((prev) => ({
+                            ...prev,
+                            [s.name]: !(prev[s.name] ?? false),
+                          }))
+                        }
                         onReload={
                           s.enabled
                             ? () => void reloadMcpTools(s.name)
@@ -2709,6 +2742,8 @@ function McpExposeCard({
 function McpServerCard({
   server,
   onToggle,
+  alwaysLoad,
+  onToggleAlwaysLoad,
   onReload,
   onTogglePreview,
   onReauthenticate,
@@ -2718,6 +2753,9 @@ function McpServerCard({
 }: {
   server: MCPServerStatus;
   onToggle: () => void;
+  /** Pin state for on-demand tool loading; undefined hides the toggle. */
+  alwaysLoad?: boolean;
+  onToggleAlwaysLoad?: () => void;
   onReload?: () => void;
   onTogglePreview?: () => void;
   onReauthenticate?: () => void;
@@ -2774,6 +2812,20 @@ function McpServerCard({
           />
           <span className="text-muted">enabled</span>
         </label>
+        {alwaysLoad !== undefined && onToggleAlwaysLoad && server.enabled && (
+          <label
+            className="flex items-center gap-1 text-xs cursor-pointer"
+            data-tooltip="Send all this server's tool definitions with every request instead of loading them on demand"
+          >
+            <input
+              type="checkbox"
+              checked={alwaysLoad}
+              onChange={onToggleAlwaysLoad}
+              className="accent-accent"
+            />
+            <span className="text-muted">always load</span>
+          </label>
+        )}
         {onTogglePreview && (
           <label
             className="flex items-center gap-1 text-xs cursor-pointer"

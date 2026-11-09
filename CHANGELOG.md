@@ -13,6 +13,23 @@ are the per-version history; releasing does not rewrite this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **MCP tools are loaded on demand.** Chats and topics no longer send every
+  enabled tool's schema with every request. A small set is sent up front (tools
+  the prompt names, recently used tools, and servers marked **always load**);
+  the rest are listed by name and the model loads them with `search_tools` when
+  needed. Requests with many MCP servers shrink from ~100k tokens to a few
+  thousand. Turn it off, or pin servers, in **Settings → MCP servers**.
+- **Claude on Azure AI Foundry uses the native Messages API with prompt
+  caching.** Deployments named `claude…` are called through
+  `/anthropic/v1/messages` first (falling back to the OpenAI-compatible APIs),
+  with cache breakpoints on tools, system prompt and conversation. Cached reads
+  don't count against Foundry's input-token quota, so low-quota deployments
+  work. Claude deployments also offer the effort picker. The conversation
+  panel's context window shows how much of the latest request came from the
+  prompt cache.
+
 ### Fixed
 
 - **Bounded Azure AI Foundry retries.** Rate limits, timeouts, conflicts, server

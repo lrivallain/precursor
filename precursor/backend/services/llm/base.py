@@ -22,6 +22,11 @@ class ChatMessage:
     image_urls: list[str] = field(default_factory=list)
     # Internal navigation metadata, rendered separately from authored content.
     permalink: str | None = None
+    # For assistant turns inside one tool loop: the provider's own content blocks
+    # (e.g. Claude's signed thinking + ``tool_use`` blocks), replayed verbatim
+    # by the provider that produced them. Never persisted; other providers
+    # ignore it and use ``content`` / ``tool_calls``.
+    provider_content: list[dict[str, Any]] | None = None
 
 
 @dataclass(slots=True)
@@ -87,6 +92,9 @@ class ToolCallsEvent:
 
     kind: Literal["tool_calls"] = "tool_calls"
     calls: list[ToolCallRequest] = field(default_factory=list)
+    # The assistant turn as the provider must see it again on the next round
+    # (see ``ChatMessage.provider_content``); ``None`` when not needed.
+    provider_content: list[dict[str, Any]] | None = None
 
 
 @dataclass(slots=True)
@@ -102,9 +110,14 @@ class UsageEvent:
     """Token-usage report from a provider for one round-trip."""
 
     kind: Literal["usage"] = "usage"
+    # All input tokens, cached or not, so totals keep one meaning across
+    # providers. The two cache counts below are the cached share of it, where
+    # the provider reports them.
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
 
 
 @dataclass(frozen=True, slots=True)

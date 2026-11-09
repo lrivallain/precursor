@@ -332,6 +332,15 @@ export function ChatStatsPanel({
             system={estimate.system_tokens}
             systemTools={estimate.system_tools_tokens}
             mcpTools={estimate.mcp_tools_tokens}
+            lastRequest={
+              estimate.last_prompt_tokens
+                ? {
+                    input: estimate.last_prompt_tokens,
+                    cacheRead: estimate.last_cache_read_tokens ?? 0,
+                    cacheWrite: estimate.last_cache_write_tokens ?? 0,
+                  }
+                : null
+            }
             estimated={useEstimate}
             partsEstimated
             model={model?.name ?? model?.id ?? "model"}

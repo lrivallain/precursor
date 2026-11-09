@@ -113,7 +113,10 @@ on the resource.
 Completions and Responses APIs are available on either. Precursor tries one
 (Responses first on a v1 endpoint, Chat Completions first otherwise), falls back
 to the other if the deployment doesn't serve it, and remembers what worked per
-deployment, so Claude deployments need no special setup. Without an explicit
+deployment. A deployment whose name contains `claude` is called through Claude's
+native Messages API first (`https://<resource host>/anthropic/`, same key or
+Azure CLI sign-in), with the two OpenAI-compatible APIs as fallbacks, so Claude
+deployments need no special setup either. Without an explicit
 **API version**, Responses calls on a classic endpoint use `2025-04-01-preview`
 and Chat Completions keep `2024-10-21`; a version you set applies to both.
 
@@ -123,21 +126,17 @@ not try the other API for rate limits (`429`), timeouts (`408`), conflicts (`409
 server errors, or authentication failures. A different API uses the same quota,
 so switching would only multiply requests. The error appears on the failed turn;
 wait before using **Retry**. Already-streamed output is never replayed through
-the other API. This does not add a quota queue or reduce prompt size.
+the other API. To keep requests within a small quota, MCP tools are
+[loaded on demand](/features/mcp#tools-loaded-on-demand) by default.
 
-**Prompt caching.** Support depends on the deployed model and API, not just the
-Foundry endpoint. For Claude, Microsoft documents 5-minute and 1-hour caching
-through the native Anthropic Messages API. Automatic caching is opt-in with
-`"cache_control": {"type": "ephemeral"}`; it is not automatic merely because the
-model is hosted on Foundry. Precursor currently uses the OpenAI-compatible Chat
-Completions / Responses APIs and does not send Claude cache controls or report
-cache-read/write usage, so do not assume Claude caching is enabled here.
-Supporting the documented Claude path requires a native Messages adapter.
-Keep tool definitions and stable instructions identical at the start of the
-prompt to enable reuse without disabling MCP servers. For most Claude models,
-cache reads do not count toward the uncached-input quota, but initial cache
-writes do: caching cannot bootstrap a prompt that already exceeds that quota.
-See [Claude caching support](https://learn.microsoft.com/azure/foundry/foundry-models/concepts/claude-models#capabilities-and-advanced-features),
+**Prompt caching.** Through the native Messages API, Precursor marks the tool
+definitions, the system prompt and the growing conversation as cacheable
+(5-minute `cache_control: {"type": "ephemeral"}` breakpoints), so each tool
+round and each follow-up reuses the previous request's prefix. Cache reads are
+cheaper and, on Foundry, do not count toward a Claude deployment's input-token
+quota; only the new part of each request does. Usage reports include the
+cache-read and cache-write token counts. Claude's thinking is adaptive and its
+depth follows the effort picker, which Claude deployments now offer. See [Claude caching support](https://learn.microsoft.com/azure/foundry/foundry-models/concepts/claude-models#capabilities-and-advanced-features),
 [cache controls](https://platform.claude.com/docs/en/build-with-claude/prompt-caching),
 and [quota accounting](https://learn.microsoft.com/azure/foundry/foundry-models/concepts/claude-models-quotas-limits).
 Azure OpenAI models have their own

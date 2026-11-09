@@ -15,6 +15,8 @@ interface ContextBreakdownProps {
   /** The system and tool sizes are estimates, not provider-reported counts. */
   partsEstimated?: boolean;
   model?: string | null;
+  /** The latest model request as the provider reported it, with its cache share. */
+  lastRequest?: { input: number; cacheRead: number; cacheWrite: number } | null;
 }
 
 interface Segment {
@@ -68,7 +70,7 @@ export function splitContext({
 }
 
 export function ContextBreakdown(props: ContextBreakdownProps) {
-  const { used, limit, estimated, partsEstimated, model } = props;
+  const { used, limit, estimated, partsEstimated, model, lastRequest } = props;
   const s = splitContext(props);
   const pct = (s.total / limit) * 100;
   const tone =
@@ -167,6 +169,21 @@ export function ContextBreakdown(props: ContextBreakdownProps) {
           </li>
         ))}
       </ul>
+      {lastRequest && lastRequest.input > 0 && (
+        <div
+          className="mt-1.5 flex items-center gap-1.5 text-[11px] text-muted"
+          data-tooltip={`Latest request: ${lastRequest.input.toLocaleString()} input tokens, ${lastRequest.cacheRead.toLocaleString()} read from the provider's prompt cache, ${lastRequest.cacheWrite.toLocaleString()} written to it. Cached reads are cheaper and, on Azure AI Foundry, don't count toward the input-token quota.`}
+        >
+          <span className="h-2 w-2 shrink-0 rounded-full bg-sky-400" />
+          <span className="truncate">Cached (last request)</span>
+          <span className="tabular-nums">
+            {formatPct((lastRequest.cacheRead / lastRequest.input) * 100)}
+          </span>
+          <span className="ml-auto tabular-nums">
+            {compactTokens(lastRequest.cacheRead)} / {compactTokens(lastRequest.input)}
+          </span>
+        </div>
+      )}
       {model && (
         <div className="mt-1 truncate text-[10px] text-muted" data-tooltip={model}>
           {model}

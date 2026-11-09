@@ -164,23 +164,27 @@ def trim_messages(
             capped.append(m)
 
     system = [m for m in capped if m.role == "system"]
-    rest = [m for m in capped if m.role != "system"]
-
     budget = max_input_tokens - estimate_total_tokens(system)
 
     # 2. Keep the most recent messages that fit the remaining budget.
-    kept_reversed: list[ChatMessage] = []
+    kept_ids: set[int] = set()
     used = 0
-    for m in reversed(rest):
+    for index in range(len(capped) - 1, -1, -1):
+        m = capped[index]
+        if m.role == "system":
+            continue
         cost = estimate_tokens(m)
-        if kept_reversed and used + cost > budget:
+        if kept_ids and used + cost > budget:
             break
         used += cost
-        kept_reversed.append(m)
-    kept = list(reversed(kept_reversed))
+        kept_ids.add(index)
 
     # 3. Drop leading orphan tool results (their assistant parent was dropped).
-    while kept and kept[0].role == "tool":
-        kept.pop(0)
+    for index in sorted(kept_ids):
+        if capped[index].role != "tool":
+            break
+        kept_ids.discard(index)
 
-    return system + kept
+    # System messages keep their place: a note after the history stays there,
+    # so the prompt + history prefix stays stable for provider prompt caching.
+    return [m for i, m in enumerate(capped) if m.role == "system" or i in kept_ids]

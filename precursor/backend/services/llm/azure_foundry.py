@@ -19,6 +19,10 @@ style: some deployments (Claude, for one) answer only the Responses API. A v1
 endpoint tries Responses first and a classic one chat-completions first; if the
 first is refused the other is tried, and the one that works is remembered.
 
+A deployment whose name says Claude is tried on Claude's native Messages API
+first (``https://<resource host>/anthropic/``), the only one of the three that
+supports prompt caching; the OpenAI-compatible APIs remain its fallbacks.
+
 Authentication is an API key when one is configured; otherwise the provider
 signs in through the Azure CLI (``az login``), optionally against a specific
 tenant, and hands the SDK a refreshable Entra ID token.
@@ -28,13 +32,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import time
 from collections.abc import AsyncIterator, Mapping, Sequence
 from typing import Any, Literal
+from urllib.parse import urlparse
 
-from openai import APIStatusError, AsyncAzureOpenAI, AsyncOpenAI
+from anthropic import AsyncAnthropic, AsyncAnthropicFoundry
+from openai import AsyncAzureOpenAI, AsyncOpenAI
 
+from precursor.backend.services.llm._anthropic_messages import stream_anthropic_tools
 from precursor.backend.services.llm._openai_compat import (
     embed_openai,
     stream_openai_tools,
@@ -60,11 +68,52 @@ _V1_ENDPOINT_RE = re.compile(r"/openai/v1/?$", re.IGNORECASE)
 _TENANT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
-Surface = Literal["chat", "responses"]
-_SURFACES: dict[Surface, tuple[Surface, Surface]] = {
+Surface = Literal["chat", "responses", "messages"]
+_SURFACES: dict[Surface, tuple[Surface, ...]] = {
     "chat": ("chat", "responses"),
     "responses": ("responses", "chat"),
 }
+# Efforts Claude's Messages API accepts, advertised so the effort picker shows.
+CLAUDE_EFFORTS = ["low", "medium", "high", "xhigh", "max"]
+
+# endpoint -> model -> the API surface that last worked. Module-level because the
+# registry builds a fresh provider per request, so instance state wouldn't
+# survive to the next turn.
+_SURFACE_MEMORY: dict[str, dict[str, Surface]] = {}
+
+
+# Environment fallbacks of ``AsyncAnthropicFoundry`` (set by e.g. a Claude Code
+# install on Foundry). Precursor's own settings are authoritative, and a stray
+# ``ANTHROPIC_FOUNDRY_RESOURCE`` next to our ``base_url`` makes the SDK raise.
+_FOUNDRY_ENV = (
+    "ANTHROPIC_FOUNDRY_API_KEY",
+    "ANTHROPIC_FOUNDRY_RESOURCE",
+    "ANTHROPIC_FOUNDRY_BASE_URL",
+)
+
+
+def foundry_messages_client(
+    base_url: str, *, api_key: str = "", token_provider: Any = None, **options: Any
+) -> AsyncAnthropic:
+    """An ``AsyncAnthropicFoundry`` built from these arguments only.
+
+    ``options`` are passed through to the client (``http_client``,
+    ``max_retries``…).
+    """
+    saved = {name: os.environ.pop(name) for name in _FOUNDRY_ENV if name in os.environ}
+    try:
+        if api_key:
+            return AsyncAnthropicFoundry(base_url=base_url, api_key=api_key, **options)
+        return AsyncAnthropicFoundry(
+            base_url=base_url, azure_ad_token_provider=token_provider, **options
+        )
+    finally:
+        os.environ.update(saved)
+
+
+def is_claude_deployment(name: str) -> bool:
+    """Whether a deployment name looks like a Claude model."""
+    return "claude" in name.lower()
 
 
 class AzureCliError(LLMError):
@@ -158,7 +207,15 @@ class AzureFoundryProvider:
         # Either API may serve a deployment whatever the URL style, so the other
         # one is the fallback; the surface that last worked is remembered per model.
         self._default_surface: Surface = "responses" if v1 else "chat"
-        self._surface: dict[str, Surface] = {}
+        self._surface = _SURFACE_MEMORY.setdefault(endpoint, {})
+        host = urlparse(endpoint).netloc
+        # Claude's native API lives at the resource root, whichever Azure host
+        # name (``*.openai.azure.com``, ``*.services.ai.azure.com``) is configured.
+        self._messages_client: AsyncAnthropic | None = None
+        if host:
+            self._messages_client = foundry_messages_client(
+                f"https://{host}/anthropic/", api_key=api_key, token_provider=credential
+            )
 
         def azure_client(version: str) -> AsyncOpenAI:
             if api_key:
@@ -206,15 +263,12 @@ class AzureFoundryProvider:
         request_options: Mapping[str, Any] | None = None,
     ) -> AsyncIterator[ProviderEvent]:
         model = model or self._deployment
-        surfaces = _SURFACES[self._surface.get(model, self._default_surface)]
         first_error: LLMError | None = None
-        for surface in surfaces:
-            run = stream_responses_tools if surface == "responses" else stream_openai_tools
-            client = self._responses_client if surface == "responses" else self._client
+        for surface in self._surface_order(model):
             yielded = False
             try:
-                async for event in run(
-                    client=client,
+                async for event in self._run_surface(
+                    surface,
                     model=model,
                     messages=messages,
                     tools=tools,
@@ -226,20 +280,54 @@ class AzureFoundryProvider:
             except LLMError as exc:
                 # The SDK already retries transient HTTP failures. Changing API
                 # surfaces would multiply those attempts against the same quota.
-                cause = exc.__cause__
+                status = getattr(exc.__cause__, "status_code", None)
                 if (
                     yielded
                     or isinstance(exc, AzureCliError)
                     or "credentials" in str(exc)
-                    or (isinstance(cause, APIStatusError) and cause.status_code not in (400, 404))
+                    or (isinstance(status, int) and status not in (400, 404))
                 ):
                     raise
                 first_error = first_error or exc
                 continue
             self._surface[model] = surface
             return
-        assert first_error is not None  # both surfaces ran and failed
+        assert first_error is not None  # every surface ran and failed
         raise first_error
+
+    def _surface_order(self, model: str) -> tuple[Surface, ...]:
+        """API surfaces to try for ``model``: the remembered one, then the rest."""
+        order: tuple[Surface, ...] = _SURFACES[self._default_surface]
+        if self._messages_client is not None and is_claude_deployment(model):
+            order = ("messages", *order)
+        remembered = self._surface.get(model)
+        if remembered in order:
+            order = (remembered, *(s for s in order if s != remembered))
+        return order
+
+    def _run_surface(
+        self,
+        surface: Surface,
+        *,
+        model: str,
+        messages: Sequence[ChatMessage],
+        tools: Sequence[ToolDef],
+        reasoning_effort: str | None,
+        request_options: Mapping[str, Any] | None,
+    ) -> AsyncIterator[ProviderEvent]:
+        common: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "tools": tools,
+            "reasoning_effort": reasoning_effort,
+            "request_options": request_options,
+        }
+        if surface == "messages":
+            assert self._messages_client is not None
+            return stream_anthropic_tools(client=self._messages_client, **common)
+        if surface == "responses":
+            return stream_responses_tools(client=self._responses_client, **common)
+        return stream_openai_tools(client=self._client, **common)
 
     async def embed(
         self, texts: Sequence[str], *, model: str, dimensions: int | None = None
@@ -248,4 +336,14 @@ class AzureFoundryProvider:
 
     async def list_models(self) -> list[LLMModel]:
         # This is a configured list, not a remotely verified deployment catalog.
-        return [LLMModel(id=name, name=name, publisher="Azure") for name in self._deployments]
+        return [
+            LLMModel(
+                id=name,
+                name=name,
+                publisher="Azure",
+                supported_reasoning_efforts=list(CLAUDE_EFFORTS)
+                if is_claude_deployment(name)
+                else [],
+            )
+            for name in self._deployments
+        ]

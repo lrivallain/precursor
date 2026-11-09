@@ -60,10 +60,13 @@ def test_model_can_reference_a_previous_reply_and_streams_immediate_link_ids(
         reasoning_effort: str | None = None,
     ) -> AsyncIterator[str]:
         captured.extend(messages)
+        note = next(
+            m.content
+            for m in messages
+            if m.role == "system" and "## Recent conversation message references" in m.content
+        )
         references = json.loads(
-            messages[0]
-            .content.split("## Recent conversation message references\n", 1)[1]
-            .split("\n", 1)[1]
+            note.split("## Recent conversation message references\n", 1)[1].split("\n", 1)[1]
         )
         link = next(r["href"] for r in references if r["role"] == "assistant")
         yield f"As explained in [the previous reply]({link}), use the stable link."

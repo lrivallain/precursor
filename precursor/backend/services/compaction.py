@@ -18,7 +18,9 @@ say how full the window is before and after compacting.
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
+from types import SimpleNamespace
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,6 +32,7 @@ from precursor.backend.services import approvals as approval_service
 from precursor.backend.services.app_settings import (
     resolve_llm_max_tool_result_tokens,
     resolve_llm_tool_result_keep_turns,
+    resolve_mcp_tool_policy,
 )
 from precursor.backend.services.context_budget import (
     elide_stale_tool_results,
@@ -42,13 +45,14 @@ from precursor.backend.services.llm.base import ChatMessage, ToolDef
 from precursor.backend.services.llm.one_shot import complete_once
 from precursor.backend.services.mcp.client import get_mcp_client_manager
 from precursor.backend.services.model_fallbacks import resolve_llm_preparation_budget
+from precursor.backend.services.tool_loading import build_loadout
 from precursor.backend.services.turn_engine import (
     ContainerKind,
     build_chat_system_context,
     build_system_context,
     container_message_kwargs,
+    last_round_usage,
     load_enabled_mcp_servers,
-    mcp_tools_to_provider,
     publish_container_changed,
 )
 
@@ -110,6 +114,11 @@ class ContextEstimate:
     system_tokens: int = 0
     system_tools_tokens: int = 0
     mcp_tools_tokens: int = 0
+    # The latest model request of this conversation, as the provider reported
+    # it: total input and the part read from / written to its prompt cache.
+    last_prompt_tokens: int = 0
+    last_cache_read_tokens: int = 0
+    last_cache_write_tokens: int = 0
 
 
 def render_transcript(history: list[ChatMessage]) -> list[str]:
@@ -246,13 +255,18 @@ def _tools_tokens(tools: list[ToolDef]) -> int:
 
 
 async def _estimate_fixed_overhead(
-    session: AsyncSession, kind: ContainerKind, container_id: int
+    session: AsyncSession,
+    kind: ContainerKind,
+    container_id: int,
+    history: Sequence[ChatMessage] = (),
 ) -> tuple[int, int, int]:
     """Estimated (system prompt, Precursor tools, other MCP tools) tokens of a turn.
 
     Tools come from the manager's stored catalogue, so nothing connects here, and
     a topic's linked GitHub issue is left out of the prompt to spare the panel a
-    network round trip on every refresh.
+    network round trip on every refresh. With on-demand tool loading, only the
+    tools a turn would start with count, and the on-demand index is part of the
+    system prompt.
     """
     if kind == "topic":
         topic = await session.get(Topic, container_id)
@@ -260,18 +274,31 @@ async def _estimate_fixed_overhead(
     else:
         chat = await session.get(Chat, container_id)
         prompt = await build_chat_system_context(session, chat) if chat else ""
-    own: list[ToolDef] = []
-    other: list[ToolDef] = []
     manager = get_mcp_client_manager()
+    catalog = []
     for name in await load_enabled_mcp_servers(session):
         entry = manager.get(name)
-        if entry is None:
-            continue
-        (own if name == "precursor" else other).extend(mcp_tools_to_provider(entry.tools))
+        if entry is not None:
+            catalog.extend(entry.tools)
+    own: list[ToolDef] = []
+    other: list[ToolDef] = []
     gate = await approval_service.build_gate(session, kind, container_id)
     if gate.offers_intent:
         prompt = f"{prompt}\n\n{approval_service.APPROVAL_PROMPT}"
         own.append(approval_service.REQUEST_APPROVAL_DEF)
+    loadout = build_loadout(
+        SimpleNamespace(tools=catalog),
+        policy=await resolve_mcp_tool_policy(session),
+        history=history,
+        system_prompt=prompt,
+    )
+    servers = {t.qualified_name: t.server for t in catalog}
+    for tool in loadout.provider_tools():
+        (own if servers.get(tool.name) == "precursor" else other).append(tool)
+    own.extend(loadout.meta_tools())
+    index = loadout.index()
+    if index:
+        prompt = f"{prompt}\n\n{index}"
     system = estimate_tokens(ChatMessage(role="system", content=prompt))
     return system, _tools_tokens(own), _tools_tokens(other)
 
@@ -300,7 +327,10 @@ async def estimate_context(
     for m in sent:
         by_role[m.role] = by_role.get(m.role, 0) + _cost(m)
     total = sum(by_role.values())
-    system, system_tools, mcp_tools = await _estimate_fixed_overhead(session, kind, container_id)
+    last = last_round_usage(kind, container_id)
+    system, system_tools, mcp_tools = await _estimate_fixed_overhead(
+        session, kind, container_id, raw
+    )
     return ContextEstimate(
         tokens=total,
         by_role=by_role,
@@ -312,4 +342,7 @@ async def estimate_context(
         system_tokens=system,
         system_tools_tokens=system_tools,
         mcp_tools_tokens=mcp_tools,
+        last_prompt_tokens=last.prompt_tokens if last else 0,
+        last_cache_read_tokens=last.cache_read_tokens if last else 0,
+        last_cache_write_tokens=last.cache_write_tokens if last else 0,
     )

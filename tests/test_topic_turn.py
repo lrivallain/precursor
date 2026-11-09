@@ -42,6 +42,17 @@ from precursor.backend.services.turn import run_topic_turn
 
 _FAKE_PROVIDER = "test-topic-turn-fake"
 
+REFERENCES_HEADER = "## Recent conversation message references"
+
+
+def _conversation(messages):  # type: ignore[no-untyped-def]
+    """The sent messages after the system prompt, minus the references note."""
+    return [m for m in messages[1:] if not m.content.startswith(REFERENCES_HEADER)]
+
+
+def _references(messages) -> str:  # type: ignore[no-untyped-def]
+    return next(m.content for m in messages if m.content.startswith(REFERENCES_HEADER))
+
 
 class _Call:
     def __init__(self, call_id: str, name: str, arguments: str = "{}") -> None:
@@ -191,12 +202,14 @@ async def test_persists_literal_prompt_but_sends_the_expanded_one(
     ]
     assert rows[1].prompt_tokens == 13
     assert rows[1].completion_tokens == 4
-    system, *history = provider.calls[0]
+    system = provider.calls[0][0]
+    history = _conversation(provider.calls[0])
+    references = _references(provider.calls[0])
     assert system.role == "system"
     assert "Topic title: Scheduled" in system.content
     assert [(m.role, m.content) for m in history] == [("user", "Translate to English: bravo")]
     assert history[0].permalink.endswith(f"#message={rows[0].public_id}")
-    assert history[0].permalink in system.content
+    assert history[0].permalink in references
     # The server is attached for its workspace tools; the rest of it is filtered
     # out per tool (see test_precursor_workspace_tools).
     assert requested == [["precursor", "fetch"]]
@@ -215,7 +228,7 @@ async def test_clear_context_starts_from_an_empty_transcript(monkeypatch, enable
     await run_topic_turn(topic_id, "new question", clear_context=True)
 
     assert [m.content for m in await _messages(topic_id)] == ["new question", "fresh"]
-    assert [m.content for m in provider.calls[0][1:]] == ["new question"]
+    assert [m.content for m in _conversation(provider.calls[0])] == ["new question"]
 
 
 async def test_history_is_replayed_to_the_model(monkeypatch, enabled_servers) -> None:
@@ -230,14 +243,16 @@ async def test_history_is_replayed_to_the_model(monkeypatch, enabled_servers) ->
 
     await run_topic_turn(topic_id, "next")
 
-    assert [(m.role, m.content) for m in provider.calls[0][1:]] == [
+    assert [(m.role, m.content) for m in _conversation(provider.calls[0])] == [
         ("user", "first"),
         ("assistant", "second"),
         ("user", "next"),
     ]
-    for sent, row in zip(provider.calls[0][1:], (await _messages(topic_id))[:-1], strict=True):
+    for sent, row in zip(
+        _conversation(provider.calls[0]), (await _messages(topic_id))[:-1], strict=True
+    ):
         assert sent.permalink.endswith(f"#message={row.public_id}")
-        assert sent.permalink in provider.calls[0][0].content
+        assert sent.permalink in _references(provider.calls[0])
 
 
 async def test_tool_round_persists_the_call_and_its_result(monkeypatch, enabled_servers) -> None:

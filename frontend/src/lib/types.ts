@@ -1417,6 +1417,10 @@ export interface ContextEstimate {
   system_tools_tokens: number;
   /** Tool definitions of every other enabled MCP server. */
   mcp_tools_tokens: number;
+  /** The latest model request: total input and its prompt-cache share (0 when unknown). */
+  last_prompt_tokens?: number;
+  last_cache_read_tokens?: number;
+  last_cache_write_tokens?: number;
 }
 
 export interface StoppedTurn {
@@ -1658,6 +1662,9 @@ export interface Settings {
   chat_autoname_model: string;
   // Which Precursor capability sections the built-in MCP server exposes.
   mcp_expose: Record<string, boolean>;
+  // On-demand MCP tool loading and the servers whose tools are always sent.
+  mcp_defer_tools: boolean;
+  mcp_always_load: Record<string, boolean>;
   // HTTP transport for the built-in 'precursor' MCP server.
   mcp_http_enabled: boolean;
   plugin_install_enabled: boolean;
@@ -1775,6 +1782,8 @@ export interface SettingsUpdate {
   mock_provider_enabled?: boolean;
   chat_autoname_model?: string;
   mcp_expose?: Record<string, boolean>;
+  mcp_defer_tools?: boolean;
+  mcp_always_load?: Record<string, boolean>;
   mcp_http_enabled?: boolean;
   plugin_install_enabled?: boolean;
   openai_proxy_enabled?: boolean;

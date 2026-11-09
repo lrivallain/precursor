@@ -108,6 +108,9 @@ class ContextEstimateRead(BaseModel):
     system_tokens: int = 0
     system_tools_tokens: int = 0
     mcp_tools_tokens: int = 0
+    last_prompt_tokens: int = 0
+    last_cache_read_tokens: int = 0
+    last_cache_write_tokens: int = 0
 
 
 class StoppedTurn(BaseModel):
