@@ -137,6 +137,23 @@ def _installs_start_in_database_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(main, "backfill_role_files", _none)
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _scratch_db_at_head() -> None:
+    """Migrate this process's scratch DB once, before its first test.
+
+    Most tests reach the schema through an app lifespan (``init_db`` runs
+    ``alembic upgrade head``), but a test that seeds rows directly relied on an
+    earlier test in the same process having done that. Run alone, or first in
+    an xdist worker, it failed with "no such table". ``init_db`` is idempotent,
+    so tests that also call it are unaffected.
+    """
+    import asyncio
+
+    from precursor.backend.db import init_db
+
+    asyncio.run(init_db())
+
+
 @pytest.fixture(autouse=True)
 def _sse_shutdown_flag_is_per_test():
     """Don't let one test's server shutdown end every later SSE stream.
