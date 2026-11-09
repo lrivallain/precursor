@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
 from precursor.backend.db import get_session
+from precursor.backend.lookups import get_or_404
 from precursor.backend.models import Message, Topic
 from precursor.backend.routers.deps import get_topic_or_404
 from precursor.backend.schemas import (
@@ -190,9 +191,7 @@ async def stream_chat(
     payload: ChatRequest,
     session: AsyncSession = Depends(get_session),
 ) -> EventSourceResponse:
-    topic = await session.get(Topic, topic_id)
-    if topic is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
+    topic = await get_or_404(session, Topic, topic_id, "Topic not found")
 
     user_msg, attachments = await persist_user_turn(session, "topic", topic_id, payload)
     # Snapshot history + system context now, before the session closes.

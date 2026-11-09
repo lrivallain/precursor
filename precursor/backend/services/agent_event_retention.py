@@ -22,13 +22,9 @@ the verbose event trace is dropped.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
-from contextlib import AbstractAsyncContextManager
-from datetime import UTC, datetime, timedelta
-from typing import Any, cast
+from typing import Any
 
 from sqlalchemy import delete, func, select
-from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.db import SessionLocal
@@ -37,6 +33,7 @@ from precursor.backend.services.app_settings import (
     resolve_agent_event_max_per_session,
     resolve_agent_event_retention_days,
 )
+from precursor.backend.services.retention_sweep import SessionFactory, cutoff, rowcount
 from precursor.backend.services.sweep_result import SweepResult
 
 logger = logging.getLogger(__name__)
@@ -64,10 +61,9 @@ async def _expired_ids(session: AsyncSession, retention_days: int) -> list[int]:
     """Ids of events past the retention window, for prunable agents."""
     if retention_days <= 0:
         return []
-    cutoff = datetime.now(UTC) - timedelta(days=retention_days)
     rows = await session.execute(
         select(AgentEventRecord.id).where(
-            AgentEventRecord.created_at < cutoff,
+            AgentEventRecord.created_at < cutoff(retention_days),
             AgentEventRecord.agent_session_id.in_(_prunable_agents()),
         )
     )
@@ -116,7 +112,7 @@ async def _measure(session: AsyncSession, ids: list[int]) -> SweepResult:
 
 
 async def prune_agent_events(
-    session_factory: Callable[[], AbstractAsyncContextManager[AsyncSession]] = SessionLocal,
+    session_factory: SessionFactory = SessionLocal,
     *,
     dry_run: bool = False,
 ) -> SweepResult:
@@ -148,7 +144,7 @@ async def prune_agent_events(
             result = await session.execute(
                 delete(AgentEventRecord).where(AgentEventRecord.id.in_(chunk))
             )
-            deleted += int(cast("CursorResult[Any]", result).rowcount or 0)
+            deleted += rowcount(result)
         await session.commit()
         logger.info(
             "Pruned %d archived agent event(s) (~%d bytes; window=%dd, cap=%d/session)",

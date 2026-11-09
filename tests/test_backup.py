@@ -9,33 +9,14 @@ and ``backup_due`` respects the interval and last-run state.
 from __future__ import annotations
 
 import asyncio
-import json
 from datetime import UTC, datetime, timedelta
-
-from fastapi.testclient import TestClient
 
 from precursor.backend.config import get_settings
 from precursor.backend.db import SessionLocal
-from precursor.backend.main import create_app
 from precursor.backend.models import AppSetting
 from precursor.backend.services import backup as backup_svc
 from precursor.backend.services.backup import backup_due, run_backup
-
-
-def _init_db() -> None:
-    with TestClient(create_app()):
-        pass
-
-
-async def _set(key: str, value: object) -> None:
-    async with SessionLocal() as session:
-        row = await session.get(AppSetting, key)
-        encoded = json.dumps(value)
-        if row is None:
-            session.add(AppSetting(key=key, value=encoded))
-        else:
-            row.value = encoded
-        await session.commit()
+from tests.support import init_db, set_app_setting
 
 
 async def _clear_backup_keys() -> None:
@@ -55,7 +36,7 @@ async def _clear_backup_keys() -> None:
 
 
 def test_disabled_backup_is_skipped() -> None:
-    _init_db()
+    init_db()
 
     async def _run() -> None:
         await _clear_backup_keys()
@@ -67,11 +48,11 @@ def test_disabled_backup_is_skipped() -> None:
 
 
 def test_enabled_without_dir_is_skipped() -> None:
-    _init_db()
+    init_db()
 
     async def _run() -> None:
         await _clear_backup_keys()
-        await _set("backup_enabled", True)
+        await set_app_setting("backup_enabled", True)
         result = await run_backup()
         assert result.status == "skipped"
         assert "folder" in result.detail.lower()
@@ -80,7 +61,7 @@ def test_enabled_without_dir_is_skipped() -> None:
 
 
 def test_backup_writes_snapshot_and_mirrors_blobs(tmp_path) -> None:
-    _init_db()
+    init_db()
     from pathlib import Path
 
     from precursor.backend.services import blob_store
@@ -94,8 +75,8 @@ def test_backup_writes_snapshot_and_mirrors_blobs(tmp_path) -> None:
 
     async def _run() -> None:
         await _clear_backup_keys()
-        await _set("backup_enabled", True)
-        await _set("backup_dir", str(dest))
+        await set_app_setting("backup_enabled", True)
+        await set_app_setting("backup_dir", str(dest))
         result = await run_backup()
         assert result.ok, result.detail
         assert result.status == "ok"
@@ -127,7 +108,7 @@ def test_backup_archives_definitions_folder(tmp_path) -> None:
     import zipfile
     from pathlib import Path
 
-    _init_db()
+    init_db()
     defs = Path(get_settings().definitions_dir)
     (defs / "workflows").mkdir(parents=True, exist_ok=True)
     (defs / "workflows" / "backup-test.workflow.yaml").write_bytes(b"name: x\n")
@@ -135,8 +116,8 @@ def test_backup_archives_definitions_folder(tmp_path) -> None:
 
     async def _run() -> None:
         await _clear_backup_keys()
-        await _set("backup_enabled", True)
-        await _set("backup_dir", str(dest))
+        await set_app_setting("backup_enabled", True)
+        await set_app_setting("backup_dir", str(dest))
         result = await run_backup()
         assert result.ok, result.detail
         assert result.definitions_archive is not None
@@ -153,7 +134,7 @@ def test_backup_archives_definitions_folder(tmp_path) -> None:
 
 
 def test_backup_without_definitions_folder_skips_archive(tmp_path) -> None:
-    _init_db()
+    init_db()
     dest = tmp_path / "backup-target"
     result = backup_svc._run_backup_sync(None, tmp_path / "no-blobs", dest, 3, tmp_path / "nope")
     assert result.ok
@@ -178,14 +159,14 @@ def test_retention_prunes_definitions_archives(tmp_path) -> None:
 
 
 def test_retention_prunes_oldest_snapshots(tmp_path) -> None:
-    _init_db()
+    init_db()
     dest = tmp_path / "backup-target"
 
     async def _run() -> None:
         await _clear_backup_keys()
-        await _set("backup_enabled", True)
-        await _set("backup_dir", str(dest))
-        await _set("backup_retention", 2)
+        await set_app_setting("backup_enabled", True)
+        await set_app_setting("backup_dir", str(dest))
+        await set_app_setting("backup_retention", 2)
         # Three runs; only the 2 newest DB snapshots should survive.
         for _ in range(3):
             result = await run_backup()
@@ -199,31 +180,31 @@ def test_retention_prunes_oldest_snapshots(tmp_path) -> None:
 
 
 def test_backup_due_respects_interval() -> None:
-    _init_db()
+    init_db()
 
     async def _run() -> None:
         await _clear_backup_keys()
-        await _set("backup_enabled", True)
-        await _set("backup_dir", "/tmp/whatever")
+        await set_app_setting("backup_enabled", True)
+        await set_app_setting("backup_dir", "/tmp/whatever")
 
         async with SessionLocal() as session:
             # Never run before → due.
             assert await backup_due(session, 86_400) is True
 
         # A recent successful run → not due.
-        await _set("backup_last_run_at", datetime.now(UTC).isoformat())
-        await _set("backup_last_status", "ok")
+        await set_app_setting("backup_last_run_at", datetime.now(UTC).isoformat())
+        await set_app_setting("backup_last_status", "ok")
         async with SessionLocal() as session:
             assert await backup_due(session, 86_400) is False
 
         # An old successful run → due again.
         old = (datetime.now(UTC) - timedelta(days=2)).isoformat()
-        await _set("backup_last_run_at", old)
+        await set_app_setting("backup_last_run_at", old)
         async with SessionLocal() as session:
             assert await backup_due(session, 86_400) is True
 
         # Disabled → never due.
-        await _set("backup_enabled", False)
+        await set_app_setting("backup_enabled", False)
         async with SessionLocal() as session:
             assert await backup_due(session, 86_400) is False
 

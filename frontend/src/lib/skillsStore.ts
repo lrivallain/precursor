@@ -1,36 +1,17 @@
-import { useSyncExternalStore } from "react";
 import { api } from "./api";
+import { ListResourceStore, useStoreVersion } from "./externalStore";
 import { expandSkillReferences } from "./skillRefs";
 import type { Skill } from "./types";
 
-type Listener = () => void;
+class SkillsStore extends ListResourceStore<Skill> {
+  protected readonly label = "skills";
 
-class SkillsStore {
-  private skills: Skill[] = [];
-  private version = 0;
-  private listeners = new Set<Listener>();
-  private loaded = false;
-
-  subscribe = (l: Listener): (() => void) => {
-    this.listeners.add(l);
-    return () => {
-      this.listeners.delete(l);
-    };
-  };
-
-  getSnapshot = (): number => this.version;
-
-  private notify(): void {
-    this.version++;
-    for (const l of this.listeners) l();
-  }
-
-  all(): Skill[] {
-    return this.skills;
+  protected fetchAll(): Promise<Skill[]> {
+    return api.skills.list();
   }
 
   byName(name: string): Skill | undefined {
-    return this.skills.find((s) => s.name === name);
+    return this.items.find((s) => s.name === name);
   }
 
   /**
@@ -40,33 +21,15 @@ class SkillsStore {
    */
   expandReferences(text: string): string {
     const table = new Map(
-      this.skills.filter((s) => s.active).map((s) => [s.name, s.instructions]),
+      this.items.filter((s) => s.active).map((s) => [s.name, s.instructions]),
     );
     return expandSkillReferences(text, table);
-  }
-
-  async load(): Promise<void> {
-    try {
-      this.skills = await api.skills.list();
-      this.loaded = true;
-      this.notify();
-    } catch (err) {
-      console.error("Failed to load skills", err);
-    }
-  }
-
-  async ensureLoaded(): Promise<void> {
-    if (!this.loaded) await this.load();
   }
 }
 
 export const skillsStore = new SkillsStore();
 
 export function useSkills(): Skill[] {
-  useSyncExternalStore(
-    skillsStore.subscribe,
-    skillsStore.getSnapshot,
-    skillsStore.getSnapshot,
-  );
+  useStoreVersion(skillsStore);
   return skillsStore.all();
 }

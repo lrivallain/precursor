@@ -13,6 +13,7 @@ import asyncio
 import contextlib
 import logging
 from abc import ABC, abstractmethod
+from typing import ClassVar, Self
 
 from precursor.backend.config import Settings, get_settings
 
@@ -33,6 +34,21 @@ class BackgroundPoll(ABC):
     label: str = "Background poller"
     #: Lower bound applied to ``poll_seconds`` so a tiny setting can't busy-spin.
     poll_floor: int = 60
+
+    _instances: ClassVar[dict[type[BackgroundPoll], BackgroundPoll]] = {}
+
+    @classmethod
+    def instance(cls) -> Self:
+        """The process-wide instance of this poller, built on first use.
+
+        Modules expose it as ``get_<name> = <Poller>.instance`` so callers and
+        tests keep a stable accessor.
+        """
+        existing = BackgroundPoll._instances.get(cls)
+        if existing is None:
+            existing = BackgroundPoll._instances[cls] = cls()
+        assert isinstance(existing, cls)
+        return existing
 
     def __init__(self, settings: Settings | None = None) -> None:
         self._settings = settings or get_settings()

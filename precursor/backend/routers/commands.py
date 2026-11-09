@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.config import Settings, get_settings
 from precursor.backend.db import SessionLocal, get_session
+from precursor.backend.lookups import get_or_404
 from precursor.backend.models import (
     IssueContextCache,
     Message,
@@ -95,9 +96,7 @@ async def _require_repo(session: AsyncSession, topic_id: int) -> tuple[Topic, st
             status.HTTP_403_FORBIDDEN,
             "GitHub issue associations are disabled. Enable the feature in Settings → GitHub.",
         )
-    topic = await session.get(Topic, topic_id)
-    if topic is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
+    topic = await get_or_404(session, Topic, topic_id, "Topic not found")
     repo = await resolve_topic_github_repo(session, topic)
     if not repo:
         raise HTTPException(
@@ -633,9 +632,7 @@ async def suggest_name(
     Only the title moves. The slug is deliberately left alone so links already
     shared or open elsewhere keep resolving.
     """
-    topic = await session.get(Topic, topic_id)
-    if topic is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
+    topic = await get_or_404(session, Topic, topic_id, "Topic not found")
     return SuggestNameResponse(title=await suggest_topic_name(session, topic))
 
 
@@ -659,9 +656,7 @@ async def notes_rephrase(
     session: AsyncSession = Depends(get_session),
 ) -> NotesRephraseResponse:
     """Clean up rough notes via the LLM (no persistence)."""
-    topic = await session.get(Topic, topic_id)
-    if topic is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
+    topic = await get_or_404(session, Topic, topic_id, "Topic not found")
     user_prompt = notes_service.build_rephrase_user_prompt(
         container_label="Topic",
         title=topic.title,

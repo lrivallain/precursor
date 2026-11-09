@@ -20,6 +20,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import Select, exists, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from precursor.backend.lookups import get_or_404
 from precursor.backend.models import (
     Chat,
     Message,
@@ -61,9 +62,7 @@ async def create_side_chat(
 
     ``quote`` narrows the copied reply to an excerpt of it (a text selection).
     """
-    topic = await session.get(Topic, topic_id)
-    if topic is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
+    topic = await get_or_404(session, Topic, topic_id, "Topic not found")
     excerpt = (quote or "").strip()
     if excerpt and message_id is None:
         raise HTTPException(
@@ -271,9 +270,7 @@ async def discard_if_untouched(session: AsyncSession, chat_id: int) -> int | Non
     kept. Returns the parent topic id when the chat was deleted (``None`` for
     a detached one, which is deleted all the same), or raises 404/409.
     """
-    chat = await session.get(Chat, chat_id)
-    if chat is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Chat not found")
+    chat = await get_or_404(session, Chat, chat_id, "Chat not found")
     used = (
         not chat.autoname_pending
         or chat.pinned

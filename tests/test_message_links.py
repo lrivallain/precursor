@@ -37,6 +37,7 @@ from precursor.backend.services.agents.timeline import Timeline, archive_event
 from precursor.backend.services.llm.base import ChatMessage
 from precursor.backend.services.llm.mock import MockProvider
 from precursor.backend.services.mcp import precursor_server
+from precursor.backend.services.mcp.precursor_tools import conversations
 from precursor.backend.services.message_links import (
     MESSAGE_LINK_INSTRUCTION,
     discussion_path,
@@ -76,7 +77,7 @@ def test_model_can_reference_a_previous_reply_and_streams_immediate_link_ids(
 
     monkeypatch.setattr(MockProvider, "stream_chat", stream)
     monkeypatch.setattr(conversation_turn, "get_llm_provider", provider)
-    monkeypatch.setattr(precursor_server, "_section_enabled", AsyncMock(return_value=True))
+    monkeypatch.setattr(conversations, "_section_enabled", AsyncMock(return_value=True))
     with TestClient(create_app()) as client:
         container = client.post(f"/api/{kind}", json={"title": "Citable replies"}).json()
         path = f"/api/{kind}/{container['id']}/messages"

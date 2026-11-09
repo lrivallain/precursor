@@ -12,6 +12,8 @@ Git-backed Markdown folders (see ``models/workspace.py``).
 
 from __future__ import annotations
 
+from typing import Literal, get_args
+
 from sqlalchemy import Boolean, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -20,16 +22,9 @@ from precursor.backend.models.base import Base, TimestampMixin
 # Accent keys usable by the frontend. Stored as a key (not a CSS class) because
 # Tailwind classes must be statically analysable — the SPA maps these to full
 # class strings in `lib/sections.ts`.
-COLLECTION_ACCENTS = (
-    "sky",
-    "emerald",
-    "amber",
-    "violet",
-    "rose",
-    "cyan",
-    "slate",
-)
-DEFAULT_COLLECTION_ACCENT = "sky"
+CollectionAccent = Literal["sky", "emerald", "amber", "violet", "rose", "cyan", "slate"]
+COLLECTION_ACCENTS: tuple[str, ...] = get_args(CollectionAccent)
+DEFAULT_COLLECTION_ACCENT: CollectionAccent = "sky"
 
 # Name of the protected built-in collection every topic falls back to.
 DEFAULT_COLLECTION_NAME = "General"

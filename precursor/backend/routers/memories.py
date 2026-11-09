@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.db import get_session
+from precursor.backend.lookups import get_or_404
 from precursor.backend.models import Memory
 from precursor.backend.schemas import MemoryCreate, MemoryRead, MemoryUpdate
 from precursor.backend.services import memories as memory_service
@@ -41,8 +42,6 @@ async def update_memory(
 
 @router.delete("/{memory_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_memory(memory_id: int, session: AsyncSession = Depends(get_session)) -> None:
-    memory = await session.get(Memory, memory_id)
-    if memory is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Memory not found")
+    memory = await get_or_404(session, Memory, memory_id, "Memory not found")
     await session.delete(memory)
     await session.commit()

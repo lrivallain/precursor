@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 import type { ConvKind } from "./streamStore";
 import type { NoteDraftAttachment } from "./types";
+import { Emitter } from "./externalStore";
 
 export type DetachedKind = "notes" | "gh-create" | "gh-update" | "gh-close";
 
@@ -39,19 +40,8 @@ export interface DetachedSession {
 }
 
 let sessions: DetachedSession[] = [];
-const listeners = new Set<() => void>();
 let counter = 0;
-
-function emit(): void {
-  for (const l of listeners) l();
-}
-
-function subscribe(listener: () => void): () => void {
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-  };
-}
+const { emit, subscribe } = new Emitter();
 
 export const detachedDraftStore = {
   /** Open (or focus) a detached session, returning its id. */

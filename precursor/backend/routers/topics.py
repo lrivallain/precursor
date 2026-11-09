@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from precursor.backend.db import get_session
+from precursor.backend.lookups import get_or_404
 from precursor.backend.models import Message, MessageRole, Topic, TopicSchedule
 from precursor.backend.schemas import (
     ChatRead,
@@ -247,9 +248,7 @@ async def get_topic_by_public_id(
 
 @router.get("/{topic_id}", response_model=TopicRead)
 async def get_topic(topic_id: int, session: AsyncSession = Depends(get_session)) -> Topic:
-    topic = await session.get(Topic, topic_id)
-    if topic is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
+    topic = await get_or_404(session, Topic, topic_id, "Topic not found")
     return topic
 
 
@@ -259,9 +258,7 @@ async def update_topic(
     payload: TopicUpdate,
     session: AsyncSession = Depends(get_session),
 ) -> Topic:
-    topic = await session.get(Topic, topic_id)
-    if topic is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
+    topic = await get_or_404(session, Topic, topic_id, "Topic not found")
 
     data = payload.model_dump(exclude_unset=True)
     if "llm_selection" in data:
@@ -334,9 +331,7 @@ async def update_topic(
 
 @router.delete("/{topic_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_topic(topic_id: int, session: AsyncSession = Depends(get_session)) -> None:
-    topic = await session.get(Topic, topic_id)
-    if topic is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
+    topic = await get_or_404(session, Topic, topic_id, "Topic not found")
     # Promote direct children one level up (parent's parent, or root) so they
     # are not lost when their parent disappears.
     new_parent_id = topic.parent_id
@@ -382,9 +377,7 @@ async def mark_topic_read(
     session: AsyncSession = Depends(get_session),
 ) -> None:
     """Stamp the topic's last_read_at to now, clearing the unread badge."""
-    topic = await session.get(Topic, topic_id)
-    if topic is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
+    topic = await get_or_404(session, Topic, topic_id, "Topic not found")
     topic.last_read_at = datetime.now(UTC)
     await session.commit()
     # Let other tabs clear this topic's badge/counter in real time.
@@ -396,9 +389,7 @@ async def mark_topic_unread(
     topic_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> None:
-    topic = await session.get(Topic, topic_id)
-    if topic is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
+    topic = await get_or_404(session, Topic, topic_id, "Topic not found")
     latest = await session.scalar(
         select(Message.created_at)
         .where(Message.topic_id == topic_id)
@@ -418,9 +409,7 @@ async def archive_topic(
     session: AsyncSession = Depends(get_session),
 ) -> Topic:
     """Archive a topic; ``side_chats_too`` archives its open side chats with it."""
-    topic = await session.get(Topic, topic_id)
-    if topic is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
+    topic = await get_or_404(session, Topic, topic_id, "Topic not found")
     if topic.archived_at is None:
         topic.archived_at = datetime.now(UTC)
         archived_chats = (
@@ -441,9 +430,7 @@ async def unarchive_topic(
     topic_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> Topic:
-    topic = await session.get(Topic, topic_id)
-    if topic is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
+    topic = await get_or_404(session, Topic, topic_id, "Topic not found")
     if topic.archived_at is not None:
         # Side chats archived along with the topic come back with it.
         restored = await side_chats.unarchive_with_topic(session, topic_id, topic.archived_at)
@@ -469,9 +456,7 @@ def _now() -> datetime:
 
 
 async def _require_topic(session: AsyncSession, topic_id: int) -> Topic:
-    topic = await session.get(Topic, topic_id)
-    if topic is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
+    topic = await get_or_404(session, Topic, topic_id, "Topic not found")
     return topic
 
 

@@ -1,0 +1,23 @@
+{
+  "path": [
+    "precursor",
+    "frontend/src",
+    "tests",
+    "scripts"
+  ],
+  "minLines": 8,
+  "minTokens": 60,
+  "ignore": [
+    "**/alembic/versions/**",
+    "**/node_modules/**",
+    "**/*.json",
+    "**/*.md",
+    "**/*.css",
+    "**/*.html",
+    "**/generated/**"
+  ],
+  "reporters": [
+    "json"
+  ],
+  "silent": true
+}

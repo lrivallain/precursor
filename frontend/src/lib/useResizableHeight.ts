@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { beginDrag } from "./dragGuard";
+import { useCallback, useEffect, useRef } from "react";
+import { clamp, parseClampedInt, useMouseDrag, usePersistedState } from "./resizeCore";
 
 interface Options {
   storageKey: string;
@@ -18,25 +18,14 @@ export function useResizableHeight({
   max,
   side = "top",
 }: Options) {
-  const [preferredHeight, setHeight] = useState<number>(() => {
-    if (typeof window === "undefined") return defaultHeight;
-    const raw = window.localStorage.getItem(storageKey);
-    if (!raw) return defaultHeight;
-    const n = Number.parseInt(raw, 10);
-    if (Number.isNaN(n)) return defaultHeight;
-    return clamp(n, min, max);
-  });
-  const dragging = useRef(false);
-  const startY = useRef(0);
-  const startH = useRef(0);
-  const endGuard = useRef<(() => void) | null>(null);
+  const [preferredHeight, setHeight] = usePersistedState(
+    storageKey,
+    defaultHeight,
+    parseClampedInt(min, max),
+  );
+  const startHeight = useRef(0);
   const pointerCleanup = useRef<(() => void) | null>(null);
   const height = clamp(preferredHeight, min, max);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem(storageKey, String(preferredHeight));
-  }, [storageKey, preferredHeight]);
 
   const cancelResize = useCallback(() => pointerCleanup.current?.(), []);
   useEffect(() => cancelResize, [cancelResize]);
@@ -77,7 +66,7 @@ export function useResizableHeight({
     target.addEventListener("pointercancel", finish);
     target.addEventListener("lostpointercapture", finish);
     window.addEventListener("blur", finish);
-  }, [cancelResize, height, min, max, side]);
+  }, [cancelResize, height, min, max, side, setHeight]);
 
   const onKeyDown = useCallback((e: React.KeyboardEvent<HTMLElement>) => {
     if (e.key === "Home" || e.key === "End") {
@@ -88,49 +77,19 @@ export function useResizableHeight({
       const delta = (e.key === "ArrowDown" ? 16 : -16) * (side === "bottom" ? 1 : -1);
       setHeight((value) => clamp(clamp(value, min, max) + delta, min, max));
     }
-  }, [min, max, side]);
+  }, [min, max, side, setHeight]);
 
-  const onMouseDown = useCallback(
-    (e: React.MouseEvent) => {
-      e.preventDefault();
-      dragging.current = true;
-      startY.current = e.clientY;
-      startH.current = height;
-      endGuard.current?.();
-      endGuard.current = beginDrag();
-      document.body.style.userSelect = "none";
-      document.body.style.cursor = "row-resize";
+  const onMouseDown = useMouseDrag({
+    cursor: "row-resize",
+    onStart: () => {
+      startHeight.current = height;
     },
-    [height],
-  );
-
-  useEffect(() => {
-    function onMove(e: MouseEvent): void {
-      if (!dragging.current) return;
-      const delta = e.clientY - startY.current;
-      const next = side === "top" ? startH.current - delta : startH.current + delta;
+    onMove: (_dx, dy) => {
+      const next = side === "top" ? startHeight.current - dy : startHeight.current + dy;
       setHeight(clamp(next, min, max));
-    }
-    function onUp(): void {
-      endGuard.current?.();
-      endGuard.current = null;
-      if (!dragging.current) return;
-      dragging.current = false;
-      document.body.style.userSelect = "";
-      document.body.style.cursor = "";
-    }
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-    return () => {
-      onUp();
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    };
-  }, [side, min, max]);
+    },
+  });
 
   return { height, onMouseDown, onPointerDown, onKeyDown, cancelResize };
 }
 
-function clamp(n: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, n));
-}

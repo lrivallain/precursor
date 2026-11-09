@@ -12,18 +12,16 @@ is swept in bounded statements.
 from __future__ import annotations
 
 import asyncio
-import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
-from fastapi.testclient import TestClient
 from sqlalchemy import delete, event, func, insert, select
 
 from precursor.backend.db import SessionLocal, engine
-from precursor.backend.main import create_app
 from precursor.backend.models import AgentEventRecord, AgentSession, AppSetting
 from precursor.backend.services.agent_event_retention import prune_agent_events
+from tests.support import init_db, set_app_setting
 
 
 @pytest.fixture(autouse=True)
@@ -45,26 +43,9 @@ def _restore_retention_settings() -> Any:
     asyncio.run(_clear())
 
 
-def _init_db() -> None:
-    # Lifespan runs init_db (alembic upgrade head) before we touch the tables.
-    with TestClient(create_app()):
-        pass
-
-
-async def _set(key: str, value: int) -> None:
-    async with SessionLocal() as session:
-        row = await session.get(AppSetting, key)
-        encoded = json.dumps(value)
-        if row is None:
-            session.add(AppSetting(key=key, value=encoded))
-        else:
-            row.value = encoded
-        await session.commit()
-
-
 async def _configure(*, days: int, cap: int) -> None:
-    await _set("agent_event_retention_days", days)
-    await _set("agent_event_max_per_session", cap)
+    await set_app_setting("agent_event_retention_days", days)
+    await set_app_setting("agent_event_max_per_session", cap)
 
 
 async def _seed() -> dict[str, int]:
@@ -116,7 +97,7 @@ async def _event_count(agent_id: int) -> int:
 
 
 def test_both_levers_disabled_is_noop() -> None:
-    _init_db()
+    init_db()
 
     async def _run() -> None:
         await _configure(days=0, cap=0)
@@ -128,7 +109,7 @@ def test_both_levers_disabled_is_noop() -> None:
 
 
 def test_age_window_prunes_only_expired_events_of_idle_agents() -> None:
-    _init_db()
+    init_db()
 
     async def _run() -> None:
         await _configure(days=30, cap=0)
@@ -146,7 +127,7 @@ def test_age_window_prunes_only_expired_events_of_idle_agents() -> None:
 
 
 def test_per_session_cap_keeps_newest_events() -> None:
-    _init_db()
+    init_db()
 
     async def _run() -> None:
         await _configure(days=0, cap=2)
@@ -175,7 +156,7 @@ def test_per_session_cap_keeps_newest_events() -> None:
 
 
 def test_dry_run_measures_without_deleting() -> None:
-    _init_db()
+    init_db()
 
     async def _run() -> None:
         await _configure(days=30, cap=0)
@@ -192,7 +173,7 @@ def test_dry_run_measures_without_deleting() -> None:
 
 def test_levers_overlap_without_double_counting() -> None:
     """An event caught by both the window and the cap is removed (and counted) once."""
-    _init_db()
+    init_db()
 
     async def _run() -> None:
         await _configure(days=30, cap=2)
@@ -215,7 +196,7 @@ def test_large_backlog_stays_under_the_sqlite_parameter_ceiling() -> None:
     seed tens of thousands of rows the test asserts no statement binds more than
     the lowest ceiling while sweeping a backlog above it.
     """
-    _init_db()
+    init_db()
     backlog = 1_200
     payload = '{"kind":"old"}'
     widest: list[int] = []

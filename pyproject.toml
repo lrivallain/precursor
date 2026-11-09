@@ -210,6 +210,17 @@ ignore = ["E501", "B008"]
 [tool.ruff.lint.isort]
 known-first-party = ["precursor"]
 
+# Complexity thresholds. These rules are NOT in `select` above: existing code
+# breaks them in ~100 places, so they are enforced by the quality ratchet
+# (`scripts/quality_ratchet.py`), which fails only when a file gets worse than
+# its recorded baseline. New code must stay under the limits.
+[tool.ruff.lint.mccabe]
+max-complexity = 15
+
+[tool.ruff.lint.pylint]
+max-branches = 15
+max-statements = 60
+
 [tool.mypy]
 python_version = "3.12"
 strict = true

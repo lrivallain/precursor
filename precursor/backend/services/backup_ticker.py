@@ -44,11 +44,4 @@ class BackupTicker(BackgroundPoll):
             await run_backup()
 
 
-_ticker: BackupTicker | None = None
-
-
-def get_backup_ticker() -> BackupTicker:
-    global _ticker
-    if _ticker is None:
-        _ticker = BackupTicker()
-    return _ticker
+get_backup_ticker = BackupTicker.instance

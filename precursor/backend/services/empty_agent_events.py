@@ -17,13 +17,10 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Callable
-from contextlib import AbstractAsyncContextManager
 from typing import Any, cast
 
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.engine import CursorResult
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.db import SessionLocal
 from precursor.backend.models import AgentEventRecord
@@ -31,6 +28,7 @@ from precursor.backend.services.agents.event_normalizer import (
     LIVE_ONLY_KINDS,
     is_content_free,
 )
+from precursor.backend.services.retention_sweep import SessionFactory
 from precursor.backend.services.sweep_result import SweepResult
 
 logger = logging.getLogger(__name__)
@@ -66,7 +64,7 @@ def _is_empty_payload(payload: str) -> bool:
 
 
 async def prune_empty_agent_events(
-    session_factory: Callable[[], AbstractAsyncContextManager[AsyncSession]] = SessionLocal,
+    session_factory: SessionFactory = SessionLocal,
     *,
     dry_run: bool = False,
 ) -> SweepResult:

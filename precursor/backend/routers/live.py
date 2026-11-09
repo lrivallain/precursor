@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
 from precursor.backend.db import SessionLocal, get_session
+from precursor.backend.lookups import get_or_404
 from precursor.backend.models import (
     Attachment,
     Chat,
@@ -151,9 +152,7 @@ async def _allocate_slug(session: AsyncSession, base: str) -> str:
 
 
 async def _get_session_or_404(session_id: int, session: AsyncSession) -> MeetingSession:
-    ms = await session.get(MeetingSession, session_id)
-    if ms is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Meeting session not found")
+    ms = await get_or_404(session, MeetingSession, session_id, "Meeting session not found")
     return ms
 
 
@@ -635,9 +634,7 @@ async def upload_meeting_attachment(
 async def get_meeting_attachment(
     attachment_id: int, session: AsyncSession = Depends(get_session)
 ) -> FileResponse:
-    att = await session.get(MeetingAttachment, attachment_id)
-    if att is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Attachment not found")
+    att = await get_or_404(session, MeetingAttachment, attachment_id, "Attachment not found")
     path = blob_path(att.sha256)
     if not path.exists():
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Attachment content missing")

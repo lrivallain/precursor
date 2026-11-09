@@ -73,11 +73,4 @@ class ApprovalExpiryTicker(BackgroundPoll):
             logger.exception("Headless resume of topic %s failed", topic_id)
 
 
-_ticker: ApprovalExpiryTicker | None = None
-
-
-def get_approval_expiry_ticker() -> ApprovalExpiryTicker:
-    global _ticker
-    if _ticker is None:
-        _ticker = ApprovalExpiryTicker()
-    return _ticker
+get_approval_expiry_ticker = ApprovalExpiryTicker.instance

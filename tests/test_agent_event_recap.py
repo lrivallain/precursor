@@ -13,11 +13,9 @@ from __future__ import annotations
 import asyncio
 import json
 
-from fastapi.testclient import TestClient
 from sqlalchemy import delete, func, select
 
 from precursor.backend.db import SessionLocal
-from precursor.backend.main import create_app
 from precursor.backend.models import AgentEventRecord, AgentSession
 from precursor.backend.schemas.agent import AgentEvent
 from precursor.backend.services.agent_event_recap import recap_archived_events, recap_payload
@@ -26,11 +24,7 @@ from precursor.backend.services.agents.event_normalizer import (
     TEXT_CAP,
     TOOL_RESULT_CAP,
 )
-
-
-def _init_db() -> None:
-    with TestClient(create_app()):
-        pass
+from tests.support import init_db
 
 
 def test_recap_trims_oversized_data_values() -> None:
@@ -127,7 +121,7 @@ async def _total_payload_bytes() -> int:
 
 
 def test_sweep_shrinks_rows_and_keeps_them_parseable() -> None:
-    _init_db()
+    init_db()
     _seed()
 
     async def _run() -> None:
@@ -157,7 +151,7 @@ def test_sweep_shrinks_rows_and_keeps_them_parseable() -> None:
 
 
 def test_sweep_is_idempotent() -> None:
-    _init_db()
+    init_db()
     _seed()
 
     async def _run() -> None:
@@ -170,7 +164,7 @@ def test_sweep_is_idempotent() -> None:
 
 
 def test_dry_run_measures_without_rewriting() -> None:
-    _init_db()
+    init_db()
     _seed()
 
     async def _run() -> None:

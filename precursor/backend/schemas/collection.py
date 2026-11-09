@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field
 
-from precursor.backend.models.collection import COLLECTION_ACCENTS, DEFAULT_COLLECTION_ACCENT
+from precursor.backend.models.collection import DEFAULT_COLLECTION_ACCENT, CollectionAccent
 
 
 class CollectionBase(BaseModel):
@@ -14,18 +14,11 @@ class CollectionBase(BaseModel):
     description: str | None = None
     # `owner/repo`; null/empty falls back to the global GitHub repo setting.
     github_repo: str | None = Field(default=None, max_length=255)
-    accent: str = Field(default=DEFAULT_COLLECTION_ACCENT, max_length=32)
+    accent: CollectionAccent = DEFAULT_COLLECTION_ACCENT
     icon: str | None = Field(default=None, max_length=64)
     # Default Assistant Role for new topics in this collection; null = built-in
     # default role.
     default_role: str | None = None
-
-    @field_validator("accent")
-    @classmethod
-    def _known_accent(cls, value: str) -> str:
-        if value not in COLLECTION_ACCENTS:
-            raise ValueError(f"accent must be one of: {', '.join(COLLECTION_ACCENTS)}")
-        return value
 
 
 class CollectionCreate(CollectionBase):
@@ -36,19 +29,12 @@ class CollectionUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=64)
     description: str | None = None
     github_repo: str | None = Field(default=None, max_length=255)
-    accent: str | None = Field(default=None, max_length=32)
+    accent: CollectionAccent | None = None
     icon: str | None = Field(default=None, max_length=64)
     slug: str | None = Field(default=None, min_length=1, max_length=255)
     # Send explicit null to clear the collection's default role; omit to leave
     # it unchanged (relies on `exclude_unset=True` in the router).
     default_role: str | None = None
-
-    @field_validator("accent")
-    @classmethod
-    def _known_accent(cls, value: str | None) -> str | None:
-        if value is not None and value not in COLLECTION_ACCENTS:
-            raise ValueError(f"accent must be one of: {', '.join(COLLECTION_ACCENTS)}")
-        return value
 
 
 class CollectionRead(CollectionBase):

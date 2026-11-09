@@ -11,12 +11,7 @@ from precursor.backend.models import AgentEventRecord, AgentSession, Chat, Topic
 from precursor.backend.services import system_stats as system_stats_module
 from precursor.backend.services.github_client import GitHubRepoNotAccessibleError
 from precursor.backend.services.system_stats import compute_system_stats
-
-
-def _init_db() -> None:
-    # Lifespan runs init_db (alembic upgrade head) before we touch the tables.
-    with TestClient(create_app()):
-        pass
+from tests.support import init_db
 
 
 async def _reset_entities() -> None:
@@ -30,7 +25,7 @@ async def _reset_entities() -> None:
 
 
 async def test_compute_system_stats_counts_and_sizes() -> None:
-    _init_db()
+    init_db()
     await _reset_entities()
 
     async with SessionLocal() as session:
@@ -66,7 +61,7 @@ async def test_compute_system_stats_counts_and_sizes() -> None:
 
 
 async def test_issue_stats_unconfigured_when_no_repo_or_token(monkeypatch) -> None:
-    _init_db()
+    init_db()
 
     async def _no_repo(_session) -> str:
         return ""
@@ -86,7 +81,7 @@ async def test_issue_stats_unconfigured_when_no_repo_or_token(monkeypatch) -> No
 
 
 async def test_issue_stats_counts_open_and_closed(monkeypatch) -> None:
-    _init_db()
+    init_db()
 
     async def _repo(_session) -> str:
         return "owner/name"
@@ -120,7 +115,7 @@ async def test_issue_stats_counts_open_and_closed(monkeypatch) -> None:
 
 
 async def test_issue_stats_degrades_when_repo_inaccessible(monkeypatch) -> None:
-    _init_db()
+    init_db()
 
     async def _repo(_session) -> str:
         return "owner/private"

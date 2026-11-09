@@ -3,18 +3,12 @@
 from __future__ import annotations
 
 import httpx
-from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
 from precursor.backend.db import SessionLocal
 from precursor.backend.main import create_app
 from precursor.backend.models import UsageRecord
-
-
-def _init_db() -> None:
-    # Lifespan runs init_db (alembic upgrade head) before we touch the tables.
-    with TestClient(create_app()):
-        pass
+from tests.support import init_db
 
 
 async def _ledger_count() -> int:
@@ -36,7 +30,7 @@ async def test_refine_rewrites_text_and_records_usage(monkeypatch) -> None:
 
     monkeypatch.setattr(one_shot, "get_llm_provider", _mock_provider)
 
-    _init_db()
+    init_db()
     before = await _ledger_count()
 
     transport = httpx.ASGITransport(app=create_app())
@@ -62,7 +56,7 @@ async def test_refine_rewrites_text_and_records_usage(monkeypatch) -> None:
 
 
 async def test_refine_rejects_blank_text() -> None:
-    _init_db()
+    init_db()
     transport = httpx.ASGITransport(app=create_app())
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.post("/api/refine", json={"text": "   "})

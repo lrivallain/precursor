@@ -28,7 +28,7 @@ BACKEND_READS = frozenset(
     {
         "frontend/package.json",
         "frontend/package-lock.json",
-        "frontend/src/components/SettingsPanel.tsx",
+        "frontend/src/components/settings/SystemTab.tsx",
     }
 )
 # Markdown is prose everywhere except where code or fixtures live.

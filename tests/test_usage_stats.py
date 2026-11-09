@@ -17,12 +17,7 @@ from precursor.backend.db import SessionLocal
 from precursor.backend.main import create_app
 from precursor.backend.models import Topic, UsageRecord
 from precursor.backend.services.usage_stats import compute_usage_stats, record_usage
-
-
-def _init_db() -> None:
-    # Lifespan runs init_db (alembic upgrade head) before we touch the tables.
-    with TestClient(create_app()):
-        pass
+from tests.support import init_db
 
 
 async def _ledger_count() -> int:
@@ -62,7 +57,7 @@ async def _seed_ledger() -> None:
 
 
 async def test_compute_usage_stats_buckets_and_totals() -> None:
-    _init_db()
+    init_db()
     await _seed_ledger()
 
     async with SessionLocal() as session:
@@ -86,7 +81,7 @@ async def test_compute_usage_stats_buckets_and_totals() -> None:
 
 
 async def test_record_usage_skips_zero_token_rounds() -> None:
-    _init_db()
+    init_db()
     before = await _ledger_count()
     async with SessionLocal() as session:
         await record_usage(session, prompt_tokens=0, completion_tokens=0)
@@ -108,7 +103,7 @@ async def test_notes_rephrase_records_usage(monkeypatch) -> None:
 
     monkeypatch.setattr(one_shot, "get_llm_provider", _mock_provider)
 
-    _init_db()
+    init_db()
     async with SessionLocal() as session:
         topic = Topic(title="Notes", slug="notes-usage-cmd")
         session.add(topic)
@@ -149,7 +144,7 @@ async def test_chat_notes_rephrase_records_usage_against_the_chat(monkeypatch) -
 
     monkeypatch.setattr(one_shot, "get_llm_provider", _mock_provider)
 
-    _init_db()
+    init_db()
     async with SessionLocal() as session:
         chat = Chat(title="Notes", slug="notes-usage-chat-cmd")
         session.add(chat)

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { hasUnsavedEdits } from "./stepPlans";
+import { Emitter } from "./externalStore";
 
 /**
  * Unsaved text typed into the step-by-step editors (a step's artifact, the
@@ -14,20 +15,10 @@ interface DraftEntry {
 }
 
 const entries = new Map<string, DraftEntry>();
-const listeners = new Set<() => void>();
 // Fields whose last autosave failed: their text is kept and a retry is offered.
 const failed = new Set<string>();
-let version = 0;
-
-function emit(): void {
-  version += 1;
-  listeners.forEach((l) => l());
-}
-
-function subscribe(listener: () => void): () => void {
-  listeners.add(listener);
-  return () => listeners.delete(listener);
-}
+const changes = new Emitter();
+const { emit, subscribe, getVersion } = changes;
 
 /** `<planId>/final` or `<planId>/step/<stepId>`. */
 export function draftKey(planId: number, target: "final" | number): string {
@@ -103,7 +94,7 @@ export function markFailed(keys: string[], isFailed: boolean): void {
 
 /** The keys with unsaved edits in `planId`, for the "unsaved" markers. */
 export function useUnsavedKeys(planId: number): ReadonlySet<string> {
-  const seen = useSyncExternalStore(subscribe, () => version);
+  const seen = useSyncExternalStore(subscribe, getVersion);
   // `seen` is the cache key: the set is rebuilt only when a draft changed.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   return useMemo(() => new Set([...entries.keys()].filter((k) => k.startsWith(`${planId}/`))), [seen, planId]);
@@ -162,7 +153,7 @@ export function useFieldDraft(key: string, saved: string, exact = false) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, value, saved, exact]);
-  const seen = useSyncExternalStore(subscribe, () => version);
+  const seen = useSyncExternalStore(subscribe, getVersion);
   const isFailed = useMemo(() => failed.has(key), [seen, key]); // eslint-disable-line react-hooks/exhaustive-deps
   return { value, setValue, failed: isFailed };
 }

@@ -16,18 +16,13 @@ never touched. Default retention is 30 days; 0 keeps everything.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
-from contextlib import AbstractAsyncContextManager
-from datetime import UTC, datetime, timedelta
-from typing import Any, cast
 
-from sqlalchemy import func, select, update
-from sqlalchemy.engine import CursorResult
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from precursor.backend.db import SessionLocal
 from precursor.backend.models import WorkflowRun, WorkflowRunStep
 from precursor.backend.services.app_settings import resolve_workflow_step_retention_days
+from precursor.backend.services.retention_sweep import SessionFactory, cutoff, replace_column
 from precursor.backend.services.sweep_result import SweepResult
 
 logger = logging.getLogger(__name__)
@@ -38,7 +33,7 @@ PRUNED_PLACEHOLDER = "[Step input pruned to save space]"
 
 
 async def prune_expired_workflow_step_inputs(
-    session_factory: Callable[[], AbstractAsyncContextManager[AsyncSession]] = SessionLocal,
+    session_factory: SessionFactory = SessionLocal,
     *,
     dry_run: bool = False,
 ) -> SweepResult:
@@ -51,37 +46,27 @@ async def prune_expired_workflow_step_inputs(
         retention_days = await resolve_workflow_step_retention_days(session)
         if retention_days <= 0:
             return SweepResult()
-        cutoff = datetime.now(UTC) - timedelta(days=retention_days)
         expired_runs = select(WorkflowRun.id).where(
-            WorkflowRun.finished_at.is_not(None), WorkflowRun.finished_at < cutoff
+            WorkflowRun.finished_at.is_not(None),
+            WorkflowRun.finished_at < cutoff(retention_days),
         )
-        criteria = (
-            WorkflowRunStep.run_id.in_(expired_runs),
-            WorkflowRunStep.input_context.is_not(None),
-            WorkflowRunStep.input_context != PRUNED_PLACEHOLDER,
+        result = await replace_column(
+            session,
+            WorkflowRunStep.input_context,
+            (
+                WorkflowRunStep.run_id.in_(expired_runs),
+                WorkflowRunStep.input_context.is_not(None),
+                WorkflowRunStep.input_context != PRUNED_PLACEHOLDER,
+            ),
+            replacement=PRUNED_PLACEHOLDER,
+            dry_run=dry_run,
         )
-        measured = (
-            await session.execute(
-                select(
-                    func.count(WorkflowRunStep.id),
-                    func.coalesce(func.sum(func.length(WorkflowRunStep.input_context)), 0),
-                ).where(*criteria)
-            )
-        ).one()
-        rows = int(measured[0] or 0)
-        # Each step keeps the placeholder, so only the excess is reclaimed.
-        freed = max(int(measured[1] or 0) - rows * len(PRUNED_PLACEHOLDER), 0)
-        if dry_run or not rows:
-            return SweepResult(rows=rows, bytes=freed)
-
-        result = await session.execute(
-            update(WorkflowRunStep).where(*criteria).values(input_context=PRUNED_PLACEHOLDER)
-        )
-        cleared = int(cast("CursorResult[Any]", result).rowcount or 0)
+        if dry_run or not result.rows:
+            return result
         await session.commit()
         logger.info(
             "Cleared the input context of %d workflow step(s) from runs older than %d day(s)",
-            cleared,
+            result.rows,
             retention_days,
         )
-        return SweepResult(rows=cleared, bytes=freed)
+        return result

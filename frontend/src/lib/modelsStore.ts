@@ -1,17 +1,15 @@
 import { useEffect } from "react";
-import { useSyncExternalStore } from "react";
 import { api } from "./api";
 import { resolveDefaultModel } from "./conversationModel";
+import { VersionedStore, useStoreVersion } from "./externalStore";
 import type { LLMModel, Settings } from "./types";
-
-type Listener = () => void;
 
 // Providers add and retire models upstream, and the desktop webview never
 // reloads — a fetch-once catalog would stay frozen for the lifetime of the
 // app, hiding new models and offering retired ones.
 const STALE_AFTER_MS = 5 * 60 * 1000;
 
-class ModelsStore {
+class ModelsStore extends VersionedStore {
   private catalogs = new Map<string, { models: LLMModel[]; fetchedAt: number }>();
   private errors = new Map<string, string>();
   private provider = "github_copilot";
@@ -22,22 +20,6 @@ class ModelsStore {
   private loading = new Map<string, Promise<void>>();
   private generations = new Map<string, number>();
   private requests = new Map<string, symbol>();
-  private version = 0;
-  private listeners = new Set<Listener>();
-
-  subscribe = (l: Listener): (() => void) => {
-    this.listeners.add(l);
-    return () => {
-      this.listeners.delete(l);
-    };
-  };
-
-  getSnapshot = (): number => this.version;
-
-  private notify(): void {
-    this.version++;
-    for (const l of this.listeners) l();
-  }
 
   all(provider = this.provider): LLMModel[] {
     return this.catalogs.get(provider)?.models ?? [];
@@ -133,11 +115,7 @@ class ModelsStore {
 export const modelsStore = new ModelsStore();
 
 export function useModelsVersion(): number {
-  return useSyncExternalStore(
-    modelsStore.subscribe,
-    modelsStore.getSnapshot,
-    modelsStore.getSnapshot,
-  );
+  return useStoreVersion(modelsStore);
 }
 
 export function useCurrentModel(): LLMModel | null {
