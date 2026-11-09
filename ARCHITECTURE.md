@@ -21,6 +21,10 @@ precursor/backend/
   schemas/           Pydantic models: the single source of truth for API shapes
   routers/           thin FastAPI routers: validate, call a service, return a schema
   services/          the logic; one module per concern
+    agents/          agents mode: AgentManager (manager.py) delegates each concern to a
+                     collaborator (runs, session_pool, turns, event_handling, goal_loop,
+                     watchdog, timeline, permissions, ...)
+      workflow_engine/   the workflow coordinator, one module per concern; workflow.py re-exports it
     mcp/             MCP client (client.py) and built-in servers
       precursor_tools/   tools of the built-in "precursor" server, one module per group
 frontend/src/
@@ -45,6 +49,7 @@ scripts/             CI and maintenance scripts (stdlib-only where they run in h
 | An age-limited cleanup sweep | `cutoff`, `replace_column`, `delete_rows`, `rowcount`, `SessionFactory` | `services/retention_sweep.py` |
 | Report what a sweep did | `SweepResult` | `services/sweep_result.py` |
 | Prepare a conversation turn (topic or chat) | `conversation_turn.py`; persist the reply with `persist_final_turn` (`turn_engine.py`) | `services/` |
+| A new AgentManager concern | a collaborator class in `services/agents/` holding a `manager` back-reference (only a `TYPE_CHECKING` import of the manager), with a same-named delegate on `AgentManager` | `services/agents/` (e.g. `turns.py`) |
 | A tool on the built-in MCP server | `@mcp.tool()` in the matching `precursor_tools/<group>.py`, gated with `_section_enabled`; new groups are added to `precursor_tools/__init__.py` | `services/mcp/precursor_tools/` |
 | Links to topics, chats and messages | `app_base_url`, `topic_paths`, `message_path` | `services/links.py`, `services/message_links.py` |
 
