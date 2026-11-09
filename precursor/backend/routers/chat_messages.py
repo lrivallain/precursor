@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
 from precursor.backend.db import get_session
+from precursor.backend.lookups import get_or_404
 from precursor.backend.models import (
     Chat,
     Message,
@@ -208,9 +209,7 @@ async def stream_chat(
     payload: ChatRequest,
     session: AsyncSession = Depends(get_session),
 ) -> EventSourceResponse:
-    chat = await session.get(Chat, chat_id)
-    if chat is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Chat not found")
+    chat = await get_or_404(session, Chat, chat_id, "Chat not found")
 
     user_msg, attachments = await persist_user_turn(session, "chat", chat_id, payload)
 
@@ -260,9 +259,7 @@ async def suggest_name(
     session: AsyncSession = Depends(get_session),
 ) -> SuggestNameResponse:
     """Rename this chat from its transcript (the ``/suggest-name`` command)."""
-    chat = await session.get(Chat, chat_id)
-    if chat is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Chat not found")
+    chat = await get_or_404(session, Chat, chat_id, "Chat not found")
     return SuggestNameResponse(title=await suggest_chat_name(session, chat))
 
 
@@ -273,9 +270,7 @@ async def notes_rephrase(
     session: AsyncSession = Depends(get_session),
 ) -> NotesRephraseResponse:
     """Clean up rough notes via the LLM (no persistence)."""
-    chat = await session.get(Chat, chat_id)
-    if chat is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Chat not found")
+    chat = await get_or_404(session, Chat, chat_id, "Chat not found")
     user_prompt = notes_service.build_rephrase_user_prompt(
         container_label="Chat",
         title=chat.title,

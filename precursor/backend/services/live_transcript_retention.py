@@ -16,25 +16,20 @@ days; 0 disables cleanup (keep forever).
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
-from contextlib import AbstractAsyncContextManager
-from datetime import UTC, datetime, timedelta
-from typing import Any, cast
 
-from sqlalchemy import delete, func, select
-from sqlalchemy.engine import CursorResult
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from precursor.backend.db import SessionLocal
 from precursor.backend.models import MeetingSegment, MeetingSession
 from precursor.backend.services.app_settings import resolve_live_transcript_retention_days
+from precursor.backend.services.retention_sweep import SessionFactory, cutoff, delete_rows
 from precursor.backend.services.sweep_result import SweepResult
 
 logger = logging.getLogger(__name__)
 
 
 async def prune_expired_live_transcripts(
-    session_factory: Callable[[], AbstractAsyncContextManager[AsyncSession]] = SessionLocal,
+    session_factory: SessionFactory = SessionLocal,
     *,
     dry_run: bool = False,
 ) -> SweepResult:
@@ -49,32 +44,23 @@ async def prune_expired_live_transcripts(
         retention_days = await resolve_live_transcript_retention_days(session)
         if retention_days <= 0:
             return SweepResult()
-        cutoff = datetime.now(UTC) - timedelta(days=retention_days)
         expired_sessions = select(MeetingSession.id).where(
             MeetingSession.ended_at.is_not(None),
-            MeetingSession.ended_at < cutoff,
+            MeetingSession.ended_at < cutoff(retention_days),
         )
-        measured = (
-            await session.execute(
-                select(
-                    func.count(MeetingSegment.id),
-                    func.coalesce(func.sum(func.length(MeetingSegment.text)), 0),
-                ).where(MeetingSegment.session_id.in_(expired_sessions))
-            )
-        ).one()
-        rows, freed = int(measured[0] or 0), int(measured[1] or 0)
-        if dry_run or not rows:
-            return SweepResult(rows=rows, bytes=freed)
-
-        result = await session.execute(
-            delete(MeetingSegment).where(MeetingSegment.session_id.in_(expired_sessions))
+        result = await delete_rows(
+            session,
+            MeetingSegment.text,
+            (MeetingSegment.session_id.in_(expired_sessions),),
+            dry_run=dry_run,
         )
+        if dry_run:
+            return result
         await session.commit()
-        count = int(cast("CursorResult[Any]", result).rowcount or 0)
-        if count:
+        if result.rows:
             logger.info(
                 "Deleted %d Live transcript segment(s) from session(s) ended over %d day(s) ago",
-                count,
+                result.rows,
                 retention_days,
             )
-        return SweepResult(rows=count, bytes=freed)
+        return result

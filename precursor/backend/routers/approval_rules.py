@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.db import get_session
+from precursor.backend.lookups import get_or_404
 from precursor.backend.models import Chat, Topic
 from precursor.backend.models.approval_rule import ApprovalRule
 from precursor.backend.schemas import ApprovalRuleCreate, ApprovalRuleRead, ApprovalRuleUpdate
@@ -17,9 +18,7 @@ router = APIRouter(prefix="/api/approval-rules", tags=["approvals"])
 
 
 async def _get_or_404(rule_id: int, session: AsyncSession) -> ApprovalRule:
-    row = await session.get(ApprovalRule, rule_id)
-    if row is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Rule not found")
+    row = await get_or_404(session, ApprovalRule, rule_id, "Rule not found")
     return row
 
 

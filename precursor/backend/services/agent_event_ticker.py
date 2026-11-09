@@ -29,11 +29,4 @@ class AgentEventTicker(BackgroundPoll):
         await prune_expired_workflow_step_inputs()
 
 
-_ticker: AgentEventTicker | None = None
-
-
-def get_agent_event_ticker() -> AgentEventTicker:
-    global _ticker
-    if _ticker is None:
-        _ticker = AgentEventTicker()
-    return _ticker
+get_agent_event_ticker = AgentEventTicker.instance

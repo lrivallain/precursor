@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.config import Settings, get_settings
 from precursor.backend.db import get_session
+from precursor.backend.lookups import get_or_404
 from precursor.backend.models import AppSetting, MCPServer
 from precursor.backend.services.github_auth import resolve_github_token
 from precursor.backend.services.mcp.client import BUILTIN_CATALOG, get_mcp_client_manager
@@ -809,9 +810,7 @@ async def update_user_server(
     payload: UserServerUpdate,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    row = await session.get(MCPServer, server_id)
-    if row is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "MCP server not found")
+    row = await get_or_404(session, MCPServer, server_id, "MCP server not found")
     old_name = row.name
 
     if payload.name is not None and payload.name != row.name:
@@ -869,9 +868,7 @@ async def delete_user_server(
     server_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> None:
-    row = await session.get(MCPServer, server_id)
-    if row is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "MCP server not found")
+    row = await get_or_404(session, MCPServer, server_id, "MCP server not found")
     name = row.name
     await session.delete(row)
     await session.commit()

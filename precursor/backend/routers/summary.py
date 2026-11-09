@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.config import Settings, get_settings
 from precursor.backend.db import SessionLocal, get_session
+from precursor.backend.lookups import get_or_404
 from precursor.backend.models import IssueContextCache, Topic
 from precursor.backend.services.app_settings import (
     resolve_issue_associations_enabled,
@@ -84,9 +85,7 @@ async def summarize_issue(
             status.HTTP_403_FORBIDDEN,
             "GitHub issue associations are disabled. Enable the feature in Settings → GitHub.",
         )
-    topic = await session.get(Topic, topic_id)
-    if topic is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
+    topic = await get_or_404(session, Topic, topic_id, "Topic not found")
 
     repo = await resolve_topic_github_repo(session, topic)
     if topic.github_issue_number is None:

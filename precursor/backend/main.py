@@ -13,7 +13,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from importlib.resources import as_file, files
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Protocol, cast
 
 from fastapi import APIRouter, FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -85,6 +85,14 @@ from precursor.backend.services.llm.one_shot import LLMCallFailed
 from precursor.backend.services.roles import ensure_default_role_file
 
 logger = logging.getLogger(__name__)
+
+
+class _Lifecycle(Protocol):
+    """A background component the app starts on boot and stops on shutdown."""
+
+    async def start(self) -> None: ...
+
+    async def stop(self) -> None: ...
 
 
 @asynccontextmanager
@@ -198,50 +206,33 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await tool_cache.hydrate_entries()
     except Exception:  # pragma: no cover - defensive: a cold cache is not fatal
         logger.warning("MCP tool-cache hydration failed", exc_info=True)
-    from precursor.backend.services.scheduler import get_scheduler
-
-    scheduler = get_scheduler()
-    await scheduler.start()
+    from precursor.backend.services.agent_event_ticker import get_agent_event_ticker
+    from precursor.backend.services.agents.manager import get_agent_manager
+    from precursor.backend.services.approval_expiry_ticker import get_approval_expiry_ticker
+    from precursor.backend.services.backup_ticker import get_backup_ticker
+    from precursor.backend.services.iq.ticker import get_iq_ticker
+    from precursor.backend.services.live_transcript_ticker import get_live_transcript_ticker
+    from precursor.backend.services.mcp.warmup import get_mcp_warmup
+    from precursor.backend.services.mcp.workiq_keepalive import get_workiq_keepalive
     from precursor.backend.services.reminder_ticker import get_reminder_ticker
-
-    reminder_ticker = get_reminder_ticker()
-    await reminder_ticker.start()
+    from precursor.backend.services.scheduler import get_scheduler
     from precursor.backend.services.tool_result_ticker import get_tool_result_ticker
 
-    tool_result_ticker = get_tool_result_ticker()
-    await tool_result_ticker.start()
-    from precursor.backend.services.live_transcript_ticker import get_live_transcript_ticker
-
-    live_transcript_ticker = get_live_transcript_ticker()
-    await live_transcript_ticker.start()
-    from precursor.backend.services.agent_event_ticker import get_agent_event_ticker
-
-    agent_event_ticker = get_agent_event_ticker()
-    await agent_event_ticker.start()
-    from precursor.backend.services.backup_ticker import get_backup_ticker
-
-    backup_ticker = get_backup_ticker()
-    await backup_ticker.start()
-    from precursor.backend.services.approval_expiry_ticker import get_approval_expiry_ticker
-
-    approval_expiry_ticker = get_approval_expiry_ticker()
-    await approval_expiry_ticker.start()
-    from precursor.backend.services.iq.ticker import get_iq_ticker
-
-    iq_ticker = get_iq_ticker()
-    await iq_ticker.start()
-    from precursor.backend.services.mcp.workiq_keepalive import get_workiq_keepalive
-
-    workiq_keepalive = get_workiq_keepalive()
-    await workiq_keepalive.start()
-    from precursor.backend.services.mcp.warmup import get_mcp_warmup
-
-    mcp_warmup = get_mcp_warmup()
-    await mcp_warmup.start()
-    from precursor.backend.services.agents.manager import get_agent_manager
-
-    agent_manager = get_agent_manager()
-    await agent_manager.start()
+    # Started in order, stopped in the same order. The IQ indexer is shut down
+    # between the two groups, once nothing polls it any more.
+    pollers: list[_Lifecycle] = [
+        get_scheduler(),
+        get_reminder_ticker(),
+        get_tool_result_ticker(),
+        get_live_transcript_ticker(),
+        get_agent_event_ticker(),
+        get_backup_ticker(),
+        get_approval_expiry_ticker(),
+        get_iq_ticker(),
+    ]
+    services: list[_Lifecycle] = [get_workiq_keepalive(), get_mcp_warmup(), get_agent_manager()]
+    for component in (*pollers, *services):
+        await component.start()
     try:
         # The mounted streamable-HTTP MCP app needs its session manager's task group
         # running for the lifetime of the server (the mount itself doesn't start it).
@@ -255,20 +246,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         from precursor.backend.services.chat_autoname import cancel_pending_autonames
 
         await cancel_pending_autonames()
-        await scheduler.stop()
-        await reminder_ticker.stop()
-        await tool_result_ticker.stop()
-        await live_transcript_ticker.stop()
-        await agent_event_ticker.stop()
-        await backup_ticker.stop()
-        await approval_expiry_ticker.stop()
-        await iq_ticker.stop()
+        for component in pollers:
+            await component.stop()
         from precursor.backend.services.iq import indexer as iq_indexer
 
         await iq_indexer.shutdown()
-        await workiq_keepalive.stop()
-        await mcp_warmup.stop()
-        await agent_manager.stop()
+        for component in services:
+            await component.stop()
         from precursor.backend.services.mcp.client import get_mcp_client_manager
 
         await get_mcp_client_manager().aclose()

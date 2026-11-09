@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.db import get_session
+from precursor.backend.lookups import get_or_404
 from precursor.backend.models import Topic, TopicSummary
 from precursor.backend.schemas import (
     SummaryHunkRead,
@@ -65,9 +66,7 @@ def _to_read(row: TopicSummary) -> TopicSummaryRead:
 
 
 async def _require_topic(session: AsyncSession, topic_id: int) -> Topic:
-    topic = await session.get(Topic, topic_id)
-    if topic is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
+    topic = await get_or_404(session, Topic, topic_id, "Topic not found")
     return topic
 
 

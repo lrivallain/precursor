@@ -27,11 +27,4 @@ class ToolResultTicker(BackgroundPoll):
         await prune_expired_tool_results()
 
 
-_ticker: ToolResultTicker | None = None
-
-
-def get_tool_result_ticker() -> ToolResultTicker:
-    global _ticker
-    if _ticker is None:
-        _ticker = ToolResultTicker()
-    return _ticker
+get_tool_result_ticker = ToolResultTicker.instance

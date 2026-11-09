@@ -20,6 +20,7 @@ from starlette.concurrency import run_in_threadpool
 from precursor.backend import supervisor
 from precursor.backend.config import get_settings
 from precursor.backend.db import get_session
+from precursor.backend.lookups import get_or_404
 from precursor.backend.models import (
     AgentArtifact,
     AgentBlueprint,
@@ -496,9 +497,7 @@ async def update_blueprint(
     payload: AgentBlueprintUpdate,
     session: AsyncSession = Depends(get_session),
 ) -> AgentBlueprint:
-    blueprint = await session.get(AgentBlueprint, blueprint_id)
-    if blueprint is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Blueprint not found")
+    blueprint = await get_or_404(session, AgentBlueprint, blueprint_id, "Blueprint not found")
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(blueprint, field, value)
     await session.commit()
@@ -508,9 +507,7 @@ async def update_blueprint(
 
 @router.delete("/blueprints/{blueprint_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_blueprint(blueprint_id: int, session: AsyncSession = Depends(get_session)) -> None:
-    blueprint = await session.get(AgentBlueprint, blueprint_id)
-    if blueprint is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Blueprint not found")
+    blueprint = await get_or_404(session, AgentBlueprint, blueprint_id, "Blueprint not found")
     await session.delete(blueprint)
     await session.commit()
 
@@ -527,9 +524,7 @@ async def instantiate_blueprint(
 ) -> AgentSession:
     """Spawn a fresh agent seeded from a blueprint (with optional overrides)."""
     await _require_runtime(session)
-    blueprint = await session.get(AgentBlueprint, blueprint_id)
-    if blueprint is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Blueprint not found")
+    blueprint = await get_or_404(session, AgentBlueprint, blueprint_id, "Blueprint not found")
     await _validate_container(session, topic_id=payload.topic_id, chat_id=payload.chat_id)
 
     task_prompt = (payload.task or blueprint.task_prompt).strip()
@@ -579,9 +574,7 @@ async def fire_agent_webhook(
     ).scalar_one_or_none()
     if trigger is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Unknown or disabled trigger")
-    agent = await session.get(AgentSession, trigger.agent_id)
-    if agent is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent session not found")
+    agent = await get_or_404(session, AgentSession, trigger.agent_id, "Agent session not found")
     trigger.last_fired_at = datetime.now(UTC)
     await session.commit()
     await session.refresh(agent)
@@ -717,9 +710,9 @@ async def create_agent(
     # A blueprint seeds the defaults; explicit payload fields still win over it.
     blueprint: AgentBlueprint | None = None
     if payload.blueprint_id is not None:
-        blueprint = await session.get(AgentBlueprint, payload.blueprint_id)
-        if blueprint is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Blueprint not found")
+        blueprint = await get_or_404(
+            session, AgentBlueprint, payload.blueprint_id, "Blueprint not found"
+        )
 
     task_prompt = payload.task or (blueprint.task_prompt if blueprint else "")
     if not task_prompt.strip():
