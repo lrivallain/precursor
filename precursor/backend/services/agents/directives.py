@@ -228,7 +228,7 @@ def _strip_trailing_directives(content: str) -> str:
 # message stays in the durable event archive, so any consumer that needs the
 # whole thing (the topic repost, a workflow step's trace) reads it back from
 # there rather than inheriting this cut. See
-# ``precursor.backend.services.agents.workflow._step_output``.
+# ``precursor.backend.services.agents.workflow_engine.output._step_output``.
 RESULT_SUMMARY_CAP = 2000
 
 # Whole-line control directives (anywhere in the text) plus an ``ARTIFACT`` block
