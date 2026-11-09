@@ -167,12 +167,14 @@
 .quick-actions-popover[data-bend="right"] .quick-actions-menu {
   align-items: flex-start;
 }
+/* Sizes are written every frame by the magnification loop (springs, not CSS transitions). */
 .quick-actions-item {
   position: relative;
   flex-shrink: 0;
+  width: var(--qa-tile);
+  height: var(--qa-tile);
   border-radius: 50%;
   cursor: pointer;
-  transition: width 260ms var(--qa-out), height 260ms var(--qa-out);
 }
 .quick-actions-tile {
   --qa-glyph: var(--qa-to);
@@ -230,7 +232,7 @@
 .quick-actions-popover[data-bend="left"] .quick-actions-dot { right: -8px; }
 .quick-actions-popover[data-bend="right"] .quick-actions-dot { left: -8px; }
 /* The PR's expanding pill: each tile has one behind it, which unrolls to reveal the action
-   name and rolls back up when the pointer moves on. Size and position share the tiles' timing. */
+   name and rolls back up when the pointer moves on. Size and position track the tile. */
 .quick-actions-menu {
   z-index: 1;
 }
@@ -250,7 +252,7 @@
   visibility: hidden;
   pointer-events: none;
   clip-path: inset(0 calc(100% - var(--qa-size)) 0 0 round 999px);
-  transition: clip-path var(--qa-roll), top var(--qa-roll), height var(--qa-roll), padding var(--qa-roll), visibility 0s linear 260ms;
+  transition: clip-path var(--qa-roll), visibility 0s linear 260ms;
 }
 .dark .quick-actions-tip {
   --qa-glyph: var(--qa-from);
@@ -262,7 +264,7 @@
   visibility: visible;
   pointer-events: auto;
   clip-path: inset(0 0 0 0 round 999px);
-  transition: clip-path var(--qa-roll), top var(--qa-roll), height var(--qa-roll), padding var(--qa-roll), visibility 0s;
+  transition: clip-path var(--qa-roll), visibility 0s;
 }
 .quick-actions-label {
   min-width: 0;

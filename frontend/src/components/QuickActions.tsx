@@ -18,11 +18,15 @@ const PAD = 8;
 const COLUMN = 64;
 const INSET = (COLUMN - SIZE) / 2;
 const LAUNCHER_GAP = 12;
-// Fisheye magnification, as in the macOS Dock: neighbours grow too, and the dock lengthens.
-const MAGNIFY = 1.45;
-const RANGE = 110;
+// Magnification, as in the macOS Dock: the tile under the pointer stays under it while its
+// neighbours grow on both sides along a Gaussian curve. The pointer and the overall strength
+// follow critically damped springs, so the column moves continuously and never overshoots.
+const MAGNIFY = 1.5;
+const RANGE = 100;
+const POINTER_STIFFNESS = 320;
+const STRENGTH_STIFFNESS = 220;
 const BULGE = Math.ceil(TILE * (MAGNIFY - 1));
-const MAX_GROWTH = 56;
+const MAX_GROWTH = 72;
 const DEFAULT_POSITION: Position = { right: 24, bottom: 24 };
 // Listed from the far end of the dock to the launcher. Glyph colours are the section's 400 (dark) / 600 (light) shades.
 const ACTIONS = [
@@ -67,31 +71,36 @@ function savePosition(position: Position): void {
   }
 }
 
-/**
- * Tile scales, indexed outward from the launcher, for a pointer `offset` px from
- * the dock's launcher-side edge. Scales are solved in un-magnified space so the
- * tile under the pointer stays under it as its neighbours grow, without jitter.
- * `exact` treats the offset as already un-magnified (keyboard focus).
- */
-function fisheye(offset: number, count: number, exact = false): number[] {
-  const scalesAt = (point: number) => Array.from({ length: count }, (_, index) => {
-    const distance = Math.abs(point - (PAD + index * (TILE + ITEM_GAP) + TILE / 2)) / RANGE;
-    return distance >= 1 ? 1 : 1 + (MAGNIFY - 1) * (Math.cos(distance * Math.PI) + 1) / 2;
+type Spring = { x: number; v: number };
+
+function settle(spring: Spring, target: number, stiffness: number, dt: number): void {
+  spring.v += (stiffness * (target - spring.x) - 2 * Math.sqrt(stiffness) * spring.v) * dt;
+  spring.x += spring.v * dt;
+}
+
+/** Resting centre of the tile `index` places out from the launcher, measured from the column's edge. */
+function restingCentre(index: number): number {
+  return PAD + index * (TILE + ITEM_GAP) + TILE / 2;
+}
+
+/** Tile scales, indexed outward from the launcher, for a pointer at `point` (resting coordinates). */
+function magnifiedScales(point: number, strength: number, count: number): number[] {
+  return Array.from({ length: count }, (_, index) => {
+    const distance = (point - restingCentre(index)) / (RANGE * 0.42);
+    return 1 + (MAGNIFY - 1) * strength * Math.exp(-0.5 * distance * distance);
   });
-  if (exact) return scalesAt(offset);
-  const project = (point: number, scales: number[]): number => {
-    let actual = PAD;
-    for (let index = 0; index < count; index++) {
-      const start = PAD + index * (TILE + ITEM_GAP);
-      if (point < start) return actual - (start - point);
-      if (point <= start + TILE) return actual + (point - start) * scales[index];
-      actual += TILE * scales[index] + ITEM_GAP;
-    }
-    return actual + point - (PAD + count * (TILE + ITEM_GAP));
-  };
-  let point = offset;
-  for (let step = 0; step < 4; step++) point -= project(point, scalesAt(point)) - offset;
-  return scalesAt(point);
+}
+
+/** Where resting point `point` lands once tiles take `scales`, with the column anchored at its edge. */
+function magnifiedPoint(point: number, scales: number[]): number {
+  let actual = PAD;
+  for (let index = 0; index < scales.length; index++) {
+    const start = PAD + index * (TILE + ITEM_GAP);
+    if (point < start) return actual - (start - point);
+    if (point <= start + TILE) return actual + (point - start) * scales[index];
+    actual += TILE * scales[index] + ITEM_GAP;
+  }
+  return actual + point - (PAD + scales.length * (TILE + ITEM_GAP));
 }
 
 interface Props {
@@ -107,9 +116,7 @@ export function QuickActions({ agentsEnabled, liveEnabled, current = null, onCre
   const [open, setOpen] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [layout, setLayout] = useState({ above: true, height: 360, bendsLeft: true });
-  const [scales, setScales] = useState<number[] | null>(null);
   const [active, setActive] = useState<number | null>(null);
-  const [scrollTop, setScrollTop] = useState(0);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -120,6 +127,14 @@ export function QuickActions({ agentsEnabled, liveEnabled, current = null, onCre
   const endDrag = useRef<(() => void) | null>(null);
   const suppressClick = useRef(false);
   const pendingFocus = useRef<number | null>(null);
+  // Magnification runs outside React: a frame loop writes tile and label geometry directly.
+  const magnify = useRef({
+    target: null as number | null,
+    pointer: { x: 0, v: 0 } as Spring,
+    strength: { x: 0, v: 0 } as Spring,
+    frame: 0,
+    last: 0,
+  });
   const menuId = useId();
   const helpId = useId();
   const available = ACTIONS.filter(({ section }) =>
@@ -137,8 +152,75 @@ export function QuickActions({ agentsEnabled, liveEnabled, current = null, onCre
     closeTimer.current = null;
   }
 
+  /** Size the tiles and position their label pills for the given scales (outward order). */
+  function applyMagnification(scales: number[], shift: number): void {
+    const menu = menuRef.current;
+    const labels = labelsRef.current;
+    if (!menu || !labels) return;
+    const items = menu.querySelectorAll<HTMLElement>('[role="menuitem"]');
+    const pills = labels.children;
+    // Growing on both sides pulls the column toward the launcher by `shift` (at most PAD).
+    const edge = `${PAD + shift}px`;
+    if (layout.above) menu.style.paddingBottom = edge;
+    else menu.style.paddingTop = edge;
+    let top = (layout.above ? 0 : INSET + SIZE + LAUNCHER_GAP) + (layout.above ? PAD : PAD + shift) - menu.scrollTop;
+    items.forEach((item, index) => {
+      const size = TILE * (scales[outward(index)] ?? 1);
+      item.style.width = `${size}px`;
+      item.style.height = `${size}px`;
+      const pill = pills[index] as HTMLElement | undefined;
+      if (pill) {
+        pill.style.top = `${top}px`;
+        pill.style.height = `${size}px`;
+        pill.style.paddingRight = layout.bendsLeft ? `${size + 2}px` : "";
+        pill.style.paddingLeft = layout.bendsLeft ? "" : `${size + 2}px`;
+        pill.style.setProperty("--qa-size", `${size}px`);
+      }
+      top += size + ITEM_GAP;
+    });
+  }
+
+  function step(now: number): void {
+    const state = magnify.current;
+    const dt = Math.min(0.05, (now - state.last) / 1000);
+    state.last = now;
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const goal = state.target === null ? 0 : 1;
+    if (state.target !== null && state.strength.x < 0.03) state.pointer = { x: state.target, v: 0 };
+    if (reduced) {
+      state.strength = { x: goal, v: 0 };
+      if (state.target !== null) state.pointer = { x: state.target, v: 0 };
+    } else {
+      for (let elapsed = 0; elapsed < dt; elapsed += 1 / 240) {
+        const slice = Math.min(1 / 240, dt - elapsed);
+        settle(state.strength, goal, STRENGTH_STIFFNESS, slice);
+        if (state.target !== null) settle(state.pointer, state.target, POINTER_STIFFNESS, slice);
+      }
+    }
+    const strength = Math.max(0, state.strength.x);
+    const scales = magnifiedScales(state.pointer.x, strength, actions.length);
+    const shift = Math.max(-PAD, Math.min(0, state.pointer.x - magnifiedPoint(state.pointer.x, scales)));
+    applyMagnification(scales, shift);
+    const resting = Math.abs(state.strength.x - goal) < 1e-3 && Math.abs(state.strength.v) < 1e-3
+      && (state.target === null || (Math.abs(state.pointer.x - state.target) < 0.05 && Math.abs(state.pointer.v) < 0.05));
+    state.frame = resting ? 0 : requestAnimationFrame((time) => stepRef.current(time));
+  }
+  // Frames always run the latest render's step, so a layout change mid-animation is picked up.
+  const stepRef = useRef(step);
+  stepRef.current = step;
+
+  /** Aim the magnification at `point` (resting coordinates), or release it with null. */
+  function magnifyTo(point: number | null): void {
+    const state = magnify.current;
+    state.target = canMagnify ? point : null;
+    if (!state.frame) {
+      state.last = performance.now();
+      state.frame = requestAnimationFrame((time) => stepRef.current(time));
+    }
+  }
+
   function resetMagnification(): void {
-    setScales(null);
+    magnifyTo(null);
     setActive(null);
   }
 
@@ -159,8 +241,21 @@ export function QuickActions({ agentsEnabled, liveEnabled, current = null, onCre
   }, [open]);
 
   useLayoutEffect(() => {
-    if (!open) resetMagnification();
+    if (open) return;
+    const state = magnify.current;
+    cancelAnimationFrame(state.frame);
+    Object.assign(state, { target: null, frame: 0, pointer: { x: 0, v: 0 }, strength: { x: 0, v: 0 } });
+    applyMagnification([], 0);
+    setActive(null);
   }, [open]);
+
+  // Lay the resting geometry out again whenever the column itself changes.
+  useLayoutEffect(() => {
+    const state = magnify.current;
+    applyMagnification(magnifiedScales(state.pointer.x, Math.max(0, state.strength.x), actions.length), 0);
+  }, [layout, actions.length]);
+
+  useEffect(() => () => cancelAnimationFrame(magnify.current.frame), []);
 
   function leaveLabel(event: PointerEvent<HTMLElement>): void {
     // Moving between a tile and its label pill keeps both active.
@@ -171,10 +266,9 @@ export function QuickActions({ agentsEnabled, liveEnabled, current = null, onCre
 
   function magnifyAt(event: PointerEvent<HTMLDivElement>): void {
     const menu = menuRef.current;
-    if (!menu || event.pointerType !== "mouse" || !canMagnify) return;
+    if (!menu || event.pointerType !== "mouse") return;
     const box = menu.getBoundingClientRect();
-    const offset = layout.above ? box.bottom - event.clientY : event.clientY - box.top;
-    setScales(fisheye(offset, actions.length));
+    magnifyTo(layout.above ? box.bottom - event.clientY : event.clientY - box.top);
   }
 
   useEffect(() => {
@@ -282,7 +376,7 @@ export function QuickActions({ agentsEnabled, liveEnabled, current = null, onCre
     <div
       ref={rootRef}
       className={`quick-actions fixed ${Z_INDEX.POPOVER}`}
-      style={{ right: position.right, bottom: position.bottom }}
+      style={{ right: position.right, bottom: position.bottom, "--qa-tile": `${TILE}px` } as CSSProperties}
       data-open={open}
       data-dragging={dragging}
       onKeyDown={onKeyDown}
@@ -323,14 +417,19 @@ export function QuickActions({ agentsEnabled, liveEnabled, current = null, onCre
           className="quick-actions-menu"
           style={{
             maxHeight: layout.height,
-            padding: `${PAD}px ${layout.bendsLeft ? (COLUMN - TILE) / 2 : (COLUMN - TILE) / 2 + BULGE}px ${PAD}px ${layout.bendsLeft ? (COLUMN - TILE) / 2 + BULGE : (COLUMN - TILE) / 2}px`,
+            // The launcher-side padding is written by the magnification loop.
+            [layout.above ? "paddingTop" : "paddingBottom"]: PAD,
+            paddingLeft: layout.bendsLeft ? (COLUMN - TILE) / 2 + BULGE : (COLUMN - TILE) / 2,
+            paddingRight: layout.bendsLeft ? (COLUMN - TILE) / 2 : (COLUMN - TILE) / 2 + BULGE,
           }}
           onPointerMove={magnifyAt}
           onPointerLeave={leaveLabel}
-          onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+          onScroll={() => {
+            const state = magnify.current;
+            applyMagnification(magnifiedScales(state.pointer.x, Math.max(0, state.strength.x), actions.length), 0);
+          }}
         >
           {actions.map(({ section, label, icon: Icon, colors }, index) => {
-            const scale = scales?.[outward(index)] ?? 1;
             return (
               <button
                 key={section}
@@ -340,8 +439,7 @@ export function QuickActions({ agentsEnabled, liveEnabled, current = null, onCre
                 className="quick-actions-item"
                 data-active={active === index}
                 style={{
-                  width: TILE * scale,
-                  height: TILE * scale,
+                  // Width and height are written by the magnification loop.
                   "--qa-from": colors[0],
                   "--qa-to": colors[1],
                   "--qa-delay": open ? `${outward(index) * 24}ms` : "0ms",
@@ -349,9 +447,7 @@ export function QuickActions({ agentsEnabled, liveEnabled, current = null, onCre
                 onPointerEnter={() => setActive(index)}
                 onFocus={(event) => {
                   setActive(index);
-                  if (canMagnify && event.currentTarget.matches(":focus-visible")) {
-                    setScales(fisheye(PAD + outward(index) * (TILE + ITEM_GAP) + TILE / 2, actions.length, true));
-                  }
+                  if (event.currentTarget.matches(":focus-visible")) magnifyTo(restingCentre(outward(index)));
                 }}
                 onBlur={(event) => {
                   const next = event.relatedTarget;
@@ -369,25 +465,17 @@ export function QuickActions({ agentsEnabled, liveEnabled, current = null, onCre
           })}
         </div>
         {/* One pill per tile, outside the scrolling list so it is never clipped. Each sits behind its
-            tile, at the tile's target size and position, and rolls out of it (or back in) with the
-            same timing as the magnification, so the icon grows while its name unrolls. */}
+            tile (the magnification loop keeps its size and position in step) and rolls out of it, or
+            back in, as the tile becomes active. */}
         <span ref={labelsRef} className="quick-actions-labels">
           {actions.map(({ section, label, colors }, index) => {
-            const sizes = actions.map((_, other) => TILE * (scales?.[outward(other)] ?? 1));
-            const size = sizes[index];
-            const top = (layout.above ? 0 : INSET + SIZE + LAUNCHER_GAP) + PAD - scrollTop
-              + sizes.slice(0, index).reduce((sum, other) => sum + other + ITEM_GAP, 0);
             return (
               <span
                 key={section}
                 className="quick-actions-tip"
                 data-open={active === index}
                 style={{
-                  top,
-                  height: size,
                   [layout.bendsLeft ? "right" : "left"]: (COLUMN - TILE) / 2,
-                  [layout.bendsLeft ? "paddingRight" : "paddingLeft"]: size + 2,
-                  "--qa-size": `${size}px`,
                   "--qa-from": colors[0],
                   "--qa-to": colors[1],
                 } as CSSProperties}
