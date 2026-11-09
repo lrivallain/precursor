@@ -32,6 +32,10 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Fixed
 
+- **Settings warns about every unsaved change.** Closing the settings panel
+  now asks before discarding edits to **Load tools on demand** and the
+  per-server **always load** switches, and no longer asks after you saved the
+  removal of a stored provider secret.
 - **Reloading the page no longer loses a reply in progress.** A chat or topic
   turn now runs on the server independently of the browser connection: reload
   or close the tab and the turn still finishes and is saved. A reloaded window
