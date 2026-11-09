@@ -33,6 +33,7 @@ async function run() {
       const label = document.querySelector('.quick-actions-tip[data-open="true"]');
       return label && label.getAnimations({ subtree: true }).length === 0;
     });
+    await page.waitForTimeout(400); // let the magnification springs settle
     assert.equal(await tip.textContent(), "New chat");
     assert.ok((await tip.boundingBox()).width < 170, "Short labels do not reserve an oversized empty pill");
     assert.ok((await chatAction.boundingBox()).width > 52, "Hover magnifies the icon");
@@ -43,6 +44,16 @@ async function run() {
     const edges = await menu.getByRole("menuitem").evaluateAll((buttons) =>
       buttons.map((button) => Math.round(button.getBoundingClientRect().right)));
     assert.ok(edges.every((edge) => edge === edges[0]), "Tiles stay aligned to the screen edge and grow inward");
+    const live = menu.getByRole("menuitem", { name: "New live session", exact: true });
+    const restingLive = await live.boundingBox();
+    const pointerY = restingLive.y + restingLive.height / 2;
+    await page.mouse.move(restingLive.x + restingLive.width / 2, pointerY, { steps: 4 });
+    await page.waitForTimeout(450);
+    const liveBox = await live.boundingBox();
+    assert.ok(pointerY > liveBox.y + 4 && pointerY < liveBox.y + liveBox.height - 4,
+      `Like the macOS Dock, the hovered tile stays under the pointer (${pointerY} in ${liveBox.y}+${liveBox.height})`);
+    await chatAction.hover();
+    await page.waitForTimeout(400);
     const chatBox = await chatAction.boundingBox();
     const tipBox = await tip.boundingBox();
     assert.ok(Math.abs(tipBox.x + tipBox.width - (chatBox.x + chatBox.width)) <= 1 && tipBox.x < chatBox.x,
