@@ -13,7 +13,7 @@
     "frontend/src/components/WorkflowStepEditor.tsx": 817,
     "frontend/src/components/WorkflowView.tsx": 1665,
     "frontend/src/components/WorkspaceView.tsx": 1922,
-    "frontend/src/lib/api.ts": 2082,
+    "frontend/src/lib/api.ts": 1707,
     "frontend/src/lib/types.ts": 2111,
     "precursor/backend/__main__.py": 847,
     "precursor/backend/routers/agents.py": 1557,

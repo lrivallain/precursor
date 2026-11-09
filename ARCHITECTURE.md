@@ -66,7 +66,7 @@ Conventions that keep this reusable:
 
 | Need | Reuse | Where |
 | --- | --- | --- |
-| Call the API | `api.*` | `lib/api.ts` |
+| Call the API | `api.*`; new endpoints go through `call("METHOD /path", { path, query, body })`, typed from the backend's schema | `lib/api.ts`, `lib/apiClient.ts` |
 | Stream a chat reply | `streamChat` and friends (POST + SSE) | `lib/sse.ts` |
 | Types of what the API sends and accepts | aliases of the generated types (`export type X = Api.X`) | `lib/types.ts`, `lib/generated/apiTypes.ts` |
 | A store shared across components | extend `VersionedStore` (class) or use `Emitter` (module functions); read it with `useStoreVersion` | `lib/externalStore.ts` |
@@ -92,6 +92,12 @@ The backend's Pydantic schemas are the single source of truth for API shapes.
 `make api-types` turns the app's OpenAPI schema into
 `frontend/src/lib/generated/apiTypes.ts`; CI fails when that file is stale.
 After changing a schema or a route's `response_model`, regenerate and commit.
+The same file holds `Operations`, every route's path and query parameters,
+request body and response type, keyed by `"METHOD /path"`; `call()` in
+`lib/apiClient.ts` reads it, so a renamed route, param or field fails the
+frontend typecheck instead of failing at runtime. A route whose response is
+still a `dict[str, Any]` comes back as `Record<string, unknown>`; `api.ts`
+wraps those calls in `untyped<T>()` until the backend declares a model.
 Never edit the generated file; hand-write types in `types.ts` only for
 frontend-only shapes.
 
