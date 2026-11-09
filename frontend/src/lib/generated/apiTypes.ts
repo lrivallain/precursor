@@ -683,23 +683,23 @@ export interface BlobStats {
 }
 
 export interface Body_notes_attachments_upload_api_chats__chat_id__messages_notes_attachments_post {
-  file: string;
+  file: Blob;
 }
 
 export interface Body_notes_attachments_upload_api_topics__topic_id__commands_notes_attachments_post {
-  file: string;
+  file: Blob;
 }
 
 export interface Body_upload_attachment_api_topics__topic_id__attachments_post {
-  file: string;
+  file: Blob;
 }
 
 export interface Body_upload_chat_attachment_api_chats__chat_id__attachments_post {
-  file: string;
+  file: Blob;
 }
 
 export interface Body_upload_meeting_attachment_api_live__session_id__attachments_post {
-  file: string;
+  file: Blob;
 }
 
 export interface BranchRequest {
@@ -3343,4 +3343,2477 @@ export interface precursor__backend__schemas__definitions_api__CleanupPreview {
 export interface precursor__backend__schemas__stats__CleanupPreview {
   targets: CleanupTargetStat[];
   total_bytes: number;
+}
+
+/**
+ * Every API operation, keyed by "METHOD /path" as the backend declares it.
+ * `path` and `query` hold the parameters, `body` the JSON request body, `form`
+ * a multipart one, and `response` what a success returns (`void` for 204).
+ * Optional members may be omitted; `lib/apiClient.ts` reads this map to type
+ * its `call()` helper.
+ */
+export interface Operations {
+  "GET /api/agents": {
+    query?: {
+      topic_id?: number | null;
+      chat_id?: number | null;
+    };
+    response: AgentSessionRead[];
+  };
+  "POST /api/agents": {
+    body: AgentSessionCreate;
+    response: AgentSessionRead;
+  };
+  "GET /api/agents/archived": {
+    response: AgentSessionRead[];
+  };
+  "GET /api/agents/blueprints": {
+    response: AgentBlueprintRead[];
+  };
+  "POST /api/agents/blueprints": {
+    body: AgentBlueprintCreate;
+    response: AgentBlueprintRead;
+  };
+  "PATCH /api/agents/blueprints/{blueprint_id}": {
+    path: {
+      blueprint_id: number;
+    };
+    body: AgentBlueprintUpdate;
+    response: AgentBlueprintRead;
+  };
+  "DELETE /api/agents/blueprints/{blueprint_id}": {
+    path: {
+      blueprint_id: number;
+    };
+    response: void;
+  };
+  "POST /api/agents/blueprints/{blueprint_id}/instantiate": {
+    path: {
+      blueprint_id: number;
+    };
+    body: AgentBlueprintInstantiate;
+    response: AgentSessionRead;
+  };
+  "POST /api/agents/hooks/{token}": {
+    path: {
+      token: string;
+    };
+    response: AgentSessionRead;
+  };
+  "GET /api/agents/inbox": {
+    response: AgentInboxItem[];
+  };
+  "GET /api/agents/metrics": {
+    response: AgentMetrics;
+  };
+  "GET /api/agents/models": {
+    response: AgentModelInfo[];
+  };
+  "GET /api/agents/permissions": {
+    response: AgentPermissionGrant[];
+  };
+  "POST /api/agents/permissions/reset": {
+    response: Record<string, number>;
+  };
+  "GET /api/agents/runtime": {
+    response: AgentRuntimeStatus;
+  };
+  "POST /api/agents/runtime/cli": {
+    response: AgentRuntimeStatus;
+  };
+  "POST /api/agents/runtime/restart": {
+    response: unknown;
+  };
+  "GET /api/agents/{agent_id}": {
+    path: {
+      agent_id: string;
+    };
+    response: AgentSessionRead;
+  };
+  "PATCH /api/agents/{agent_id}": {
+    path: {
+      agent_id: string;
+    };
+    body: AgentUpdateRequest;
+    response: AgentSessionRead;
+  };
+  "DELETE /api/agents/{agent_id}": {
+    path: {
+      agent_id: string;
+    };
+    response: void;
+  };
+  "POST /api/agents/{agent_id}/archive": {
+    path: {
+      agent_id: string;
+    };
+    response: AgentSessionRead;
+  };
+  "GET /api/agents/{agent_id}/artifacts": {
+    path: {
+      agent_id: string;
+    };
+    query?: {
+      run_id?: number | null;
+    };
+    response: AgentArtifactRead[];
+  };
+  "POST /api/agents/{agent_id}/artifacts": {
+    path: {
+      agent_id: string;
+    };
+    body: AgentArtifactCreate;
+    response: AgentArtifactRead;
+  };
+  "GET /api/agents/{agent_id}/artifacts/{artifact_id}": {
+    path: {
+      agent_id: string;
+      artifact_id: number;
+    };
+    response: AgentArtifactRead;
+  };
+  "GET /api/agents/{agent_id}/artifacts/{artifact_id}/raw": {
+    path: {
+      agent_id: string;
+      artifact_id: number;
+    };
+    response: unknown;
+  };
+  "POST /api/agents/{agent_id}/cancel": {
+    path: {
+      agent_id: string;
+    };
+    response: AgentSessionRead;
+  };
+  "GET /api/agents/{agent_id}/events": {
+    path: {
+      agent_id: string;
+    };
+    query?: {
+      agent_run_id?: number | null;
+      after?: number;
+      epoch?: string | null;
+    };
+    response: AgentEventPage;
+  };
+  "PATCH /api/agents/{agent_id}/link": {
+    path: {
+      agent_id: string;
+    };
+    body: AgentLinkRequest;
+    response: AgentSessionRead;
+  };
+  "POST /api/agents/{agent_id}/permission": {
+    path: {
+      agent_id: string;
+    };
+    body: AgentPermissionDecision;
+    response: AgentSessionRead;
+  };
+  "POST /api/agents/{agent_id}/read": {
+    path: {
+      agent_id: string;
+    };
+    response: void;
+  };
+  "POST /api/agents/{agent_id}/resume": {
+    path: {
+      agent_id: string;
+    };
+    response: AgentSessionRead;
+  };
+  "POST /api/agents/{agent_id}/rewind": {
+    path: {
+      agent_id: string;
+    };
+    body: AgentRewindRequest;
+    response: AgentRewindResult;
+  };
+  "GET /api/agents/{agent_id}/rewind/preview": {
+    path: {
+      agent_id: string;
+    };
+    query: {
+      event_id: string;
+    };
+    response: AgentRewindPreview;
+  };
+  "GET /api/agents/{agent_id}/runs": {
+    path: {
+      agent_id: string;
+    };
+    query?: {
+      limit?: number;
+      workflow_run_id?: number | null;
+    };
+    response: AgentRunRead[];
+  };
+  "GET /api/agents/{agent_id}/runs/{run_id}": {
+    path: {
+      agent_id: string;
+      run_id: number;
+    };
+    response: AgentRunRead;
+  };
+  "GET /api/agents/{agent_id}/schedule": {
+    path: {
+      agent_id: string;
+    };
+    response: AgentScheduleRead;
+  };
+  "POST /api/agents/{agent_id}/schedule": {
+    path: {
+      agent_id: string;
+    };
+    body: AgentScheduleCreate;
+    response: AgentScheduleRead;
+  };
+  "PATCH /api/agents/{agent_id}/schedule": {
+    path: {
+      agent_id: string;
+    };
+    body: AgentScheduleUpdate;
+    response: AgentScheduleRead;
+  };
+  "DELETE /api/agents/{agent_id}/schedule": {
+    path: {
+      agent_id: string;
+    };
+    response: void;
+  };
+  "POST /api/agents/{agent_id}/schedule/run": {
+    path: {
+      agent_id: string;
+    };
+    response: AgentScheduleRead;
+  };
+  "POST /api/agents/{agent_id}/send": {
+    path: {
+      agent_id: string;
+    };
+    body: AgentSendRequest;
+    response: AgentSessionRead;
+  };
+  "POST /api/agents/{agent_id}/start": {
+    path: {
+      agent_id: string;
+    };
+    response: AgentSessionRead;
+  };
+  "GET /api/agents/{agent_id}/state": {
+    path: {
+      agent_id: string;
+    };
+    response: AgentStateRead[];
+  };
+  "PUT /api/agents/{agent_id}/state": {
+    path: {
+      agent_id: string;
+    };
+    body: AgentStateWrite;
+    response: AgentStateRead;
+  };
+  "DELETE /api/agents/{agent_id}/state": {
+    path: {
+      agent_id: string;
+    };
+    response: void;
+  };
+  "DELETE /api/agents/{agent_id}/state/{key}": {
+    path: {
+      agent_id: string;
+      key: string;
+    };
+    response: void;
+  };
+  "GET /api/agents/{agent_id}/triggers": {
+    path: {
+      agent_id: string;
+    };
+    response: AgentTriggerRead[];
+  };
+  "POST /api/agents/{agent_id}/triggers": {
+    path: {
+      agent_id: string;
+    };
+    body: AgentTriggerCreate;
+    response: AgentTriggerRead;
+  };
+  "DELETE /api/agents/{agent_id}/triggers/{trigger_id}": {
+    path: {
+      agent_id: string;
+      trigger_id: number;
+    };
+    response: void;
+  };
+  "POST /api/agents/{agent_id}/unarchive": {
+    path: {
+      agent_id: string;
+    };
+    response: AgentSessionRead;
+  };
+  "POST /api/agents/{agent_id}/unread": {
+    path: {
+      agent_id: string;
+    };
+    response: void;
+  };
+  "GET /api/agents/{agent_id}/workflows": {
+    path: {
+      agent_id: string;
+    };
+    response: WorkflowSummary[];
+  };
+  "GET /api/approval-rules": {
+    query?: {
+      scope?: ("global" | "topic" | "chat") | null;
+      topic_id?: number | null;
+      chat_id?: number | null;
+    };
+    response: ApprovalRuleRead[];
+  };
+  "POST /api/approval-rules": {
+    body: ApprovalRuleCreate;
+    response: ApprovalRuleRead;
+  };
+  "PATCH /api/approval-rules/{rule_id}": {
+    path: {
+      rule_id: number;
+    };
+    body: ApprovalRuleUpdate;
+    response: ApprovalRuleRead;
+  };
+  "DELETE /api/approval-rules/{rule_id}": {
+    path: {
+      rule_id: number;
+    };
+    response: void;
+  };
+  "GET /api/attachments/{attachment_id}": {
+    path: {
+      attachment_id: number;
+    };
+    response: unknown;
+  };
+  "DELETE /api/attachments/{attachment_id}": {
+    path: {
+      attachment_id: number;
+    };
+    response: void;
+  };
+  "GET /api/chats": {
+    query?: {
+      q?: string | null;
+    };
+    response: ChatRead[];
+  };
+  "POST /api/chats": {
+    body: ChatCreate;
+    response: ChatRead;
+  };
+  "GET /api/chats/archived": {
+    response: ChatRead[];
+  };
+  "GET /api/chats/by-public-id/{public_id}": {
+    path: {
+      public_id: string;
+    };
+    response: ChatRead;
+  };
+  "GET /api/chats/by-slug/{slug}": {
+    path: {
+      slug: string;
+    };
+    response: ChatRead;
+  };
+  "GET /api/chats/{chat_id}": {
+    path: {
+      chat_id: number;
+    };
+    response: ChatRead;
+  };
+  "PATCH /api/chats/{chat_id}": {
+    path: {
+      chat_id: number;
+    };
+    body: ChatUpdate;
+    response: ChatRead;
+  };
+  "DELETE /api/chats/{chat_id}": {
+    path: {
+      chat_id: number;
+    };
+    response: void;
+  };
+  "GET /api/chats/{chat_id}/approvals": {
+    path: {
+      chat_id: number;
+    };
+    response: ToolApprovalRead[];
+  };
+  "POST /api/chats/{chat_id}/approvals/resume": {
+    path: {
+      chat_id: number;
+    };
+    response: unknown;
+  };
+  "POST /api/chats/{chat_id}/approvals/{approval_id}": {
+    path: {
+      chat_id: number;
+      approval_id: number;
+    };
+    body: ToolApprovalDecision;
+    response: ApprovalDecisionResult;
+  };
+  "POST /api/chats/{chat_id}/archive": {
+    path: {
+      chat_id: number;
+    };
+    response: ChatRead;
+  };
+  "GET /api/chats/{chat_id}/artifacts": {
+    path: {
+      chat_id: number;
+    };
+    response: ArtifactRead[];
+  };
+  "POST /api/chats/{chat_id}/artifacts": {
+    path: {
+      chat_id: number;
+    };
+    body: ArtifactCreate;
+    response: ArtifactRead;
+  };
+  "DELETE /api/chats/{chat_id}/artifacts/{artifact_id}": {
+    path: {
+      artifact_id: number;
+      chat_id: number;
+    };
+    response: void;
+  };
+  "POST /api/chats/{chat_id}/attachments": {
+    path: {
+      chat_id: number;
+    };
+    form: Body_upload_chat_attachment_api_chats__chat_id__attachments_post;
+    response: AttachmentRead;
+  };
+  "POST /api/chats/{chat_id}/discard": {
+    path: {
+      chat_id: number;
+    };
+    response: void;
+  };
+  "GET /api/chats/{chat_id}/messages": {
+    path: {
+      chat_id: number;
+    };
+    query?: {
+      limit?: number | null;
+      before_id?: number | null;
+    };
+    response: MessageRead[];
+  };
+  "DELETE /api/chats/{chat_id}/messages": {
+    path: {
+      chat_id: number;
+    };
+    response: void;
+  };
+  "POST /api/chats/{chat_id}/messages/compact": {
+    path: {
+      chat_id: number;
+    };
+    body: CompactRequest;
+    response: MessageRead;
+  };
+  "GET /api/chats/{chat_id}/messages/context": {
+    path: {
+      chat_id: number;
+    };
+    response: ContextEstimateRead;
+  };
+  "POST /api/chats/{chat_id}/messages/notes/append": {
+    path: {
+      chat_id: number;
+    };
+    body: NotesAppendRequest;
+    response: NotesAppendResponse;
+  };
+  "GET /api/chats/{chat_id}/messages/notes/attachments": {
+    path: {
+      chat_id: number;
+    };
+    response: NoteDraftAttachmentRead[];
+  };
+  "POST /api/chats/{chat_id}/messages/notes/attachments": {
+    path: {
+      chat_id: number;
+    };
+    form: Body_notes_attachments_upload_api_chats__chat_id__messages_notes_attachments_post;
+    response: NoteDraftAttachmentRead;
+  };
+  "DELETE /api/chats/{chat_id}/messages/notes/attachments/{attachment_id}": {
+    path: {
+      chat_id: number;
+      attachment_id: number;
+    };
+    response: void;
+  };
+  "GET /api/chats/{chat_id}/messages/notes/draft": {
+    path: {
+      chat_id: number;
+    };
+    response: NotesDraftResponse;
+  };
+  "PUT /api/chats/{chat_id}/messages/notes/draft": {
+    path: {
+      chat_id: number;
+    };
+    body: NotesDraftSaveRequest;
+    response: NotesDraftResponse;
+  };
+  "DELETE /api/chats/{chat_id}/messages/notes/draft": {
+    path: {
+      chat_id: number;
+    };
+    response: void;
+  };
+  "POST /api/chats/{chat_id}/messages/notes/rephrase": {
+    path: {
+      chat_id: number;
+    };
+    body: NotesRephraseRequest;
+    response: NotesRephraseResponse;
+  };
+  "POST /api/chats/{chat_id}/messages/rewind": {
+    path: {
+      chat_id: number;
+    };
+    body: RewindRequest;
+    response: RewindResult;
+  };
+  "POST /api/chats/{chat_id}/messages/stop": {
+    path: {
+      chat_id: number;
+    };
+    response: void;
+  };
+  "POST /api/chats/{chat_id}/messages/stopped": {
+    path: {
+      chat_id: number;
+    };
+    body: StoppedTurn;
+    response: MessageRead[];
+  };
+  "POST /api/chats/{chat_id}/messages/stream": {
+    path: {
+      chat_id: number;
+    };
+    body: ChatRequest;
+    response: unknown;
+  };
+  "POST /api/chats/{chat_id}/messages/suggest-name": {
+    path: {
+      chat_id: number;
+    };
+    response: SuggestNameResponse;
+  };
+  "GET /api/chats/{chat_id}/messages/turns": {
+    path: {
+      chat_id: number;
+    };
+    response: TurnIndexRead[];
+  };
+  "PATCH /api/chats/{chat_id}/messages/{message_id}": {
+    path: {
+      chat_id: number;
+      message_id: number;
+    };
+    body: MessageUpdate;
+    response: MessageRead;
+  };
+  "DELETE /api/chats/{chat_id}/messages/{message_id}": {
+    path: {
+      chat_id: number;
+      message_id: number;
+    };
+    response: void;
+  };
+  "POST /api/chats/{chat_id}/promote": {
+    path: {
+      chat_id: number;
+    };
+    query?: {
+      collection_id?: number | null;
+      parent_id?: number | null;
+    };
+    response: TopicRead;
+  };
+  "POST /api/chats/{chat_id}/read": {
+    path: {
+      chat_id: number;
+    };
+    response: void;
+  };
+  "POST /api/chats/{chat_id}/topic-note": {
+    path: {
+      chat_id: number;
+    };
+    body: TopicNoteSend;
+    response: MessageRead;
+  };
+  "POST /api/chats/{chat_id}/topic-note/draft": {
+    path: {
+      chat_id: number;
+    };
+    body: TopicNoteDraftRequest;
+    response: TopicNoteDraft;
+  };
+  "POST /api/chats/{chat_id}/unarchive": {
+    path: {
+      chat_id: number;
+    };
+    response: ChatRead;
+  };
+  "POST /api/chats/{chat_id}/unread": {
+    path: {
+      chat_id: number;
+    };
+    response: void;
+  };
+  "GET /api/collections": {
+    response: CollectionRead[];
+  };
+  "POST /api/collections": {
+    body: CollectionCreate;
+    response: CollectionRead;
+  };
+  "GET /api/collections/{collection_id}": {
+    path: {
+      collection_id: number;
+    };
+    response: CollectionRead;
+  };
+  "PATCH /api/collections/{collection_id}": {
+    path: {
+      collection_id: number;
+    };
+    body: CollectionUpdate;
+    response: CollectionRead;
+  };
+  "DELETE /api/collections/{collection_id}": {
+    path: {
+      collection_id: number;
+    };
+    query?: {
+      /** Collection to move the topics into (defaults to the built-in one). */
+      reassign_to?: number | null;
+    };
+    response: void;
+  };
+  "POST /api/definitions/accept": {
+    body: DefinitionAcceptRequest;
+    response: DefinitionSource;
+  };
+  "GET /api/definitions/check": {
+    response: DefinitionsCheckReport;
+  };
+  "POST /api/definitions/export": {
+    query?: {
+      overwrite?: boolean;
+    };
+    response: DefinitionsExportResult;
+  };
+  "GET /api/definitions/file-issues": {
+    query: {
+      workspace_id: number;
+      path: string;
+    };
+    response: DefinitionFileReport;
+  };
+  "POST /api/definitions/finalize": {
+    body: FinalizeRequest;
+    response: FinalizeResult;
+  };
+  "POST /api/definitions/migrate": {
+    body: MigrationRequest;
+    response: MigrationResult;
+  };
+  "GET /api/definitions/migration": {
+    response: MigrationPreview;
+  };
+  "GET /api/definitions/migration/items/{kind}/{item_id}": {
+    path: {
+      kind: "agent" | "workflow" | "role";
+      item_id: number;
+    };
+    response: MigrationItemDetail;
+  };
+  "POST /api/definitions/revert": {
+    response: RevertResult;
+  };
+  "GET /api/definitions/schema/{kind}": {
+    path: {
+      kind: "agent" | "workflow" | "summary" | "role";
+    };
+    response: Record<string, unknown>;
+  };
+  "GET /api/definitions/status": {
+    response: DefinitionsStatus;
+  };
+  "POST /api/drawio/install": {
+    response: DrawioStatus;
+  };
+  "GET /api/drawio/status": {
+    response: DrawioStatus;
+  };
+  "GET /api/events": {
+    response: unknown;
+  };
+  "POST /api/events/publish": {
+    body: EventPublish;
+    response: void;
+  };
+  "GET /api/github/issues": {
+    query?: {
+      repo?: string | null;
+      q?: string | null;
+    };
+    response: Record<string, unknown>[];
+  };
+  "POST /api/github/issues": {
+    body: IssueCreatePayload;
+    response: Record<string, unknown>;
+  };
+  "GET /api/github/issues/{number}": {
+    path: {
+      number: number;
+    };
+    query?: {
+      repo?: string | null;
+    };
+    response: IssueDetail;
+  };
+  "POST /api/github/issues/{number}/comments": {
+    path: {
+      number: number;
+    };
+    body: IssueCommentPayload;
+    response: IssueComment;
+  };
+  "PUT /api/github/issues/{number}/labels": {
+    path: {
+      number: number;
+    };
+    body: IssueLabelsPayload;
+    response: IssueLabel[];
+  };
+  "GET /api/github/labels": {
+    query?: {
+      repo?: string | null;
+    };
+    response: Record<string, unknown>[];
+  };
+  "GET /api/health": {
+    response: Record<string, string>;
+  };
+  "POST /api/iq/ask": {
+    body: IQAskRequest;
+    response: IQAskResponse;
+  };
+  "POST /api/iq/embeddings/test": {
+    body: IQEmbeddingTestRequest;
+    response: IQEmbeddingTestResponse;
+  };
+  "POST /api/iq/reindex": {
+    response: IQStatus;
+  };
+  "GET /api/iq/retrieve": {
+    query?: {
+      /** Natural-language query */
+      q?: string;
+      limit?: number;
+      /** Comma-separated entity kinds to include */
+      sections?: string;
+    };
+    response: IQRetrieveResponse;
+  };
+  "GET /api/iq/status": {
+    response: IQStatus;
+  };
+  "GET /api/live": {
+    response: MeetingSessionRead[];
+  };
+  "POST /api/live": {
+    body: MeetingSessionCreate;
+    response: MeetingSessionRead;
+  };
+  "GET /api/live/archived": {
+    response: MeetingSessionRead[];
+  };
+  "GET /api/live/attachments/{attachment_id}": {
+    path: {
+      attachment_id: number;
+    };
+    response: unknown;
+  };
+  "GET /api/live/m365/agenda": {
+    query?: {
+      start?: string | null;
+      end?: string | null;
+    };
+    response: AgendaResponse;
+  };
+  "GET /api/live/summary-templates": {
+    response: SummaryTemplateCatalog;
+  };
+  "POST /api/live/summary-templates/files": {
+    body: SummaryTemplateFileRequest;
+    response: SummaryTemplateFileResult;
+  };
+  "PUT /api/live/summary-templates/selection": {
+    body: SummaryTemplateSelection;
+    response: void;
+  };
+  "GET /api/live/{session_id}": {
+    path: {
+      session_id: number;
+    };
+    response: MeetingSessionRead;
+  };
+  "PATCH /api/live/{session_id}": {
+    path: {
+      session_id: number;
+    };
+    body: MeetingSessionUpdate;
+    response: MeetingSessionRead;
+  };
+  "DELETE /api/live/{session_id}": {
+    path: {
+      session_id: number;
+    };
+    response: void;
+  };
+  "POST /api/live/{session_id}/analyze": {
+    path: {
+      session_id: number;
+    };
+    response: MeetingAnalyzeResult;
+  };
+  "POST /api/live/{session_id}/archive": {
+    path: {
+      session_id: number;
+    };
+    response: MeetingSessionRead;
+  };
+  "POST /api/live/{session_id}/ask": {
+    path: {
+      session_id: number;
+    };
+    body: MeetingAskRequest;
+    response: unknown;
+  };
+  "POST /api/live/{session_id}/attachments": {
+    path: {
+      session_id: number;
+    };
+    form: Body_upload_meeting_attachment_api_live__session_id__attachments_post;
+    response: MeetingAttachmentRead;
+  };
+  "PUT /api/live/{session_id}/attendees": {
+    path: {
+      session_id: number;
+    };
+    body: AttendeesUpdate;
+    response: MeetingSessionRead;
+  };
+  "POST /api/live/{session_id}/chat": {
+    path: {
+      session_id: number;
+    };
+    response: ChatRead;
+  };
+  "POST /api/live/{session_id}/context-notes": {
+    path: {
+      session_id: number;
+    };
+    body: ContextNoteAdd;
+    response: MeetingSessionRead;
+  };
+  "PUT /api/live/{session_id}/context-notes": {
+    path: {
+      session_id: number;
+    };
+    body: ContextNotesUpdate;
+    response: MeetingSessionRead;
+  };
+  "GET /api/live/{session_id}/insights": {
+    path: {
+      session_id: number;
+    };
+    response: MeetingInsightRead[];
+  };
+  "POST /api/live/{session_id}/meeting": {
+    path: {
+      session_id: number;
+    };
+    body: LinkMeetingRequest;
+    response: MeetingSessionRead;
+  };
+  "DELETE /api/live/{session_id}/meeting": {
+    path: {
+      session_id: number;
+    };
+    response: MeetingSessionRead;
+  };
+  "POST /api/live/{session_id}/meeting/post": {
+    path: {
+      session_id: number;
+    };
+    response: MeetingPostResult;
+  };
+  "GET /api/live/{session_id}/segments": {
+    path: {
+      session_id: number;
+    };
+    response: MeetingSegmentRead[];
+  };
+  "POST /api/live/{session_id}/segments": {
+    path: {
+      session_id: number;
+    };
+    body: MeetingSegmentCreate;
+    response: MeetingSegmentRead;
+  };
+  "PATCH /api/live/{session_id}/segments/{segment_id}": {
+    path: {
+      session_id: number;
+      segment_id: number;
+    };
+    body: MeetingSegmentUpdate;
+    response: MeetingSegmentRead;
+  };
+  "POST /api/live/{session_id}/speakers": {
+    path: {
+      session_id: number;
+    };
+    body: SpeakerRenameRequest;
+    response: MeetingSessionRead;
+  };
+  "POST /api/live/{session_id}/speakers/me": {
+    path: {
+      session_id: number;
+    };
+    body: SpeakerMeRequest;
+    response: MeetingSessionRead;
+  };
+  "POST /api/live/{session_id}/suggest": {
+    path: {
+      session_id: number;
+    };
+    body: LiveSuggestRequest;
+    response: unknown;
+  };
+  "POST /api/live/{session_id}/summary": {
+    path: {
+      session_id: number;
+    };
+    body?: MeetingSummaryRequest | null;
+    response: MeetingSummaryResult;
+  };
+  "POST /api/live/{session_id}/summary/from-transcript": {
+    path: {
+      session_id: number;
+    };
+    body?: MeetingTranscriptSummaryRequest | null;
+    response: MeetingTranscriptSummaryResult;
+  };
+  "POST /api/live/{session_id}/summary/post": {
+    path: {
+      session_id: number;
+    };
+    body: MeetingSummaryPost;
+    response: MeetingSummaryPostResult;
+  };
+  "POST /api/live/{session_id}/topic-summary": {
+    path: {
+      session_id: number;
+    };
+    response: TopicSummaryResult;
+  };
+  "GET /api/live/{session_id}/transcripts": {
+    path: {
+      session_id: number;
+    };
+    response: MeetingTranscriptListResult;
+  };
+  "POST /api/live/{session_id}/translate": {
+    path: {
+      session_id: number;
+    };
+    body: TranslateRequest;
+    response: TranslateResult;
+  };
+  "POST /api/live/{session_id}/unarchive": {
+    path: {
+      session_id: number;
+    };
+    response: MeetingSessionRead;
+  };
+  "GET /api/llm/models": {
+    query?: {
+      provider?: string | null;
+    };
+    response: LLMModelRead[];
+  };
+  "GET /api/llm/providers": {
+    query?: {
+      include_disabled?: boolean;
+    };
+    response: ProviderRead[];
+  };
+  "GET /api/mcp/auth/diagnostics": {
+    query?: {
+      limit?: number;
+    };
+    response: Record<string, unknown>;
+  };
+  "GET /api/mcp/server/info": {
+    response: Record<string, unknown>;
+  };
+  "GET /api/mcp/servers": {
+    query?: {
+      probe?: boolean;
+    };
+    response: Record<string, unknown>[];
+  };
+  "POST /api/mcp/servers/user": {
+    body: UserServerCreate;
+    response: Record<string, unknown>;
+  };
+  "PATCH /api/mcp/servers/user/{server_id}": {
+    path: {
+      server_id: number;
+    };
+    body: UserServerUpdate;
+    response: Record<string, unknown>;
+  };
+  "DELETE /api/mcp/servers/user/{server_id}": {
+    path: {
+      server_id: number;
+    };
+    response: void;
+  };
+  "POST /api/mcp/servers/workiq/preview": {
+    body: WorkiqPreviewToggle;
+    response: Record<string, unknown>;
+  };
+  "POST /api/mcp/servers/{name}/connect": {
+    path: {
+      name: string;
+    };
+    response: Record<string, unknown>;
+  };
+  "POST /api/mcp/servers/{name}/disconnect": {
+    path: {
+      name: string;
+    };
+    response: Record<string, unknown>;
+  };
+  "POST /api/mcp/servers/{name}/probe": {
+    path: {
+      name: string;
+    };
+    response: Record<string, unknown>;
+  };
+  "POST /api/mcp/servers/{name}/reauthenticate": {
+    path: {
+      name: string;
+    };
+    query?: {
+      use_popup?: boolean;
+      silent_only?: boolean;
+      auto?: boolean;
+    };
+    response: Record<string, unknown>;
+  };
+  "POST /api/mcp/servers/{name}/reauthenticate/cancel": {
+    path: {
+      name: string;
+    };
+    response: Record<string, boolean>;
+  };
+  "POST /api/mcp/servers/{name}/refresh": {
+    path: {
+      name: string;
+    };
+    response: Record<string, unknown>;
+  };
+  "GET /api/me": {
+    response: Me;
+  };
+  "GET /api/me/copilot": {
+    response: CopilotQuota | null;
+  };
+  "GET /api/memories": {
+    response: MemoryRead[];
+  };
+  "POST /api/memories": {
+    body: MemoryCreate;
+    response: MemoryRead;
+  };
+  "PATCH /api/memories/{memory_id}": {
+    path: {
+      memory_id: number;
+    };
+    body: MemoryUpdate;
+    response: MemoryRead;
+  };
+  "DELETE /api/memories/{memory_id}": {
+    path: {
+      memory_id: number;
+    };
+    response: void;
+  };
+  "GET /api/notes/attachments/{attachment_id}": {
+    path: {
+      attachment_id: number;
+    };
+    response: unknown;
+  };
+  "POST /api/openai/v1/chat/completions": {
+    response: unknown;
+  };
+  "GET /api/openai/v1/models": {
+    response: unknown;
+  };
+  "GET /api/openai/v1/models/{model_id}": {
+    path: {
+      model_id: string;
+    };
+    response: unknown;
+  };
+  "GET /api/plugins": {
+    response: Record<string, unknown>[];
+  };
+  "GET /api/plugins/catalog": {
+    response: Record<string, unknown>[];
+  };
+  "GET /api/plugins/environment": {
+    response: Record<string, unknown>;
+  };
+  "POST /api/plugins/install": {
+    body: PluginInstall;
+    response: Record<string, unknown>;
+  };
+  "GET /api/plugins/installed": {
+    response: Record<string, unknown>[];
+  };
+  "PUT /api/plugins/installed/{plugin_id}": {
+    path: {
+      plugin_id: string;
+    };
+    body: PluginToggle;
+    response: Record<string, unknown>;
+  };
+  "DELETE /api/plugins/installed/{plugin_id}": {
+    path: {
+      plugin_id: string;
+    };
+    response: Record<string, unknown>;
+  };
+  "GET /api/plugins/installed/{plugin_id}/settings": {
+    path: {
+      plugin_id: string;
+    };
+    response: Record<string, unknown>;
+  };
+  "PUT /api/plugins/installed/{plugin_id}/settings": {
+    path: {
+      plugin_id: string;
+    };
+    body: Record<string, unknown>;
+    response: Record<string, unknown>;
+  };
+  "POST /api/plugins/installed/{plugin_id}/upgrade": {
+    path: {
+      plugin_id: string;
+    };
+    body: PluginUpgrade;
+    response: Record<string, unknown>;
+  };
+  "POST /api/plugins/restart": {
+    response: Record<string, string>;
+  };
+  "GET /api/plugins/updates": {
+    query?: {
+      refresh?: boolean;
+    };
+    response: Record<string, unknown>[];
+  };
+  "GET /api/plugins/versions": {
+    query: {
+      package: string;
+      refresh?: boolean;
+    };
+    response: Record<string, unknown>;
+  };
+  "POST /api/refine": {
+    body: RefineRequest;
+    response: RefineResponse;
+  };
+  "GET /api/reminders": {
+    response: ReminderItem[];
+  };
+  "GET /api/reminders/{container}/{container_id}": {
+    path: {
+      container: string;
+      container_id: number;
+    };
+    response: ReminderRead | null;
+  };
+  "PUT /api/reminders/{container}/{container_id}": {
+    path: {
+      container: string;
+      container_id: number;
+    };
+    body: ReminderCreate;
+    response: ReminderRead;
+  };
+  "DELETE /api/reminders/{container}/{container_id}": {
+    path: {
+      container: string;
+      container_id: number;
+    };
+    response: void;
+  };
+  "GET /api/roles": {
+    response: RoleRead[];
+  };
+  "POST /api/roles": {
+    body: RoleCreate;
+    response: RoleRead;
+  };
+  "GET /api/roles/{name}": {
+    path: {
+      name: string;
+    };
+    response: RoleRead;
+  };
+  "PATCH /api/roles/{name}": {
+    path: {
+      name: string;
+    };
+    body: RoleUpdate;
+    response: RoleRead;
+  };
+  "DELETE /api/roles/{name}": {
+    path: {
+      name: string;
+    };
+    response: void;
+  };
+  "GET /api/search": {
+    query?: {
+      /** Search text */
+      q?: string;
+      limit?: number;
+    };
+    response: SearchResponse;
+  };
+  "GET /api/settings": {
+    response: SettingsRead;
+  };
+  "PUT /api/settings": {
+    body: SettingsPayload;
+    response: SettingsRead;
+  };
+  "POST /api/settings/backup/run": {
+    response: Record<string, unknown>;
+  };
+  "POST /api/settings/openai-proxy/key": {
+    response: Record<string, string>;
+  };
+  "GET /api/skills": {
+    response: SkillRead[];
+  };
+  "POST /api/skills": {
+    body: SkillCreate;
+    response: SkillRead;
+  };
+  "GET /api/skills/{name}": {
+    path: {
+      name: string;
+    };
+    response: SkillRead;
+  };
+  "PATCH /api/skills/{name}": {
+    path: {
+      name: string;
+    };
+    body: SkillUpdate;
+    response: SkillRead;
+  };
+  "DELETE /api/skills/{name}": {
+    path: {
+      name: string;
+    };
+    response: void;
+  };
+  "GET /api/skills/{name}/export": {
+    path: {
+      name: string;
+    };
+    response: string;
+  };
+  "POST /api/skills/{name}/migrate": {
+    path: {
+      name: string;
+    };
+    response: SkillRead;
+  };
+  "GET /api/stats/cleanup": {
+    response: precursor__backend__schemas__stats__CleanupPreview;
+  };
+  "POST /api/stats/cleanup/{key}": {
+    path: {
+      key: string;
+    };
+    response: CleanupRunResult;
+  };
+  "POST /api/stats/compact": {
+    response: CompactResult;
+  };
+  "GET /api/stats/system": {
+    response: SystemStats;
+  };
+  "GET /api/stats/usage": {
+    response: UsageStats;
+  };
+  "GET /api/step-plans": {
+    query?: {
+      topic_id?: number | null;
+      chat_id?: number | null;
+    };
+    response: StepPlanItem[];
+  };
+  "POST /api/step-plans": {
+    body: StepPlanCreate;
+    response: StepPlanRead;
+  };
+  "GET /api/step-plans/archived": {
+    response: StepPlanItem[];
+  };
+  "GET /api/step-plans/{plan_id}": {
+    path: {
+      plan_id: number;
+    };
+    response: StepPlanRead;
+  };
+  "PATCH /api/step-plans/{plan_id}": {
+    path: {
+      plan_id: number;
+    };
+    body: StepPlanUpdate;
+    response: StepPlanRead;
+  };
+  "DELETE /api/step-plans/{plan_id}": {
+    path: {
+      plan_id: number;
+    };
+    response: void;
+  };
+  "POST /api/step-plans/{plan_id}/amend": {
+    path: {
+      plan_id: number;
+    };
+    body: StepPlanAmendRequest;
+    response: StepPlanRead;
+  };
+  "POST /api/step-plans/{plan_id}/archive": {
+    path: {
+      plan_id: number;
+    };
+    response: StepPlanRead;
+  };
+  "POST /api/step-plans/{plan_id}/assess": {
+    path: {
+      plan_id: number;
+    };
+    response: StepPlanRead;
+  };
+  "POST /api/step-plans/{plan_id}/auto/pause": {
+    path: {
+      plan_id: number;
+    };
+    response: StepPlanRead;
+  };
+  "POST /api/step-plans/{plan_id}/auto/start": {
+    path: {
+      plan_id: number;
+    };
+    response: StepPlanRead;
+  };
+  "POST /api/step-plans/{plan_id}/complete": {
+    path: {
+      plan_id: number;
+    };
+    response: StepPlanRead;
+  };
+  "POST /api/step-plans/{plan_id}/consolidate/generate": {
+    path: {
+      plan_id: number;
+    };
+    body?: ConsolidateRequest | null;
+    response: FinalDraftResult;
+  };
+  "POST /api/step-plans/{plan_id}/consolidation/chat": {
+    path: {
+      plan_id: number;
+    };
+    response: ChatRead;
+  };
+  "PUT /api/step-plans/{plan_id}/final": {
+    path: {
+      plan_id: number;
+    };
+    body: FinalWrite;
+    response: StepPlanRead;
+  };
+  "POST /api/step-plans/{plan_id}/final/from-message": {
+    path: {
+      plan_id: number;
+    };
+    body: UseMessageRequest;
+    response: StepPlanRead;
+  };
+  "POST /api/step-plans/{plan_id}/final/revert": {
+    path: {
+      plan_id: number;
+    };
+    body: StepArtifactRevert;
+    response: StepPlanRead;
+  };
+  "GET /api/step-plans/{plan_id}/final/versions": {
+    path: {
+      plan_id: number;
+    };
+    response: FinalVersionRead[];
+  };
+  "POST /api/step-plans/{plan_id}/launch": {
+    path: {
+      plan_id: number;
+    };
+    response: StepPlanRead;
+  };
+  "POST /api/step-plans/{plan_id}/propose": {
+    path: {
+      plan_id: number;
+    };
+    body?: StepGenerateRequest | null;
+    response: StepPlanRead;
+  };
+  "POST /api/step-plans/{plan_id}/review": {
+    path: {
+      plan_id: number;
+    };
+    response: StepPlanReview;
+  };
+  "POST /api/step-plans/{plan_id}/send-to-source": {
+    path: {
+      plan_id: number;
+    };
+    body?: SendToTopicRequest | null;
+    response: MessageRead;
+  };
+  "POST /api/step-plans/{plan_id}/send-to-topic": {
+    path: {
+      plan_id: number;
+    };
+    body?: SendToTopicRequest | null;
+    response: MessageRead;
+  };
+  "POST /api/step-plans/{plan_id}/start": {
+    path: {
+      plan_id: number;
+    };
+    body?: StepStartRequest | null;
+    response: StepPlanRead;
+  };
+  "POST /api/step-plans/{plan_id}/steps": {
+    path: {
+      plan_id: number;
+    };
+    body: StepCreate;
+    response: StepRead;
+  };
+  "POST /api/step-plans/{plan_id}/suggest-missing": {
+    path: {
+      plan_id: number;
+    };
+    body?: StepGenerateRequest | null;
+    response: StepPlanRead;
+  };
+  "POST /api/step-plans/{plan_id}/unarchive": {
+    path: {
+      plan_id: number;
+    };
+    response: StepPlanRead;
+  };
+  "PATCH /api/steps/{step_id}": {
+    path: {
+      step_id: number;
+    };
+    body: StepUpdate;
+    response: StepRead;
+  };
+  "DELETE /api/steps/{step_id}": {
+    path: {
+      step_id: number;
+    };
+    response: void;
+  };
+  "POST /api/steps/{step_id}/accept": {
+    path: {
+      step_id: number;
+    };
+    response: StepRead;
+  };
+  "PUT /api/steps/{step_id}/artifact": {
+    path: {
+      step_id: number;
+    };
+    body: StepArtifactWrite;
+    response: StepRead;
+  };
+  "POST /api/steps/{step_id}/artifact/from-message": {
+    path: {
+      step_id: number;
+    };
+    body: UseMessageRequest;
+    response: StepRead;
+  };
+  "POST /api/steps/{step_id}/artifact/generate": {
+    path: {
+      step_id: number;
+    };
+    body?: StepGenerateRequest | null;
+    response: ArtifactDraftResult;
+  };
+  "POST /api/steps/{step_id}/artifact/revert": {
+    path: {
+      step_id: number;
+    };
+    body: StepArtifactRevert;
+    response: StepRead;
+  };
+  "POST /api/steps/{step_id}/assess": {
+    path: {
+      step_id: number;
+    };
+    response: StepRead;
+  };
+  "POST /api/steps/{step_id}/chat": {
+    path: {
+      step_id: number;
+    };
+    response: ChatRead;
+  };
+  "POST /api/steps/{step_id}/move": {
+    path: {
+      step_id: number;
+    };
+    body: StepMove;
+    response: StepRead;
+  };
+  "POST /api/steps/{step_id}/status": {
+    path: {
+      step_id: number;
+    };
+    body: StepStatusUpdate;
+    response: StepRead;
+  };
+  "POST /api/steps/{step_id}/suggest-substeps": {
+    path: {
+      step_id: number;
+    };
+    body?: StepGenerateRequest | null;
+    response: StepPlanRead;
+  };
+  "GET /api/steps/{step_id}/versions": {
+    path: {
+      step_id: number;
+    };
+    response: StepArtifactVersionRead[];
+  };
+  "POST /api/stt/test": {
+    body: SpeechTestRequest;
+    response: SpeechTestResult;
+  };
+  "GET /api/stt/token": {
+    response: SpeechToken;
+  };
+  "GET /api/topics": {
+    query?: {
+      q?: string | null;
+      collection_id?: number | null;
+    };
+    response: TopicRead[];
+  };
+  "POST /api/topics": {
+    body: TopicCreate;
+    response: TopicRead;
+  };
+  "GET /api/topics/archived": {
+    query?: {
+      collection_id?: number | null;
+    };
+    response: TopicRead[];
+  };
+  "GET /api/topics/by-public-id/{public_id}": {
+    path: {
+      public_id: string;
+    };
+    response: TopicRead;
+  };
+  "GET /api/topics/by-slug/{slug}": {
+    path: {
+      slug: string;
+    };
+    response: TopicRead;
+  };
+  "GET /api/topics/tree": {
+    query?: {
+      collection_id?: number | null;
+    };
+    response: TopicNode[];
+  };
+  "GET /api/topics/{topic_id}": {
+    path: {
+      topic_id: number;
+    };
+    response: TopicRead;
+  };
+  "PATCH /api/topics/{topic_id}": {
+    path: {
+      topic_id: number;
+    };
+    body: TopicUpdate;
+    response: TopicRead;
+  };
+  "DELETE /api/topics/{topic_id}": {
+    path: {
+      topic_id: number;
+    };
+    response: void;
+  };
+  "GET /api/topics/{topic_id}/approvals": {
+    path: {
+      topic_id: number;
+    };
+    response: ToolApprovalRead[];
+  };
+  "POST /api/topics/{topic_id}/approvals/resume": {
+    path: {
+      topic_id: number;
+    };
+    response: unknown;
+  };
+  "POST /api/topics/{topic_id}/approvals/{approval_id}": {
+    path: {
+      topic_id: number;
+      approval_id: number;
+    };
+    body: ToolApprovalDecision;
+    response: ApprovalDecisionResult;
+  };
+  "POST /api/topics/{topic_id}/archive": {
+    path: {
+      topic_id: number;
+    };
+    query?: {
+      side_chats_too?: boolean;
+    };
+    response: TopicRead;
+  };
+  "GET /api/topics/{topic_id}/artifacts": {
+    path: {
+      topic_id: number;
+    };
+    response: ArtifactRead[];
+  };
+  "POST /api/topics/{topic_id}/artifacts": {
+    path: {
+      topic_id: number;
+    };
+    body: ArtifactCreate;
+    response: ArtifactRead;
+  };
+  "DELETE /api/topics/{topic_id}/artifacts/{artifact_id}": {
+    path: {
+      artifact_id: number;
+      topic_id: number;
+    };
+    response: void;
+  };
+  "POST /api/topics/{topic_id}/attachments": {
+    path: {
+      topic_id: number;
+    };
+    form: Body_upload_attachment_api_topics__topic_id__attachments_post;
+    response: AttachmentRead;
+  };
+  "GET /api/topics/{topic_id}/chats": {
+    path: {
+      topic_id: number;
+    };
+    response: SideChatItem[];
+  };
+  "POST /api/topics/{topic_id}/chats": {
+    path: {
+      topic_id: number;
+    };
+    body: SideChatCreate;
+    response: ChatRead;
+  };
+  "POST /api/topics/{topic_id}/commands/gh-close/draft": {
+    path: {
+      topic_id: number;
+    };
+    body: DraftRequest;
+    response: CommentDraftResponse;
+  };
+  "POST /api/topics/{topic_id}/commands/gh-close/post": {
+    path: {
+      topic_id: number;
+    };
+    body: GhClosePostRequest;
+    response: GhCloseResponse;
+  };
+  "POST /api/topics/{topic_id}/commands/gh-create/draft": {
+    path: {
+      topic_id: number;
+    };
+    body: DraftRequest;
+    response: GhCreateDraftResponse;
+  };
+  "POST /api/topics/{topic_id}/commands/gh-create/post": {
+    path: {
+      topic_id: number;
+    };
+    body: GhCreatePostRequest;
+    response: GhCreatePostResponse;
+  };
+  "POST /api/topics/{topic_id}/commands/gh-sync": {
+    path: {
+      topic_id: number;
+    };
+    response: GhSyncResponse;
+  };
+  "POST /api/topics/{topic_id}/commands/gh-update/draft": {
+    path: {
+      topic_id: number;
+    };
+    body: DraftRequest;
+    response: CommentDraftResponse;
+  };
+  "POST /api/topics/{topic_id}/commands/gh-update/post": {
+    path: {
+      topic_id: number;
+    };
+    body: CommentPostRequest;
+    response: CommentPostResponse;
+  };
+  "POST /api/topics/{topic_id}/commands/notes/append": {
+    path: {
+      topic_id: number;
+    };
+    body: NotesAppendRequest;
+    response: NotesAppendResponse;
+  };
+  "GET /api/topics/{topic_id}/commands/notes/attachments": {
+    path: {
+      topic_id: number;
+    };
+    response: NoteDraftAttachmentRead[];
+  };
+  "POST /api/topics/{topic_id}/commands/notes/attachments": {
+    path: {
+      topic_id: number;
+    };
+    form: Body_notes_attachments_upload_api_topics__topic_id__commands_notes_attachments_post;
+    response: NoteDraftAttachmentRead;
+  };
+  "DELETE /api/topics/{topic_id}/commands/notes/attachments/{attachment_id}": {
+    path: {
+      topic_id: number;
+      attachment_id: number;
+    };
+    response: void;
+  };
+  "GET /api/topics/{topic_id}/commands/notes/draft": {
+    path: {
+      topic_id: number;
+    };
+    response: NotesDraftResponse;
+  };
+  "PUT /api/topics/{topic_id}/commands/notes/draft": {
+    path: {
+      topic_id: number;
+    };
+    body: NotesDraftSaveRequest;
+    response: NotesDraftResponse;
+  };
+  "DELETE /api/topics/{topic_id}/commands/notes/draft": {
+    path: {
+      topic_id: number;
+    };
+    response: void;
+  };
+  "POST /api/topics/{topic_id}/commands/notes/rephrase": {
+    path: {
+      topic_id: number;
+    };
+    body: NotesRephraseRequest;
+    response: NotesRephraseResponse;
+  };
+  "POST /api/topics/{topic_id}/commands/suggest-name": {
+    path: {
+      topic_id: number;
+    };
+    response: SuggestNameResponse;
+  };
+  "POST /api/topics/{topic_id}/issue/push": {
+    path: {
+      topic_id: number;
+    };
+    response: IssuePushResult;
+  };
+  "GET /api/topics/{topic_id}/messages": {
+    path: {
+      topic_id: number;
+    };
+    query?: {
+      limit?: number | null;
+      before_id?: number | null;
+    };
+    response: MessageRead[];
+  };
+  "DELETE /api/topics/{topic_id}/messages": {
+    path: {
+      topic_id: number;
+    };
+    response: void;
+  };
+  "POST /api/topics/{topic_id}/messages/compact": {
+    path: {
+      topic_id: number;
+    };
+    body: CompactRequest;
+    response: MessageRead;
+  };
+  "GET /api/topics/{topic_id}/messages/context": {
+    path: {
+      topic_id: number;
+    };
+    response: ContextEstimateRead;
+  };
+  "POST /api/topics/{topic_id}/messages/rewind": {
+    path: {
+      topic_id: number;
+    };
+    body: RewindRequest;
+    response: RewindResult;
+  };
+  "POST /api/topics/{topic_id}/messages/stop": {
+    path: {
+      topic_id: number;
+    };
+    response: void;
+  };
+  "POST /api/topics/{topic_id}/messages/stopped": {
+    path: {
+      topic_id: number;
+    };
+    body: StoppedTurn;
+    response: MessageRead[];
+  };
+  "POST /api/topics/{topic_id}/messages/stream": {
+    path: {
+      topic_id: number;
+    };
+    body: ChatRequest;
+    response: unknown;
+  };
+  "GET /api/topics/{topic_id}/messages/turns": {
+    path: {
+      topic_id: number;
+    };
+    response: TurnIndexRead[];
+  };
+  "PATCH /api/topics/{topic_id}/messages/{message_id}": {
+    path: {
+      topic_id: number;
+      message_id: number;
+    };
+    body: MessageUpdate;
+    response: MessageRead;
+  };
+  "DELETE /api/topics/{topic_id}/messages/{message_id}": {
+    path: {
+      topic_id: number;
+      message_id: number;
+    };
+    response: void;
+  };
+  "POST /api/topics/{topic_id}/read": {
+    path: {
+      topic_id: number;
+    };
+    response: void;
+  };
+  "GET /api/topics/{topic_id}/schedule": {
+    path: {
+      topic_id: number;
+    };
+    response: ScheduleRead;
+  };
+  "POST /api/topics/{topic_id}/schedule": {
+    path: {
+      topic_id: number;
+    };
+    body: TopicScheduleCreate;
+    response: ScheduleRead;
+  };
+  "PATCH /api/topics/{topic_id}/schedule": {
+    path: {
+      topic_id: number;
+    };
+    body: ScheduleUpdate;
+    response: ScheduleRead;
+  };
+  "DELETE /api/topics/{topic_id}/schedule": {
+    path: {
+      topic_id: number;
+    };
+    response: void;
+  };
+  "POST /api/topics/{topic_id}/schedule/run": {
+    path: {
+      topic_id: number;
+    };
+    response: ScheduleRead;
+  };
+  "POST /api/topics/{topic_id}/summary": {
+    path: {
+      topic_id: number;
+    };
+    query?: {
+      force?: boolean;
+    };
+    response: IssueSummary;
+  };
+  "GET /api/topics/{topic_id}/topic-summary": {
+    path: {
+      topic_id: number;
+    };
+    response: TopicSummaryRead | null;
+  };
+  "PUT /api/topics/{topic_id}/topic-summary": {
+    path: {
+      topic_id: number;
+    };
+    body: TopicSummarySave;
+    response: TopicSummaryRead;
+  };
+  "DELETE /api/topics/{topic_id}/topic-summary": {
+    path: {
+      topic_id: number;
+    };
+    query?: {
+      revision?: string | null;
+    };
+    response: void;
+  };
+  "POST /api/topics/{topic_id}/topic-summary/generate": {
+    path: {
+      topic_id: number;
+    };
+    body?: TopicSummaryGenerate | null;
+    response: TopicSummaryRead;
+  };
+  "POST /api/topics/{topic_id}/topic-summary/items": {
+    path: {
+      topic_id: number;
+    };
+    body: TopicSummaryItem;
+    response: TopicSummaryRead;
+  };
+  "POST /api/topics/{topic_id}/topic-summary/resolve": {
+    path: {
+      topic_id: number;
+    };
+    body: TopicSummaryResolve;
+    response: TopicSummaryRead;
+  };
+  "POST /api/topics/{topic_id}/topic-summary/visibility": {
+    path: {
+      topic_id: number;
+    };
+    body: TopicSummaryVisibility;
+    response: TopicSummaryRead | null;
+  };
+  "POST /api/topics/{topic_id}/unarchive": {
+    path: {
+      topic_id: number;
+    };
+    response: TopicRead;
+  };
+  "POST /api/topics/{topic_id}/unread": {
+    path: {
+      topic_id: number;
+    };
+    response: void;
+  };
+  "GET /api/transfer/agents/{agent_id}": {
+    path: {
+      agent_id: string;
+    };
+    response: string;
+  };
+  "POST /api/transfer/import": {
+    body: TransferImportRequest;
+    response: TransferImportResult;
+  };
+  "POST /api/transfer/preview": {
+    body: TransferParseRequest;
+    response: TransferPreview;
+  };
+  "GET /api/transfer/workflows/{workflow_id}": {
+    path: {
+      workflow_id: number;
+    };
+    response: string;
+  };
+  "GET /api/version": {
+    response: VersionInfo;
+  };
+  "GET /api/version/check": {
+    query?: {
+      force?: boolean;
+    };
+    response: UpdateCheck;
+  };
+  "GET /api/workflows": {
+    query?: {
+      include_archived?: boolean;
+    };
+    response: WorkflowRead[];
+  };
+  "POST /api/workflows": {
+    body: WorkflowCreate;
+    response: WorkflowRead;
+  };
+  "GET /api/workflows/archived": {
+    response: WorkflowRead[];
+  };
+  "POST /api/workflows/hooks/{token}": {
+    path: {
+      token: string;
+    };
+    response: Record<string, string>;
+  };
+  "GET /api/workflows/{workflow_id}": {
+    path: {
+      workflow_id: number;
+    };
+    response: WorkflowRead;
+  };
+  "PATCH /api/workflows/{workflow_id}": {
+    path: {
+      workflow_id: number;
+    };
+    body: WorkflowUpdate;
+    response: WorkflowRead;
+  };
+  "DELETE /api/workflows/{workflow_id}": {
+    path: {
+      workflow_id: number;
+    };
+    response: void;
+  };
+  "POST /api/workflows/{workflow_id}/approve": {
+    path: {
+      workflow_id: number;
+    };
+    body?: WorkflowApprovalRequest | null;
+    response: WorkflowRead;
+  };
+  "POST /api/workflows/{workflow_id}/archive": {
+    path: {
+      workflow_id: number;
+    };
+    response: WorkflowRead;
+  };
+  "POST /api/workflows/{workflow_id}/cancel": {
+    path: {
+      workflow_id: number;
+    };
+    response: WorkflowRead;
+  };
+  "POST /api/workflows/{workflow_id}/pause": {
+    path: {
+      workflow_id: number;
+    };
+    response: WorkflowRead;
+  };
+  "POST /api/workflows/{workflow_id}/permission": {
+    path: {
+      workflow_id: number;
+    };
+    body: WorkflowPermissionDecision;
+    response: WorkflowRead;
+  };
+  "POST /api/workflows/{workflow_id}/reject": {
+    path: {
+      workflow_id: number;
+    };
+    body?: WorkflowApprovalRequest | null;
+    response: WorkflowRead;
+  };
+  "POST /api/workflows/{workflow_id}/resume": {
+    path: {
+      workflow_id: number;
+    };
+    body?: WorkflowResumeRequest | null;
+    response: WorkflowRead;
+  };
+  "POST /api/workflows/{workflow_id}/retry": {
+    path: {
+      workflow_id: number;
+    };
+    body?: WorkflowRetryRequest | null;
+    response: WorkflowRead;
+  };
+  "POST /api/workflows/{workflow_id}/run": {
+    path: {
+      workflow_id: number;
+    };
+    body?: WorkflowRunRequest | null;
+    response: WorkflowRead;
+  };
+  "GET /api/workflows/{workflow_id}/run-steps/{step_run_id}/events": {
+    path: {
+      workflow_id: number;
+      step_run_id: number;
+    };
+    response: AgentEvent[];
+  };
+  "POST /api/workflows/{workflow_id}/run-steps/{step_run_id}/replay": {
+    path: {
+      workflow_id: number;
+      step_run_id: number;
+    };
+    response: WorkflowRead;
+  };
+  "GET /api/workflows/{workflow_id}/runs": {
+    path: {
+      workflow_id: number;
+    };
+    query?: {
+      limit?: number;
+    };
+    response: WorkflowRunRead[];
+  };
+  "PUT /api/workflows/{workflow_id}/schedule": {
+    path: {
+      workflow_id: number;
+    };
+    body: WorkflowScheduleUpdate;
+    response: WorkflowRead;
+  };
+  "GET /api/workflows/{workflow_id}/state": {
+    path: {
+      workflow_id: number;
+    };
+    response: WorkflowStateRead[];
+  };
+  "PUT /api/workflows/{workflow_id}/state": {
+    path: {
+      workflow_id: number;
+    };
+    body: WorkflowStateWrite;
+    response: WorkflowStateRead;
+  };
+  "DELETE /api/workflows/{workflow_id}/state": {
+    path: {
+      workflow_id: number;
+    };
+    response: void;
+  };
+  "DELETE /api/workflows/{workflow_id}/state/{key}": {
+    path: {
+      workflow_id: number;
+      key: string;
+    };
+    response: void;
+  };
+  "POST /api/workflows/{workflow_id}/unarchive": {
+    path: {
+      workflow_id: number;
+    };
+    response: WorkflowRead;
+  };
+  "POST /api/workflows/{workflow_id}/webhook": {
+    path: {
+      workflow_id: number;
+    };
+    response: WorkflowRead;
+  };
+  "DELETE /api/workflows/{workflow_id}/webhook": {
+    path: {
+      workflow_id: number;
+    };
+    response: WorkflowRead;
+  };
+  "GET /api/workspaces": {
+    response: WorkspaceRead[];
+  };
+  "POST /api/workspaces": {
+    body: WorkspaceCreate;
+    response: WorkspaceRead;
+  };
+  "DELETE /api/workspaces/{workspace_id}": {
+    path: {
+      workspace_id: number;
+    };
+    response: void;
+  };
+  "GET /api/workspaces/{workspace_id}/discussions": {
+    path: {
+      workspace_id: number;
+    };
+    query?: {
+      path?: string | null;
+    };
+    response: DiscussionItem[];
+  };
+  "GET /api/workspaces/{workspace_id}/file": {
+    path: {
+      workspace_id: number;
+    };
+    query: {
+      path: string;
+    };
+    response: FileContent;
+  };
+  "POST /api/workspaces/{workspace_id}/file": {
+    path: {
+      workspace_id: number;
+    };
+    body: FileCreate;
+    response: FileContent;
+  };
+  "PUT /api/workspaces/{workspace_id}/file": {
+    path: {
+      workspace_id: number;
+    };
+    query: {
+      path: string;
+    };
+    body: FileWrite;
+    response: FileContent;
+  };
+  "DELETE /api/workspaces/{workspace_id}/file": {
+    path: {
+      workspace_id: number;
+    };
+    query: {
+      path: string;
+    };
+    response: void;
+  };
+  "GET /api/workspaces/{workspace_id}/files": {
+    path: {
+      workspace_id: number;
+    };
+    response: FileNode[];
+  };
+  "POST /api/workspaces/{workspace_id}/folder": {
+    path: {
+      workspace_id: number;
+    };
+    body: FolderCreate;
+    response: FileNode;
+  };
+  "DELETE /api/workspaces/{workspace_id}/folder": {
+    path: {
+      workspace_id: number;
+    };
+    query: {
+      path: string;
+    };
+    response: void;
+  };
+  "GET /api/workspaces/{workspace_id}/git/branches": {
+    path: {
+      workspace_id: number;
+    };
+    response: GitBranches;
+  };
+  "POST /api/workspaces/{workspace_id}/git/branches": {
+    path: {
+      workspace_id: number;
+    };
+    body: BranchRequest;
+    response: GitActionResult;
+  };
+  "POST /api/workspaces/{workspace_id}/git/commit": {
+    path: {
+      workspace_id: number;
+    };
+    body: CommitRequest;
+    response: GitActionResult;
+  };
+  "POST /api/workspaces/{workspace_id}/git/commit-push": {
+    path: {
+      workspace_id: number;
+    };
+    body: CommitRequest;
+    response: GitActionResult;
+  };
+  "GET /api/workspaces/{workspace_id}/git/commits/{sha}": {
+    path: {
+      workspace_id: number;
+      sha: string;
+    };
+    response: GitCommitDetail;
+  };
+  "GET /api/workspaces/{workspace_id}/git/conflict": {
+    path: {
+      workspace_id: number;
+    };
+    query: {
+      path: string;
+    };
+    response: GitConflict;
+  };
+  "GET /api/workspaces/{workspace_id}/git/diff": {
+    path: {
+      workspace_id: number;
+    };
+    query: {
+      path: string;
+    };
+    response: FileDiff;
+  };
+  "POST /api/workspaces/{workspace_id}/git/discard": {
+    path: {
+      workspace_id: number;
+    };
+    query: {
+      path: string;
+    };
+    response: GitStatus;
+  };
+  "POST /api/workspaces/{workspace_id}/git/fetch": {
+    path: {
+      workspace_id: number;
+    };
+    response: GitActionResult;
+  };
+  "GET /api/workspaces/{workspace_id}/git/file-versions": {
+    path: {
+      workspace_id: number;
+    };
+    query: {
+      path: string;
+      original_path?: string | null;
+      base?: string | null;
+      head?: string | null;
+    };
+    response: FileVersions;
+  };
+  "GET /api/workspaces/{workspace_id}/git/log": {
+    path: {
+      workspace_id: number;
+    };
+    query?: {
+      limit?: number;
+      skip?: number;
+      path?: string | null;
+    };
+    response: GitLog;
+  };
+  "POST /api/workspaces/{workspace_id}/git/merge": {
+    path: {
+      workspace_id: number;
+    };
+    response: GitActionResult;
+  };
+  "POST /api/workspaces/{workspace_id}/git/merge/abort": {
+    path: {
+      workspace_id: number;
+    };
+    response: GitActionResult;
+  };
+  "POST /api/workspaces/{workspace_id}/git/merge/complete": {
+    path: {
+      workspace_id: number;
+    };
+    response: GitActionResult;
+  };
+  "POST /api/workspaces/{workspace_id}/git/pull": {
+    path: {
+      workspace_id: number;
+    };
+    response: GitActionResult;
+  };
+  "POST /api/workspaces/{workspace_id}/git/push": {
+    path: {
+      workspace_id: number;
+    };
+    response: GitActionResult;
+  };
+  "POST /api/workspaces/{workspace_id}/git/resolve": {
+    path: {
+      workspace_id: number;
+    };
+    body: ResolveRequest;
+    response: GitStatus;
+  };
+  "GET /api/workspaces/{workspace_id}/git/status": {
+    path: {
+      workspace_id: number;
+    };
+    response: GitStatus;
+  };
+  "POST /api/workspaces/{workspace_id}/git/switch": {
+    path: {
+      workspace_id: number;
+    };
+    body: BranchRequest;
+    response: GitActionResult;
+  };
+  "GET /api/workspaces/{workspace_id}/local-path": {
+    path: {
+      workspace_id: number;
+    };
+    response: LocalPath;
+  };
+  "POST /api/workspaces/{workspace_id}/rename": {
+    path: {
+      workspace_id: number;
+    };
+    body: FileRename;
+    response: FileNode;
+  };
+  "GET /raw/{slug}/{file_path}": {
+    path: {
+      slug: string;
+      file_path: string;
+    };
+    response: unknown;
+  };
 }
