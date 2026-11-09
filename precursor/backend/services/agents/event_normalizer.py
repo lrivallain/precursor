@@ -111,6 +111,141 @@ def jsonify(value: Any) -> str:
         return str(value)
 
 
+# Raw attributes captured as tool I/O (and error diagnostics) on any event.
+_TOOL_IO_ATTRS = (
+    "arguments",
+    "input",
+    "result",
+    "output",
+    "server_name",
+    "error_type",
+    "error_code",
+    "status_code",
+)
+_USAGE_ATTRS = ("input_tokens", "output_tokens", "reasoning_tokens")
+_CONTEXT_USAGE_ATTRS = (
+    "current_tokens",
+    "token_limit",
+    "conversation_tokens",
+    "system_tokens",
+    "tool_definitions_tokens",
+)
+_COMPACTION_ATTRS = (
+    "current_tokens",
+    "pre_compaction_tokens",
+    "post_compaction_tokens",
+    "tokens_removed",
+    "messages_removed",
+    "token_limit",
+)
+
+
+def _tool_io(data: Any) -> dict[str, Any]:
+    """Capture tool I/O (and error diagnostics) so the UI can show "what was
+    done" / "why it failed" on demand."""
+    extra: dict[str, Any] = {}
+    for attr in _TOOL_IO_ATTRS:
+        val = getattr(data, attr, None)
+        if val is None:
+            continue
+        if attr in ("result", "output"):
+            val = unwrap_result(val)
+        # Non-strings are rendered as JSON. Cap *after* rendering: the raw
+        # attribute may be a dict (e.g. a hook's ``input``, which re-embeds the
+        # whole tool result), and leaving that branch uncapped let single events
+        # archive tens of KB each.
+        extra[attr] = cap(val if isinstance(val, str) else jsonify(val), TOOL_RESULT_CAP)
+    return extra
+
+
+def _tool_completion(
+    data: Any, extra: dict[str, Any], tool_status: str | None, tool_name: Any
+) -> tuple[str | None, Any]:
+    """Fold a ``ToolExecutionCompleteData`` into ``extra``; returns status and name.
+
+    It reports success + result/error as nested objects rather than the flat
+    ``is_error``/``result`` string attrs :func:`_tool_io` looks for, so a
+    *failed* tool would otherwise archive as ``data: null`` with no status —
+    losing the reason the agent hit a wall (e.g. a sandbox "permission denied"
+    or a fetch error). Pull them out explicitly so the timeline shows why a tool
+    call failed.
+    """
+    success = getattr(data, "success", None)
+    if success is not None:
+        tool_status = "done" if success else "error"
+        extra["success"] = bool(success)
+    sandboxed = getattr(data, "sandboxed", None)
+    if sandboxed is not None:
+        # Surfaces that a command ran in the ephemeral cmd-runner jail — key
+        # context when file writes silently don't persist.
+        extra["sandboxed"] = bool(sandboxed)
+    err = getattr(data, "error", None)
+    if err is not None:
+        message = getattr(err, "message", None) or str(err)
+        extra["error"] = cap(str(message), TOOL_RESULT_CAP)
+        code = getattr(err, "code", None)
+        if code:
+            extra["error_code"] = str(code)
+    if "result" not in extra:
+        content = unwrap_result(getattr(data, "result", None))
+        if isinstance(content, str) and content.strip():
+            extra["result"] = cap(content, TOOL_RESULT_CAP)
+    if not tool_name:
+        desc = getattr(data, "tool_description", None)
+        tool_name = getattr(desc, "name", None) or getattr(desc, "tool_name", None)
+    return tool_status, tool_name
+
+
+def _int_attrs(data: Any, attrs: tuple[str, ...], extra: dict[str, Any]) -> None:
+    """Copy token counts verbatim (as raw ints, not JSON-stringified)."""
+    for attr in attrs:
+        val = getattr(data, attr, None)
+        if val is not None:
+            extra[attr] = int(val)
+
+
+def _compaction(data: Any, extra: dict[str, Any]) -> Any:
+    """Fold a compaction event into ``extra``; returns its summary, if any.
+
+    Surfaces compactions (the SDK's automatic ones as well as /compact) so the
+    timeline can mark where older turns were replaced by a summary.
+    """
+    _int_attrs(data, _COMPACTION_ATTRS, extra)
+    trigger = getattr(data, "trigger", None)
+    if trigger is not None:
+        extra["trigger"] = str(getattr(trigger, "value", trigger))
+    success = getattr(data, "success", None)
+    if success is not None:
+        extra["success"] = bool(success)
+    error = getattr(data, "error", None)
+    if error:
+        extra["error"] = cap(str(error), TOOL_RESULT_CAP)
+    return getattr(data, "summary_content", None)
+
+
+def _usage(name: str, data: Any, extra: dict[str, Any]) -> Any:
+    """Capture usage and compaction figures; returns a text override, if any.
+
+    Usage events carry token counts, not tool I/O, so the workflow timeline can
+    drive the per-agent usage stats in the side panel: ``AssistantUsageData``
+    meters each LLM round, ``SessionUsageInfoData`` reports the live
+    context-window occupancy.
+    """
+    if name == "AssistantUsageData":
+        _int_attrs(data, _USAGE_ATTRS, extra)
+        # The resolved model for this LLM round (a required SDK field). Lets the
+        # UI show the concrete model per turn — useful for default-model agents
+        # whose session.model is null.
+        model = getattr(data, "model", None)
+        if model:
+            extra["model"] = str(model)
+    elif name == "SessionUsageInfoData":
+        _int_attrs(data, _CONTEXT_USAGE_ATTRS, extra)
+    elif name in ("SessionCompactionStartData", "SessionCompactionCompleteData"):
+        return _compaction(data, extra)
+    return None
+
+
 def normalize_event(event: Any) -> AgentEvent:
     """Map a raw SDK event onto the workflow-timeline shape."""
     data = getattr(event, "data", event)
@@ -134,112 +269,12 @@ def normalize_event(event: Any) -> AgentEvent:
         tool_status = "running"
     elif "ToolResult" in name or kind == "tool_result":
         tool_status = "error" if getattr(data, "is_error", False) else "done"
-    # Capture tool I/O (and error diagnostics) so the UI can show "what was
-    # done" / "why it failed" on demand.
-    extra: dict[str, Any] = {}
-    for attr in (
-        "arguments",
-        "input",
-        "result",
-        "output",
-        "server_name",
-        "error_type",
-        "error_code",
-        "status_code",
-    ):
-        val = getattr(data, attr, None)
-        if val is None:
-            continue
-        if attr in ("result", "output"):
-            val = unwrap_result(val)
-        # Non-strings are rendered as JSON. Cap *after* rendering: the raw
-        # attribute may be a dict (e.g. a hook's ``input``, which re-embeds the
-        # whole tool result), and leaving that branch uncapped let single events
-        # archive tens of KB each.
-        extra[attr] = cap(val if isinstance(val, str) else jsonify(val), TOOL_RESULT_CAP)
-    # ``ToolExecutionCompleteData`` reports success + result/error as nested
-    # objects rather than the flat ``is_error``/``result`` string attrs the
-    # loop above looks for, so a *failed* tool would otherwise archive as
-    # ``data: null`` with no status — losing the reason the agent hit a wall
-    # (e.g. a sandbox "permission denied" or a fetch error). Pull them out
-    # explicitly so the timeline shows why a tool call failed.
+    extra = _tool_io(data)
     if name == "ToolExecutionCompleteData":
-        success = getattr(data, "success", None)
-        if success is not None:
-            tool_status = "done" if success else "error"
-            extra["success"] = bool(success)
-        sandboxed = getattr(data, "sandboxed", None)
-        if sandboxed is not None:
-            # Surfaces that a command ran in the ephemeral cmd-runner jail —
-            # key context when file writes silently don't persist.
-            extra["sandboxed"] = bool(sandboxed)
-        err = getattr(data, "error", None)
-        if err is not None:
-            message = getattr(err, "message", None) or str(err)
-            extra["error"] = cap(str(message), TOOL_RESULT_CAP)
-            code = getattr(err, "code", None)
-            if code:
-                extra["error_code"] = str(code)
-        if "result" not in extra:
-            content = unwrap_result(getattr(data, "result", None))
-            if isinstance(content, str) and content.strip():
-                extra["result"] = cap(content, TOOL_RESULT_CAP)
-        if not tool_name:
-            desc = getattr(data, "tool_description", None)
-            tool_name = getattr(desc, "name", None) or getattr(desc, "tool_name", None)
-    # Usage events carry token counts, not tool I/O. Capture them verbatim
-    # (as raw ints, not JSON-stringified) so the workflow timeline can drive
-    # the per-agent usage stats in the side panel: ``AssistantUsageData``
-    # meters each LLM round, ``SessionUsageInfoData`` reports the live
-    # context-window occupancy.
-    if name == "AssistantUsageData":
-        for attr in ("input_tokens", "output_tokens", "reasoning_tokens"):
-            val = getattr(data, attr, None)
-            if val is not None:
-                extra[attr] = int(val)
-        # The resolved model for this LLM round (a required SDK field). Lets
-        # the UI show the concrete model per turn — useful for default-model
-        # agents whose session.model is null.
-        model = getattr(data, "model", None)
-        if model:
-            extra["model"] = str(model)
-    elif name == "SessionUsageInfoData":
-        for attr in (
-            "current_tokens",
-            "token_limit",
-            "conversation_tokens",
-            "system_tokens",
-            "tool_definitions_tokens",
-        ):
-            val = getattr(data, attr, None)
-            if val is not None:
-                extra[attr] = int(val)
-    elif name in ("SessionCompactionStartData", "SessionCompactionCompleteData"):
-        # Surface compactions (the SDK's automatic ones as well as /compact) so
-        # the timeline can mark where older turns were replaced by a summary.
-        for attr in (
-            "current_tokens",
-            "pre_compaction_tokens",
-            "post_compaction_tokens",
-            "tokens_removed",
-            "messages_removed",
-            "token_limit",
-        ):
-            val = getattr(data, attr, None)
-            if val is not None:
-                extra[attr] = int(val)
-        trigger = getattr(data, "trigger", None)
-        if trigger is not None:
-            extra["trigger"] = str(getattr(trigger, "value", trigger))
-        success = getattr(data, "success", None)
-        if success is not None:
-            extra["success"] = bool(success)
-        error = getattr(data, "error", None)
-        if error:
-            extra["error"] = cap(str(error), TOOL_RESULT_CAP)
-        summary = getattr(data, "summary_content", None)
-        if summary:
-            text = summary
+        tool_status, tool_name = _tool_completion(data, extra, tool_status, tool_name)
+    summary = _usage(name, data, extra)
+    if summary:
+        text = summary
     # A prompt's SDK id is what a rewind truncates from. It lives on the event
     # envelope, not its data, and only prompts need it.
     event_id = (

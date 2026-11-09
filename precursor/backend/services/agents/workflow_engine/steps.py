@@ -40,9 +40,7 @@ from precursor.backend.services.agents.workflow_engine.context import (
     _last_run_summary,
     _run_input,
 )
-from precursor.backend.services.agents.workflow_engine.output import (
-    _cap_output_summary,
-)
+from precursor.backend.services.agents.workflow_engine.output import _cap_output_summary
 
 
 async def _begin_run(

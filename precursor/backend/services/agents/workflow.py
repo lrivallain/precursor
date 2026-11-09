@@ -137,9 +137,7 @@ from precursor.backend.services.agents.workflow_engine.steps import (
     _started_after,
     _supersede_open_run_steps,
 )
-from precursor.backend.services.agents.workflow_engine.sweep import (
-    sweep_stalled_steps,
-)
+from precursor.backend.services.agents.workflow_engine.sweep import sweep_stalled_steps
 
 __all__ = [
     "OUTPUT_SUMMARY_CAP",

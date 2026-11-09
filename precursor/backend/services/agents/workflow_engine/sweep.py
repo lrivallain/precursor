@@ -27,9 +27,7 @@ from precursor.backend.services.agents.workflow_engine.common import (
     _step_label,
     _workflow_lock,
 )
-from precursor.backend.services.agents.workflow_engine.steps import (
-    _apply_failure_policy,
-)
+from precursor.backend.services.agents.workflow_engine.steps import _apply_failure_policy
 
 logger = logging.getLogger(__name__)
 

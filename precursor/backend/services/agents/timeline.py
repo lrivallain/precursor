@@ -2,14 +2,14 @@
 
 Hydrates the in-memory cache from the ``agent_events`` archive, persists new
 events, and serves the transcript (whole or paged) with any parked permission
-cards appended. The caches themselves (``_events``/``_loaded``) stay on
+cards appended, plus the dashboard cockpit's live-activity snapshot. The caches themselves (``_events``/``_loaded``) stay on
 ``AgentManager``; this module must not import ``manager`` at runtime.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from sqlalchemy import select
@@ -18,6 +18,7 @@ from precursor.backend.db import SessionLocal
 from precursor.backend.models import AgentEventRecord
 from precursor.backend.schemas.agent import AgentEvent, AgentEventPage, AgentLiveThinking
 from precursor.backend.services.agents import rewind
+from precursor.backend.services.agents.directives import _clean_narration
 from precursor.backend.services.agents.event_normalizer import is_content_free, normalize_event
 
 if TYPE_CHECKING:
@@ -220,6 +221,73 @@ class Timeline:
             if archived:
                 self._manager._events[agent_id] = archived
             self._manager._loaded.add(agent_id)
+
+    def live_activity(self, agent_ids: list[int]) -> dict[int, dict[str, Any]]:
+        """Snapshot each agent's in-flight work for the dashboard cockpit.
+
+        Reads the in-memory event cache and the live stream (no DB, no
+        ``await``) to derive, per agent: the currently running tool, how many
+        tool calls are running in parallel (the "sub-agent fan-out" cluster), a
+        plain-language **narration** line distilled from the agent's own
+        commentary this turn, the **thinking** it is streaming right now, and the
+        oldest unresolved permission request. Everything resets at turn
+        boundaries so a dropped completion event can't leave a tool "running"
+        across turns. Agents not live in-process report an empty snapshot.
+        """
+        m = self._manager
+        out: dict[int, dict[str, Any]] = {}
+        for aid in agent_ids:
+            running: dict[str, str | None] = {}
+            order: list[str] = []
+            # Rolling live-narration state, reset at every turn boundary so a
+            # resting agent shows nothing and each turn narrates itself.
+            narration_msg: str | None = None  # last completed assistant message
+            for ev in m._events.get(aid, ()):
+                if ev.kind in ("turn_start", "turn_end", "idle", "aborted"):
+                    running.clear()
+                    order.clear()
+                    narration_msg = None
+                    continue
+                if ev.kind == "assistant_message":
+                    if ev.text:
+                        narration_msg = ev.text
+                    continue
+                rid = ev.request_id
+                if not rid:
+                    continue
+                if ev.tool_status == "running":
+                    if rid not in running:
+                        order.append(rid)
+                    running[rid] = ev.tool_name
+                elif ev.tool_status in ("done", "error"):
+                    running.pop(rid, None)
+                    if rid in order:
+                        order.remove(rid)
+            run_id = m._agent_runs.get(aid)
+            live = m._live.get(run_id) if run_id is not None else None
+            stream = live.stream if live is not None else None
+            # The answer being streamed is newer than the last completed message,
+            # so prefer it; fall back to the last full message otherwise.
+            raw_narration = stream.message if stream and stream.message else narration_msg
+            narration = _clean_narration(raw_narration) if raw_narration else None
+            pending: dict[str, Any] | None = None
+            if live is not None and live.pending_info:
+                info = next(iter(live.pending_info.values()))
+                pending = {
+                    "request_id": info.get("request_id"),
+                    "title": info.get("title"),
+                    # The whole payload travels: the workflow board renders the
+                    # decision card from it, and it has no event stream to mine.
+                    "data": dict(info),
+                }
+            out[aid] = {
+                "active_tool": running.get(order[-1]) if order else None,
+                "active_tool_count": len(order),
+                "active_narration": narration,
+                "active_thinking": stream.thinking if stream is not None else None,
+                "pending_permission": pending,
+            }
+        return out
 
 
 async def archive_event(

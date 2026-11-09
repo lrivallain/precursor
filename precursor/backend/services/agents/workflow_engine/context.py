@@ -18,9 +18,7 @@ from precursor.backend.models.workflow import (
     WorkflowRunStep,
     WorkflowStep,
 )
-from precursor.backend.services.agents.directives import (
-    strip_published_artifacts,
-)
+from precursor.backend.services.agents.directives import strip_published_artifacts
 from precursor.backend.services.workflow_state import (
     build_state_index_prompt,
     render_step_instructions,
@@ -35,9 +33,7 @@ from precursor.backend.services.agents.workflow_engine.common import (
     _has_precursor_tools,
     _last_assistant_message,
 )
-from precursor.backend.services.agents.workflow_engine.output import (
-    _DIRECTIVE_LINE_RE,
-)
+from precursor.backend.services.agents.workflow_engine.output import _DIRECTIVE_LINE_RE
 
 _GATE_PREAMBLE = (
     "You are a QUALITY GATE in an automated workflow. Judge the material from the "

@@ -21,9 +21,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 
-from precursor.backend.services.agents.workflow_engine.common import (
-    _last_assistant_message,
-)
+from precursor.backend.services.agents.workflow_engine.common import _last_assistant_message
 
 # --- Gate verdict grammar --------------------------------------------------
 # A gate step's agent votes by ending its turn with

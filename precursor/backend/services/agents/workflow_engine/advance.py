@@ -11,6 +11,7 @@ from precursor.backend.models.agent_session import AgentSession
 from precursor.backend.models.workflow import (
     Workflow,
     WorkflowRun,
+    WorkflowStep,
 )
 from precursor.backend.services.definitions import anchors as definition_anchors
 from precursor.backend.services.definitions import overlay as definition_overlay
@@ -44,9 +45,7 @@ from precursor.backend.services.agents.workflow_engine.output import (
     _turn_dropped,
     _verdict_reason,
 )
-from precursor.backend.services.agents.workflow_engine.replay import (
-    finalize_replays_for_run,
-)
+from precursor.backend.services.agents.workflow_engine.replay import finalize_replays_for_run
 from precursor.backend.services.agents.workflow_engine.steps import (
     _advance_from,
     _apply_failure_policy,
@@ -243,6 +242,238 @@ async def advance_for_run(session: AsyncSession, manager: AgentManager, agent_ru
         await session.commit()
 
 
+async def _consume_trace(
+    session: AsyncSession,
+    workflow: Workflow,
+    current: WorkflowStep,
+    entered_at: datetime | None,
+) -> bool:
+    """Claim the current step's open trace; ``False`` means another advance has.
+
+    This step's open trace is the turn's idempotency token: whoever handles the
+    turn closes it, so a duplicate advance finds nothing open and stops here.
+    ``entered_at`` covers the one case that leaves a *fresh* row in its place —
+    a step re-entered in place by ``on_error=retry``, which reopens a trace at
+    the same position before the duplicate gets to look. An advance always
+    answers a turn that was already under way, so a row that started after the
+    advance did belongs to the next attempt, not this one. A run-less workflow
+    has no trace to consume and is exempt.
+    """
+    run_id = workflow.current_run_id
+    if run_id is None or current.agent_id is None:
+        return True
+    open_trace = await _open_run_step(session, run_id, current.position, current.agent_id)
+    if open_trace is None:
+        return False
+    return not (entered_at is not None and _started_after(open_trace, entered_at))
+
+
+async def _divert(
+    session: AsyncSession,
+    manager: AgentManager,
+    workflow: Workflow,
+    steps: list[WorkflowStep],
+    current_idx: int,
+    agent_id: int,
+    agent_status: str,
+    agent_run: AgentRun | None,
+) -> bool:
+    """Handle a status that does not complete the step; ``True`` if it did."""
+    if agent_status in STEP_FAILED_STATUSES:
+        if agent_run is not None and agent_run.error:
+            reason = agent_run.error
+        else:
+            agent = await session.get(AgentSession, agent_id)
+            reason = agent.error if agent and agent.error else "A step failed."
+        await _apply_failure_policy(
+            session, manager, workflow, steps, current_idx, agent_id, reason
+        )
+        return True
+
+    if agent_status in STEP_CANCELLED_STATUSES:
+        workflow.status = "cancelled"
+        workflow.finished_at = datetime.now(UTC)
+        workflow.current_step_id = None
+        await _finalize_run_step(session, workflow, agent_id, status="cancelled")
+        await _finalize_run(session, workflow, status="cancelled")
+        await session.commit()
+        await _publish(workflow)
+        return True
+
+    if agent_status in STEP_AWAITING_PERMISSION_STATUSES:
+        # A tool-permission gate inside a live turn. The agent picks up where it
+        # left off as soon as the decision lands, so there is nothing to resume
+        # and nothing to record: leave the run ``running`` with its step trace
+        # open and just publish, which surfaces the approve/deny card on the
+        # board. The step timeout still applies, so a gate nobody ever answers is
+        # caught by the watchdog rather than parking the pipeline forever.
+        await _publish(workflow)
+        return True
+
+    if agent_status in STEP_BLOCKED_STATUSES:
+        # The agent raised a question and ended its turn. Hold the workflow
+        # paused on this step so a resume re-drives it once answered.
+        workflow.status = "paused"
+        await _finalize_run_step(session, workflow, agent_id, status="blocked")
+        await _finalize_run(session, workflow, status="paused")
+        await session.commit()
+        await _publish(workflow)
+        return True
+
+    # running / interrupted / pending — not a decision point.
+    return agent_status not in STEP_DONE_STATUSES
+
+
+async def _gate_verdict_text(
+    session: AsyncSession, agent: AgentSession | None, agent_id: int, agent_run: AgentRun | None
+) -> str:
+    """The gate's raw final message, else its stored summary.
+
+    Read the raw archived turn first: the manager cleans directive tokens out of
+    ``result_summary`` for display, so the raw message is the reliable source of
+    the PASS/FAIL verdict. Fall back to the summary if unavailable.
+    """
+    verdict_text = (
+        await _last_assistant_message(
+            session, agent_id, agent_run.id if agent_run is not None else None
+        )
+        or ""
+    )
+    if verdict_text:
+        return verdict_text
+    fallback = (
+        agent_run.result_summary
+        if agent_run is not None and agent_run.result_summary
+        else (agent.result_summary if agent and agent.result_summary else "")
+    )
+    return fallback or ""
+
+
+async def _fail_gate_run(
+    session: AsyncSession, workflow: Workflow, agent_id: int, verdict_text: str, error: str
+) -> None:
+    """End the run on a gate that cannot loop back any more."""
+    workflow.status = "failed"
+    workflow.finished_at = datetime.now(UTC)
+    workflow.current_step_id = None
+    workflow.error = error[:2000]
+    await _finalize_run_step(
+        session,
+        workflow,
+        agent_id,
+        status="failed",
+        output_summary=_verdict_reason(verdict_text),
+        gate_verdict="FAIL",
+    )
+    await _finalize_run(session, workflow, status="failed", error=workflow.error)
+    await session.commit()
+    await _publish(workflow)
+
+
+async def _loop_back(
+    session: AsyncSession,
+    manager: AgentManager,
+    workflow: Workflow,
+    steps: list[WorkflowStep],
+    current_idx: int,
+    agent_id: int,
+    verdict_text: str,
+) -> None:
+    """Re-enter an earlier step after a gate's FAIL, or fail the run."""
+    current = steps[current_idx]
+    # Where to retry: explicit on_fail_position, else the previous step.
+    target_idx = current.on_fail_position
+    if (
+        target_idx is None
+        or target_idx < 0
+        or target_idx >= len(steps)
+        or not _is_runnable(steps[target_idx])
+    ):
+        target_idx = _prev_runnable_idx(steps, current_idx)
+    if target_idx is None:
+        # Nothing to loop back to — a gate with no upstream is a hard fail.
+        await _fail_gate_run(
+            session,
+            workflow,
+            agent_id,
+            verdict_text,
+            f"Gate '{_step_label(current)}' failed and has no earlier step to retry: "
+            f"{_verdict_reason(verdict_text)}",
+        )
+        return
+
+    # Count this loop-back on the gate; give up once the cap is exceeded.
+    current.attempt_count = (current.attempt_count or 0) + 1
+    if current.attempt_count > (workflow.max_loops or 3):
+        await _fail_gate_run(
+            session,
+            workflow,
+            agent_id,
+            verdict_text,
+            f"Gate '{_step_label(current)}' still failing after "
+            f"{workflow.max_loops} attempts: {_verdict_reason(verdict_text)}",
+        )
+        return
+
+    await _finalize_run_step(
+        session,
+        workflow,
+        agent_id,
+        status="failed",
+        output_summary=_verdict_reason(verdict_text),
+        gate_verdict="FAIL",
+    )
+    await _enter_step(
+        session,
+        manager,
+        workflow,
+        steps,
+        target_idx,
+        fail_reason=_verdict_reason(verdict_text),
+    )
+
+
+async def _close_gate(
+    session: AsyncSession,
+    manager: AgentManager,
+    workflow: Workflow,
+    steps: list[WorkflowStep],
+    current_idx: int,
+    agent_id: int,
+    agent_run: AgentRun | None,
+) -> bool:
+    """Parse a gate's PASS/FAIL and loop back on FAIL; ``True`` to move on."""
+    agent = await session.get(AgentSession, agent_id)
+    verdict_text = await _gate_verdict_text(session, agent, agent_id, agent_run)
+    passed = _parse_verdict(verdict_text)
+    if _turn_dropped(agent_run, verdict_text):
+        # Checked before the tidy below, which would otherwise stamp a
+        # fabricated "Passed" onto a turn that never spoke. A dropped gate is
+        # worse than a dropped task: the verdict grammar is deliberately
+        # fail-*open*, so silence waves the deliverable through. Route it
+        # through the step's own error policy, where a transient fault belongs.
+        await _apply_failure_policy(
+            session, manager, workflow, steps, current_idx, agent_id, _DROPPED_TURN_REASON
+        )
+        return False
+    # Normalise the gate's stored result to a plain verdict and drop its
+    # auto-captured artifact — a gate judges, it doesn't publish deliverables.
+    await _tidy_gate_result(session, agent, agent_run, verdict_text, passed)
+    if not passed:
+        await _loop_back(session, manager, workflow, steps, current_idx, agent_id, verdict_text)
+        return False
+    # PASS → close the gate trace, then fall through to the forward advance.
+    await _finalize_run_step(
+        session,
+        workflow,
+        agent_id,
+        status="passed",
+        output_summary=_verdict_reason(verdict_text),
+        gate_verdict="PASS",
+    )
+    return True
+
+
 async def _advance_one(
     session: AsyncSession,
     manager: AgentManager,
@@ -258,198 +489,26 @@ async def _advance_one(
     current_idx = next((i for i, s in enumerate(steps) if s.id == workflow.current_step_id), None)
     if current_idx is None:
         return
-
-    # This step's open trace is the turn's idempotency token: whoever handles the
-    # turn closes it, so a duplicate advance finds nothing open and stops here.
-    # ``entered_at`` covers the one case that leaves a *fresh* row in its place —
-    # a step re-entered in place by ``on_error=retry``, which reopens a trace at
-    # the same position before the duplicate gets to look. An advance always
-    # answers a turn that was already under way, so a row that started after the
-    # advance did belongs to the next attempt, not this one. A run-less workflow
-    # has no trace to consume and is exempt.
-    run_id = workflow.current_run_id
-    if run_id is not None:
-        step_agent_id = steps[current_idx].agent_id
-        if step_agent_id is not None:
-            open_trace = await _open_run_step(
-                session, run_id, steps[current_idx].position, step_agent_id
-            )
-            if open_trace is None:
-                return
-            if entered_at is not None and _started_after(open_trace, entered_at):
-                return
+    current = steps[current_idx]
+    if not await _consume_trace(session, workflow, current, entered_at):
+        return
 
     # The execution's own state, never the agent's mirror: a shared agent's row
     # may already be reporting whatever a concurrent workflow is doing to it.
     agent_run = await session.get(AgentRun, agent_run_id) if agent_run_id else None
-
-    now = datetime.now(UTC)
-
-    if agent_status in STEP_FAILED_STATUSES:
-        if agent_run is not None and agent_run.error:
-            reason = agent_run.error
-        else:
-            agent = await session.get(AgentSession, agent_id)
-            reason = agent.error if agent and agent.error else "A step failed."
-        await _apply_failure_policy(
-            session, manager, workflow, steps, current_idx, agent_id, reason
-        )
+    if await _divert(
+        session, manager, workflow, steps, current_idx, agent_id, agent_status, agent_run
+    ):
         return
 
-    if agent_status in STEP_CANCELLED_STATUSES:
-        workflow.status = "cancelled"
-        workflow.finished_at = now
-        workflow.current_step_id = None
-        await _finalize_run_step(session, workflow, agent_id, status="cancelled")
-        await _finalize_run(session, workflow, status="cancelled")
-        await session.commit()
-        await _publish(workflow)
-        return
-
-    if agent_status in STEP_AWAITING_PERMISSION_STATUSES:
-        # A tool-permission gate inside a live turn. The agent picks up where it
-        # left off as soon as the decision lands, so there is nothing to resume
-        # and nothing to record: leave the run ``running`` with its step trace
-        # open and just publish, which surfaces the approve/deny card on the
-        # board. The step timeout still applies, so a gate nobody ever answers is
-        # caught by the watchdog rather than parking the pipeline forever.
-        await _publish(workflow)
-        return
-
-    if agent_status in STEP_BLOCKED_STATUSES:
-        # The agent raised a question and ended its turn. Hold the workflow
-        # paused on this step so a resume re-drives it once answered.
-        workflow.status = "paused"
-        await _finalize_run_step(session, workflow, agent_id, status="blocked")
-        await _finalize_run(session, workflow, status="paused")
-        await session.commit()
-        await _publish(workflow)
-        return
-
-    if agent_status not in STEP_DONE_STATUSES:
-        # running / interrupted / pending — not a decision point.
-        return
-
-    current = steps[current_idx]
-
-    # --- Gate step: parse PASS/FAIL and loop back on FAIL ------------------
     if current.kind == "gate":
-        agent = await session.get(AgentSession, agent_id)
-        # Read the raw archived turn first: the manager cleans directive tokens out
-        # of ``result_summary`` for display, so the raw message is the reliable
-        # source of the PASS/FAIL verdict. Fall back to the summary if unavailable.
-        verdict_text = (
-            await _last_assistant_message(
-                session, agent_id, agent_run.id if agent_run is not None else None
-            )
-            or ""
-        )
-        if not verdict_text:
-            fallback = (
-                agent_run.result_summary
-                if agent_run is not None and agent_run.result_summary
-                else (agent.result_summary if agent and agent.result_summary else "")
-            )
-            verdict_text = fallback or ""
-        passed = _parse_verdict(verdict_text)
-        if _turn_dropped(agent_run, verdict_text):
-            # Checked before the tidy below, which would otherwise stamp a
-            # fabricated "Passed" onto a turn that never spoke. A dropped gate is
-            # worse than a dropped task: the verdict grammar is deliberately
-            # fail-*open*, so silence waves the deliverable through. Route it
-            # through the step's own error policy, where a transient fault belongs.
-            await _apply_failure_policy(
-                session, manager, workflow, steps, current_idx, agent_id, _DROPPED_TURN_REASON
-            )
+        # A just-passed gate closes its own trace.
+        if not await _close_gate(
+            session, manager, workflow, steps, current_idx, agent_id, agent_run
+        ):
             return
-        # Normalise the gate's stored result to a plain verdict and drop its
-        # auto-captured artifact — a gate judges, it doesn't publish deliverables.
-        await _tidy_gate_result(session, agent, agent_run, verdict_text, passed)
-        if not passed:
-            # Where to retry: explicit on_fail_position, else the previous step.
-            target_idx = current.on_fail_position
-            if (
-                target_idx is None
-                or target_idx < 0
-                or target_idx >= len(steps)
-                or not _is_runnable(steps[target_idx])
-            ):
-                target_idx = _prev_runnable_idx(steps, current_idx)
-            if target_idx is None:
-                # Nothing to loop back to — a gate with no upstream is a hard fail.
-                workflow.status = "failed"
-                workflow.finished_at = now
-                workflow.current_step_id = None
-                workflow.error = (
-                    f"Gate '{_step_label(current)}' failed and has no earlier step to retry: "
-                    f"{_verdict_reason(verdict_text)}"
-                )[:2000]
-                await _finalize_run_step(
-                    session,
-                    workflow,
-                    agent_id,
-                    status="failed",
-                    output_summary=_verdict_reason(verdict_text),
-                    gate_verdict="FAIL",
-                )
-                await _finalize_run(session, workflow, status="failed", error=workflow.error)
-                await session.commit()
-                await _publish(workflow)
-                return
-
-            # Count this loop-back on the gate; give up once the cap is exceeded.
-            current.attempt_count = (current.attempt_count or 0) + 1
-            if current.attempt_count > (workflow.max_loops or 3):
-                workflow.status = "failed"
-                workflow.finished_at = now
-                workflow.current_step_id = None
-                workflow.error = (
-                    f"Gate '{_step_label(current)}' still failing after "
-                    f"{workflow.max_loops} attempts: {_verdict_reason(verdict_text)}"
-                )[:2000]
-                await _finalize_run_step(
-                    session,
-                    workflow,
-                    agent_id,
-                    status="failed",
-                    output_summary=_verdict_reason(verdict_text),
-                    gate_verdict="FAIL",
-                )
-                await _finalize_run(session, workflow, status="failed", error=workflow.error)
-                await session.commit()
-                await _publish(workflow)
-                return
-
-            await _finalize_run_step(
-                session,
-                workflow,
-                agent_id,
-                status="failed",
-                output_summary=_verdict_reason(verdict_text),
-                gate_verdict="FAIL",
-            )
-            await _enter_step(
-                session,
-                manager,
-                workflow,
-                steps,
-                target_idx,
-                fail_reason=_verdict_reason(verdict_text),
-            )
-            return
-        # PASS → close the gate trace, then fall through to the forward advance.
-        await _finalize_run_step(
-            session,
-            workflow,
-            agent_id,
-            status="passed",
-            output_summary=_verdict_reason(verdict_text),
-            gate_verdict="PASS",
-        )
-
-    # --- Step done: close its trace, then move on (or finish) --------------
-    # A just-passed gate already closed its own trace above.
-    if current.kind != "gate":
+    else:
+        # Step done: close its trace, then move on (or finish).
         output = await _step_output(session, agent_id, agent_run)
         if _turn_dropped(agent_run, output):
             await _apply_failure_policy(
