@@ -124,12 +124,11 @@ def _prefix_fingerprint(
 
 def _assistant_blocks(m: ChatMessage, prefix: str | None) -> list[dict[str, Any]]:
     if m.provider_content:
-        blocks = []
-        for block in m.provider_content:
-            if block.get("type") in _THINKING_BLOCKS and block.get(_PREFIX_KEY) != prefix:
-                continue
-            blocks.append({k: v for k, v in block.items() if k != _PREFIX_KEY})
-        return blocks
+        return [
+            {k: v for k, v in block.items() if k != _PREFIX_KEY}
+            for block in m.provider_content
+            if block.get("type") not in _THINKING_BLOCKS or block.get(_PREFIX_KEY) == prefix
+        ]
     blocks: list[dict[str, Any]] = []
     if m.content:
         blocks.append({"type": "text", "text": m.content})

@@ -45,8 +45,8 @@ async def stream_events(request: Request) -> EventSourceResponse:
             # the window picks up the result when stream.ended arrives.
             for kind, container_id in running_turns():
                 field = "topic_id" if kind == "topic" else "chat_id"
-                event = {"type": "stream.started", field: container_id}
-                yield {"event": "stream.started", "data": json.dumps(event)}
+                replay = {"type": "stream.started", field: container_id}
+                yield {"event": "stream.started", "data": json.dumps(replay)}
             while True:
                 if await request.is_disconnected():
                     return

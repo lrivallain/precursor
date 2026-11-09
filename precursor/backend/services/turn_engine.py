@@ -17,7 +17,6 @@ import json
 import logging
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
-from contextlib import aclosing
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -1725,10 +1724,16 @@ def lifecycle_stream(
         else:
             await publish_stream_started_chat(container_id)
         try:
-            async with aclosing(inner) as events:
-                async for evt in events:
+            try:
+                async for evt in inner:
                     if not listener["detached"]:
                         queue.put_nowait(evt)
+            finally:
+                # Close the turn's generator here, in its own task, so its
+                # cleanup runs now rather than whenever it is collected.
+                aclose = getattr(inner, "aclose", None)
+                if aclose is not None:
+                    await aclose()
         finally:
             if kind == "topic":
                 await publish_stream_ended(container_id)
