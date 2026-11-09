@@ -22,7 +22,7 @@ from sqlalchemy import delete, select, update
 from precursor.backend.db import SessionLocal, init_db
 from precursor.backend.models import AgentEventRecord, AgentRun, AgentSession
 from precursor.backend.schemas.agent import AgentEvent, AgentLiveThinking
-from precursor.backend.services.agents import manager as manager_mod
+from precursor.backend.services.agents import event_handling
 from precursor.backend.services.agents.event_normalizer import is_content_free, normalize_event
 from precursor.backend.services.agents.live_session import _LiveSession
 from precursor.backend.services.agents.live_stream import LiveStream
@@ -234,7 +234,7 @@ async def test_streaming_frames_feed_the_live_view_but_are_never_archived(
     async def _publish(**kwargs: Any) -> None:
         published.append(kwargs.get("agent_run_id"))
 
-    monkeypatch.setattr(manager_mod, "publish_agent_changed", _publish)
+    monkeypatch.setattr(event_handling, "publish_agent_changed", _publish)
 
     async def feed(*events: object) -> None:
         for event in events:

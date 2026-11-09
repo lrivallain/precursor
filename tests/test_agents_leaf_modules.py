@@ -24,12 +24,18 @@ _LEAF_MODULES = (
     # import it for type checking.
     "precursor.backend.services.agents.artifacts",
     "precursor.backend.services.agents.commands",
+    "precursor.backend.services.agents.event_handling",
+    "precursor.backend.services.agents.goal_loop",
     "precursor.backend.services.agents.mcp_config",
     "precursor.backend.services.agents.models",
     "precursor.backend.services.agents.permissions",
     "precursor.backend.services.agents.prompting",
+    "precursor.backend.services.agents.runs",
+    "precursor.backend.services.agents.session_pool",
     "precursor.backend.services.agents.timeline",
+    "precursor.backend.services.agents.turns",
     "precursor.backend.services.agents.usage",
+    "precursor.backend.services.agents.watchdog",
 )
 
 _REEXPORTS = {
