@@ -5,7 +5,9 @@ The Pydantic schemas in ``precursor/backend/schemas`` are the single source of
 truth for the shapes the API exchanges. This script turns the app's OpenAPI
 document into ``frontend/src/lib/generated/apiTypes.ts`` so the frontend reuses
 those shapes instead of re-declaring them by hand (``frontend/src/lib/types.ts``
-aliases them).
+aliases them). It also emits ``Operations``, a map of every route ("METHOD
+/path") to its path and query parameters, request body and response type, which
+the typed request helper in ``frontend/src/lib/apiClient.ts`` builds on.
 
 Response vs request shapes. Pydantic always serializes every field of a
 response, so a field with a default is still always present in the JSON the
@@ -127,6 +129,8 @@ class Renderer:
         kind = node.get("type")
         if isinstance(kind, list):
             return " | ".join(self.type_of({**node, "type": k}, request=request) for k in kind)
+        if kind == "string" and _is_binary(node):
+            return "Blob"
         if kind in PRIMITIVES:
             return PRIMITIVES[kind]
         if kind == "array":
@@ -187,6 +191,11 @@ class Renderer:
         return f"{prefix}export type {name} = {body};"
 
 
+def _is_binary(node: Schema) -> bool:
+    """An uploaded file (multipart): OpenAPI 3.1 and 3.0 spellings."""
+    return node.get("format") == "binary" or "contentMediaType" in node
+
+
 def _dedupe(items: Iterable[str]) -> list[str]:
     return list(dict.fromkeys(items))
 
@@ -208,6 +217,88 @@ def _doc(node: Any, indent: str) -> list[str]:
     return [f"{indent}/**", *(f"{indent} * {line}".rstrip() for line in lines), f"{indent} */"]
 
 
+# --- operations -------------------------------------------------------------
+
+METHODS = ("get", "post", "put", "patch", "delete")
+SUCCESS_CODES = ("200", "201", "202", "204")
+OPERATIONS_DOC = """\
+/**
+ * Every API operation, keyed by "METHOD /path" as the backend declares it.
+ * `path` and `query` hold the parameters, `body` the JSON request body, `form`
+ * a multipart one, and `response` what a success returns (`void` for 204).
+ * Optional members may be omitted; `lib/apiClient.ts` reads this map to type
+ * its `call()` helper.
+ */"""
+
+
+def _params_type(params: list[Schema], renderer: Renderer, indent: str) -> tuple[str, bool]:
+    """Render a parameter group as an object type; True when any is required."""
+    properties = {p["name"]: {**p.get("schema", {}), **_described(p)} for p in params}
+    required = [p["name"] for p in params if p.get("required")]
+    node = {"type": "object", "properties": properties, "required": required}
+    return renderer.object_type(node, request=True, indent=indent), bool(required)
+
+
+def _described(param: Schema) -> Schema:
+    text = param.get("description")
+    return {"description": text} if text else {}
+
+
+def _body_field(operation: Schema, renderer: Renderer, indent: str) -> str | None:
+    body = operation.get("requestBody")
+    if not isinstance(body, dict):
+        return None
+    content: Schema = body.get("content", {})
+    field = "body" if "application/json" in content else "form"
+    media: Schema = content.get("application/json") or next(iter(content.values()), {})
+    optional = "" if body.get("required") else "?"
+    value = renderer.type_of(media.get("schema"), request=True, indent=indent)
+    return f"{field}{optional}: {value}"
+
+
+def _response_type(operation: Schema, renderer: Renderer, indent: str) -> str:
+    responses: Schema = operation.get("responses", {})
+    code = next((c for c in SUCCESS_CODES if c in responses), None)
+    content: Schema = responses[code].get("content", {}) if code else {}
+    if code is None or not content:
+        return "void"
+    if "application/json" not in content:
+        return "string"
+    schema = content["application/json"].get("schema")
+    return renderer.type_of(schema, request=False, indent=indent)
+
+
+def operation_fields(operation: Schema, renderer: Renderer, indent: str) -> list[str]:
+    params: list[Schema] = operation.get("parameters", [])
+    fields: list[str] = []
+    for where in ("path", "query"):
+        group = [p for p in params if p.get("in") == where]
+        if group:
+            text, required = _params_type(group, renderer, indent)
+            fields.append(f"{where}{'' if required else '?'}: {text}")
+    body = _body_field(operation, renderer, indent)
+    if body is not None:
+        fields.append(body)
+    fields.append(f"response: {_response_type(operation, renderer, indent)}")
+    return fields
+
+
+def render_operations(openapi: Schema, renderer: Renderer) -> str:
+    lines = [OPERATIONS_DOC, "export interface Operations {"]
+    paths: dict[str, Schema] = openapi.get("paths", {})
+    for path in sorted(paths):
+        for method in METHODS:
+            operation = paths[path].get(method)
+            if not isinstance(operation, dict):
+                continue
+            lines.append(f"  {json.dumps(f'{method.upper()} {path}')}: {{")
+            for field in operation_fields(operation, renderer, "    "):
+                lines.append(f"    {field};")
+            lines.append("  };")
+    lines.append("}")
+    return "\n".join(lines)
+
+
 def render(openapi: Schema) -> str:
     schemas: dict[str, Schema] = openapi.get("components", {}).get("schemas", {})
     request_side, response_side = classify(openapi)
@@ -220,6 +311,7 @@ def render(openapi: Schema) -> str:
         blocks.append(renderer.declaration(name, node, request=is_request_only))
         if name in dual:
             blocks.append(renderer.declaration(f"{name}Input", node, request=True))
+    blocks.append(render_operations(openapi, renderer))
     return "\n\n".join(blocks) + "\n"
 
 
