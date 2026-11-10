@@ -1894,6 +1894,16 @@ export interface PluginUpgrade {
   version?: string | null;
 }
 
+export interface ProviderFieldChoice {
+  value: string;
+  label: string;
+}
+
+export interface ProviderFieldCondition {
+  field: string;
+  value: string;
+}
+
 export interface ProviderFieldRead {
   name: string;
   label: string;
@@ -1901,6 +1911,8 @@ export interface ProviderFieldRead {
   required: boolean;
   placeholder: string;
   help: string;
+  choices: ProviderFieldChoice[];
+  shown_when: ProviderFieldCondition | null;
 }
 
 export interface ProviderRead {
@@ -2138,6 +2150,9 @@ export interface SettingsPayload {
   issue_associations_enabled?: boolean | null;
   azure_speech_endpoint?: string | null;
   azure_speech_language?: string | null;
+  azure_speech_auth?: ("key" | "azure_cli") | null;
+  azure_speech_tenant?: string | null;
+  azure_speech_resource_id?: string | null;
   live_enabled?: boolean | null;
   live_fast_model?: string | null;
   live_reasoning_effort?: string | null;
@@ -2221,6 +2236,9 @@ export interface SettingsRead {
   llm_providers_present: Record<string, Record<string, boolean>>;
   azure_speech_endpoint: string;
   azure_speech_language: string;
+  azure_speech_auth: "key" | "azure_cli";
+  azure_speech_tenant: string;
+  azure_speech_resource_id: string;
   stt_azure_ready: boolean;
   live_enabled: boolean;
   live_fast_model: string;
@@ -2359,6 +2377,9 @@ export interface SpeakerRenameRequest {
 export interface SpeechTestRequest {
   endpoint: string;
   key?: string | null;
+  auth?: ("key" | "azure_cli") | null;
+  tenant?: string | null;
+  resource_id?: string | null;
 }
 
 export interface SpeechTestResult {

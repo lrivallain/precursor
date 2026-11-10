@@ -1,7 +1,7 @@
 import { Select } from "../Select";
 import { STT_LANGUAGES } from "./panelConfig";
 import type { Settings } from "../../lib/types";
-import type { SpeechSettings, SttTestState } from "./useSpeechSettings";
+import type { SpeechAuth, SpeechSettings, SttTestState } from "./useSpeechSettings";
 
 export function SpeechTab({ s, settings }: { s: SpeechSettings; settings: Settings | null }) {
   const {
@@ -9,6 +9,8 @@ export function SpeechTab({ s, settings }: { s: SpeechSettings; settings: Settin
     setAzureEndpoint,
     azureLanguage,
     setAzureLanguage,
+    azureAuth,
+    setAzureAuth,
     azureKey,
     setAzureKey,
     sttTest,
@@ -34,11 +36,12 @@ export function SpeechTab({ s, settings }: { s: SpeechSettings; settings: Settin
           setSttTest({ state: "idle" });
         }}
         placeholder="https://<name>.cognitiveservices.azure.com/"
-        className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
+        className={INPUT_CLASS}
       />
       <p className="text-[11px] text-muted mt-1">
         The resource endpoint URL from your Azure Speech / Cognitive
-        Services resource ("Keys and Endpoint").
+        Services resource ("Keys and Endpoint"). Azure CLI sign-in needs
+        its custom-domain endpoint, not a regional one.
       </p>
 
       <label className="block text-xs text-muted mt-4 mb-1">Language</label>
@@ -54,31 +57,30 @@ export function SpeechTab({ s, settings }: { s: SpeechSettings; settings: Settin
         current locale.
       </p>
 
-      <label className="block text-xs text-muted mt-4 mb-1">
-        Subscription key{" "}
-        {keyPresent && (
-          <span className="text-green-500">(configured)</span>
-        )}
-      </label>
-      <input
-        type="password"
-        value={azureKey}
-        onChange={(e) => {
-          setAzureKey(e.target.value);
+      <label className="block text-xs text-muted mt-4 mb-1">Sign in with</label>
+      <Select
+        value={azureAuth}
+        onChange={(v) => {
+          setAzureAuth(v as SpeechAuth);
           setSttTest({ state: "idle" });
         }}
-        placeholder={
-          keyPresent
-            ? "••••••••••••••••"
-            : "Azure Speech key"
-        }
-        className="w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
+        options={SPEECH_AUTH_OPTIONS}
+        ariaLabel="Azure Speech sign-in"
+        fullWidth
       />
-      <p className="text-[11px] text-muted mt-1">
-        Stored server-side and never returned. The browser only ever
-        receives a short-lived token minted from it. Leave blank to keep
-        the saved key.
-      </p>
+
+      {azureAuth === "azure_cli" ? (
+        <CliSignInFields s={s} />
+      ) : (
+        <KeyField
+          value={azureKey}
+          present={Boolean(keyPresent)}
+          onChange={(v) => {
+            setAzureKey(v);
+            setSttTest({ state: "idle" });
+          }}
+        />
+      )}
 
       <SttTestRow
         state={sttTest}
@@ -86,6 +88,91 @@ export function SpeechTab({ s, settings }: { s: SpeechSettings; settings: Settin
         onTest={() => void testStt()}
       />
     </section>
+  );
+}
+
+const SPEECH_AUTH_OPTIONS: ReadonlyArray<{ value: SpeechAuth; label: string }> = [
+  { value: "key", label: "Subscription key" },
+  { value: "azure_cli", label: "Azure CLI (az login)" },
+];
+
+const INPUT_CLASS =
+  "w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent";
+
+function KeyField({
+  value,
+  present,
+  onChange,
+}: {
+  value: string;
+  present: boolean;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <>
+      <label className="block text-xs text-muted mt-4 mb-1">
+        Subscription key{" "}
+        {present && <span className="text-green-500">(configured)</span>}
+      </label>
+      <input
+        type="password"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={present ? "••••••••••••••••" : "Azure Speech key"}
+        className={INPUT_CLASS}
+      />
+      <p className="text-[11px] text-muted mt-1">
+        Stored server-side and never returned. The browser only ever
+        receives a short-lived token minted from it. Leave blank to keep
+        the saved key.
+      </p>
+    </>
+  );
+}
+
+function CliSignInFields({ s }: { s: SpeechSettings }) {
+  const { azureTenant, setAzureTenant, azureResourceId, setAzureResourceId, setSttTest } = s;
+  return (
+    <>
+      <p className="text-[11px] text-muted mt-1">
+        Uses the account signed in with <code>az login</code> on the machine
+        running Precursor. It needs the <em>Cognitive Services Speech User</em>{" "}
+        role on the resource; the browser only receives a short-lived token.
+      </p>
+
+      <label className="block text-xs text-muted mt-4 mb-1">Tenant ID (optional)</label>
+      <input
+        type="text"
+        value={azureTenant}
+        onChange={(e) => {
+          setAzureTenant(e.target.value);
+          setSttTest({ state: "idle" });
+        }}
+        placeholder="CLI default tenant"
+        className={INPUT_CLASS}
+      />
+      <p className="text-[11px] text-muted mt-1">
+        Tenant ID or domain to sign in to. Leave blank for the Azure CLI's
+        current tenant.
+      </p>
+
+      <label className="block text-xs text-muted mt-4 mb-1">Resource ID (optional)</label>
+      <input
+        type="text"
+        value={azureResourceId}
+        onChange={(e) => {
+          setAzureResourceId(e.target.value);
+          setSttTest({ state: "idle" });
+        }}
+        placeholder="Found from the endpoint"
+        className={INPUT_CLASS}
+      />
+      <p className="text-[11px] text-muted mt-1">
+        /subscriptions/…/providers/Microsoft.CognitiveServices/accounts/&lt;name&gt;.
+        Leave blank to look it up with Azure Resource Graph from the
+        endpoint's custom domain.
+      </p>
+    </>
   );
 }
 

@@ -1005,7 +1005,11 @@ export type ModelCategory = string;
 export type ModelCategoryDef = Api.ModelCategoryDef;
 export type ModelCategories = Api.ModelCategories;
 
-export interface Settings {
+// Azure AI Speech: endpoint, language and sign-in (key or `az login`); the key is never echoed.
+type SpeechFields = "azure_speech_endpoint" | "azure_speech_language" | "azure_speech_auth"
+  | "azure_speech_tenant" | "azure_speech_resource_id";
+
+export interface Settings extends Pick<Api.SettingsRead, SpeechFields | "stt_azure_ready"> {
   theme: "light" | "dark" | "system";
   font_family: "system" | "opendyslexic" | "atkinson-hyperlegible" | "lexend";
   llm_model: string;
@@ -1031,10 +1035,6 @@ export interface Settings {
   model_fallbacks: ModelCategories;
   llm_providers: Record<string, Record<string, string>>;
   llm_providers_present: Record<string, Record<string, boolean>>;
-  // Azure AI Speech: configured endpoint + language + readiness (key never echoed).
-  azure_speech_endpoint: string;
-  azure_speech_language: string;
-  stt_azure_ready: boolean;
   // Live meeting assistant: enablement + model + reasoning effort for fast
   // analysis / Q&A. Empty model resolves to the default chat model.
   live_enabled: boolean;
@@ -1138,7 +1138,7 @@ export interface Settings {
   backup_last_error: string | null;
 }
 
-export interface SettingsUpdate {
+export interface SettingsUpdate extends Partial<Pick<Api.SettingsRead, SpeechFields>> {
   theme?: Settings["theme"];
   font_family?: Settings["font_family"];
   llm_model?: string;
@@ -1158,8 +1158,6 @@ export interface SettingsUpdate {
   llm_provider?: string;
   model_fallbacks?: ModelCategories;
   llm_providers?: Record<string, Record<string, string>>;
-  azure_speech_endpoint?: string;
-  azure_speech_language?: string;
   live_enabled?: boolean;
   live_fast_model?: string;
   live_reasoning_effort?: string;
@@ -1344,14 +1342,7 @@ export interface LLMModel {
   catalog_provider?: string | null;
 }
 
-export interface LLMProviderField {
-  name: string;
-  label: string;
-  secret: boolean;
-  required: boolean;
-  placeholder: string;
-  help: string;
-}
+export type LLMProviderField = Api.ProviderFieldRead;
 
 export interface LLMProviderSpec {
   id: string;

@@ -448,26 +448,6 @@ async def resolve_issue_associations_enabled(session: AsyncSession) -> bool:
     )
 
 
-async def resolve_azure_speech_key(session: AsyncSession) -> str:
-    """Effective Azure Speech key from the DB ``api_keys`` (Settings panel)."""
-    api_keys = await _get_db_value(session, "api_keys")
-    if isinstance(api_keys, dict):
-        key = api_keys.get("azure_speech_key")
-        if isinstance(key, str) and key.strip():
-            return key.strip()
-    return ""
-
-
-async def resolve_azure_speech_endpoint(session: AsyncSession) -> str:
-    """Effective Azure Speech endpoint URL from the DB (Settings panel)."""
-    return await resolve(session, SettingSpec("azure_speech_endpoint", _nonempty_str(), default=""))
-
-
-async def resolve_azure_speech_language(session: AsyncSession) -> str:
-    """Effective dictation language (BCP-47, e.g. ``en-US``); ``""`` => auto."""
-    return await resolve(session, SettingSpec("azure_speech_language", _nonempty_str(), default=""))
-
-
 async def resolve_workiq_tenant_id(session: AsyncSession) -> str:
     """Effective Microsoft Entra tenant GUID for the Agent 365 MCP endpoints.
 
@@ -482,13 +462,6 @@ async def resolve_workiq_tenant_id(session: AsyncSession) -> str:
             _nonempty_str(),
             default_factory=lambda: get_settings().workiq_tenant_id.strip(),
         ),
-    )
-
-
-async def azure_stt_ready(session: AsyncSession) -> bool:
-    """True when both an Azure Speech key and endpoint are configured."""
-    return bool(
-        await resolve_azure_speech_key(session) and await resolve_azure_speech_endpoint(session)
     )
 
 

@@ -1,4 +1,5 @@
 import type { LLMProviderSpec, ModelCategoryDef, ModelPreset, Settings } from "./types";
+import { shownProviderFields } from "./providerFields";
 
 export interface CatalogModel {
   id: string;
@@ -35,10 +36,11 @@ export function providerSetupIssue(settings: Settings | null, provider: LLMProvi
   if (provider.uses_github_token && settings.github_token_source === "none") {
     return "Connect GitHub in Settings > GitHub, then apply and refresh the provider.";
   }
-  const missing = provider.fields.filter((field) => field.required && (
+  const values = settings.llm_providers?.[provider.id];
+  const missing = shownProviderFields(provider.fields, values).filter((field) => field.required && (
     field.secret
       ? !settings.llm_providers_present?.[provider.id]?.[field.name]
-      : !settings.llm_providers?.[provider.id]?.[field.name]?.trim()
+      : !values?.[field.name]?.trim()
   ));
   return missing.length
     ? `Configure ${missing.map((field) => field.label).join(", ")} for ${provider.label}, then Apply & refresh models.`

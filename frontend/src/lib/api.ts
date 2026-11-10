@@ -966,8 +966,7 @@ export const api = {
   stt: {
     // Speech-to-text (Azure token broker)
     getToken: () => call("GET /api/stt/token"),
-    testConnection: (endpoint: string, key?: string) =>
-      call("POST /api/stt/test", { body: { endpoint, key: key || null } }),
+    testConnection: (body: Api.SpeechTestRequest) => call("POST /api/stt/test", { body }),
   },
 
   github: {

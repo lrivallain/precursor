@@ -1,0 +1,15 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "precursor-dev",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "exec uv run --frozen --no-sync precursor --dev --port \"${PORT:-8010}\" --strict-port --no-docs"
+      ],
+      "port": 8010,
+      "autoPort": true
+    }
+  ]
+}

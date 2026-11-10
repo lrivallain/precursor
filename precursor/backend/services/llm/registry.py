@@ -30,6 +30,10 @@ class ProviderField:
     required: bool = False
     placeholder: str = ""
     help: str = ""
+    # (value, label) options: the field is a dropdown, defaulting to the first.
+    choices: tuple[tuple[str, str], ...] = ()
+    # (field, value): only shown, and only used, while that field has that value.
+    shown_when: tuple[str, str] | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -52,15 +56,23 @@ class ProviderSpec:
     # client can discover. The mock would answer with canned text, and Azure
     # needs per-deployment wiring the endpoint can't express.
     openai_proxy: bool = False
+    # Values a stored config implies for fields it doesn't set (it predates
+    # them), so Settings shows what the provider will actually do.
+    implied: Callable[[dict[str, str]], dict[str, str]] = field(default=lambda _cfg: {})
+
+
+def _azure_auth(cfg: dict[str, str]) -> str:
+    # Before "Sign in with" existed, a missing key meant the Azure CLI.
+    return cfg.get("auth") or ("key" if cfg.get("key") else "azure_cli")
 
 
 def _build_azure(cfg: dict[str, str], _token: str) -> LLMProvider:
     return AzureFoundryProvider(
         endpoint=cfg.get("endpoint", ""),
-        api_key=cfg.get("key", ""),
+        api_key=cfg.get("key", "") if _azure_auth(cfg) == "key" else "",
         api_version=cfg.get("api_version", ""),
         deployment=cfg.get("deployment", ""),
-        tenant=cfg.get("tenant", ""),
+        tenant=cfg.get("tenant", "") if _azure_auth(cfg) == "azure_cli" else "",
     )
 
 
@@ -120,22 +132,29 @@ PROVIDERS: dict[str, ProviderSpec] = {
                 placeholder="2024-10-21",
             ),
             ProviderField(
+                name="auth",
+                label="Sign in with",
+                choices=(("azure_cli", "Azure CLI (az login)"), ("key", "API key")),
+            ),
+            ProviderField(
                 name="key",
-                label="API key (optional)",
+                label="API key",
                 secret=True,
-                help=(
-                    "Remove a saved key to sign in with the Azure CLI (`az login`) instead; "
-                    "the CLI's default tenant is used unless you set one below."
-                ),
+                shown_when=("auth", "key"),
             ),
             ProviderField(
                 name="tenant",
                 label="Tenant ID (optional)",
                 placeholder="CLI default tenant",
-                help="Only used with Azure CLI sign-in (no API key).",
+                help=(
+                    "Signs in with the account from `az login` on the machine running Precursor. "
+                    "Leave blank for the CLI's current tenant."
+                ),
+                shown_when=("auth", "azure_cli"),
             ),
         ),
         build=_build_azure,
+        implied=lambda cfg: {} if cfg.get("auth") else {"auth": _azure_auth(cfg)},
         discovers_models=False,
     ),
     "openai": ProviderSpec(
@@ -201,3 +220,20 @@ def provider_secret_fields(provider_id: str) -> set[str]:
     if spec is None:
         return set()
     return {f.name for f in spec.fields if f.secret}
+
+
+def with_implied_values(
+    stored: object, public: dict[str, dict[str, str]]
+) -> dict[str, dict[str, str]]:
+    """``public`` (redacted) provider configs plus the values ``stored`` implies."""
+    if not isinstance(stored, dict):
+        return public
+    out = dict(public)
+    for provider_id, cfg in stored.items():
+        spec = PROVIDERS.get(provider_id)
+        if spec is None or not isinstance(cfg, dict):
+            continue
+        implied = spec.implied({k: v for k, v in cfg.items() if isinstance(v, str)})
+        if implied:
+            out[provider_id] = {**implied, **out.get(provider_id, {})}
+    return out

@@ -9,7 +9,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.db import get_session
-from precursor.backend.schemas.llm import LLMModelRead, ProviderFieldRead, ProviderRead
+from precursor.backend.schemas.llm import (
+    LLMModelRead,
+    ProviderFieldChoice,
+    ProviderFieldCondition,
+    ProviderFieldRead,
+    ProviderRead,
+)
 from precursor.backend.services.app_settings import resolve_mock_provider_enabled
 from precursor.backend.services.llm import get_llm_provider
 from precursor.backend.services.llm.registry import selectable_providers
@@ -39,6 +45,10 @@ async def list_providers(
                     required=f.required,
                     placeholder=f.placeholder,
                     help=f.help,
+                    choices=[ProviderFieldChoice(value=v, label=lbl) for v, lbl in f.choices],
+                    shown_when=ProviderFieldCondition(field=f.shown_when[0], value=f.shown_when[1])
+                    if f.shown_when
+                    else None,
                 )
                 for f in spec.fields
             ],

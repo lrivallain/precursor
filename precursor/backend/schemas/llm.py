@@ -17,6 +17,16 @@ class LLMModelRead(BaseModel):
     catalog_provider: str | None = None
 
 
+class ProviderFieldChoice(BaseModel):
+    value: str
+    label: str
+
+
+class ProviderFieldCondition(BaseModel):
+    field: str
+    value: str
+
+
 class ProviderFieldRead(BaseModel):
     name: str
     label: str
@@ -24,6 +34,10 @@ class ProviderFieldRead(BaseModel):
     required: bool = False
     placeholder: str = ""
     help: str = ""
+    # Non-empty => a dropdown of these options; an unset value means the first.
+    choices: list[ProviderFieldChoice] = []
+    # Set => the field is only shown while another field has the given value.
+    shown_when: ProviderFieldCondition | None = None
 
 
 class ProviderRead(BaseModel):
