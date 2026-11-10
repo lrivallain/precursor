@@ -10,6 +10,7 @@ import pytest
 from openai import APIStatusError
 
 from precursor.backend.routers import llm as llm_router
+from precursor.backend.services import azure_cli
 from precursor.backend.services.llm import azure_foundry
 from precursor.backend.services.llm.base import LLMError, TextDeltaEvent
 from precursor.backend.services.llm.registry import PROVIDERS
@@ -137,79 +138,16 @@ async def test_tool_chat_routes_to_selected_deployment(
     ]
 
 
-class _FakeProc:
-    def __init__(self, stdout: bytes, stderr: bytes = b"", returncode: int = 0) -> None:
-        self._out = (stdout, stderr)
-        self.returncode = returncode
-
-    async def communicate(self) -> tuple[bytes, bytes]:
-        return self._out
-
-
-def _az_output(token: str = "tok", expires_on: float | None = None) -> bytes:
-    import json
-    import time
-
-    return json.dumps(
-        {"accessToken": token, "expires_on": expires_on or time.time() + 3600}
-    ).encode()
-
-
-async def test_cli_token_uses_default_tenant_and_caches(monkeypatch: pytest.MonkeyPatch) -> None:
-    exec_mock = AsyncMock(return_value=_FakeProc(_az_output()))
-    monkeypatch.setattr(azure_foundry.asyncio, "create_subprocess_exec", exec_mock)
-    provider = azure_foundry.AzureCliTokenProvider("")
-    assert await provider() == "tok"
-    assert await provider() == "tok"
-    assert exec_mock.await_count == 1
-    args = exec_mock.await_args.args
-    assert args[0] == "az"
-    assert "--tenant" not in args
-    assert azure_foundry.TOKEN_RESOURCE in args
-
-
-async def test_cli_token_passes_configured_tenant(monkeypatch: pytest.MonkeyPatch) -> None:
-    exec_mock = AsyncMock(return_value=_FakeProc(_az_output()))
-    monkeypatch.setattr(azure_foundry.asyncio, "create_subprocess_exec", exec_mock)
-    await azure_foundry.AzureCliTokenProvider(" contoso.onmicrosoft.com ")()
-    args = exec_mock.await_args.args
-    assert args[args.index("--tenant") + 1] == "contoso.onmicrosoft.com"
-
-
-async def test_cli_token_refreshes_when_near_expiry(monkeypatch: pytest.MonkeyPatch) -> None:
-    import time
-
-    exec_mock = AsyncMock(return_value=_FakeProc(_az_output("old", time.time() + 60)))
-    monkeypatch.setattr(azure_foundry.asyncio, "create_subprocess_exec", exec_mock)
-    provider = azure_foundry.AzureCliTokenProvider()
-    await provider()
-    exec_mock.return_value = _FakeProc(_az_output("new"))
-    assert await provider() == "new"
-
-
 async def test_cli_token_errors_are_llm_errors(monkeypatch: pytest.MonkeyPatch) -> None:
-    from precursor.backend.services.llm.base import LLMError
-
+    # The chat UI shows an LLMError's message as is, so Foundry narrows the CLI's errors.
     monkeypatch.setattr(
-        azure_foundry.asyncio,
+        azure_cli.asyncio,
         "create_subprocess_exec",
         AsyncMock(side_effect=FileNotFoundError),
     )
-    with pytest.raises(LLMError, match="Azure CLI not found"):
+    with pytest.raises(LLMError, match="Azure CLI not found") as caught:
         await azure_foundry.AzureCliTokenProvider()()
-    monkeypatch.setattr(
-        azure_foundry.asyncio,
-        "create_subprocess_exec",
-        AsyncMock(return_value=_FakeProc(b"", b"ERROR: Please run 'az login'\n", 1)),
-    )
-    with pytest.raises(LLMError, match="az login"):
-        await azure_foundry.AzureCliTokenProvider("t1")()
-
-
-@pytest.mark.parametrize("tenant", ["--foo", "a b", "x;y"])
-def test_invalid_tenant_is_rejected(tenant: str) -> None:
-    with pytest.raises(ValueError):
-        azure_foundry.AzureCliTokenProvider(tenant)
+    assert isinstance(caught.value, azure_foundry.AzureCliError)
 
 
 def test_client_auth_follows_api_key_presence(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -233,6 +171,66 @@ def test_client_auth_follows_api_key_presence(monkeypatch: pytest.MonkeyPatch) -
         azure_foundry.DEFAULT_API_VERSION,
         azure_foundry.RESPONSES_API_VERSION,
     ]
+
+
+@pytest.mark.parametrize(
+    ("cfg", "uses_key", "tenant"),
+    [
+        # "Sign in with" decides; the other mode's field is ignored, not cleared.
+        ({"auth": "azure_cli", "key": "secret", "tenant": "t1"}, False, "t1"),
+        ({"auth": "key", "key": "secret", "tenant": "t1"}, True, None),
+        # Configs saved before the selector: a key means the key, none means the CLI.
+        ({"key": "secret"}, True, None),
+        ({"tenant": "t1"}, False, "t1"),
+    ],
+)
+def test_sign_in_choice_picks_the_credential(
+    cfg: dict[str, str], uses_key: bool, tenant: str | None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        azure_foundry, "AsyncAzureOpenAI", lambda **kw: seen.append(kw) or SimpleNamespace()
+    )
+    PROVIDERS["azure_foundry"].build({"endpoint": "https://example.openai.azure.com", **cfg}, "")
+    if uses_key:
+        assert seen[0]["api_key"] == "secret"
+    else:
+        credential = seen[0]["azure_ad_token_provider"]
+        assert isinstance(credential, azure_foundry.AzureCliTokenProvider)
+        assert credential.tenant == tenant
+
+
+def test_settings_show_the_sign_in_a_stored_config_implies() -> None:
+    from precursor.backend.services.llm.registry import with_implied_values
+
+    stored = {
+        "azure_foundry": {"endpoint": "https://e", "key": "secret"},
+        "openai": {"key": "sk"},
+    }
+    public = {"azure_foundry": {"endpoint": "https://e"}}
+    assert with_implied_values(stored, public) == {
+        "azure_foundry": {"auth": "key", "endpoint": "https://e"},
+    }
+    explicit = {"azure_foundry": {"auth": "azure_cli", "key": "secret"}}
+    assert with_implied_values(explicit, {"azure_foundry": {"auth": "azure_cli"}}) == {
+        "azure_foundry": {"auth": "azure_cli"}
+    }
+    assert with_implied_values({"azure_foundry": {}}, {}) == {
+        "azure_foundry": {"auth": "azure_cli"}
+    }
+
+
+async def test_provider_fields_describe_the_sign_in_selector(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(llm_router, "resolve_mock_provider_enabled", AsyncMock(return_value=True))
+    specs = await llm_router.list_providers(session=SimpleNamespace())
+    spec = next(spec for spec in specs if spec.id == "azure_foundry")
+    fields = {f.name: f.model_dump() for f in spec.fields}
+    assert [c["value"] for c in fields["auth"]["choices"]] == ["azure_cli", "key"]
+    assert fields["key"]["shown_when"] == {"field": "auth", "value": "key"}
+    assert fields["tenant"]["shown_when"] == {"field": "auth", "value": "azure_cli"}
+    assert fields["endpoint"]["shown_when"] is None
 
 
 @pytest.mark.parametrize("suffix", ["/openai/v1", "/openai/v1/"])

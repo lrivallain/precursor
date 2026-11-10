@@ -13,6 +13,7 @@ Theme = Literal["light", "dark", "system"]
 # see frontend/src/lib/font.ts for the matching CSS class per id.
 FontFamily = Literal["system", "opendyslexic", "atkinson-hyperlegible", "lexend"]
 GitHubTokenSource = Literal["env", "gh-cli", "settings", "none"]
+SpeechAuth = Literal["key", "azure_cli"]
 
 
 class SettingsPayload(BaseModel):
@@ -58,6 +59,12 @@ class SettingsPayload(BaseModel):
     # `azure_speech_key`). Endpoint is the resource URL; language is BCP-47.
     azure_speech_endpoint: str | None = None
     azure_speech_language: str | None = None
+    # "key" (subscription key) or "azure_cli" (the `az login` sign-in, in
+    # `azure_speech_tenant` or the CLI's default tenant). The resource id is
+    # discovered from the endpoint when blank.
+    azure_speech_auth: SpeechAuth | None = None
+    azure_speech_tenant: str | None = None
+    azure_speech_resource_id: str | None = None
     # Live meeting assistant: enablement + model + reasoning effort (fast
     # analysis / Q&A).
     live_enabled: bool | None = None
@@ -187,6 +194,9 @@ class SettingsRead(BaseModel):
     # a readiness flag the composer uses to choose the STT provider.
     azure_speech_endpoint: str = ""
     azure_speech_language: str = ""
+    azure_speech_auth: SpeechAuth = "key"
+    azure_speech_tenant: str = ""
+    azure_speech_resource_id: str = ""
     stt_azure_ready: bool = False
     # Live meeting assistant: enablement + model + reasoning effort (fast
     # analysis / Q&A). Empty model resolves to the default chat model.

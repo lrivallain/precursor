@@ -97,15 +97,22 @@ names, not underlying model catalogue names: Precursor does not discover or
 verify them against Azure, and incorrect names fail when used. Manual model-id
 entry remains available.
 
-**Authentication.** Enter an **API key**, or leave it empty to sign in with the
-Azure CLI instead (to switch an already-saved key over, click **Remove** next to
-its *(configured)* label, then **Save**): run `az login` once, and Precursor requests Entra ID tokens
-from `az account get-access-token` (cached and refreshed automatically). Set
-**Tenant ID** to use a specific tenant; if it is empty, the Azure CLI's default
-tenant is used. The tenant is ignored when an API key is set. The `az` command
-must be on the `PATH` of the machine running Precursor, and your identity needs
-an Azure OpenAI data-plane role (for example *Cognitive Services OpenAI User*)
-on the resource.
+**Authentication.** Pick how Precursor signs in under **Sign in with**, as on
+the Speech-to-text tab:
+
+- **Azure CLI (`az login`)**, the default: run `az login` once, and Precursor
+  requests Entra ID tokens from `az account get-access-token` (cached and
+  refreshed automatically). Set **Tenant ID** to use a specific tenant; if it is
+  empty, the Azure CLI's current tenant is used. The `az` command must be on
+  the `PATH` of the machine running Precursor, and your identity needs an Azure
+  OpenAI data-plane role (for example *Cognitive Services OpenAI User*) on the
+  resource.
+- **API key**: enter the resource key.
+
+Only the chosen method's field is shown and used. A saved key stays stored while
+you use the Azure CLI; switch back to **API key** and click **Remove** next to its
+*(configured)* label to delete it. Configurations saved before the selector
+existed keep working: a saved key means **API key**, no key means **Azure CLI**.
 
 **Endpoint styles.** Both Azure OpenAI endpoints
 (`https://<resource>.openai.azure.com`) and Foundry "v1" endpoints
@@ -356,11 +363,25 @@ this order:
 ## Speech-to-text (Live sessions)
 
 The [live meeting assistant](/features/live-sessions) transcribes audio with
-**Azure AI Speech**. Set a Speech **key** and **endpoint** under
-**Settings → Speech-to-text**. Until then, live sessions can be created but the
-**Record** button stays disabled. Audio streams directly from the browser using a
-short-lived token minted by the backend — the subscription key never reaches the
-browser, and raw audio is never stored.
+**Azure AI Speech**. Set the resource **endpoint** under
+**Settings → Speech-to-text** and choose how Precursor signs in to it. Until
+then, live sessions can be created but the **Record** button stays disabled.
+
+- **Subscription key**: paste the resource key.
+- **Azure CLI (`az login`)**: no key. Precursor requests Microsoft Entra ID
+  tokens from the Azure CLI signed in on the machine that runs it. By default it
+  uses the CLI's current tenant. To use another tenant, enter its ID or domain
+  under **Tenant ID**. Entra ID needs the resource's **custom-domain** endpoint
+  (`https://<name>.cognitiveservices.azure.com`); regional endpoints don't
+  support it. The signed-in account needs the **Cognitive Services Speech User**
+  role on the resource. Precursor finds the resource's ID with Azure Resource
+  Graph from the endpoint's subdomain. If your account can't read the resource
+  there, paste its **Resource ID** (`/subscriptions/…/accounts/<name>`).
+
+**Test connection** checks the values in the form before you save them. Either
+way, audio streams directly from the browser using a short-lived token minted
+by the backend. No key or CLI credential reaches the browser, and raw audio is
+never stored.
 
 ## Other settings areas
 

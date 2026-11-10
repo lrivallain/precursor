@@ -7,7 +7,8 @@ summary to a topic. Audio is transcribed in the browser via Azure Speech and
 
 ## Prerequisites
 
-Transcription uses **Azure AI Speech**. Set a Speech **key** and **endpoint** in
+Transcription uses **Azure AI Speech**. Set a Speech **endpoint** and either a
+**key** or **Azure CLI** sign-in (`az login`, optionally in a given tenant) in
 *Settings → Speech*. Until then, sessions can be created but the **Record**
 button stays disabled.
 

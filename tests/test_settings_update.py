@@ -165,5 +165,24 @@ def test_llm_providers_merge_per_field_and_an_empty_value_clears_it() -> None:
         body = client.put(
             "/api/settings", json={"llm_providers": {"azure_foundry": {"deployment": ""}}}
         ).json()
-        assert body["llm_providers"]["azure_foundry"] == {"endpoint": "https://e"}
+        # "auth" isn't stored: it's what the saved key implies (see "Sign in with").
+        assert body["llm_providers"]["azure_foundry"] == {"endpoint": "https://e", "auth": "key"}
         assert body["llm_providers_present"]["azure_foundry"] == {"key": True}
+
+
+def test_speech_can_sign_in_with_the_azure_cli_instead_of_a_key() -> None:
+    with TestClient(create_app()) as client:
+        body = client.put(
+            "/api/settings", json={"azure_speech_endpoint": "https://s.cognitiveservices.azure.com"}
+        ).json()
+        assert body["azure_speech_auth"] == "key"
+        assert body["stt_azure_ready"] is False
+        body = client.put(
+            "/api/settings",
+            json={"azure_speech_auth": "azure_cli", "azure_speech_tenant": " contoso "},
+        ).json()
+        assert body["azure_speech_auth"] == "azure_cli"
+        assert body["azure_speech_tenant"] == "contoso"
+        assert body["azure_speech_resource_id"] == ""
+        assert body["stt_azure_ready"] is True
+        assert client.put("/api/settings", json={"azure_speech_auth": "nope"}).status_code == 422

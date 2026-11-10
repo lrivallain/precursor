@@ -1,5 +1,7 @@
+import { providerFieldValue, shownProviderFields } from "../../lib/providerFields";
 import type { LLMProviderField } from "../../lib/types";
 import { DeploymentNamesInput } from "../DeploymentNamesInput";
+import { Select } from "../Select";
 import { secretMarker } from "./modelSettings";
 import type { ModelSettings } from "./useModelSettings";
 
@@ -39,7 +41,7 @@ export function ProviderSetup({ m }: { m: ModelSettings }) {
   if (spec.fields.length === 0) return null;
   return (
     <div data-llm-provider-config={m.provider} className="mt-3 space-y-3 p-3 rounded border border-border bg-surface">
-      {spec.fields.map((f) => (
+      {shownProviderFields(spec.fields, m.providerConfig[m.provider]).map((f) => (
         <div key={f.name}>
           <ProviderField m={m} field={f} />
           {f.help && <p className="text-[11px] text-muted mt-1">{f.help}</p>}
@@ -55,9 +57,23 @@ export function ProviderSetup({ m }: { m: ModelSettings }) {
 
 function ProviderField({ m, field: f }: { m: ModelSettings; field: LLMProviderField }) {
   const { provider } = m;
-  const value = m.providerConfig[provider]?.[f.name] ?? "";
+  const value = providerFieldValue(f, m.providerConfig[provider]);
   if (provider === "azure_foundry" && f.name === "deployment") {
     return <DeploymentNamesInput value={value} onChange={(next) => m.editField(f.name, next)} />;
+  }
+  if (f.choices.length > 0) {
+    return (
+      <>
+        <label className="block text-xs text-muted mb-1">{f.label}</label>
+        <Select
+          value={value}
+          onChange={(next) => m.editField(f.name, next)}
+          options={f.choices}
+          ariaLabel={f.label}
+          fullWidth
+        />
+      </>
+    );
   }
   const stored = f.secret && Boolean(m.settings?.llm_providers_present?.[provider]?.[f.name]);
   return (

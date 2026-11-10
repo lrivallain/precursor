@@ -50,9 +50,17 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **Azure AI Speech can sign in with the Azure CLI.** Under **Settings →
+  Speech-to-text**, choose **Azure CLI (`az login`)** instead of a subscription
+  key. Precursor uses Entra ID tokens from the CLI's current tenant, or from a
+  tenant you enter. The resource needs a custom-domain endpoint. Its resource
+  ID is looked up automatically, or you can enter it. Azure AI Foundry gets
+  the same **Sign in with** selector in **Settings → Model**: only the chosen
+  method's field (API key, or Tenant ID) is shown and used, so a saved key no
+  longer has to be removed to switch to `az login`.
 - **Remove a saved provider key.** Secret fields in **Settings → Model** now have a
   **Remove** link (with **Undo**) next to *(configured)*, so a stored API key can
-  be deleted, for example to switch Azure AI Foundry to Azure CLI sign-in.
+  be deleted.
 - **Azure CLI sign-in for Azure AI Foundry.** Leave the API key empty to
   authenticate with `az login`, optionally against a custom **Tenant ID**
   (otherwise the CLI's default tenant). The API key is no longer required.

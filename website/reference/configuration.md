@@ -21,9 +21,10 @@ Azure AI Foundry's runtime **Deployment names** setting adds names individually
 as removable bubbles on the same endpoint, sharing its key and API version. The persisted
 `llm_providers.azure_foundry.deployment` string also accepts a single name for
 backward compatibility and stores multiple names separated by commas.
-The same provider config accepts an optional `tenant`; with no `key`, requests
-authenticate through the Azure CLI (`az login`) using that tenant, or the CLI's
-default tenant when unset.
+The same provider config takes `auth`: `azure_cli` signs in through the Azure CLI
+(`az login`), in the optional `tenant` or the CLI's default tenant; `key` uses
+`key`. When `auth` is unset (configs saved before it existed), a stored `key`
+means `key` and no key means `azure_cli`.
 See [Connecting a model](/guide/configuration#connecting-a-model).
 
 Chats/topics store an optional `llm_selection` alongside their metadata:

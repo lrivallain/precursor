@@ -24,7 +24,6 @@ from precursor.backend.services.app_settings import (
     DEFAULT_LLM_REASONING_EFFORT,
     DEFAULT_MAX_TOOL_ROUNDS,
     MAX_TOOL_ROUNDS_CEILING,
-    azure_stt_ready,
     redact_llm_providers,
     resolve_agents_approval_policy,
     resolve_agents_context_tier,
@@ -34,8 +33,6 @@ from precursor.backend.services.app_settings import (
     resolve_agents_reasoning_effort,
     resolve_agents_system_prompt,
     resolve_agents_watchdog_timeout,
-    resolve_azure_speech_endpoint,
-    resolve_azure_speech_language,
     resolve_chat_approval_policy,
     resolve_iq_ask_model,
     resolve_iq_ask_provider,
@@ -59,6 +56,7 @@ from precursor.backend.services.app_settings import (
 from precursor.backend.services.backup import resolve_backup_status, run_backup
 from precursor.backend.services.cmd_runner import docker_available
 from precursor.backend.services.github_auth import github_token_source
+from precursor.backend.services.llm.registry import with_implied_values
 from precursor.backend.services.mcp.precursor_server import (
     http_endpoint_url,
     is_loopback_host,
@@ -78,6 +76,10 @@ from precursor.backend.services.settings_update import (
     normalise_settings_update,
 )
 from precursor.backend.services.settings_update import load_stored_settings as _load_all
+from precursor.backend.services.speech_settings import (
+    resolve_azure_speech_language,
+    resolve_speech_config,
+)
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -192,15 +194,20 @@ async def _iq_block(session: AsyncSession) -> dict[str, Any]:
 
 
 async def _stt_block(session: AsyncSession) -> dict[str, Any]:
+    speech = await resolve_speech_config(session)
     return {
-        "azure_speech_endpoint": await resolve_azure_speech_endpoint(session),
+        "azure_speech_endpoint": speech.endpoint,
         "azure_speech_language": await resolve_azure_speech_language(session),
-        "stt_azure_ready": await azure_stt_ready(session),
+        "azure_speech_auth": speech.auth,
+        "azure_speech_tenant": speech.tenant,
+        "azure_speech_resource_id": speech.resource_id,
+        "stt_azure_ready": speech.ready,
     }
 
 
 async def _llm_block(session: AsyncSession, data: dict[str, Any]) -> dict[str, Any]:
     public, present = redact_llm_providers(data.get("llm_providers"))
+    public = with_implied_values(data.get("llm_providers"), public)
     return {
         "github_token_source": await github_token_source(session),
         "llm_provider": await resolve_llm_provider(session),

@@ -13,9 +13,11 @@ Speech** and **never stored** — only the transcript and derived insights are k
 
 ## Prerequisites
 
-Transcription uses **Azure AI Speech**. Set a Speech **key** and **endpoint**
-under **Settings → Speech-to-text**. Until then, sessions can be created but the
-**Record** button stays disabled.
+Transcription uses **Azure AI Speech**. Set the Speech **endpoint** under
+**Settings → Speech-to-text**, then either a subscription **key** or sign-in
+with the **Azure CLI** (`az login`, in the CLI's tenant or one you set; see
+[Speech-to-text configuration](/guide/configuration#speech-to-text-live-sessions)).
+Until then, sessions can be created but the **Record** button stays disabled.
 
 ## Capturing meeting audio
 
@@ -250,6 +252,7 @@ on demand and compacts the database afterwards.
 ## Privacy
 
 Audio is streamed directly from the browser to Azure Speech using a short-lived
-token minted by the backend — the subscription key **never reaches the browser**,
+token minted by the backend — the subscription key or Azure CLI credential
+**never reaches the browser**,
 and raw audio is **never persisted**. Only the finalized transcript (and derived
 insights) are stored.

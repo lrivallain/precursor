@@ -30,11 +30,8 @@ tenant, and hands the SDK a refreshable Entra ID token.
 
 from __future__ import annotations
 
-import asyncio
-import json
 import os
 import re
-import time
 from collections.abc import AsyncIterator, Mapping, Sequence
 from typing import Any, Literal
 from urllib.parse import urlparse
@@ -42,6 +39,7 @@ from urllib.parse import urlparse
 from anthropic import AsyncAnthropic, AsyncAnthropicFoundry
 from openai import AsyncAzureOpenAI, AsyncOpenAI
 
+from precursor.backend.services import azure_cli
 from precursor.backend.services.llm._anthropic_messages import stream_anthropic_tools
 from precursor.backend.services.llm._openai_compat import (
     embed_openai,
@@ -60,12 +58,8 @@ from precursor.backend.services.llm.base import (
 
 DEFAULT_API_VERSION = "2024-10-21"
 RESPONSES_API_VERSION = "2025-04-01-preview"
-TOKEN_RESOURCE = "https://cognitiveservices.azure.com"
-_TOKEN_TIMEOUT_SECONDS = 30.0
-_REFRESH_MARGIN_SECONDS = 300.0
-_FALLBACK_TTL_SECONDS = 300.0
+TOKEN_RESOURCE = azure_cli.COGNITIVE_SERVICES_RESOURCE
 _V1_ENDPOINT_RE = re.compile(r"/openai/v1/?$", re.IGNORECASE)
-_TENANT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 Surface = Literal["chat", "responses", "messages"]
@@ -116,71 +110,12 @@ def is_claude_deployment(name: str) -> bool:
     return "claude" in name.lower()
 
 
-class AzureCliError(LLMError):
-    """The Azure CLI could not supply a token."""
+class AzureCliError(LLMError, azure_cli.AzureCliError):
+    """The Azure CLI could not supply a token (shown to the user as is)."""
 
 
-class AzureCliTokenProvider:
-    """Async bearer-token source backed by ``az account get-access-token``.
-
-    An empty ``tenant`` lets the CLI use its default tenant. Tokens are cached
-    until shortly before they expire so concurrent requests share one CLI call.
-    """
-
-    def __init__(self, tenant: str = "") -> None:
-        tenant = tenant.strip()
-        if tenant and not _TENANT_RE.match(tenant):
-            raise ValueError("Invalid Azure tenant.")
-        self._tenant = tenant
-        self._token = ""
-        self._expires_at = 0.0
-        self._lock = asyncio.Lock()
-
-    async def __call__(self) -> str:
-        async with self._lock:
-            if self._token and time.time() < self._expires_at - _REFRESH_MARGIN_SECONDS:
-                return self._token
-            self._token, self._expires_at = await self._fetch()
-            return self._token
-
-    async def _fetch(self) -> tuple[str, float]:
-        args = ["account", "get-access-token", "--resource", TOKEN_RESOURCE, "--output", "json"]
-        if self._tenant:
-            args += ["--tenant", self._tenant]
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "az",
-                *args,
-                stdin=asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-        except FileNotFoundError:
-            raise AzureCliError(
-                "Azure CLI not found. Install it and run `az login`, or set an API key."
-            ) from None
-        try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), _TOKEN_TIMEOUT_SECONDS)
-        except TimeoutError:
-            proc.kill()
-            await proc.wait()
-            raise AzureCliError("Azure CLI timed out while fetching an access token.") from None
-        if proc.returncode != 0:
-            detail = stderr.decode(errors="replace").strip().splitlines()
-            hint = f" ({detail[-1]})" if detail else ""
-            where = f" for tenant {self._tenant}" if self._tenant else ""
-            raise AzureCliError(f"Azure CLI could not get a token{where}; run `az login`.{hint}")
-        try:
-            payload = json.loads(stdout)
-            token = str(payload["accessToken"])
-        except (ValueError, KeyError, TypeError):
-            raise AzureCliError("Azure CLI returned an unreadable access token response.") from None
-        expires = payload.get("expires_on")
-        try:
-            expires_at = float(expires)
-        except (TypeError, ValueError):
-            expires_at = time.time() + _FALLBACK_TTL_SECONDS + _REFRESH_MARGIN_SECONDS
-        return token, expires_at
+class AzureCliTokenProvider(azure_cli.AzureCliTokenProvider):
+    error = AzureCliError
 
 
 class AzureFoundryProvider:
