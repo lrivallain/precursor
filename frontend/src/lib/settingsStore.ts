@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { api } from "./api";
 import { VersionedStore, useStoreVersion } from "./externalStore";
+import { m365Enabled } from "./m365";
 import type { Settings } from "./types";
 
 class SettingsStore extends VersionedStore {
@@ -73,4 +74,9 @@ export function useSettingsReady(): boolean {
     void settingsStore.ensureLoaded();
   }, []);
   return settingsStore.isSettled();
+}
+
+/** Whether M365-backed features (agenda, Teams transcripts) should show. */
+export function useM365Enabled(): boolean {
+  return m365Enabled(useSettings());
 }
