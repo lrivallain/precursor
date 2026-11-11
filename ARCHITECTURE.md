@@ -81,6 +81,7 @@ Conventions that keep this reusable:
 | An async action with a busy flag and an inline error | `useBusyAction()` | `lib/useBusyAction.ts` |
 | A "Copied!" style feedback that clears itself | `useFlash(ms)` | `lib/useFlash.ts` |
 | Agent timeline rows, exchanges and folds | `buildRows`, `buildCockpitTimeline` | `lib/agentWorkflow.ts`, `lib/agentCockpitTimeline.ts` |
+| The M365 agenda (WorkIQ) and its Past / Current & upcoming list; hide M365 surfaces when WorkIQ is off | `useAgenda()`, `MeetingAgendaList`, `useM365Enabled()` | `lib/useAgenda.ts`, `components/MeetingAgendaList.tsx`, `lib/settingsStore.ts` |
 | A settings tab | a component in `components/settings/` taking `{ s }` from its own `use<Tab>Settings` hook, called in `SettingsPanel` (only the active tab is mounted); the hook returns a `SettingsSection` (`hydrate`, `payload`, `snapshot`, `onSaved`) that `useSettingsForm` merges into the one Save and the unsaved-changes check | `components/settings/settingsSection.ts`, `components/settings/useSettingsForm.ts` |
 
 Conventions that keep this reusable:

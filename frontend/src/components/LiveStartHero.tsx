@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { CalendarClock, History, Loader2, Radio, RefreshCw, Users } from "lucide-react";
+import { useMemo, useState } from "react";
+import { CalendarClock, Loader2, Radio, RefreshCw, Users } from "lucide-react";
 import type {
   AgendaEvent,
   Collection,
@@ -7,15 +7,16 @@ import type {
   MeetingSessionCreate,
   TopicNode,
 } from "../lib/types";
-import { useM365Enabled, useSettings } from "../lib/settingsStore";
+import { useSettings } from "../lib/settingsStore";
+import { useAgenda } from "../lib/useAgenda";
 import { api } from "../lib/api";
 import {
   formatMeetingWhen,
   isOngoingMeeting,
-  partitionMeetings,
 } from "../lib/agenda";
 import { TopicPicker } from "./TopicPicker";
 import { Select } from "./Select";
+import { MeetingAgendaList } from "./MeetingAgendaList";
 
 // Common BCP-47 tags offered in the create form. An empty value means "use the
 // configured Azure Speech default"; the meeting can still be switched later.
@@ -61,7 +62,6 @@ export function LiveStartHero({
   const settings = useSettings();
   const sttReady = settings?.stt_azure_ready ?? false;
   const defaultLang = settings?.azure_speech_language || "";
-  const m365 = useM365Enabled();
 
   const [title, setTitle] = useState("");
   const [topicId, setTopicId] = useState<number | null>(null);
@@ -71,10 +71,16 @@ export function LiveStartHero({
 
   // Current & upcoming meetings from the user's M365 agenda (via WorkIQ), the
   // same source the in-session Context tab uses to link a meeting.
-  const [events, setEvents] = useState<AgendaEvent[] | null>(null);
-  const [agendaLoading, setAgendaLoading] = useState(false);
-  const [agendaDetail, setAgendaDetail] = useState<string | null>(null);
   const [startingFrom, setStartingFrom] = useState<string | null>(null);
+  const {
+    enabled: m365,
+    events,
+    past,
+    upcoming,
+    loading: agendaLoading,
+    detail: agendaDetail,
+    reload: loadAgenda,
+  } = useAgenda();
 
   const allTopics = useMemo(() => flattenTopicNodes(topics), [topics]);
   const languageOptions = useMemo(
@@ -87,47 +93,9 @@ export function LiveStartHero({
     [defaultLang],
   );
 
-  const { past, upcoming } = useMemo(
-    () => partitionMeetings(events ?? []),
-    [events],
-  );
   const hasMeetings = past.length > 0 || upcoming.length > 0;
 
-  // Auto-scroll the meeting list so the "Now" boundary (the Current & upcoming
-  // marker) sits at the top: past meetings stay one scroll up, current/future
-  // ones are immediately actionable.
-  const listRef = useRef<HTMLDivElement>(null);
-  const boundaryRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (past.length === 0 || upcoming.length === 0) return;
-    const box = listRef.current;
-    const marker = boundaryRef.current;
-    if (box && marker) {
-      box.scrollTop += marker.getBoundingClientRect().top - box.getBoundingClientRect().top;
-    }
-  }, [past.length, upcoming.length]);
 
-  async function loadAgenda(): Promise<void> {
-    setAgendaLoading(true);
-    setAgendaDetail(null);
-    try {
-      const res = await api.meetings.getAgenda();
-      setEvents(res.events);
-      if (!res.available) setAgendaDetail(res.detail ?? "Agenda unavailable.");
-    } catch (e) {
-      setAgendaDetail(e instanceof Error ? e.message : "Couldn't load the agenda.");
-      setEvents([]);
-    } finally {
-      setAgendaLoading(false);
-    }
-  }
-
-  // Load today's agenda once WorkIQ is known to be on; without M365 there is
-  // no calendar to offer, so nothing is fetched (and no sign-in triggered).
-  useEffect(() => {
-    if (m365) void loadAgenda();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [m365]);
 
   async function create(): Promise<void> {
     if (busy) return;
@@ -280,29 +248,13 @@ export function LiveStartHero({
           )}
 
           {hasMeetings ? (
-            <div ref={listRef} className="max-h-64 space-y-1.5 overflow-y-auto">
-              {past.length > 0 && (
-                <>
-                  <div className="flex items-center gap-2 px-0.5 pt-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-600 dark:text-amber-400">
-                    <History size={11} /> Past
-                    <span className="h-px flex-1 bg-amber-500/30" />
-                  </div>
-                  <ul className="space-y-1.5">{past.map((ev) => renderRow(ev, true))}</ul>
-                </>
-              )}
-              {upcoming.length > 0 && (
-                <>
-                  <div
-                    ref={boundaryRef}
-                    className="flex items-center gap-2 px-0.5 pt-0.5 text-[10px] font-medium uppercase tracking-wide text-emerald-600 dark:text-emerald-400"
-                  >
-                    <Radio size={11} /> Current &amp; upcoming
-                    <span className="h-px flex-1 bg-emerald-500/30" />
-                  </div>
-                  <ul className="space-y-1.5">{upcoming.map((ev) => renderRow(ev, false))}</ul>
-                </>
-              )}
-            </div>
+            <MeetingAgendaList
+              past={past}
+              upcoming={upcoming}
+              renderRow={renderRow}
+              upcomingIcon={<Radio size={11} />}
+              maxHeight="max-h-64"
+            />
           ) : (
             !agendaLoading && (
               <p className="text-[12px] text-muted">
