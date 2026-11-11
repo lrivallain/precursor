@@ -36,6 +36,14 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Fixed
 
+- **WorkIQ Teams and the other Agent 365 servers stay signed in again.** Since
+  silent renewal started sending back the stored token's granted scope, Entra
+  refused every Agent 365 refresh with `AADSTS70011` (`invalid_scope`): its
+  granted list includes the bare resource, which is not a requestable scope. The
+  keep-alive could never renew, so `workiq-teams` and `workiq-user` asked for a
+  new sign-in each time the access token expired. Agent 365 now refreshes
+  without a scope, as it did before; the WorkIQ preview still sends its scope.
+
 - **Settings warns about every unsaved change.** Closing the settings panel
   now asks before discarding edits to **Load tools on demand** and the
   per-server **always load** switches, and no longer asks after you saved the

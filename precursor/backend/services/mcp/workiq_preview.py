@@ -241,6 +241,8 @@ class WorkIQOAuthProfile:
     # and ignores the path either way.
     redirect_host: str = "localhost"
     redirect_path: str = WORKIQ_OAUTH_REDIRECT_PATH
+    # Re-send the granted scope on refresh (see _WorkIQOAuthClientProvider).
+    refresh_with_granted_scope: bool = False
 
     @property
     def redirect_uri(self) -> str:
@@ -267,6 +269,7 @@ PREVIEW_PROFILE = WorkIQOAuthProfile(
     tokens_key=OAUTH_TOKENS_KEY,
     issued_at_key=OAUTH_ISSUED_AT_KEY,
     login_hint_key=OAUTH_LOGIN_HINT_KEY,
+    refresh_with_granted_scope=True,
 )
 
 # Entra ``prompt=none`` error codes that mean "can't sign in silently, ask the
@@ -1543,10 +1546,9 @@ class _WorkIQOAuthClientProvider(OAuthClientProvider):
     :meth:`_seed_authorization_server` resolves the metadata first; that
     docstring has the detail.
 
-    **The scope.** Refresh grants retain the stored token's granted scope.
-    Entra refresh tokens are not resource-bound, and a scope-less renewal can
-    fail token-protection checks even when renewing the explicit WorkIQ scope
-    succeeds.
+    **The scope.** WorkIQ preview refreshes re-send the granted scope, since a
+    scope-less renewal can fail token protection (AADSTS530084). Agent 365 must
+    not: Entra refuses its granted list back (AADSTS70011, ``invalid_scope``).
 
     **The tracing.** The SDK is otherwise silent about all of this bar one
     ``Token refresh failed: 400`` line naming neither the credential nor Entra's
@@ -1677,7 +1679,7 @@ class _WorkIQOAuthClientProvider(OAuthClientProvider):
         )
         request = await super()._refresh_token()
         tokens = self.context.current_tokens
-        if tokens is None or not tokens.scope:
+        if not self._profile.refresh_with_granted_scope or tokens is None or not tokens.scope:
             return request
         # Keep renewal on the granted resource, not Entra's scope-less defaults.
         fields = dict(parse_qsl(request.content.decode(), keep_blank_values=True))
@@ -1685,11 +1687,7 @@ class _WorkIQOAuthClientProvider(OAuthClientProvider):
         headers = request.headers.copy()
         headers.pop("Content-Length", None)
         return httpx2.Request(
-            request.method,
-            request.url,
-            headers=headers,
-            data=fields,
-            extensions=request.extensions,
+            request.method, request.url, headers=headers, data=fields, extensions=request.extensions
         )
 
     async def _handle_refresh_response(self, response: Any) -> bool:
