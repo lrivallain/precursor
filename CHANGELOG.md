@@ -15,6 +15,10 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Changed
 
+- **No Microsoft 365, no M365 features in live sessions.** When the WorkIQ MCP
+  server is off, the live start screen and the Context tab no longer show (or
+  fetch) your meetings, and the Summary tab no longer offers the Teams
+  transcript source. Nothing calls WorkIQ or prompts for a sign-in.
 - **MCP tools are loaded on demand.** Chats and topics no longer send every
   enabled tool's schema with every request. A small set is sent up front (tools
   the prompt names, recently used tools, and servers marked **always load**);

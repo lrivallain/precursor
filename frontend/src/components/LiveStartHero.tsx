@@ -7,7 +7,7 @@ import type {
   MeetingSessionCreate,
   TopicNode,
 } from "../lib/types";
-import { useSettings } from "../lib/settingsStore";
+import { useM365Enabled, useSettings } from "../lib/settingsStore";
 import { api } from "../lib/api";
 import {
   formatMeetingWhen,
@@ -61,6 +61,7 @@ export function LiveStartHero({
   const settings = useSettings();
   const sttReady = settings?.stt_azure_ready ?? false;
   const defaultLang = settings?.azure_speech_language || "";
+  const m365 = useM365Enabled();
 
   const [title, setTitle] = useState("");
   const [topicId, setTopicId] = useState<number | null>(null);
@@ -121,11 +122,12 @@ export function LiveStartHero({
     }
   }
 
-  // Load today's agenda when the welcome screen first mounts.
+  // Load today's agenda once WorkIQ is known to be on; without M365 there is
+  // no calendar to offer, so nothing is fetched (and no sign-in triggered).
   useEffect(() => {
-    void loadAgenda();
+    if (m365) void loadAgenda();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [m365]);
 
   async function create(): Promise<void> {
     if (busy) return;
@@ -250,7 +252,7 @@ export function LiveStartHero({
       {/* Calendar meetings — one click starts a session already linked to the
           meeting for context. Past meetings are included (and clearly marked) so
           you can record/summarize from a meeting that already happened. */}
-      {(agendaLoading || hasMeetings || agendaDetail) && (
+      {m365 && (agendaLoading || hasMeetings || agendaDetail) && (
         <section className="rounded border border-border bg-surface/40 p-3">
           <div className="mb-2 flex items-center justify-between">
             <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">
@@ -311,11 +313,13 @@ export function LiveStartHero({
         </section>
       )}
 
-      <div className="flex items-center gap-3 text-[11px] uppercase tracking-wide text-muted">
-        <span className="h-px flex-1 bg-border" />
-        or start manually
-        <span className="h-px flex-1 bg-border" />
-      </div>
+      {m365 && (
+        <div className="flex items-center gap-3 text-[11px] uppercase tracking-wide text-muted">
+          <span className="h-px flex-1 bg-border" />
+          or start manually
+          <span className="h-px flex-1 bg-border" />
+        </div>
+      )}
 
       <div className="flex flex-col gap-3">
         <label className="flex flex-col gap-1 text-[12px] text-muted">

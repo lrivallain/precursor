@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Check, Eye, Loader2, Pencil, Plus, Send, X } from "lucide-react";
 import type { MeetingSession } from "../lib/types";
 import { api } from "../lib/api";
+import { useM365Enabled } from "../lib/settingsStore";
 import type { SummaryTemplatesState } from "../lib/useSummaryTemplates";
 import { GithubIcon as Github } from "./icons/GithubIcon";
 import { CopyableMarkdown } from "./CopyableMarkdown";
@@ -72,7 +73,8 @@ export function SummarySection({
   const [postError, setPostError] = useState<string | null>(null);
 
   const attendees = session.attendees ?? [];
-  const canSummarizeFromTranscript = transcriptUnavailable === null;
+  const m365 = useM365Enabled();
+  const canSummarizeFromTranscript = m365 && transcriptUnavailable === null;
   const currentTemplate =
     templates.catalog?.templates.find((t) => t.id === templates.template) ?? null;
   const canPost = session.topic_id != null;
@@ -343,8 +345,9 @@ export function SummarySection({
               </p>
             ) : (
               <p className="max-w-sm">
-                Record the meeting, or link a Teams meeting from the Context tab
-                (with the WorkIQ MCP enabled), to generate a recap here.
+                {m365
+                  ? "Record the meeting, or link a Teams meeting from the Context tab, to generate a recap here."
+                  : "Record the meeting to generate a recap here."}
               </p>
             )}
           </div>

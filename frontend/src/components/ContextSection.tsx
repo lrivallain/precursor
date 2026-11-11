@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import type { AgendaEvent, MeetingSession } from "../lib/types";
 import { api } from "../lib/api";
+import { useM365Enabled } from "../lib/settingsStore";
 import { formatMeetingWhen, partitionMeetings } from "../lib/agenda";
 import { CopyableMarkdown } from "./CopyableMarkdown";
 import { MeetingBody } from "./MeetingBody";
@@ -56,6 +57,7 @@ export function ContextSection({
   const [postMeetingError, setPostMeetingError] = useState<string | null>(null);
 
   const linked = session.external_meeting;
+  const m365 = useM365Enabled();
   const canPost = session.topic_id != null;
 
   const { past, upcoming } = useMemo(() => partitionMeetings(events ?? []), [events]);
@@ -130,11 +132,12 @@ export function ContextSection({
     }
   }
 
-  // Auto-load today's agenda when the Context tab first mounts.
+  // Auto-load today's agenda once WorkIQ is known to be on; without M365 the
+  // picker is hidden and nothing is fetched.
   useEffect(() => {
-    void loadAgenda();
+    if (m365) void loadAgenda();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [m365]);
 
   async function link(event: AgendaEvent): Promise<void> {
     setLinking(event.id ?? event.subject);
@@ -255,147 +258,150 @@ export function ContextSection({
         </section>
       )}
 
-      {/* Linked meeting (context grounding) or today's agenda picker */}
-      <section className="p-4">
-        {linked ? (
-          <>
-            <div className="mb-2 flex items-center justify-between">
-              <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">
-                <Link2 size={12} /> Linked meeting
-              </div>
-              <button
-                type="button"
-                onClick={() => void unlink()}
-                disabled={unlinking}
-                className="inline-flex items-center gap-1.5 rounded border border-border px-2 py-1 text-[12px] hover:bg-surface disabled:opacity-50"
-              >
-                {unlinking ? (
-                  <Loader2 size={12} className="animate-spin" />
-                ) : (
-                  <Link2Off size={12} />
-                )}
-                Unlink
-              </button>
-            </div>
-
-            <div className="rounded border border-accent/40 bg-accent/5 px-3 py-3">
-              <div className="flex items-center gap-1.5 text-sm font-medium">
-                <CalendarClock size={13} className="text-accent" /> {linked.subject}
-              </div>
-              <div className="mt-1 space-y-0.5 text-[12px] text-muted">
-                {(linked.start || linked.end) && (
-                  <div>
-                    {formatMeetingWhen(linked.start)}
-                    {linked.end && ` – ${formatMeetingWhen(linked.end)}`}
-                  </div>
-                )}
-                {linked.organizer && <div>Organizer: {linked.organizer}</div>}
-              </div>
-
-              {linked.attendees && linked.attendees.length > 0 && (
-                <div className="mt-2 flex flex-wrap gap-1">
-                  {linked.attendees.map((a, i) => (
-                    <span
-                      key={`${a.email ?? a.name}-${i}`}
-                      className="inline-flex items-center gap-1 rounded-full border border-border bg-bg px-2 py-0.5 text-[11px]"
-                    >
-                      <Users size={10} /> {a.name || a.email}
-                    </span>
-                  ))}
+      {/* Linked meeting (context grounding) or today's agenda picker. An already
+          linked meeting stays visible; the picker needs M365. */}
+      {(linked || m365) && (
+        <section className="p-4">
+          {linked ? (
+            <>
+              <div className="mb-2 flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">
+                  <Link2 size={12} /> Linked meeting
                 </div>
-              )}
-
-              {linked.body && (
-                <div className="mt-3">
-                  <MeetingBody html={linked.body} />
-                </div>
-              )}
-
-              <div className="mt-3 flex items-start gap-1.5 rounded bg-bg/60 px-2 py-1.5 text-[11px] text-muted">
-                <ShieldCheck size={13} className="mt-px shrink-0 text-accent" />
-                <span>
-                  This meeting grounds the transcript, live insights and summary as
-                  additional context.
-                </span>
-              </div>
-
-              <div className="mt-3 flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => void postMeeting()}
-                  disabled={postingMeeting || !canPost}
-                  data-tooltip={canPost ? undefined : "Attach a topic to post"}
-                  className="inline-flex items-center gap-1.5 rounded bg-accent px-2.5 py-1.5 text-[12px] text-white disabled:opacity-50"
+                  onClick={() => void unlink()}
+                  disabled={unlinking}
+                  className="inline-flex items-center gap-1.5 rounded border border-border px-2 py-1 text-[12px] hover:bg-surface disabled:opacity-50"
                 >
-                  {postedMeeting ? <Check size={13} /> : <Send size={13} />}
-                  {postedMeeting
-                    ? "Posted"
-                    : postingMeeting
-                      ? "Posting…"
-                      : "Post to topic"}
+                  {unlinking ? (
+                    <Loader2 size={12} className="animate-spin" />
+                  ) : (
+                    <Link2Off size={12} />
+                  )}
+                  Unlink
                 </button>
-                {postMeetingError && (
-                  <span className="text-[11px] text-red-500">{postMeetingError}</span>
-                )}
               </div>
-            </div>
-          </>
-        ) : (
-          <>
-            <div className="mb-2 flex items-center justify-between">
-              <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">
-                <CalendarClock size={12} /> Your meetings
-              </div>
-              <button
-                type="button"
-                onClick={() => void loadAgenda()}
-                disabled={agendaLoading}
-                className="inline-flex items-center gap-1.5 rounded border border-border px-2 py-1 text-[12px] hover:bg-surface disabled:opacity-50"
-              >
-                {agendaLoading ? (
-                  <Loader2 size={12} className="animate-spin" />
-                ) : (
-                  <RefreshCw size={12} />
-                )}
-                Refresh
-              </button>
-            </div>
 
-            {agendaLoading && !events && (
-              <div className="flex items-center gap-2 text-sm text-muted">
-                <Loader2 size={14} className="animate-spin" /> Loading your agenda…
-              </div>
-            )}
-            {agendaDetail && <p className="mb-2 text-[12px] text-muted">{agendaDetail}</p>}
+              <div className="rounded border border-accent/40 bg-accent/5 px-3 py-3">
+                <div className="flex items-center gap-1.5 text-sm font-medium">
+                  <CalendarClock size={13} className="text-accent" /> {linked.subject}
+                </div>
+                <div className="mt-1 space-y-0.5 text-[12px] text-muted">
+                  {(linked.start || linked.end) && (
+                    <div>
+                      {formatMeetingWhen(linked.start)}
+                      {linked.end && ` – ${formatMeetingWhen(linked.end)}`}
+                    </div>
+                  )}
+                  {linked.organizer && <div>Organizer: {linked.organizer}</div>}
+                </div>
 
-            {(past.length > 0 || upcoming.length > 0) && (
-              <div ref={listRef} className="max-h-72 space-y-1.5 overflow-y-auto">
-                {past.length > 0 && (
-                  <>
-                    <div className="flex items-center gap-2 px-0.5 pt-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-600 dark:text-amber-400">
-                      <History size={11} /> Past
-                      <span className="h-px flex-1 bg-amber-500/30" />
-                    </div>
-                    <ul className="space-y-1.5">{past.map((ev) => renderRow(ev, true))}</ul>
-                  </>
+                {linked.attendees && linked.attendees.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    {linked.attendees.map((a, i) => (
+                      <span
+                        key={`${a.email ?? a.name}-${i}`}
+                        className="inline-flex items-center gap-1 rounded-full border border-border bg-bg px-2 py-0.5 text-[11px]"
+                      >
+                        <Users size={10} /> {a.name || a.email}
+                      </span>
+                    ))}
+                  </div>
                 )}
-                {upcoming.length > 0 && (
-                  <>
-                    <div
-                      ref={boundaryRef}
-                      className="flex items-center gap-2 px-0.5 pt-0.5 text-[10px] font-medium uppercase tracking-wide text-emerald-600 dark:text-emerald-400"
-                    >
-                      <CalendarClock size={11} /> Current &amp; upcoming
-                      <span className="h-px flex-1 bg-emerald-500/30" />
-                    </div>
-                    <ul className="space-y-1.5">{upcoming.map((ev) => renderRow(ev, false))}</ul>
-                  </>
+
+                {linked.body && (
+                  <div className="mt-3">
+                    <MeetingBody html={linked.body} />
+                  </div>
                 )}
+
+                <div className="mt-3 flex items-start gap-1.5 rounded bg-bg/60 px-2 py-1.5 text-[11px] text-muted">
+                  <ShieldCheck size={13} className="mt-px shrink-0 text-accent" />
+                  <span>
+                    This meeting grounds the transcript, live insights and summary as
+                    additional context.
+                  </span>
+                </div>
+
+                <div className="mt-3 flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void postMeeting()}
+                    disabled={postingMeeting || !canPost}
+                    data-tooltip={canPost ? undefined : "Attach a topic to post"}
+                    className="inline-flex items-center gap-1.5 rounded bg-accent px-2.5 py-1.5 text-[12px] text-white disabled:opacity-50"
+                  >
+                    {postedMeeting ? <Check size={13} /> : <Send size={13} />}
+                    {postedMeeting
+                      ? "Posted"
+                      : postingMeeting
+                        ? "Posting…"
+                        : "Post to topic"}
+                  </button>
+                  {postMeetingError && (
+                    <span className="text-[11px] text-red-500">{postMeetingError}</span>
+                  )}
+                </div>
               </div>
-            )}
-          </>
-        )}
-      </section>
+            </>
+          ) : (
+            <>
+              <div className="mb-2 flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">
+                  <CalendarClock size={12} /> Your meetings
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void loadAgenda()}
+                  disabled={agendaLoading}
+                  className="inline-flex items-center gap-1.5 rounded border border-border px-2 py-1 text-[12px] hover:bg-surface disabled:opacity-50"
+                >
+                  {agendaLoading ? (
+                    <Loader2 size={12} className="animate-spin" />
+                  ) : (
+                    <RefreshCw size={12} />
+                  )}
+                  Refresh
+                </button>
+              </div>
+
+              {agendaLoading && !events && (
+                <div className="flex items-center gap-2 text-sm text-muted">
+                  <Loader2 size={14} className="animate-spin" /> Loading your agenda…
+                </div>
+              )}
+              {agendaDetail && <p className="mb-2 text-[12px] text-muted">{agendaDetail}</p>}
+
+              {(past.length > 0 || upcoming.length > 0) && (
+                <div ref={listRef} className="max-h-72 space-y-1.5 overflow-y-auto">
+                  {past.length > 0 && (
+                    <>
+                      <div className="flex items-center gap-2 px-0.5 pt-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-600 dark:text-amber-400">
+                        <History size={11} /> Past
+                        <span className="h-px flex-1 bg-amber-500/30" />
+                      </div>
+                      <ul className="space-y-1.5">{past.map((ev) => renderRow(ev, true))}</ul>
+                    </>
+                  )}
+                  {upcoming.length > 0 && (
+                    <>
+                      <div
+                        ref={boundaryRef}
+                        className="flex items-center gap-2 px-0.5 pt-0.5 text-[10px] font-medium uppercase tracking-wide text-emerald-600 dark:text-emerald-400"
+                      >
+                        <CalendarClock size={11} /> Current &amp; upcoming
+                        <span className="h-px flex-1 bg-emerald-500/30" />
+                      </div>
+                      <ul className="space-y-1.5">{upcoming.map((ev) => renderRow(ev, false))}</ul>
+                    </>
+                  )}
+                </div>
+              )}
+            </>
+          )}
+        </section>
+      )}
     </div>
   );
 }

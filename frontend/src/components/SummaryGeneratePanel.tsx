@@ -11,6 +11,7 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { api } from "../lib/api";
+import { useM365Enabled } from "../lib/settingsStore";
 import type { SummaryTemplatesState } from "../lib/useSummaryTemplates";
 import { openWorkspaceFile } from "../lib/workspaceLink";
 import { Select } from "./Select";
@@ -54,7 +55,9 @@ export function SummaryGeneratePanel({
 }: Props) {
   const [open, setOpen] = useState(false);
   const [fileBusy, setFileBusy] = useState<"edit" | "duplicate" | null>(null);
-  const canUseTranscript = transcriptUnavailable === null;
+  // Without M365 the Teams transcript isn't a source at all, so it's not offered.
+  const teamsTranscript = useM365Enabled();
+  const canUseTranscript = teamsTranscript && transcriptUnavailable === null;
   const [source, setSource] = useState<SummarySource>(
     canUseRecording || !canUseTranscript ? "recording" : "transcript",
   );
@@ -176,7 +179,11 @@ export function SummaryGeneratePanel({
             <div className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">
               Source
             </div>
-            <div role="radiogroup" aria-label="Summary source" className="grid grid-cols-2 gap-1">
+            <div
+              role="radiogroup"
+              aria-label="Summary source"
+              className={`grid gap-1 ${teamsTranscript ? "grid-cols-2" : "grid-cols-1"}`}
+            >
               <SourceOption
                 selected={source === "recording"}
                 disabled={!canUseRecording}
@@ -185,14 +192,16 @@ export function SummaryGeneratePanel({
                 icon={<Mic size={12} aria-hidden />}
                 label="Recording"
               />
-              <SourceOption
-                selected={source === "transcript"}
-                disabled={!canUseTranscript}
-                hint={transcriptUnavailable ?? "The linked Teams meeting's published transcript"}
-                onSelect={() => setSource("transcript")}
-                icon={<ScrollText size={12} aria-hidden />}
-                label="Teams transcript"
-              />
+              {teamsTranscript && (
+                <SourceOption
+                  selected={source === "transcript"}
+                  disabled={!canUseTranscript}
+                  hint={transcriptUnavailable ?? "The linked Teams meeting's published transcript"}
+                  onSelect={() => setSource("transcript")}
+                  icon={<ScrollText size={12} aria-hidden />}
+                  label="Teams transcript"
+                />
+              )}
             </div>
           </div>
 

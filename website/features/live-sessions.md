@@ -105,6 +105,13 @@ role afterwards to override it. Detaching a topic leaves the role as it is.
   agenda spans the last few days through today, so you can attach — or record
   from — a meeting that already happened.
 
+::: tip Without Microsoft 365
+Every Microsoft 365 surface follows the WorkIQ MCP server. While it is off, the
+start screen and the Context tab show no meeting picker, the Summary tab offers
+no Teams transcript source, and Precursor never calls WorkIQ or asks you to
+sign in. You start sessions by hand and summarize from the local recording.
+:::
+
 ### Suggested answers
 
 An opt-in feature (**Suggested answers** in the feature picker, per session; it
@@ -200,8 +207,8 @@ agenda in the **Context** tab, then open **Summary → Generate** and pick the
 structured recap (decisions, action items, open questions, risks) instead of
 Teams' own summary.
 
-The source can be picked **only** when the WorkIQ MCP server is enabled **and**
-a Teams meeting is linked. It's best-effort and fail-closed: the transcript is
+The source is offered **only** when the WorkIQ MCP server is enabled, and can
+be picked once a Teams meeting is linked. It's best-effort and fail-closed: the transcript is
 only available to the meeting **organizer**, requires the delegated
 `OnlineMeetingTranscript.Read.All` permission, and is published by Teams a few
 minutes **after** the meeting ends. When any of those isn't met, generating
