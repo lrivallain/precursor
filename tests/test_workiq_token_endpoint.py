@@ -119,19 +119,7 @@ async def test_seeding_leaves_the_refresh_body_untouched(monkeypatch) -> None:
     assert provider.context.protected_resource_metadata is None
 
 
-@pytest.mark.parametrize(
-    ("profile", "scope"),
-    [
-        (wp.PREVIEW_PROFILE, "fdcc1f02-fc51-4226-8753-f668596af7f7/WorkIQAgent.Ask"),
-        (
-            AGENT365_PROFILE,
-            f"{AGENT365_PROFILE.url}/McpServers.Teams.All "
-            f"{AGENT365_PROFILE.url}/McpServersMetadata.Read.All",
-        ),
-    ],
-)
-@pytest.mark.anyio
-async def test_refresh_preserves_the_granted_resource_scope(profile, scope) -> None:
+def _scoped(profile, scope: str) -> wp.OAuthClientProvider:
     provider = _primed(profile)
     provider.context.oauth_metadata = _entra_metadata()
     provider.context.current_tokens = OAuthToken(
@@ -140,18 +128,54 @@ async def test_refresh_preserves_the_granted_resource_scope(profile, scope) -> N
         token_type="Bearer",
         scope=scope,
     )
+    return provider
 
-    request = await provider._refresh_token()
+
+@pytest.mark.anyio
+async def test_preview_refresh_preserves_the_granted_resource_scope() -> None:
+    scope = "fdcc1f02-fc51-4226-8753-f668596af7f7/WorkIQAgent.Ask"
+    request = await _scoped(wp.PREVIEW_PROFILE, scope)._refresh_token()
     fields = parse_qs(request.content.decode())
 
     assert str(request.url) == ENTRA_TOKEN_ENDPOINT
     assert fields == {
         "grant_type": ["refresh_token"],
         "refresh_token": ["renewable"],
-        "client_id": [profile.client_id],
+        "client_id": [wp.PREVIEW_PROFILE.client_id],
         "scope": [scope],
     }
     assert int(request.headers["content-length"]) == len(request.content)
+
+
+@pytest.mark.anyio
+async def test_agent365_refresh_does_not_send_back_the_granted_scope() -> None:
+    """Entra rejects the Agent 365 grant list with AADSTS70011 (invalid_scope).
+
+    The granted set includes the bare resource (``.../mcp_TeamsServer/``), which
+    is not a requestable scope, so echoing it made every silent renewal fail and
+    forced a browser sign-in. Scope-less is what Agent 365 renewed with before.
+    """
+    scope = (
+        f"{AGENT365_PROFILE.url}/McpServers.Teams.All "
+        f"{AGENT365_PROFILE.url}/AgentTools.MOSEvents.All "
+        f"{AGENT365_PROFILE.url}/"
+    )
+    request = await _scoped(AGENT365_PROFILE, scope)._refresh_token()
+
+    assert str(request.url) == ENTRA_TOKEN_ENDPOINT
+    assert parse_qs(request.content.decode()) == {
+        "grant_type": ["refresh_token"],
+        "refresh_token": ["renewable"],
+        "client_id": [AGENT365_PROFILE.client_id],
+    }
+
+
+def test_only_the_preview_profile_refreshes_with_its_granted_scope() -> None:
+    from precursor.backend.services.mcp import agent365
+
+    assert wp.PREVIEW_PROFILE.refresh_with_granted_scope is True
+    for name in ("workiq-teams", "workiq-user"):
+        assert agent365.build_profile(name, "tid").refresh_with_granted_scope is False
 
 
 @pytest.mark.anyio

@@ -25,7 +25,7 @@
     "precursor/backend/services/definitions/migration.py": 1068,
     "precursor/backend/services/mcp/client.py": 1571,
     "precursor/backend/services/mcp/drawio_server.py": 1023,
-    "precursor/backend/services/mcp/workiq_preview.py": 2287,
+    "precursor/backend/services/mcp/workiq_preview.py": 2285,
     "precursor/backend/services/scheduled_commands.py": 947,
     "precursor/backend/services/step_plan_llm.py": 1385,
     "precursor/backend/services/step_plan_runner.py": 1192,
