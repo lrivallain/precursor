@@ -30,6 +30,10 @@ from tests.support import set_app_setting
 @pytest.fixture(autouse=True)
 async def _migrated() -> None:
     await init_db()
+    # Index what earlier tests in this worker queued. ``retrieve`` only drains
+    # for a second, oldest first, so behind a backlog it searched before the
+    # rows a test had just written were indexed.
+    await _indexed()
 
 
 async def _topic(title: str, *, description: str = "", messages: tuple[str, ...] = ()) -> int:
@@ -51,6 +55,11 @@ async def _indexed() -> None:
         if not await indexer.drain(max_sources=500):
             return
     raise AssertionError("the IQ queue never drained")
+
+
+async def test_each_test_starts_with_an_empty_index_queue() -> None:
+    async with SessionLocal() as session:
+        assert (await session.execute(select(IQDirty).limit(1))).first() is None
 
 
 # -- chunking ---------------------------------------------------------------
