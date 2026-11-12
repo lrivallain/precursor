@@ -13,6 +13,15 @@ are the per-version history; releasing does not rewrite this file.
 
 ## [Unreleased]
 
+### Added
+
+- **MCP servers that sign in with Entra ID.** A user-defined HTTP server can
+  now authenticate with a token from your Azure CLI sign-in (`az login`)
+  instead of a static header. Paste the URL and Precursor detects the tenant
+  and resource from the server's OAuth metadata. Tokens are refreshed
+  automatically, and sign-in errors say which `az login` to run. Works for
+  servers such as EngOps IQ that accept the Azure CLI client.
+
 ### Changed
 
 - **No Microsoft 365, no M365 features in live sessions.** When the WorkIQ MCP

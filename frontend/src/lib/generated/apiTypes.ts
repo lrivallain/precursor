@@ -1511,6 +1511,19 @@ export interface LocalPath {
   path: string;
 }
 
+export interface MCPAuthDetectRequest {
+  url: string;
+}
+
+/** What an MCP server's endpoint says about the sign-in it expects. */
+export interface MCPAuthDetection {
+  auth_required: boolean;
+  auth: "none" | "azure_cli";
+  tenant: string | null;
+  resource: string | null;
+  message: string;
+}
+
 export interface Me {
   github: GitHubIdentity | null;
   github_token_source: "env" | "gh-cli" | "settings" | "none";
@@ -2998,6 +3011,9 @@ export interface UserServerCreate {
   command?: string | null;
   args?: string[];
   headers?: Record<string, string>;
+  auth?: "none" | "azure_cli";
+  auth_tenant?: string | null;
+  auth_resource?: string | null;
 }
 
 export interface UserServerUpdate {
@@ -3007,6 +3023,9 @@ export interface UserServerUpdate {
   command?: string | null;
   args?: string[] | null;
   headers?: Record<string, string> | null;
+  auth?: ("none" | "azure_cli") | null;
+  auth_tenant?: string | null;
+  auth_resource?: string | null;
 }
 
 export interface ValidationError {
@@ -4408,6 +4427,10 @@ export interface Operations {
       probe?: boolean;
     };
     response: Record<string, unknown>[];
+  };
+  "POST /api/mcp/servers/detect-auth": {
+    body: MCPAuthDetectRequest;
+    response: MCPAuthDetection;
   };
   "POST /api/mcp/servers/user": {
     body: UserServerCreate;

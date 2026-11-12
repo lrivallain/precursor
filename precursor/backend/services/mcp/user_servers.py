@@ -15,6 +15,7 @@ from precursor.backend.services.mcp.client import (
     MCPClientManager,
     get_mcp_client_manager,
 )
+from precursor.backend.services.mcp.entra_auth import build_auth
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,7 @@ def apply_to_manager(row: MCPServer, manager: MCPClientManager | None = None) ->
         command=row.command,
         args=_decode_args(row.args_json),
         headers=_decode_headers(row.headers_json) or None,
+        auth_provider=build_auth(row.auth, row.auth_tenant, row.auth_resource),
     )
 
 
@@ -77,7 +79,28 @@ def to_public_dict(row: MCPServer) -> dict[str, Any]:
         "command": row.command,
         "args": _decode_args(row.args_json),
         "header_keys": header_keys,
+        "auth": row.auth,
+        "auth_tenant": row.auth_tenant,
+        "auth_resource": row.auth_resource,
     }
+
+
+def enrich_with_user_meta(base: dict[str, Any], row: MCPServer | None) -> dict[str, Any]:
+    """Attach DB-only fields (id, header_keys, auth) to a status dict when user-defined."""
+    if row is None:
+        return {
+            **base,
+            "id": None,
+            "header_keys": [],
+            "auth": "none",
+            "auth_tenant": None,
+            "auth_resource": None,
+        }
+    meta = to_public_dict(row)
+    return {**base, **{k: meta[k] for k in _USER_META_KEYS}}
+
+
+_USER_META_KEYS = ("id", "header_keys", "auth", "auth_tenant", "auth_resource")
 
 
 async def get_row_by_name(session: AsyncSession, name: str) -> MCPServer | None:

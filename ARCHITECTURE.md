@@ -53,6 +53,7 @@ scripts/             CI and maintenance scripts (stdlib-only where they run in h
 | A new AgentManager concern | a collaborator class in `services/agents/` holding a `manager` back-reference (only a `TYPE_CHECKING` import of the manager), with a same-named delegate on `AgentManager` | `services/agents/` (e.g. `turns.py`) |
 | A tool on the built-in MCP server | `@mcp.tool()` in the matching `precursor_tools/<group>.py`, gated with `_section_enabled`; new groups are added to `precursor_tools/__init__.py` | `services/mcp/precursor_tools/` |
 | An Entra ID token from the Azure CLI sign-in (`az login`, optional tenant) | `AzureCliTokenProvider(tenant, resource)`; narrow its `error` to your own type | `services/azure_cli.py` |
+| Sign an MCP server's requests with an Azure CLI Entra token; read the tenant and resource it advertises | `build_auth`, `AzureCliBearerAuth`, `detect_server_auth` | `services/mcp/entra_auth.py` |
 | Links to topics, chats and messages | `app_base_url`, `topic_paths`, `message_path` | `services/links.py`, `services/message_links.py` |
 
 Conventions that keep this reusable:

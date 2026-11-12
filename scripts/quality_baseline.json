@@ -13,17 +13,16 @@
     "frontend/src/components/WorkflowView.tsx": 1665,
     "frontend/src/components/WorkspaceView.tsx": 1922,
     "frontend/src/lib/api.ts": 1706,
-    "frontend/src/lib/types.ts": 2102,
+    "frontend/src/lib/types.ts": 2094,
     "precursor/backend/__main__.py": 847,
     "precursor/backend/routers/agents.py": 1557,
     "precursor/backend/routers/live.py": 1249,
-    "precursor/backend/routers/mcp.py": 881,
     "precursor/backend/routers/workflows.py": 1059,
     "precursor/backend/services/agents/transfer.py": 894,
     "precursor/backend/services/app_settings.py": 1054,
     "precursor/backend/services/conversation_turn.py": 893,
     "precursor/backend/services/definitions/migration.py": 1068,
-    "precursor/backend/services/mcp/client.py": 1571,
+    "precursor/backend/services/mcp/client.py": 1570,
     "precursor/backend/services/mcp/drawio_server.py": 1023,
     "precursor/backend/services/mcp/workiq_preview.py": 2285,
     "precursor/backend/services/scheduled_commands.py": 947,
@@ -289,7 +288,7 @@
     "frontend/src/lib/workflows.ts::eslint(complexity)": 2
   },
   "duplication": {
-    "duplicated-lines": 2578
+    "duplicated-lines": 2567
   },
   "untyped-responses": {
     "DELETE /api/plugins/installed/{plugin_id}": 1,
