@@ -120,11 +120,16 @@ def _isolated_autostart_units(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(autostart, "_run_key", lambda: _units_run_key)
 
 
-@pytest.fixture(autouse=True)
-def _installs_start_in_database_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.fixture(scope="session", autouse=True)
+def _installs_start_in_database_mode() -> Iterator[None]:
     """The scratch DB is always "fresh", which would flip every app start to
     files mode. Tests opt in by calling ``adopt_files_if_fresh`` themselves; the
-    same goes for ``backfill_role_files``, which would file the shared roles."""
+    same goes for ``backfill_role_files``, which would file the shared roles.
+
+    Session-scoped so it is in place before any module-scoped fixture starts the
+    app: function scope came too late for those, and the first module to start
+    the app in a worker switched the whole worker to files mode for good.
+    """
     from precursor.backend import main
 
     async def _skip(_session: object) -> bool:
@@ -133,8 +138,10 @@ def _installs_start_in_database_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     async def _none(_session: object) -> int:
         return 0
 
-    monkeypatch.setattr(main, "adopt_files_if_fresh", _skip)
-    monkeypatch.setattr(main, "backfill_role_files", _none)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(main, "adopt_files_if_fresh", _skip)
+        patch.setattr(main, "backfill_role_files", _none)
+        yield
 
 
 @pytest.fixture(scope="session", autouse=True)

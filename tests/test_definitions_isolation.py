@@ -71,3 +71,24 @@ async def test_migration_isolated_from_a_previous_install(
             tmp_path.mkdir()
     finally:
         await restore_database(original)
+
+
+@pytest.fixture(scope="module")
+def _startup_adoption_seen_by_module_fixtures() -> bool:
+    from precursor.backend import main
+    from precursor.backend.services.definitions import migration
+
+    return main.adopt_files_if_fresh is not migration.adopt_files_if_fresh
+
+
+def test_module_fixtures_start_the_app_in_database_mode(
+    _startup_adoption_seen_by_module_fixtures: bool,
+) -> None:
+    """A module-scoped fixture that starts the app must not adopt files mode.
+
+    Function-scoped autouse fixtures are set up after module-scoped ones, so a
+    module fixture starting the app (``test_one_shot.py`` does) ran the real
+    ``adopt_files_if_fresh`` on the worker's fresh scratch DB and left every
+    later test in that worker in files mode.
+    """
+    assert _startup_adoption_seen_by_module_fixtures
