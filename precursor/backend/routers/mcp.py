@@ -2,7 +2,8 @@
 
 Lets the frontend Settings panel list configured servers, toggle them on/off
 (persisted in app settings under ``mcp_enabled``), probe a server to refresh
-its connection state + tool catalog, and CRUD user-defined entries.
+its connection state + tool catalog. User-defined entries are created and
+edited in ``mcp_user_servers``.
 """
 
 from __future__ import annotations
@@ -10,37 +11,24 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import re
 from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field, field_validator
-from sqlalchemy.exc import IntegrityError
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.config import Settings, get_settings
 from precursor.backend.db import get_session
-from precursor.backend.lookups import get_or_404
-from precursor.backend.models import AppSetting, MCPServer
+from precursor.backend.models import AppSetting
 from precursor.backend.services.github_auth import resolve_github_token
-from precursor.backend.services.mcp.client import BUILTIN_CATALOG, get_mcp_client_manager
+from precursor.backend.services.mcp.client import get_mcp_client_manager
 from precursor.backend.services.mcp.server import get_mcp_server
-from precursor.backend.services.mcp.user_servers import (
-    apply_to_manager,
-    get_row_by_name,
-    to_public_dict,
-)
+from precursor.backend.services.mcp.user_servers import enrich_with_user_meta, get_row_by_name
 
 router = APIRouter(prefix="/api/mcp", tags=["mcp"])
 
 logger = logging.getLogger(__name__)
-
-_NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
-# Derived rather than listed: a hand-maintained copy drifts from the catalogue
-# the moment a built-in is added (it had already lost ``drawio``), and the drift
-# is silent — a user server shadows the built-in name instead of being rejected.
-_RESERVED_NAMES = frozenset(spec.name for spec in BUILTIN_CATALOG)
 
 
 async def _load_enabled(session: AsyncSession) -> dict[str, bool]:
@@ -79,18 +67,6 @@ async def _preflight_block(name: str, session: AsyncSession) -> str | None:
     return None
 
 
-def _enrich_with_user_meta(base: dict[str, Any], row: MCPServer | None) -> dict[str, Any]:
-    """Attach DB-only fields (id, header_keys) to a status dict when user-defined."""
-    if row is None:
-        return {**base, "id": None, "header_keys": []}
-    meta = to_public_dict(row)
-    return {
-        **base,
-        "id": meta["id"],
-        "header_keys": meta["header_keys"],
-    }
-
-
 @router.get("/servers")
 async def list_servers(
     probe: bool = True,
@@ -126,7 +102,7 @@ async def list_servers(
         if entry.name in pending:
             base["state"] = "connecting"
         row = None if entry.builtin else await get_row_by_name(session, entry.name)
-        out.append(_enrich_with_user_meta(base, row))
+        out.append(enrich_with_user_meta(base, row))
     return out
 
 
@@ -153,7 +129,7 @@ async def probe_server(
         entry = await manager.probe(name, github_token=await resolve_github_token(session))
     base = manager.status_dict(entry, enabled=enabled.get(name, False))
     row = None if entry.builtin else await get_row_by_name(session, name)
-    return _enrich_with_user_meta(base, row)
+    return enrich_with_user_meta(base, row)
 
 
 @router.get("/server/info")
@@ -186,7 +162,7 @@ async def connect_server(
         entry.error = block
         base = manager.status_dict(entry, enabled=False)
         row = None if entry.builtin else await get_row_by_name(session, name)
-        return _enrich_with_user_meta(base, row)
+        return enrich_with_user_meta(base, row)
 
     enabled = await _load_enabled(session)
     enabled[name] = True
@@ -195,7 +171,7 @@ async def connect_server(
     entry = await manager.probe(name, github_token=await resolve_github_token(session))
     base = manager.status_dict(entry, enabled=True)
     row = None if entry.builtin else await get_row_by_name(session, name)
-    return _enrich_with_user_meta(base, row)
+    return enrich_with_user_meta(base, row)
 
 
 @router.post("/servers/{name}/disconnect")
@@ -212,7 +188,7 @@ async def disconnect_server(
         return {"name": name, "state": "disabled", "enabled": False}
     base = manager.status_dict(entry, enabled=False)
     row = None if entry.builtin else await get_row_by_name(session, name)
-    return _enrich_with_user_meta(base, row)
+    return enrich_with_user_meta(base, row)
 
 
 @router.post("/servers/{name}/refresh")
@@ -242,7 +218,7 @@ async def refresh_server(
     entry = await manager.probe(name, github_token=await resolve_github_token(session))
     base = manager.status_dict(entry, enabled=True)
     row = None if entry.builtin else await get_row_by_name(session, name)
-    return _enrich_with_user_meta(base, row)
+    return enrich_with_user_meta(base, row)
 
 
 class WorkiqPreviewToggle(BaseModel):
@@ -285,7 +261,7 @@ async def set_workiq_preview_mode(
     entry = manager.get("workiq")
     assert entry is not None
     base = manager.status_dict(entry, enabled=is_enabled)
-    return _enrich_with_user_meta(base, None)
+    return enrich_with_user_meta(base, None)
 
 
 async def _adopt_shared_credential(
@@ -477,7 +453,7 @@ async def reauthenticate_workiq_server(
         entry = manager.get(name)
         assert entry is not None
         base = manager.status_dict(entry, enabled=is_enabled)
-        return {**_enrich_with_user_meta(base, None), "interaction_required": True}
+        return {**enrich_with_user_meta(base, None), "interaction_required": True}
 
     try:
         if silent_only:
@@ -537,7 +513,7 @@ async def reauthenticate_workiq_server(
         assert entry is not None
         base = manager.status_dict(entry, enabled=is_enabled)
         return {
-            **_enrich_with_user_meta(base, None),
+            **enrich_with_user_meta(base, None),
             "interaction_required": True,
             "auth_episode": auth_trace.current_episode(name),
         }
@@ -595,7 +571,7 @@ async def reauthenticate_workiq_server(
     except Exception:  # pragma: no cover - agents runtime is optional
         logger.warning("Could not refresh agent sessions after WorkIQ sign-in", exc_info=True)
     base = manager.status_dict(entry, enabled=is_enabled)
-    return _enrich_with_user_meta(base, None)
+    return enrich_with_user_meta(base, None)
 
 
 @router.post("/servers/{name}/reauthenticate/cancel")
@@ -702,180 +678,3 @@ async def workiq_auth_diagnostics(
         "credentials": credentials,
         "events": auth_trace.snapshot(limit),
     }
-
-
-# --------- user-defined CRUD ---------
-
-
-class UserServerBase(BaseModel):
-    name: str = Field(min_length=1, max_length=64)
-    transport: str = Field(pattern=r"^(streamable_http|stdio)$")
-    url: str | None = None
-    command: str | None = None
-    args: list[str] = Field(default_factory=list)
-    headers: dict[str, str] = Field(default_factory=dict)
-
-    @field_validator("name")
-    @classmethod
-    def _validate_name(cls, v: str) -> str:
-        v = v.strip().lower()
-        if not _NAME_RE.match(v):
-            raise ValueError(
-                "name must start with a letter and contain only lowercase letters, "
-                "digits, or hyphens (max 64 chars)"
-            )
-        return v
-
-
-class UserServerCreate(UserServerBase):
-    pass
-
-
-class UserServerUpdate(BaseModel):
-    name: str | None = Field(default=None, min_length=1, max_length=64)
-    transport: str | None = Field(default=None, pattern=r"^(streamable_http|stdio)$")
-    url: str | None = None
-    command: str | None = None
-    args: list[str] | None = None
-    headers: dict[str, str] | None = None
-
-    @field_validator("name")
-    @classmethod
-    def _validate_name(cls, v: str | None) -> str | None:
-        if v is None:
-            return v
-        v = v.strip().lower()
-        if not _NAME_RE.match(v):
-            raise ValueError(
-                "name must start with a letter and contain only lowercase letters, "
-                "digits, or hyphens (max 64 chars)"
-            )
-        return v
-
-
-def _validate_payload(transport: str, url: str | None, command: str | None) -> None:
-    if transport == "streamable_http" and not url:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "url is required for streamable_http")
-    if transport == "stdio" and not command:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "command is required for stdio")
-
-
-def _check_reserved(name: str) -> None:
-    if name in _RESERVED_NAMES:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            f"'{name}' is reserved by a built-in MCP server",
-        )
-
-
-@router.post("/servers/user", status_code=status.HTTP_201_CREATED)
-async def create_user_server(
-    payload: UserServerCreate,
-    session: AsyncSession = Depends(get_session),
-) -> dict[str, Any]:
-    _check_reserved(payload.name)
-    _validate_payload(payload.transport, payload.url, payload.command)
-
-    row = MCPServer(
-        name=payload.name,
-        transport=payload.transport,
-        url=payload.url if payload.transport == "streamable_http" else None,
-        command=payload.command if payload.transport == "stdio" else None,
-        args_json=json.dumps(payload.args),
-        headers_json=json.dumps(payload.headers),
-    )
-    session.add(row)
-    try:
-        await session.commit()
-    except IntegrityError:
-        await session.rollback()
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            f"An MCP server named '{payload.name}' already exists.",
-        ) from None
-    await session.refresh(row)
-
-    manager = get_mcp_client_manager()
-    apply_to_manager(row, manager)
-    entry = manager.get(payload.name)
-    assert entry is not None
-    enabled = await _load_enabled(session)
-    base = manager.status_dict(entry, enabled=enabled.get(payload.name, False))
-    return _enrich_with_user_meta(base, row)
-
-
-@router.patch("/servers/user/{server_id}")
-async def update_user_server(
-    server_id: int,
-    payload: UserServerUpdate,
-    session: AsyncSession = Depends(get_session),
-) -> dict[str, Any]:
-    row = await get_or_404(session, MCPServer, server_id, "MCP server not found")
-    old_name = row.name
-
-    if payload.name is not None and payload.name != row.name:
-        _check_reserved(payload.name)
-        row.name = payload.name
-    if payload.transport is not None:
-        row.transport = payload.transport
-    if payload.url is not None:
-        row.url = payload.url
-    if payload.command is not None:
-        row.command = payload.command
-    if payload.args is not None:
-        row.args_json = json.dumps(payload.args)
-    if payload.headers is not None:
-        row.headers_json = json.dumps(payload.headers)
-
-    # Normalise fields against the (possibly updated) transport.
-    if row.transport == "streamable_http":
-        row.command = None
-        row.args_json = "[]"
-    elif row.transport == "stdio":
-        row.url = None
-        row.headers_json = "{}"
-    _validate_payload(row.transport, row.url, row.command)
-
-    try:
-        await session.commit()
-    except IntegrityError:
-        await session.rollback()
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            f"An MCP server named '{row.name}' already exists.",
-        ) from None
-    await session.refresh(row)
-
-    manager = get_mcp_client_manager()
-    if old_name != row.name:
-        manager.unregister_user_entry(old_name)
-        # Also drop any enabled flag under the old name.
-        enabled = await _load_enabled(session)
-        if old_name in enabled:
-            enabled[row.name] = enabled.pop(old_name)
-            await _store_enabled(session, enabled)
-    apply_to_manager(row, manager)
-
-    entry = manager.get(row.name)
-    assert entry is not None
-    enabled = await _load_enabled(session)
-    base = manager.status_dict(entry, enabled=enabled.get(row.name, False))
-    return _enrich_with_user_meta(base, row)
-
-
-@router.delete("/servers/user/{server_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_user_server(
-    server_id: int,
-    session: AsyncSession = Depends(get_session),
-) -> None:
-    row = await get_or_404(session, MCPServer, server_id, "MCP server not found")
-    name = row.name
-    await session.delete(row)
-    await session.commit()
-
-    manager = get_mcp_client_manager()
-    manager.unregister_user_entry(name)
-    enabled = await _load_enabled(session)
-    if name in enabled:
-        del enabled[name]
-        await _store_enabled(session, enabled)

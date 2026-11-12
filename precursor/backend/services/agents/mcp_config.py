@@ -302,7 +302,8 @@ async def oauth_bearer_header(name: str) -> tuple[dict[str, str], datetime | Non
     """Resolve a static ``Authorization`` header for an OAuth catalog server.
 
     Works for every server Precursor can sign in to — the hosted WorkIQ
-    preview *and* the Agent 365 pair — by resolving the server's credential
+    preview, the Agent 365 pair, and user servers signing in through the Azure
+    CLI — by resolving the server's credential
     profile and minting a bearer from it. Returns ``None`` when the server
     has no usable credential (not an OAuth server, preview mode off, no
     tenant resolved, or no valid token) so the caller skips attaching it
@@ -310,9 +311,14 @@ async def oauth_bearer_header(name: str) -> tuple[dict[str, str], datetime | Non
     returns ``(header, expires_at)`` where ``expires_at`` may be ``None`` if
     the token's lifetime can't be determined.
     """
+    from precursor.backend.services.mcp.client import get_mcp_client_manager
+    from precursor.backend.services.mcp.entra_auth import AzureCliBearerAuth
     from precursor.backend.services.mcp.oauth_registry import profile_for_server
     from precursor.backend.services.mcp.workiq_preview import resolve_workiq_bearer_token
 
+    entry = get_mcp_client_manager().get(name)
+    if entry is not None and isinstance(entry.auth_provider, AzureCliBearerAuth):
+        return await entry.auth_provider.bearer_header()
     profile = await profile_for_server(name)
     if profile is None:
         return None

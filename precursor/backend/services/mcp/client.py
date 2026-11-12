@@ -226,6 +226,11 @@ class MCPServerEntry:
     tools_from_cache: bool = False
 
 
+def _static_headers(headers: dict[str, str] | None) -> HeadersProvider | None:
+    static = dict(headers or {})
+    return (lambda _token: dict(static)) if static else None
+
+
 def _github_headers(token: str) -> dict[str, str] | None:
     if not token:
         return None
@@ -676,6 +681,7 @@ class MCPClientManager:
         command: str | None = None,
         args: list[str] | None = None,
         headers: dict[str, str] | None = None,
+        auth_provider: httpx2.Auth | None = None,
     ) -> MCPServerEntry:
         """Register a user-defined entry, replacing any existing one with the same name.
 
@@ -685,17 +691,14 @@ class MCPClientManager:
         existing = self._servers.get(name)
         if existing is not None and existing.builtin:
             raise ValueError(f"'{name}' is reserved by a built-in MCP server")
-        static_headers = dict(headers) if headers else None
-        provider: HeadersProvider | None = (
-            (lambda _token, h=static_headers: dict(h)) if static_headers else None
-        )
         entry = MCPServerEntry(
             name=name,
             transport=transport,
             url=url,
             command=command,
             args=list(args or []),
-            headers_provider=provider,
+            headers_provider=_static_headers(headers),
+            auth_provider=auth_provider,
             builtin=False,
         )
         self._servers[name] = entry
@@ -726,10 +729,6 @@ class MCPClientManager:
         existing = self._servers.get(name)
         if existing is not None and existing.plugin_id is None:
             raise ValueError(f"'{name}' is already registered by core or a user server")
-        static_headers = dict(headers) if headers else None
-        provider: HeadersProvider | None = (
-            (lambda _token, h=static_headers: dict(h)) if static_headers else None
-        )
         entry = MCPServerEntry(
             name=name,
             transport=transport,
@@ -739,7 +738,7 @@ class MCPClientManager:
             # Plugins ship in the app's own environment, so an in-process stdio
             # server needs the same DB/config access the in-tree ones get.
             env=dict(os.environ) if forward_env else None,
-            headers_provider=provider,
+            headers_provider=_static_headers(headers),
             builtin=True,
             plugin_id=plugin_id,
         )

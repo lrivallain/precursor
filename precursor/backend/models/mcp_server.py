@@ -25,3 +25,12 @@ class MCPServer(Base, TimestampMixin):
     args_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     # JSON-encoded dict[str, str] of HTTP headers (e.g. Authorization).
     headers_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    # How Precursor authenticates to a streamable_http server: "none" (static
+    # headers only) or "azure_cli" (an Entra token from the user's `az login`).
+    auth: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="none", server_default="none"
+    )
+    # azure_cli only: the Entra tenant to request the token in (empty = the
+    # CLI's default tenant) and the resource (application ID URI) it is for.
+    auth_tenant: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    auth_resource: Mapped[str | None] = mapped_column(Text, nullable=True)

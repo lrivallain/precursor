@@ -189,6 +189,12 @@ function ServerDetails({ server }: { server: MCPServerStatus }) {
           <span className="font-mono break-all">{server.url}</span>
         </div>
       )}
+      {server.auth === "azure_cli" && (
+        <div>
+          <span className="text-muted">Sign-in:</span> Entra ID via Azure CLI
+          {server.auth_tenant ? ` (tenant ${server.auth_tenant})` : ""}
+        </div>
+      )}
       {server.command && (
         <div>
           <span className="text-muted">Command:</span>{" "}

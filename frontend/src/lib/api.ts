@@ -1095,14 +1095,14 @@ export const api = {
     // Read on demand by ``window.precursorWorkiqAuthReport()``.
     authDiagnostics: (limit = 300) =>
       untyped<McpAuthDiagnostics>(call("GET /api/mcp/auth/diagnostics", { query: { limit } })),
+    detectAuth: (url: string) => call("POST /api/mcp/servers/detect-auth", { body: { url } }),
     create: (data: MCPServerCreate) =>
       untyped<MCPServerStatus>(call("POST /api/mcp/servers/user", { body: data })),
     update: (id: number, data: MCPServerUpdate) =>
       untyped<MCPServerStatus>(
         call("PATCH /api/mcp/servers/user/{server_id}", { path: { server_id: id }, body: data }),
       ),
-    remove: (id: number) =>
-      call("DELETE /api/mcp/servers/user/{server_id}", { path: { server_id: id } }),
+    remove: (id: number) => call("DELETE /api/mcp/servers/user/{server_id}", { path: { server_id: id } }),
   },
 
   llm: {

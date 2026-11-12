@@ -3,6 +3,7 @@ import { X } from "lucide-react";
 import { api } from "../../lib/api";
 import type { MCPServerStatus } from "../../lib/types";
 import {
+  authFormFields,
   mcpServerPayload,
   removeAt,
   replaceAt,
@@ -10,6 +11,7 @@ import {
   type McpServerForm,
   type McpTransport,
 } from "./mcpServerForm";
+import { AuthFields, DetectAuthButton, useAuthDetection } from "./McpServerAuthFields";
 
 const INPUT = "w-full bg-surface border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent";
 const ROW_INPUT = "flex-1 bg-surface border border-border rounded px-2 py-1 text-xs font-mono outline-none focus:border-accent";
@@ -24,6 +26,7 @@ function initialForm(server: MCPServerStatus | null): McpServerForm {
     // Existing header values are not exposed by the API for security; keys are
     // shown so the user knows what is set, but values must be re-entered.
     headers: server?.header_keys?.map((k) => ({ key: k, value: "" })) ?? [],
+    ...authFormFields(server),
   };
 }
 
@@ -152,18 +155,28 @@ type FieldsProps = { form: McpServerForm; update: (patch: Partial<McpServerForm>
 
 function HttpFields({ form, update, hiddenValues }: FieldsProps & { hiddenValues: boolean }) {
   const setHeaders = (headers: HeaderRow[]): void => update({ headers });
+  const detection = useAuthDetection(form, update);
   return (
     <>
       <div>
         <label className="block text-xs text-muted mb-1">URL</label>
-        <input
-          type="text"
-          value={form.url}
-          onChange={(e) => update({ url: e.target.value })}
-          placeholder="https://example.com/mcp"
-          className={`${INPUT} font-mono`}
-        />
+        <div className="flex gap-1">
+          <input
+            type="text"
+            value={form.url}
+            onChange={(e) => update({ url: e.target.value })}
+            onBlur={detection.detectOnce}
+            placeholder="https://example.com/mcp"
+            className={`${INPUT} font-mono`}
+          />
+          <DetectAuthButton
+            busy={detection.busy}
+            disabled={!form.url.trim()}
+            onClick={() => void detection.detect()}
+          />
+        </div>
       </div>
+      <AuthFields form={form} update={update} message={detection.message} />
       <RowList
         label="Headers"
         addLabel="+ Add header"

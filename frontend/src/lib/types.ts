@@ -1288,6 +1288,10 @@ export interface MCPServerStatus {
   // Populated for user-defined entries only.
   id: number | null;
   header_keys: string[];
+  // How a user-defined HTTP server signs in; "none" for built-ins.
+  auth: MCPServerAuth;
+  auth_tenant: string | null;
+  auth_resource: string | null;
 }
 
 /**
@@ -1306,23 +1310,11 @@ export interface McpAuthDiagnostics {
   events: Record<string, unknown>[];
 }
 
-export interface MCPServerCreate {
-  name: string;
-  transport: "streamable_http" | "stdio";
-  url?: string | null;
-  command?: string | null;
-  args?: string[];
-  headers?: Record<string, string>;
-}
-
-export interface MCPServerUpdate {
-  name?: string;
-  transport?: "streamable_http" | "stdio";
-  url?: string | null;
-  command?: string | null;
-  args?: string[];
-  headers?: Record<string, string>;
-}
+// The editor narrows ``transport`` to the two values the backend accepts.
+export type MCPServerCreate = Api.UserServerCreate & { transport: "streamable_http" | "stdio" };
+export type MCPServerUpdate = Api.UserServerUpdate;
+export type MCPServerAuth = Api.MCPAuthDetection["auth"];
+export type MCPAuthDetection = Api.MCPAuthDetection;
 
 export interface LLMModel {
   id: string;

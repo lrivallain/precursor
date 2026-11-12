@@ -44,6 +44,33 @@ You can also add **your own** servers (stdio or streamable-HTTP). A
 host-dependency **preflight** gates enabling a server — `cmd-runner` needs Docker
 when its jail is on, and `playwright` needs Node.js (`npx`) on PATH.
 
+### Servers that sign in with Entra ID
+
+Many organisation MCP servers want a Microsoft Entra ID token rather than an
+API key. Precursor can get one from your **Azure CLI** sign-in, so there is no
+key to paste and nothing to renew by hand:
+
+1. In **Settings → MCP**, add an HTTP server and paste its URL. When you leave
+   the URL field (or select **Detect**), Precursor asks the server which
+   sign-in it expects. For an Entra-protected server it switches
+   **Authentication** to **Entra ID (Azure CLI)** and fills in the **tenant**
+   and the **resource** (application ID URI) from the server's published
+   OAuth metadata.
+2. Save and enable the server. Each request carries a token from
+   `az account get-access-token --tenant <tenant> --resource <resource>`;
+   Precursor caches it and fetches a new one before it expires.
+
+If the Azure CLI can't supply a token, the server card says what to do next:
+run the `az login --tenant … --scope <resource>/.default` command shown in the
+editor, fix the tenant, or ask the server's owners for access when your account
+isn't authorized. Agent sessions get the same token as a header and rebuild
+their session before it expires.
+
+This only works for servers that accept the Azure CLI as a client, which many
+Microsoft-internal services do. The tenant matters: a server in the Microsoft
+tenant rejects a token from another tenant you happen to be signed in to, which
+is why detection fills it in.
+
 HTTP servers that require no custom headers, such as Microsoft Learn, can also
 be attached to agent sessions. Precursor sends an empty headers object to the
 Copilot runtime; authenticated servers retain their configured headers.

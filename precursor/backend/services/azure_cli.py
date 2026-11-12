@@ -60,6 +60,25 @@ class AzureCliTokenProvider:
             self._token, self._expires_at = await self._fetch()
             return self._token
 
+    @property
+    def resource(self) -> str:
+        return self._resource
+
+    @property
+    def expires_at(self) -> float:
+        """Epoch seconds the cached token expires at (0 before the first fetch)."""
+        return self._expires_at
+
+    def _missing_cli_message(self) -> str:
+        return "Azure CLI not found. Install it and run `az login`, or set an API key."
+
+    def _failure_message(self, stderr: str) -> str:
+        """User-facing text for a failed ``get-access-token``; subclasses tailor the advice."""
+        detail = stderr.strip().splitlines()
+        hint = f" ({detail[-1]})" if detail else ""
+        where = f" for tenant {self._tenant}" if self._tenant else ""
+        return f"Azure CLI could not get a token{where}; run `az login`.{hint}"
+
     async def _fetch(self) -> tuple[str, float]:
         args = ["account", "get-access-token", "--resource", self._resource, "--output", "json"]
         if self._tenant:
@@ -73,9 +92,7 @@ class AzureCliTokenProvider:
                 stderr=asyncio.subprocess.PIPE,
             )
         except FileNotFoundError:
-            raise self.error(
-                "Azure CLI not found. Install it and run `az login`, or set an API key."
-            ) from None
+            raise self.error(self._missing_cli_message()) from None
         try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), _TOKEN_TIMEOUT_SECONDS)
         except TimeoutError:
@@ -83,10 +100,7 @@ class AzureCliTokenProvider:
             await proc.wait()
             raise self.error("Azure CLI timed out while fetching an access token.") from None
         if proc.returncode != 0:
-            detail = stderr.decode(errors="replace").strip().splitlines()
-            hint = f" ({detail[-1]})" if detail else ""
-            where = f" for tenant {self._tenant}" if self._tenant else ""
-            raise self.error(f"Azure CLI could not get a token{where}; run `az login`.{hint}")
+            raise self.error(self._failure_message(stderr.decode(errors="replace")))
         try:
             payload = json.loads(stdout)
             token = str(payload["accessToken"])
