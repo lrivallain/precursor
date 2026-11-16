@@ -1277,8 +1277,7 @@ export const api = {
         path: { session_id: id },
         body: data,
       }) as Promise<MeetingSession>,
-    deleteSession: (id: number) =>
-      call("DELETE /api/live/{session_id}", { path: { session_id: id } }),
+    deleteSession: (id: number) => call("DELETE /api/live/{session_id}", { path: { session_id: id } }),
     listArchivedSessions: () => call("GET /api/live/archived") as Promise<MeetingSession[]>,
     archiveSession: (id: number) =>
       call("POST /api/live/{session_id}/archive", {
@@ -1297,6 +1296,8 @@ export const api = {
         path: { session_id: id, segment_id: segmentId },
         body: data,
       }),
+    discardSegments: (id: number, ids: number[]) =>
+      call("POST /api/live/{session_id}/segments/discard", { path: { session_id: id }, body: { ids } }),
     renameSpeaker: (id: number, label: string, name: string) =>
       call("POST /api/live/{session_id}/speakers", {
         path: { session_id: id },
@@ -1324,8 +1325,7 @@ export const api = {
       }) as Promise<MeetingSession>,
     uploadAttachment: (id: number, file: File) =>
       call("POST /api/live/{session_id}/attachments", { path: { session_id: id }, form: { file } }),
-    ensureChat: (id: number) =>
-      call("POST /api/live/{session_id}/chat", { path: { session_id: id } }),
+    ensureChat: (id: number) => call("POST /api/live/{session_id}/chat", { path: { session_id: id } }),
     setFeatures: (id: number, features: string[]) =>
       call("PATCH /api/live/{session_id}", {
         path: { session_id: id },

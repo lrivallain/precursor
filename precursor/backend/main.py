@@ -51,6 +51,7 @@ from precursor.backend.routers import (
     iq,
     issue,
     live,
+    live_segments,
     llm,
     mcp,
     mcp_user_servers,
@@ -455,6 +456,7 @@ def create_app() -> FastAPI:
         definitions.router,
         stt.router,
         live.router,
+        live_segments.router,
         raw.router,
         drawio.router,
         # Serves the self-hosted draw.io webapp; registered before the SPA

@@ -48,6 +48,10 @@ import { useLiveSuggestions } from "../lib/useLiveSuggestions";
 import { TranscriptPartPicker } from "./TranscriptPartPicker";
 import { Markdown } from "./Markdown";
 import { HighlightedText } from "../lib/searchHighlight";
+import { shiftIndex, shiftMarkers } from "../lib/transcriptSelection";
+import { useTranscriptSelection } from "./useTranscriptSelection";
+import { RecordingBoundary, SegmentTextEditor } from "./LiveTranscriptParts";
+import { SelectGutter, TranscriptSelectToggle, TranscriptSelectionBar } from "./TranscriptSelectionBar";
 
 // Persisted audio-capture preferences (input device + mic mix-in). Kept in
 // localStorage so a user's choice carries across sessions and app restarts.
@@ -356,6 +360,16 @@ export function LiveView({
   const lastAnalyzedRef = useRef(0);
   const segCountRef = useRef(0);
   segCountRef.current = segments.length;
+
+  // After a batch discard, keep index-based markers on the same phrases.
+  const selection = useTranscriptSelection(session.id, segments, (removed) => {
+    const order = segments.map((s) => s.id);
+    setRecordingBoundaries((b) => shiftMarkers(order, removed, b));
+    lastAnalyzedRef.current = shiftIndex(order, removed, lastAnalyzedRef.current);
+    translateNextRef.current = shiftIndex(order, removed, translateNextRef.current);
+    setTranslateStart((t) => (t === null ? t : shiftIndex(order, removed, t)));
+    setSegments((prev) => prev.filter((s) => !removed.has(s.id)));
+  });
 
   const isEnded = session.status === "ended";
   const features = session.features ?? [];
@@ -878,11 +892,12 @@ export function LiveView({
     raw ? (speakerNames[raw] ?? stripRun(raw)) : null;
 
   function beginRename(seg: MeetingSegment): void {
-    if (!seg.speaker_label) return;
+    if (!seg.speaker_label || selection.active) return;
     setEditingSegId(seg.id);
   }
 
   function beginTextEdit(seg: MeetingSegment): void {
+    if (selection.active) return;
     setEditingSegId(null);
     setEditingTextSegId(seg.id);
     setTextDraft(seg.text);
@@ -1157,7 +1172,9 @@ export function LiveView({
       {/* Pinned record controls — stay visible as the transcript scrolls. */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border px-4 py-2">
         {recordControls}
+        <TranscriptSelectToggle selection={selection} disabled={segments.length === 0} />
       </div>
+      {selection.active && <TranscriptSelectionBar selection={selection} />}
       {liveSuggestion && (
         <div className="border-b border-border bg-accent/5 px-4 py-2" aria-live="polite">
           <div className="mx-auto max-w-3xl">
@@ -1239,22 +1256,14 @@ export function LiveView({
             const boundary = boundaryMap.get(i);
             return (
             <div key={seg.id}>
-              {boundary === "resume" && (
-                <div className="my-3 flex items-center gap-2 text-[10px] uppercase tracking-wide text-muted">
-                  <div className="h-px flex-1 bg-border" />
-                  Recording resumed
-                  <div className="h-px flex-1 bg-border" />
-                </div>
-              )}
-              {boundary === "reconnect" && (
-                <div className="my-3 flex items-center gap-2 text-[10px] uppercase tracking-wide text-amber-600 dark:text-amber-500">
-                  <div className="h-px flex-1 bg-amber-500/30" />
-                  <RefreshCw size={11} aria-hidden="true" />
-                  Reconnected
-                  <div className="h-px flex-1 bg-amber-500/30" />
-                </div>
-              )}
-              <div className="flex gap-2 text-sm">
+              <RecordingBoundary kind={boundary} />
+              <div
+                className={`group flex gap-2 text-sm ${selection.active ? "cursor-pointer select-none rounded" : ""} ${
+                  selection.selected.has(seg.id) ? "bg-red-500/10 line-through decoration-red-500/40" : ""
+                }`}
+                onClick={selection.active ? (e) => selection.click(seg.id, e.shiftKey) : undefined}
+              >
+                {selection.active && <SelectGutter selection={selection} id={seg.id} />}
                 <span className="w-10 shrink-0 pt-0.5 text-right text-[11px] tabular-nums text-muted">
                   {formatOffset(seg.offset_ms)}
                 </span>
@@ -1291,22 +1300,11 @@ export function LiveView({
                     ))}
                   <span className="text-text">
                     {editingTextSegId === seg.id ? (
-                      <textarea
-                        autoFocus
-                        rows={1}
+                      <SegmentTextEditor
                         value={textDraft}
-                        onChange={(e) => setTextDraft(e.target.value)}
-                        onBlur={() => void commitTextEdit(seg)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" && !e.shiftKey) {
-                            e.preventDefault();
-                            void commitTextEdit(seg);
-                          } else if (e.key === "Escape") {
-                            e.preventDefault();
-                            setEditingTextSegId(null);
-                          }
-                        }}
-                        className="w-full resize-none rounded border border-border bg-surface px-1.5 py-0.5 text-sm text-text focus:border-accent focus:outline-none"
+                        onChange={setTextDraft}
+                        onCommit={() => void commitTextEdit(seg)}
+                        onCancel={() => setEditingTextSegId(null)}
                       />
                     ) : (
                       <span

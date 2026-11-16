@@ -5,7 +5,7 @@
     "frontend/src/components/ChatPanel.tsx": 899,
     "frontend/src/components/CommandPalette.tsx": 830,
     "frontend/src/components/DefinitionsMigrationWizard.tsx": 1111,
-    "frontend/src/components/LiveView.tsx": 1668,
+    "frontend/src/components/LiveView.tsx": 1666,
     "frontend/src/components/PluginsSettings.tsx": 1083,
     "frontend/src/components/Sidebar.tsx": 1517,
     "frontend/src/components/TopicSettingsPanel.tsx": 870,
@@ -16,7 +16,7 @@
     "frontend/src/lib/types.ts": 2094,
     "precursor/backend/__main__.py": 847,
     "precursor/backend/routers/agents.py": 1557,
-    "precursor/backend/routers/live.py": 1249,
+    "precursor/backend/routers/live.py": 1173,
     "precursor/backend/routers/workflows.py": 1059,
     "precursor/backend/services/agents/transfer.py": 894,
     "precursor/backend/services/app_settings.py": 1054,
@@ -287,7 +287,7 @@
     "frontend/src/lib/workflows.ts::eslint(complexity)": 2
   },
   "duplication": {
-    "duplicated-lines": 2567
+    "duplicated-lines": 2530
   },
   "untyped-responses": {
     "DELETE /api/plugins/installed/{plugin_id}": 1,
