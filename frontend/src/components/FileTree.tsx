@@ -8,6 +8,7 @@ import {
   Folder,
   FolderOpen,
   FolderPlus,
+  RefreshCw,
   Trash2,
 } from "lucide-react";
 import { InlineTitle } from "./InlineTitle";
@@ -80,6 +81,51 @@ function CreateRow({
         placeholder={kind === "file" ? "filename.md" : "folder-name"}
         className="flex-1 min-w-0 bg-bg border border-accent rounded px-1.5 py-0.5 text-sm font-mono outline-none"
       />
+    </div>
+  );
+}
+
+const headerButton = "p-1 rounded hover:bg-surface text-muted hover:text-text";
+
+// The Files pane header's buttons: create at the root, and reload the tree
+// (files written outside the app, e.g. by an agent or the git CLI). In a
+// narrowed pane the header wraps and these drop to their own line, right-aligned.
+export function FileTreeActions({
+  refreshing,
+  onCreate,
+  onRefresh,
+}: {
+  refreshing: boolean;
+  onCreate: (kind: "file" | "folder") => void;
+  onRefresh: () => void;
+}) {
+  return (
+    <div className="ml-auto flex shrink-0 items-center gap-0.5">
+      <button
+        className={headerButton}
+        aria-label="Refresh files"
+        data-tooltip="Refresh the file tree"
+        disabled={refreshing}
+        onClick={onRefresh}
+      >
+        <RefreshCw size={15} className={refreshing ? "animate-spin" : undefined} />
+      </button>
+      <button
+        className={headerButton}
+        aria-label="New folder"
+        data-tooltip="New folder (in root)"
+        onClick={() => onCreate("folder")}
+      >
+        <FolderPlus size={15} />
+      </button>
+      <button
+        className={headerButton}
+        aria-label="New file"
+        data-tooltip="New file (in root)"
+        onClick={() => onCreate("file")}
+      >
+        <FilePlus2 size={15} />
+      </button>
     </div>
   );
 }
@@ -308,7 +354,12 @@ export function FileTree({
             active ? "bg-surface" : "hover:bg-surface/60"
           }`}
           style={indent}
-          onClick={() => onOpen(node.path)}
+          // The second click of a double-click (which starts a rename) must not
+          // reload the file: a fresh editor, draw.io's above all, would take
+          // focus from the rename field.
+          onClick={(e) => {
+            if (e.detail <= 1) onOpen(node.path);
+          }}
           {...dragProps(node.path)}
         >
           <FileText size={14} className="shrink-0 text-muted" />

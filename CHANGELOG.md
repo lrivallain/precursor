@@ -21,6 +21,10 @@ are the per-version history; releasing does not rewrite this file.
   and resource from the server's OAuth metadata. Tokens are refreshed
   automatically, and sign-in errors say which `az login` to run. Works for
   servers such as EngOps IQ that accept the Azure CLI client.
+- **Workspace tree refresh and discussion links.** A refresh button in the
+  workspace's Files header reloads the tree and its git status, for files
+  changed outside the app. The title of a workspace's side discussion now links
+  to the chat or topic itself.
 
 ### Changed
 
@@ -45,6 +49,12 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Fixed
 
+- **Renaming a draw.io file from the workspace tree works.** Double-clicking
+  its name loaded the diagram twice, and the editor then took focus from the
+  rename field. A double-click no longer reopens the file, and the diagram
+  editor waits until you point at it before taking focus.
+- **A narrow workspace Files pane no longer spills over the editor.** Its tabs
+  and buttons wrap onto extra lines instead of overlapping the open file's name.
 - **WorkIQ Teams and the other Agent 365 servers stay signed in again.** Since
   silent renewal started sending back the stored token's granted scope, Entra
   refused every Agent 365 refresh with `AADSTS70011` (`invalid_scope`): its

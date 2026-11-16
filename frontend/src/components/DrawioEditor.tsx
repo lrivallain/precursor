@@ -241,15 +241,61 @@ export function DrawioEditor({
     );
   }
 
+  return <DrawioFrame key={`${path}:${dark}`} frameRef={frameRef} path={path} dark={dark} />;
+}
+
+// draw.io focuses itself as it loads, which would pull focus from whatever
+// the user is typing in meanwhile (renaming the file in the tree, say). Until
+// the user reaches for the diagram, with the pointer or with Tab, focus that
+// lands in the frame goes straight back where it was. The frame is also inert
+// until then, so Tab stops on the wrapper (waking it) rather than the frame.
+function useFocusGuard(frameRef: React.RefObject<HTMLIFrameElement | null>, active: boolean): void {
+  useEffect(() => {
+    if (!active) return;
+    let last: HTMLElement | null = null;
+    const onFocusIn = (e: FocusEvent) => {
+      if (e.target instanceof HTMLElement && e.target !== frameRef.current) last = e.target;
+    };
+    // Focus moving into the frame blurs this window.
+    const onBlur = () => {
+      if (document.activeElement === frameRef.current && last?.isConnected) last.focus();
+    };
+    if (document.activeElement instanceof HTMLElement) last = document.activeElement;
+    document.addEventListener("focusin", onFocusIn, true);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      document.removeEventListener("focusin", onFocusIn, true);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, [frameRef, active]);
+}
+
+// Keyed by file and theme so either change reloads the editor.
+function DrawioFrame({
+  frameRef,
+  path,
+  dark,
+}: {
+  frameRef: React.RefObject<HTMLIFrameElement | null>;
+  path: string;
+  dark: boolean;
+}) {
+  const [awake, setAwake] = useState(false);
+  useFocusGuard(frameRef, !awake);
   return (
-    <iframe
-      // Remount on file switch or theme flip so the editor reloads with the
-      // new diagram or theme.
-      key={`${path}:${dark}`}
-      ref={frameRef}
-      title={path}
-      src={editorUrl(dark)}
-      className="w-full h-full border-0 bg-white"
-    />
+    <div
+      className="w-full h-full"
+      tabIndex={awake ? -1 : 0}
+      onPointerEnter={() => setAwake(true)}
+      onFocus={() => setAwake(true)}
+    >
+      <iframe
+        ref={frameRef}
+        title={path}
+        src={editorUrl(dark)}
+        inert={!awake}
+        className="w-full h-full border-0 bg-white"
+      />
+    </div>
   );
 }

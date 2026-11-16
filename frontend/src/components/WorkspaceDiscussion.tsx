@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { MessageSquare, MessageSquarePlus, MessagesSquare, Repeat2, X } from "lucide-react";
 import { api } from "../lib/api";
+import { chatUrl, discussionPermalink } from "../lib/routes";
+import { openChat, openTopic } from "../lib/sideChats";
 import type { WsDiscussionRef } from "../lib/routes";
 import type { Chat, Topic, Workspace, WorkspaceDiscussion } from "../lib/types";
 import { useResizableWidth } from "../lib/useResizableWidth";
@@ -145,20 +147,40 @@ export function WorkspaceDiscussionPanel({
 function PanelHeader({
   title,
   icon,
+  link,
   onSwitch,
   onClose,
 }: {
   title: string;
   icon: React.ReactNode;
+  // The chat or topic itself: the title links there, and `onOpen` switches to
+  // it in place (a modified click opens `href` in a new tab instead).
+  link?: { href: string; onOpen: () => void };
   onSwitch?: () => void;
   onClose: () => void;
 }) {
+  const titleClass = "min-w-0 flex-1 truncate font-medium";
   return (
     <div className="flex h-10 shrink-0 items-center gap-1.5 border-b border-border px-3 text-sm">
       <span className="shrink-0 text-muted">{icon}</span>
-      <span className="min-w-0 flex-1 truncate font-medium" title={title}>
-        {title}
-      </span>
+      {link ? (
+        <a
+          href={link.href}
+          className={`${titleClass} hover:text-accent hover:underline`}
+          data-tooltip={`${title}\nOpen the full discussion`}
+          onClick={(e) => {
+            if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+            e.preventDefault();
+            link.onOpen();
+          }}
+        >
+          {title}
+        </a>
+      ) : (
+        <span className={titleClass} data-tooltip={title}>
+          {title}
+        </span>
+      )}
       {onSwitch && (
         <button
           type="button"
@@ -239,7 +261,13 @@ function OpenDiscussion({
     const { chat } = resolved;
     return (
       <>
-        <PanelHeader title={chat.title} icon={<MessageSquare size={14} />} onSwitch={onSwitch} onClose={onClose} />
+        <PanelHeader
+          title={chat.title}
+          icon={<MessageSquare size={14} />}
+          link={{ href: chatUrl(chat), onOpen: () => openChat(chat) }}
+          onSwitch={onSwitch}
+          onClose={onClose}
+        />
         <div className="min-h-0 flex-1">
           <ChatSessionPanel
             key={chat.id}
@@ -260,7 +288,13 @@ function OpenDiscussion({
   const { topic } = resolved;
   return (
     <>
-      <PanelHeader title={topic.title} icon={<MessagesSquare size={14} />} onSwitch={onSwitch} onClose={onClose} />
+      <PanelHeader
+        title={topic.title}
+        icon={<MessagesSquare size={14} />}
+        link={{ href: discussionPermalink("topic", topic.public_id), onOpen: () => openTopic(topic.id) }}
+        onSwitch={onSwitch}
+        onClose={onClose}
+      />
       <div className="min-h-0 flex-1">
         <ChatPanel
           key={topic.id}
