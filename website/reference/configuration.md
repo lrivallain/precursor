@@ -93,10 +93,10 @@ menu-bar tray, and the in-place updater.
 | Variable | Default | Description |
 | --- | --- | --- |
 | `PRECURSOR_UPDATE_REPO` | `lrivallain/precursor` | Repository the update check reads releases from. Point it at a fork to track your own builds. |
-| `PRECURSOR_UPDATE_CHANNEL` | *(empty)* | `stable` (tagged releases) or `nightly` (rolling build of `main`). Empty means "match the running build": a dev version follows nightly, a tagged one follows stable. |
+| `PRECURSOR_UPDATE_CHANNEL` | `stable` | `stable` (tagged releases) or `nightly` (rolling build of `main`). Empty means "match the running build": a dev version follows nightly, a tagged one follows stable. Only the default: a channel picked in **Settings → Updates** wins. |
 | `PRECURSOR_UPDATE_EXTRAS` | `kanban` | Comma-separated extras carried across a self-update, so `precursor service update` doesn't silently drop the plugins you installed with. Add `tray` if you use the menu-bar icon. This is *unioned* with `uv`'s install receipt; prefix a name with `-` (`-kanban`) to drop one instead. |
 | `PRECURSOR_UPDATE_CHECK_TTL_SECONDS` | `900` | How long an update-check result is cached before GitHub is asked again. |
-| `PRECURSOR_UPDATE_NOTIFY` | `prompt` | What the tray does when a *background* check finds a new build. `prompt` raises a notification with an **Update and restart** button (macOS `osascript`, Linux `notify-send --action`); `notify` is a plain toast; `off` stays quiet and leaves it to the menu's status line. Anything else is read as `prompt`. |
+| `PRECURSOR_UPDATE_NOTIFY` | `off` | Whether the tray posts a system notification when a *background* check finds a new build: `off` leaves it to the menu's status line, anything else (`notify`) notifies. Only the default: **Settings → Updates** wins. |
 
 ## Diagram editor
 

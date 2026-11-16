@@ -41,11 +41,12 @@ import httpx
 from precursor import __version__
 from precursor.backend import uv_receipt, winproc
 from precursor.backend.config import get_settings, is_source_checkout
+from precursor.backend.services import update_prefs
+from precursor.backend.services.update_prefs import Channel
 
 logger = logging.getLogger(__name__)
 
 InstallMode = Literal["source", "uv-tool", "wheel"]
-Channel = Literal["stable", "nightly"]
 
 NIGHTLY_TAG = "nightly"
 _HTTP_TIMEOUT = 10.0
@@ -120,9 +121,9 @@ def _running_commit() -> str | None:
 
 
 def default_channel() -> Channel:
-    configured = get_settings().update_channel.strip().lower()
-    if configured in ("stable", "nightly"):
-        return configured  # type: ignore[return-value]
+    configured = update_prefs.load().channel
+    if configured is not None:
+        return configured
     # An untagged build is by definition ahead of the last release, so comparing
     # it against `stable` would report "up to date" forever.
     return "nightly" if _is_dev_version(__version__) else "stable"

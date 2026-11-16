@@ -14,6 +14,8 @@ Theme = Literal["light", "dark", "system"]
 FontFamily = Literal["system", "opendyslexic", "atkinson-hyperlegible", "lexend"]
 GitHubTokenSource = Literal["env", "gh-cli", "settings", "none"]
 SpeechAuth = Literal["key", "azure_cli"]
+# "stable" is the tagged releases, "nightly" the rolling build of main.
+UpdateChannel = Literal["stable", "nightly"]
 
 
 class SettingsPayload(BaseModel):
@@ -101,6 +103,11 @@ class SettingsPayload(BaseModel):
     # Browser channel the built-in 'playwright' server drives (--browser).
     # "default" omits the flag entirely (escape hatch for builds without it).
     playwright_browser: str | None = None
+    # Update preferences, read by the tray: saved to a file in the data dir,
+    # not the DB (services/update_prefs.py).
+    update_channel: UpdateChannel | None = None
+    update_checks_enabled: bool | None = None
+    update_notifications_enabled: bool | None = None
     # --- System settings (env default + DB override) ---
     # Prompt budgeting.
     llm_max_input_tokens: int | None = None
@@ -243,6 +250,10 @@ class SettingsRead(BaseModel):
     # Effective browser channel the built-in 'playwright' server drives. "default"
     # means --browser is omitted so @playwright/mcp picks its own default.
     playwright_browser: str = "msedge"
+    # Effective update channel: the saved one, else the running build's.
+    update_channel: UpdateChannel = "stable"
+    update_checks_enabled: bool = True
+    update_notifications_enabled: bool = False
     # --- System settings (effective: env default with DB override applied) ---
     llm_max_input_tokens: int = 600_000
     llm_max_tool_result_tokens: int = 20_000

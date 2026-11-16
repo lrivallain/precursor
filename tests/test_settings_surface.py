@@ -28,7 +28,11 @@ _SYSTEM_TAB = Path(__file__).resolve().parents[1] / "frontend/src/components/set
 # and `.env.example` for the tenant), and both are legitimately useful before
 # anyone opens the UI — pinning an Entra tenant, or naming a browser channel that
 # actually exists on this host. Everything else with a UI control is DB-owned.
-_DELIBERATE_ENV_TWINS = {"playwright_browser", "workiq_tenant_id"}
+#
+# ``update_channel`` is the third: ``precursor service update`` on a headless
+# install follows it with nobody ever opening the UI, and the Settings choice is
+# stored outside the DB (services/update_prefs.py) because the tray reads it.
+_DELIBERATE_ENV_TWINS = {"playwright_browser", "workiq_tenant_id", "update_channel"}
 
 
 def test_no_env_field_shadows_a_settings_panel_control() -> None:

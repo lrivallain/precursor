@@ -21,6 +21,10 @@ are the per-version history; releasing does not rewrite this file.
   and resource from the server's OAuth metadata. Tokens are refreshed
   automatically, and sign-in errors say which `az login` to run. Works for
   servers such as EngOps IQ that accept the Azure CLI client.
+- **Settings → Updates.** Pick the update channel (Releases or Nightly), turn
+  the tray's background update checks off, and choose whether a new build posts
+  a system notification. The tray reads them whether or not the app is running,
+  and `precursor service update` follows the channel.
 - **Workspace tree refresh and discussion links.** A refresh button in the
   workspace's Files header reloads the tree and its git status, for files
   changed outside the app. The title of a workspace's side discussion now links
@@ -28,6 +32,12 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Changed
 
+- **Update notices no longer pop up a dialog.** A new build is announced with a
+  plain system notification, so Focus / Do Not Disturb and your system's
+  notification settings apply; take the update from the tray menu. New defaults:
+  checks on, the Releases channel (a dev build no longer follows nightly unless
+  you pick it), and notifications **off**. `PRECURSOR_UPDATE_NOTIFY=prompt` now
+  means a plain notification.
 - **No Microsoft 365, no M365 features in live sessions.** When the WorkIQ MCP
   server is off, the live start screen and the Context tab no longer show (or
   fetch) your meetings, and the Summary tab no longer offers the Teams
