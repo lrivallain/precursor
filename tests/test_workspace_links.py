@@ -293,3 +293,24 @@ def _stub_precursor_workspace(srv, monkeypatch: pytest.MonkeyPatch, ws: object, 
     monkeypatch.setattr(srv, "_load_workspace", _stub_workspace(ws))
     monkeypatch.setattr(srv, "browse_root", lambda _ws: root)
     monkeypatch.setattr(srv, "_workspace_gate", _open)
+
+
+def test_open_link_uses_the_on_disk_spelling_with_a_root(tmp_path: Path) -> None:
+    # A case-insensitive disk lets a tool write `Customers/…` into `customers/`;
+    # the result and its link must name the folder the file tree lists.
+    (tmp_path / "customers").mkdir()
+    (tmp_path / "customers" / "a.drawio").write_text("x")
+
+    result = links.with_open_link(
+        {"path": "Customers/a.drawio", "written": True}, "ws", "Customers/a.drawio", root=tmp_path
+    )
+
+    assert result["path"] == "customers/a.drawio"
+    assert result["url"] == "/ws/ws/customers/a.drawio"
+
+
+def test_open_link_without_a_root_keeps_the_path() -> None:
+    result = links.with_open_link({"path": "Customers/a.md"}, "ws", "Customers/a.md")
+
+    assert result["path"] == "Customers/a.md"
+    assert result["url"] == "/ws/ws/Customers/a.md"

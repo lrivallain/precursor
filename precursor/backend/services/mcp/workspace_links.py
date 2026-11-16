@@ -12,8 +12,11 @@ without importing the LLM/git stack.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote
+
+from precursor.backend.services.workspace_fs import disk_path
 
 # Mirrors the SPA's `/ws/<slug>/<file/path>` route (frontend/src/App.tsx).
 _WS_ROUTE = "/ws"
@@ -38,12 +41,21 @@ def workspace_file_url(slug: str, path: str) -> str | None:
     return f"{_WS_ROUTE}/{quote(slug, safe='')}/{encoded}"
 
 
-def with_open_link(result: dict[str, Any], slug: str, path: str) -> dict[str, Any]:
+def with_open_link(
+    result: dict[str, Any], slug: str, path: str, *, root: Path | None = None
+) -> dict[str, Any]:
     """Annotate a successful file result with the deep link that opens it.
 
-    The result is returned unchanged when no safe link can be built, so a tool
-    never advertises a link that would land somewhere else.
+    With ``root``, the path is first spelled as it is on disk (``disk_path``),
+    in the result too: on a case-insensitive filesystem a tool given the wrong
+    case still succeeds, and the link and what the model reads back should name
+    the file the tree lists. The result is returned unchanged when no safe link
+    can be built, so a tool never advertises a link that would land somewhere
+    else.
     """
+    if root is not None:
+        path = disk_path(root, path)
+        result = {**result, "path": path}
     url = workspace_file_url(slug, path)
     if url is None:
         return result

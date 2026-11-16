@@ -73,3 +73,31 @@ def test_rename_rejects_folder_into_own_descendant(tmp_path: Path) -> None:
 
     # The folder must be left intact.
     assert (tmp_path / "a" / "f.txt").exists()
+
+
+def test_disk_path_takes_the_on_disk_spelling(tmp_path: Path) -> None:
+    (tmp_path / "customers" / "Club Med").mkdir(parents=True)
+    (tmp_path / "customers" / "Club Med" / "dns.drawio").write_text("x")
+
+    assert fs.disk_path(tmp_path, "Customers/club med/DNS.drawio") == (
+        "customers/Club Med/dns.drawio"
+    )
+
+
+def test_disk_path_keeps_an_exact_match_and_a_missing_tail(tmp_path: Path) -> None:
+    (tmp_path / "customers").mkdir()
+
+    assert fs.disk_path(tmp_path, "customers/a.md") == "customers/a.md"
+    assert fs.disk_path(tmp_path, "Customers/New/b.md") == "customers/New/b.md"
+    assert fs.disk_path(tmp_path, "/customers//a.md") == "customers/a.md"
+
+
+def test_disk_path_leaves_an_ambiguous_segment_as_given(tmp_path: Path) -> None:
+    (tmp_path / "notes").mkdir()
+    try:
+        (tmp_path / "Notes").mkdir()
+    except FileExistsError:
+        pytest.skip("case-insensitive filesystem: two names differing in case can't coexist")
+
+    assert fs.disk_path(tmp_path, "NOTES/a.md") == "NOTES/a.md"
+    assert fs.disk_path(tmp_path, "Notes/a.md") == "Notes/a.md"
