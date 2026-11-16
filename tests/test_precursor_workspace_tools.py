@@ -90,6 +90,24 @@ async def test_create_local_workspace_makes_a_ready_folder() -> None:
     assert any(w["id"] == result["workspace_id"] for w in listing["workspaces"])
 
 
+async def test_workspace_writes_report_the_path_as_spelled_on_disk() -> None:
+    await _set_expose({"workspaces": True, "workspaces_write": True})
+    ws = await ps.create_workspace(name="Case Ws", kind="local")
+    root = Path(get_settings().workspaces_dir) / ws["slug"]
+    (root / "customers").mkdir()
+
+    written = await ps.write_workspace_file(
+        workspace_id=ws["workspace_id"], path="Customers/a.md", content="x"
+    )
+
+    # "customers/a.md" on a case-insensitive disk, "Customers/a.md" (a new
+    # folder) on a case-sensitive one: either way, the file that exists.
+    assert written["path"] in {"customers/a.md", "Customers/a.md"}
+    assert any(p.name == written["path"].split("/")[0] for p in root.iterdir())
+    assert (root / written["path"]).is_file()
+    assert written["url"].endswith("/" + written["path"])
+
+
 async def test_create_workspace_allocates_a_unique_slug() -> None:
     await _set_expose({"workspaces_write": True})
     first = await ps.create_workspace(name="Twin Space")

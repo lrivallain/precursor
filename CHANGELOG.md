@@ -45,6 +45,13 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Fixed
 
+- **A direct link to a workspace file opens it again when the folder's case
+  differs.** A link to `Customers/…` now opens `customers/…`: on a
+  case-insensitive disk the tool that wrote the file accepted either spelling,
+  but the Files section only opened an exact match. An exact match still wins,
+  and an ambiguous one opens nothing. The workspace and draw.io file tools now
+  also report the path as it is spelled on disk, so the link, the "Open" chip
+  and what the assistant reads back name the file the tree lists.
 - **WorkIQ Teams and the other Agent 365 servers stay signed in again.** Since
   silent renewal started sending back the stored token's granted scope, Entra
   refused every Agent 365 refresh with `AADSTS70011` (`invalid_scope`): its

@@ -814,11 +814,8 @@ def _persist(root: Path, path: str, content: str, *, overwrite: bool, slug: str)
         return {"error": str(exc)}
     except FileExistsError:
         return {"error": f"File already exists: {path} (pass overwrite=true to replace it)"}
-    return with_open_link(
-        {"path": path, "written": True, "bytes": len(content.encode("utf-8"))},
-        slug,
-        path,
-    )
+    result = {"path": path, "written": True, "bytes": len(content.encode("utf-8"))}
+    return with_open_link(result, slug, path, root=root)
 
 
 @mcp.tool()
@@ -1009,7 +1006,7 @@ async def read_diagram(workspace_id: int, path: str) -> dict[str, Any]:
         return {"error": f"File is not UTF-8 text (compressed diagram?): {path}"}
     if len(content.encode("utf-8")) > _MAX_XML_BYTES:
         return {"error": f"Diagram is too large to read: {path}"}
-    return with_open_link({"path": path, "xml": content}, ws.slug, path)
+    return with_open_link({"path": path, "xml": content}, ws.slug, path, root=root)
 
 
 def main() -> None:

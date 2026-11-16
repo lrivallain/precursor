@@ -70,6 +70,23 @@ export function toWorkspaceFileLink(
   return { slug, path, name, isDiagram: isDiagramPath(path) };
 }
 
+/**
+ * The tree entry a deep-linked path names. An exact match wins; otherwise a
+ * single case-insensitive match, because a link may spell a folder differently
+ * from the tree (a model writing `Customers/` to `customers/` succeeds on a
+ * case-insensitive filesystem, and the link keeps its spelling).
+ */
+export function resolveLinkedFile(
+  files: readonly { path: string; type: string }[],
+  path: string,
+): string | null {
+  const candidates = files.filter((f) => f.type !== "dir");
+  if (candidates.some((f) => f.path === path)) return path;
+  const lower = path.toLowerCase();
+  const matches = candidates.filter((f) => f.path.toLowerCase() === lower);
+  return matches.length === 1 ? matches[0].path : null;
+}
+
 /** Switch the app to the Files section with this file open. */
 export function openWorkspaceFile(
   slug: string,

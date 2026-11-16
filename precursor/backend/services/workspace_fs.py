@@ -58,6 +58,34 @@ def safe_join(root: Path, rel: str) -> Path:
     return target
 
 
+def disk_path(root: Path, rel: str) -> str:
+    """Spell ``rel`` the way the workspace tree has it on disk.
+
+    A case-insensitive filesystem (macOS, Windows) accepts ``Customers/a.md``
+    for ``customers/a.md``, so a tool given the wrong case succeeds; reporting
+    the path as given would then link to a file the tree doesn't list. Each
+    existing segment takes its on-disk name (an exact match first, else the one
+    entry equal ignoring case); from the first missing segment on, ``rel`` is
+    kept as given.
+    """
+    current = root
+    out: list[str] = []
+    segments = [seg for seg in (rel or "").split("/") if seg]
+    for index, seg in enumerate(segments):
+        try:
+            names = [entry.name for entry in current.iterdir()]
+        except OSError:
+            return "/".join(out + segments[index:])
+        if seg not in names:
+            folded = [name for name in names if name.casefold() == seg.casefold()]
+            if len(folded) != 1:
+                return "/".join(out + segments[index:])
+            seg = folded[0]
+        out.append(seg)
+        current = current / seg
+    return "/".join(out)
+
+
 def refuse_definitions_for_tools(root: Path, rel: str) -> None:
     """Raise ``UnsafePathError`` when a *tool* would write the definitions folder.
 
