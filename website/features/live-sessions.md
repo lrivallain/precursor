@@ -90,6 +90,13 @@ role afterwards to override it. Detaching a topic leaves the role as it is.
   that voice.
 - **Fix mistaken words** — **double-click any phrase** to edit its text in place,
   handy for correcting a misheard word before it feeds the insights and summary.
+- **Discard phrases in bulk** — forgot to stop recording after the meeting?
+  Press **Select** above the transcript, then tick phrases: **Shift-click**
+  selects a range, the arrow next to a checkbox selects that phrase **and
+  everything after it**, and **All** / **Invert** / **Clear** cover the rest.
+  **Discard** removes the selection for good (after a confirmation), so the
+  insights and summary only see the real meeting. Re-run the analysis if the
+  insights already picked up the discarded talk.
 - **Summary** — an editable markdown recap, including an **Attendees** list
   (seeded from renamed speakers and any linked meeting's invitees), which you can
   **post into the linked topic** as a message. One **Generate** button opens a

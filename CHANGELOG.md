@@ -15,6 +15,10 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Added
 
+- **Discard live transcript phrases in bulk.** A recording left running after
+  the meeting no longer pollutes the transcript: **Select** above the
+  transcript, pick phrases (Shift-click for a range, or "from here to the
+  end"), then **Discard**. Backed by `POST /api/live/{id}/segments/discard`.
 - **MCP servers that sign in with Entra ID.** A user-defined HTTP server can
   now authenticate with a token from your Azure CLI sign-in (`az login`)
   instead of a static header. Paste the URL and Precursor detects the tenant
