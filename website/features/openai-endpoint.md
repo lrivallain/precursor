@@ -12,30 +12,24 @@ Precursor instead of at a provider.
 
 ## Turning it on
 
-The endpoint is **off by default**. Open **Settings → Model** and tick **Serve
-an OpenAI-compatible endpoint**; the switch applies immediately. The first time,
-Precursor mints an API key (`sk-precursor-…`), and the card shows what a client
-needs:
+**Off by default.** Tick **Serve an OpenAI-compatible endpoint** in **Settings →
+Model** (applies immediately). The first time, Precursor mints an API key
+(`sk-precursor-…`):
 
 | Field | Value |
 | --- | --- |
 | Base URL | `http://127.0.0.1:<port>/api/openai/v1` |
 | API key | sent by the client as `Authorization: Bearer <key>` |
 
-The key stays **readable** in Settings, on purpose: you'll paste it into more than
-one client over time. **Regenerate** replaces it, and clients still holding the
-old key are refused (`401`) from their next request. Turning the endpoint off
-keeps the key, so switching it back on doesn't break configured clients.
+The key stays readable in Settings. **Regenerate** replaces it (old key → `401`).
+Turning the endpoint off keeps the key.
 
 ## What it relays
 
-Requests go to the **active provider** — the one picked in **Settings → Model** —
-and to the models it lists. The endpoint only serves providers that are simple to
-set up and publish a catalogue: **GitHub Copilot, OpenAI, Mistral AI, Hugging
-Face and Ollama**. With **Azure AI Foundry** or the **Mock** provider active, or
-when the active provider isn't configured (Copilot without a GitHub token, a
-missing API key), it answers `503` and the card says why — rather than letting
-the offline mock reply with canned text.
+Requests go to the **active provider** (**Settings → Model**) and its models.
+Supported: **GitHub Copilot, OpenAI, Mistral AI, Hugging Face and Ollama**. With
+**Azure AI Foundry** or **Mock** active, or an unconfigured provider, it returns
+`503` and the card says why.
 
 | Route | What it does |
 | --- | --- |
@@ -43,9 +37,9 @@ the offline mock reply with canned text.
 | `GET /api/openai/v1/models/{id}` | One model from that catalogue. |
 | `POST /api/openai/v1/chat/completions` | A chat completion, streamed (SSE) or not. |
 
-Precursor is a **pure relay** here. The client's messages and function tools go
-to the provider as they are, and the client runs its own tool loop — Precursor's
-MCP servers, skills and memory aren't involved. Specifically:
+It is a **pure relay**: the client's messages and tools go to the provider
+as-is and the client runs its own tool loop (no Precursor MCP servers, skills or
+memory).
 
 - **Messages** — `system`, `developer` (sent as `system`), `user`, `assistant`
   (including its `tool_calls`) and `tool`. Images ride along as `image_url` parts
@@ -86,8 +80,7 @@ provider's catalogue:
 3. VS Code opens `chatLanguageModels.json`: replace the entry it just added with
    the copied one, and remove the models you don't want in the picker.
 
-The models appear in the chat model picker under **Precursor**. A trimmed entry
-looks like this:
+The models appear in the chat model picker under **Precursor**. A trimmed entry:
 
 ```json
 [
@@ -114,17 +107,14 @@ looks like this:
 ]
 ```
 
-The models are listed one by one because VS Code's Custom Endpoint discovery only
-keeps model ids it already knows — pointed at Precursor's `/models`, it would find
-nothing. Every entry declares `toolCalling`, since agent mode hides models without
-it; limits come from the provider's catalogue where it publishes them, and
-reasoning models get their effort levels, so the picker's **Thinking Effort**
-submenu works.
+Models are listed explicitly because VS Code's discovery ignores unknown ids.
+Each declares `toolCalling` (agent mode needs it), the provider's limits, and
+reasoning effort levels where supported.
 
 ::: tip A client on another machine
-The base URL uses the address Precursor listens on, `127.0.0.1` by default. A
-client running elsewhere — another computer, a dev container, a remote VS Code
-window — can't reach that address.
+The base URL uses Precursor's bind address (`127.0.0.1` by default), which a
+client elsewhere (another computer, a dev container, remote VS Code) can't
+reach.
 :::
 
 ## Other clients
@@ -149,20 +139,16 @@ print(reply.choices[0].message.content)
 ## With GitHub Copilot
 
 ::: warning Copilot isn't meant to be proxied
-With **GitHub Copilot** as the provider, every request reaches Copilot with your
-account, just like Precursor's own chats. Copilot isn't intended to be exposed
-to other tools this way: heavy or automated traffic through the endpoint can trip
-GitHub's abuse detection and suspend your Copilot access. Keep it to
-interactive use. In VS Code itself, Copilot's models are already available
-natively — the endpoint is most useful for Precursor's other providers, and for
-clients that can't sign in to Copilot.
+With **GitHub Copilot** as the provider, requests use your Copilot account.
+Heavy or automated traffic can trip GitHub's abuse detection and suspend your
+Copilot access: keep it interactive. VS Code already has Copilot natively; the
+endpoint is most useful for other providers and for clients that can't sign in
+to Copilot.
 :::
 
 ## Security
 
-The endpoint needs the API key on every request, but the key sits in Settings in
-clear, and Precursor's own API has no authentication (see
-[Security & deployment model](/reference/architecture#security-deployment-model)):
-anyone who can reach Precursor can read the key. The endpoint answers on the
-address Precursor is bound to — keep the default `127.0.0.1` unless you front it
-with your own authenticating proxy.
+The key is required on every request, but Precursor's own API has no
+authentication, so anyone who can reach Precursor can read the key from Settings
+(see [Security & deployment model](/reference/architecture#security-deployment-model)).
+Keep the default `127.0.0.1` bind unless you add an authenticating proxy.

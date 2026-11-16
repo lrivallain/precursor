@@ -4,127 +4,80 @@ title: Context compression
 
 # Context compression
 
-Long conversations fill the model's context window, especially when they carry
-screenshots, file reads and search results. Precursor keeps that in check in two
-ways. **Automatic trimming** is free and makes no model call. **Compaction**
-summarises the conversation so far so you can keep going in the same thread.
-Compaction only runs when you ask for it.
+Keep long conversations inside the model's context window. **Automatic trimming** runs every
+turn at no cost; **compaction** (`/compact`) summarises the conversation and only runs when you
+ask.
 
 <Screenshot src="/screenshots/context-compression.png" alt="A topic transcript with a Context compacted divider, the older messages dimmed above it, and the conversation stats panel showing the context window bar and a Compact context button" caption="After /compact, the older messages stay visible but dimmed; the model works from the summary." />
 
 ## Automatic trimming
 
-Before each turn, Precursor trims what the model sees. The transcript itself is
-left untouched.
+Applied to what the model sees, never to the transcript:
 
-- **Inline images are dropped.** Tools such as the Playwright browser return
-  screenshots as base64 text inside their result. The model can't see a picture
-  through its base64, so each image becomes a placeholder such as
-  `[binary omitted: ~138 KB]`. One screenshot alone is about 150,000
-  characters.
-- **Large tool results from older turns are shortened.** A tool result over
-  2,000 characters that is older than the last **5** user turns reaches the
-  model as a short preview and a note. The model can call the tool again when
-  it needs the full output. Change the number of turns in **Settings → Model →
+- **Inline images in tool results** (e.g. base64 Playwright screenshots, ~150,000 characters
+  each) become placeholders like `[binary omitted: ~138 KB]`.
+- **Tool results over 2,000 characters older than the last 5 user turns** are sent as a short
+  preview; the model can call the tool again. Set the number of turns in **Settings → Model →
   Prompt budgeting → Keep tool results in full for the last N turns**
-  (`llm_tool_result_keep_turns`). Set it to `0` to always send full results.
+  (`llm_tool_result_keep_turns`; `0` = always full).
 
-The per-result cap and the overall input budget (**Max tokens per tool result**,
-**Max input tokens per request**) still apply after these two passes. Past the
-budget, the oldest turns are dropped first, without a summary. Compaction
-exists so that doesn't happen.
+**Max tokens per tool result** and **Max input tokens per request** still apply afterwards;
+past the budget, the oldest turns are dropped without a summary.
 
 ## Compacting a topic or chat
 
-Type **`/compact`** in the composer, or click **Compact context** in the
-**conversation stats** panel on the right of the transcript (shown unless
-turned off in **Settings → Chat**). The model writes a structured
-summary of the conversation with these sections:
+Run **`/compact [focus]`** or click **Compact context** in the conversation stats panel. The
+model writes a summary (goal, key facts and decisions with names/IDs/numbers/URLs verbatim,
+work done, open questions, current state) saved as a **compaction marker**. From the next turn
+the model sees the summary plus later messages.
 
-- the goal
-- key facts and decisions, with names, IDs, numbers, URLs and paths copied
-  verbatim
-- work done
-- open questions
-- where things stand
-
-The summary is saved as a **compaction marker**, and from the next turn on the
-model sees the summary plus everything after it.
-
-- **Say what matters.** Add a focus after the command, for example
-  `/compact keep the SKU comparison and the pricing figures`.
-- **Nothing is deleted.** The messages above the marker stay in the
-  transcript, dimmed. **Show summary** on the marker shows what the model now
+- `/compact keep the SKU comparison and the pricing figures` steers it.
+- Older messages stay visible, dimmed. **Show summary** on the marker shows what the model
   works from.
-- **Undo** removes the marker, and the model sees the full history again. The
-  usual undo toast gives you a few seconds to change your mind.
-- **Compacting again** folds the previous summary into the new one.
-- **Not while a reply is generating.** Wait for the reply to finish, or stop
-  it, before you compact.
-
-The summary is written by the conversation's model. Its token usage is counted
-under `/compact` in **Settings → Usage stats**.
+- **Undo** on the marker restores the full history.
+- Compacting again folds the previous summary in.
+- Not available while a reply is generating.
+- Uses the conversation's model; tokens count under `/compact` in **Settings → Usage stats**.
 
 ### Knowing when to compact
 
-The stats panel's **context window** bar shows how much of the model's window
-the last turn used, split into what fills it:
+The stats panel's **context window** bar splits the last turn's usage:
 
-- **System prompt**: the role, instructions, skills and memories sent every turn.
-- **System tools**: Precursor's built-in tools (the `precursor` server and the
-  approval tool).
-- **MCP tools**: the tool definitions of every other enabled MCP server. This
-  is often the largest slice, so it is the first place to look when a short chat
-  already feels full. Disable servers a conversation doesn't need.
-- **Messages**: the conversation itself, tool results included.
-- **Free space** and **Buffer**: what is left. The buffer is the last 20% of the
-  window, kept clear so the model has room to answer; it is where the 80% nudge
-  below kicks in.
+| Segment | Contains |
+| --- | --- |
+| System prompt | Role, instructions, skills, memories |
+| System tools | Built-in tools (the `precursor` server, the approval tool) |
+| MCP tools | Other enabled MCP servers' tool definitions; often the largest. Disable servers you don't need. |
+| Messages | The conversation, tool results included |
+| Free space / Buffer | What's left; the buffer is the last 20% of the window |
 
 <Screenshot src="/screenshots/context-breakdown.png" alt="The conversation stats panel with a segmented context window bar and a legend listing system prompt, system tools, MCP tools, messages, free space and buffer with their share and token count" caption="The context window, broken down by what fills it." />
 
-Hover a row for what it covers. Values marked `≈` are estimates: the provider
-reports a single total per turn, so Precursor sizes the system prompt and the
-tool definitions itself. A topic's linked-issue body is left out of that
-estimate.
-
-[Agents](/features/agents-mode/running) show the same breakdown in the Insights
-panel, using the split the Copilot SDK reports (system prompt, tool definitions
-and messages). The SDK doesn't separate MCP tools from built-in ones, so there
-is a single **System tools** row.
-
-<Screenshot src="/screenshots/agents-context.png" alt="The agent Insights panel with the same segmented context window bar and legend" caption="The agent Insights panel, with the SDK's own breakdown." />
-
-Past **80%**, the **Compact context** button turns amber with a nudge. The
-collapsed stats rail shows an amber shortcut too.
+Values marked `≈` are Precursor's estimates (providers report one total); a linked issue's
+body isn't counted. Past **80%**, **Compact context** turns amber (also on the collapsed rail).
 
 <Screenshot src="/screenshots/context-compression-nudge.png" alt="The conversation stats panel with the context window bar at 87% and an amber call-out: Context is 87% full, with a Compact context button" caption="Past 80% of the window, the stats panel suggests compacting." />
 
-After a compaction, until the next turn reports real usage, the bar shows an
-estimate (marked `≈`). The **Next turn (estimate)** section shows:
+After a compaction, until the next turn, **Next turn (estimate)** shows the history to be sent,
+what trimming saved, and how many messages the marker covers (system prompt and tools
+excluded).
 
-- the history the next turn will send
-- how much automatic trimming saved
-- how many messages the latest marker covers
+[Agents](/features/agents-mode/running) show the same bar in the Insights panel, from the
+Copilot SDK's split, with a single **System tools** row.
 
-The estimate leaves out the system prompt and tool definitions.
+<Screenshot src="/screenshots/agents-context.png" alt="The agent Insights panel with the same segmented context window bar and legend" caption="The agent Insights panel, with the SDK's own breakdown." />
 
 ## Compacting an agent
 
-[Agents](/features/agents-mode) run on the Copilot SDK. The SDK already compacts
-their history on its own when the window runs low. **`/compact [focus]`** in
-the agent's composer, or **Compact context** under **Usage** in the insights
-sidebar, triggers a compaction now. Only an agent at rest can be compacted:
-wait for the turn to finish, or stop it, first.
-
-Every compaction shows in the timeline as a **context compacted** marker, both
-the automatic ones and yours. The marker shows the tokens before and after;
-hover it to read the summary. The usage panel's context bar drops right away.
+The Copilot SDK compacts [agent](/features/agents-mode) history on its own when the window runs
+low. To compact now, run **`/compact [focus]`** in the agent's composer or click **Compact
+context** under **Usage** in the insights sidebar, while the agent is at rest. Every compaction
+shows as a **context compacted** marker in the timeline with tokens before/after; hover it for
+the summary.
 
 ## See also
 
-- [Attachments](/features/attachments): how much of a document the model sees.
-- [Storage & retention](/features/storage): pruning old tool results from the
-  database, which is a different lever from what the model sees.
-- [Configuration](/reference/configuration#llm-provider): the prompt
-  budgeting settings.
+- [Attachments](/features/attachments#how-much-of-a-document-the-model-sees)
+- [Storage & retention](/features/storage): pruning stored tool results (separate from what
+  the model sees).
+- [Configuration](/reference/configuration#llm-provider): prompt budgeting settings.

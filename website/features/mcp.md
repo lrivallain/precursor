@@ -4,252 +4,143 @@ title: MCP (tools both ways)
 
 # MCP — tools both ways
 
-Precursor is **both** an MCP client and an MCP server, with working transports in
-each direction. [Model Context Protocol](https://modelcontextprotocol.io) is the
-open standard for connecting AI apps to tools and data.
+Precursor is both an MCP **client** (attach tool servers to chats, topics and
+agents) and an MCP **server** (expose your conversations to VS Code, CLI agents
+and other hosts). [Model Context Protocol](https://modelcontextprotocol.io) is
+the open standard for connecting AI apps to tools and data. Internals live in
+the [MCP reference](/reference/mcp).
 
 <Screenshot src="/screenshots/mcp-settings.png" alt="The MCP settings tab with toggles for built-in tool servers" caption="Settings → MCP — pick which Precursor capabilities to serve (with Select all / Unselect all), then toggle built-in tool servers per turn." />
 
 ## As a client — attaching tool servers
 
-Precursor holds a registry of MCP **tool servers**. Each is toggled in
-**Settings → MCP**; enabled servers are opened per chat turn and their tools are
-advertised to the model, which can then call them inside the
+Toggle servers in **Settings → MCP servers**. Enabled servers are opened per
+turn and their tools are offered to the model inside the
 [streamed tool loop](/reference/architecture#request-flow-streamed-chat).
-
-Built-in servers ship in-tree:
 
 | Server | What it does |
 | --- | --- |
 | `github` | GitHub issue/PR/repo operations. |
-| `fetch` | Fetch and read web content, and make arbitrary HTTP requests. |
-| `playwright` | Drive a real Chromium — navigate, read the rendered DOM/text, screenshot. Uses a **persistent profile** so an interactive sign-in reaches **authenticated** pages (see below). |
-| `drawio` | Author native `.drawio` diagrams into a workspace, with server-side layout (see below). |
-| `cmd-runner` | Run bash / python / node in a [Docker jail](/features/command-runner). |
-| `workiq` | Microsoft 365 (mail, calendar, …) — read-only locally, or full read/write via the hosted preview. |
-| `workiq-teams` | Microsoft Teams via [Agent 365](#agent-365-workiq-teams-and-workiq-user) — chats, channels, messages, presence. |
-| `workiq-user` | Directory and people lookups via Agent 365 — profiles, managers, direct reports. |
-| `workiq-planner` | Planner via Agent 365 — plans, tasks and goals. |
-| `workiq-word` | Word via Agent 365 — create a document, read its content, comment on it. |
-| `workiq-excel` | Excel via Agent 365 — create a workbook, read its content, comment on it. |
-| `precursor` | Precursor's *own* data (see below). |
+| `fetch` | Fetch web content and make arbitrary HTTP requests. |
+| `playwright` | Drive a real browser with a persistent profile, so it can reach **authenticated** pages ([below](#playwright-authenticated-scraping)). Needs Node.js (`npx`). |
+| `drawio` | Author native `.drawio` diagrams into a workspace ([below](#draw-io-diagrams-as-files-not-pictures)). |
+| `cmd-runner` | Run bash / python / node in a [Docker jail](/features/command-runner). Needs Docker while the jail is on. |
+| `workiq` | Microsoft 365 (mail, calendar, …): read-only locally, or read/write via the hosted preview. |
+| `workiq-teams`, `workiq-user`, `workiq-planner`, `workiq-word`, `workiq-excel` | Teams, directory, Planner, Word and Excel via [Agent 365](#agent-365-workiq-teams-and-workiq-user). |
+| `precursor` | Precursor's own data ([as a server](#as-a-server-exposing-your-conversations)). |
 
-Precursor's `list_messages` and `list_chat_messages` tools return an
-instance-relative `permalink` for each user/assistant message, alongside its
-immutable `public_id`. Models can cite a particular message with
-`[Previous reply](permalink)` instead of guessing its address. System notices
-and tool results have no user-facing message permalink.
+Enabling a server runs a host-dependency **preflight** (Docker, `npx`). With the
+`workiq` server off, Microsoft 365 surfaces elsewhere in the app (the meeting
+agenda, Teams transcript import) are hidden.
 
-You can also add **your own** servers (stdio or streamable-HTTP). A
-host-dependency **preflight** gates enabling a server — `cmd-runner` needs Docker
-when its jail is on, and `playwright` needs Node.js (`npx`) on PATH.
-
-### Servers that sign in with Entra ID
-
-Many organisation MCP servers want a Microsoft Entra ID token rather than an
-API key. Precursor can get one from your **Azure CLI** sign-in, so there is no
-key to paste and nothing to renew by hand:
-
-1. In **Settings → MCP**, add an HTTP server and paste its URL. When you leave
-   the URL field (or select **Detect**), Precursor asks the server which
-   sign-in it expects. For an Entra-protected server it switches
-   **Authentication** to **Entra ID (Azure CLI)** and fills in the **tenant**
-   and the **resource** (application ID URI) from the server's published
-   OAuth metadata.
-2. Save and enable the server. Each request carries a token from
-   `az account get-access-token --tenant <tenant> --resource <resource>`;
-   Precursor caches it and fetches a new one before it expires.
-
-If the Azure CLI can't supply a token, the server card says what to do next:
-run the `az login --tenant … --scope <resource>/.default` command shown in the
-editor, fix the tenant, or ask the server's owners for access when your account
-isn't authorized. Agent sessions get the same token as a header and rebuild
-their session before it expires.
-
-This only works for servers that accept the Azure CLI as a client, which many
-Microsoft-internal services do. The tenant matters: a server in the Microsoft
-tenant rejects a token from another tenant you happen to be signed in to, which
-is why detection fills it in.
-
-HTTP servers that require no custom headers, such as Microsoft Learn, can also
-be attached to agent sessions. Precursor sends an empty headers object to the
-Copilot runtime; authenticated servers retain their configured headers.
-
-Plugins can contribute servers too, such as Kanban's `kanban.board`. Core maps
-server/tool pairs to stable model-facing names containing only ASCII letters,
-digits, underscores and hyphens, capped at 64 characters for compatibility
-across providers. Names that need conversion receive a hash suffix to distinguish
-otherwise identical normalized or shortened names. Calls still reach the
-original MCP server and tool; server IDs and saved enable toggles are unchanged.
+You can add **your own** servers (stdio or streamable HTTP). Plugins can
+contribute servers too, such as Kanban's `kanban.board`.
 
 ::: tip Narrow the catalogue per workflow step
 Enabling a server here offers it to everything. A
 [workflow](/features/workflows/steps#picking-which-tool-servers-a-step-gets) step can
-name the handful of servers it may use — the rest are never attached to that
-step's session.
+name the handful of servers it may use.
 :::
+
+### Servers that sign in with Entra ID
+
+For an organisation MCP server that wants a Microsoft Entra ID token instead of
+an API key, Precursor can use your **Azure CLI** sign-in:
+
+1. In **Settings → MCP servers**, add an HTTP server and paste its URL. On
+   leaving the field (or with **Detect**), Precursor reads the server's OAuth
+   metadata and, for an Entra-protected server, sets **Authentication** to
+   **Entra ID (Azure CLI)** with the **tenant** and **resource** filled in.
+2. Save and enable. Each request carries a token from
+   `az account get-access-token --tenant <tenant> --resource <resource>`, cached
+   and renewed before it expires. Agent sessions get the same token.
+
+If no token can be had, the server card says what to do: run the
+`az login --tenant … --scope <resource>/.default` command shown in the editor,
+fix the tenant, or ask the server's owners for access. This only works for
+servers that accept the Azure CLI as a client, and the tenant must be the
+server's (a token from another tenant is rejected).
+
+HTTP servers that need no headers (for example Microsoft Learn) can also be
+attached to agent sessions.
 
 ### Tools loaded on demand
 
-A few large servers (GitHub, Azure, Teams…) easily add up to hundreds of tools
-and ~100k tokens of JSON schemas. Sending all of them with every request makes
-even a one-line question expensive and slow, and can exceed the whole
-tokens-per-minute quota of a small model deployment.
+Large servers (GitHub, Azure, Teams…) can add hundreds of tools and ~100k tokens
+of schemas to every request. By default a chat or topic turn sends only:
 
-So by default a chat or topic turn sends only a small set of tool definitions:
+- tools the system prompt refers to (e.g. step-plan tools);
+- every tool of a server ticked **always load** in **Settings → MCP servers**;
+- tools the conversation called recently.
 
-- tools the system prompt itself refers to (for example Precursor's step-plan
-  tools);
-- every tool of a server marked **always load** in **Settings → MCP servers**;
-- tools the conversation called recently, so a follow-up doesn't need to look
-  them up again.
-
-Every other enabled tool is listed **by name only** in a compact *Tools available
-on demand* section of the system prompt. When the model needs one, it calls
-`search_tools` — with exact names or a keyword query — and the matching tools
-become callable from its next step. A tool the model calls straight from the
-list runs too. When the whole catalogue is small, everything is sent as before.
+Every other enabled tool is listed **by name only** in the system prompt. The
+model calls `search_tools` (exact names or a keyword query) and the matches
+become callable from its next step. A small catalogue is sent whole.
 
 Turn **Load tools on demand** off in **Settings → MCP servers** to send every
-tool definition with every request again, or tick **always load** on the
-servers whose tools you want offered up front. Workflow step assessments always
-receive their full tool list.
+definition every time. Workflow step assessments always get their full tool
+list. To cut the GitHub server's size at the source, trim
+`PRECURSOR_GITHUB_MCP_TOOLSETS`.
 
 ### Startup and the first prompt
 
-A dozen enabled servers used to make the *first* message of a session the
-expensive one: nothing connected at startup, so that turn paid connect +
-initialize + list_tools for every server at once — plus an `npx` spin-up for the
-stdio ones — and because they are opened concurrently the slowest set the floor.
-
-Two things remove that cost, both of them invisible:
-
-- **The tool catalogue is stored.** Each server's tool list is written after a
-  successful connect and restored on the next launch, so **Settings** renders
-  and the model is offered tools before anything has connected. It stays a
-  *hint*: the live session is still what a call reaches, and a call that finds a
-  tool the server no longer exposes re-lists the catalogue and retries once
-  rather than reporting a tool that isn't there.
-- **Enabled servers are warmed in the background.** Shortly after startup
-  Precursor connects them **one at a time**, never blocking startup or any
-  request — several built-ins each launch `npx`, and a thundering herd at launch
-  is the very stall being removed. A server whose credential needs an interactive
-  sign-in is **skipped**, so starting the app never pops a browser window at you.
-
-Both are tunable — see `PRECURSOR_MCP_WARMUP_*` in the
-[configuration reference](/reference/configuration#mcp-tool-servers).
+Each server's tool list is stored after a successful connect, so the model is
+offered tools before anything reconnects. Shortly after startup, enabled servers
+are **warmed in the background**, one at a time; servers that need an
+interactive sign-in are skipped. Tune with `PRECURSOR_MCP_WARMUP_*`
+([configuration](/reference/configuration#mcp-tool-servers)).
 
 ### When a remote server drops mid-turn
 
-A hosted endpoint can go away underneath a live session — a rolling deploy, a
-gateway blip, or the server simply forgetting the session id it issued. The MCP
-SDK reports a forgotten session as the single phrase **`Session terminated`**,
-which reads like a local problem and is anything but: it is emitted only when the
-remote answers with **HTTP 404**. Other servers say `Session not found`, and any
-other HTTP error comes back as the server's own message or an equally vague
-`Server returned an error response`, always with the status dropped. Precursor
-re-attaches it (`… (HTTP 502)`), because a 404 or 5xx and a 4xx call for
-different handling.
-
-Left alone that wording is actively harmful. A warm session is reused across
-turns, so a dropped one stays poisoned and *every* later call fails the same
-way; and the model, told only "session terminated", re-plans the call with
-smaller arguments and then tells you to sign in again — neither of which can fix
-a fault on the other end.
-
-So Precursor treats a dead session as a **transport** failure rather than a bad
-call: a remote 404, any 5xx, or a socket teardown **recycles the session and
-retries the call once**, which is enough to ride out a blip. If the second
-attempt fails too it stops there — a downed endpoint should not be hammered for
-the rest of the turn — and the model is told what actually happened, that the
-arguments and the sign-in are not at fault, and to report the outage instead of
-guessing an answer.
+A remote 404 (`Session terminated`), any 5xx, or a dropped socket recycles the
+session and **retries the call once**. If that fails too, the model is told the
+endpoint is down and to report it rather than guess. Error messages carry the
+HTTP status (`… (HTTP 502)`).
 
 ::: tip Re-authenticating will not help here
-The **Re-authenticate** button swaps a *credential*. When the endpoint is
-returning 404s or 502s the credential is fine, and a fresh token changes
-nothing — the tool error now says so explicitly.
+**Re-authenticate** swaps a credential. When the endpoint returns 404s or 502s
+the credential is fine.
 :::
 
 ### Playwright — authenticated scraping
 
-`playwright` wraps Microsoft's official
-[`@playwright/mcp`](https://github.com/microsoft/playwright-mcp) to drive a real
-browser: the model can **navigate**, read the **rendered** DOM/text (not raw
-HTML), and take **screenshots**. This is what `fetch` can't do — it does raw HTTP
-with no browser and no session, so a JS-rendered or login-gated page comes back
-empty or as a sign-in redirect.
+`playwright` runs Microsoft's
+[`@playwright/mcp`](https://github.com/microsoft/playwright-mcp) (pinned to
+`0.0.83`) so the model can navigate, read the **rendered** page and take
+screenshots — what `fetch` (raw HTTP, no session) can't do for JS-rendered or
+login-gated pages.
 
-Precursor launches the verified **`@playwright/mcp@0.0.83`** release rather than
-the registry's `latest` tag. Some package mirrors point `latest` at an old alpha
-that rejects `--browser` and `--user-data-dir`, exits immediately, and leaves
-only **Connection closed** on the server card. Pinning the release preserves
-browser selection and the persistent profile even when that tag is stale;
-restarting the app alone cannot fix a bad registry tag.
-
-Two things make **authenticated** endpoints reachable:
-
-- **Microsoft Edge is the default channel**, so the browser can ride the
-  **corporate Edge SSO / WAM broker** that signs a managed machine in to
-  Microsoft sites with little or no interaction. Pick another browser in
-  **Settings → MCP → Playwright browser** (or `PRECURSOR_PLAYWRIGHT_BROWSER`) on
-  machines without Edge.
-- **A persistent browser profile.** By default Precursor pins nothing, so
-  `@playwright/mcp` uses its own shared, machine-wide profile — meaning a
-  sign-in you already onboarded there carries over. The browser opens **headed**,
-  so the first time a page needs Entra you sign in once and every later turn
-  reuses that session. Set `PRECURSOR_PLAYWRIGHT_PROFILE_DIR` to pin an isolated
-  profile instead.
+- **Browser:** Microsoft Edge by default, so it can use the corporate Edge SSO.
+  Change it in **Settings → MCP servers → Playwright browser** or
+  `PRECURSOR_PLAYWRIGHT_BROWSER` (`chromium` on machines without Edge).
+- **Profile:** `@playwright/mcp`'s shared profile by default, so existing
+  sign-ins carry over. The browser opens headed: sign in once, later turns reuse
+  the session. `PRECURSOR_PLAYWRIGHT_PROFILE_DIR` pins an isolated profile.
 
 ::: warning Trusted, local use
 The persistent profile stores a live authenticated session on disk, and headed
-sign-in needs a real display. Treat it like the host-mode
-[command runner](/features/command-runner): a single-user, trusted-machine
-capability, not something to expose on a shared/headless server.
+sign-in needs a display. Treat it like the host-mode
+[command runner](/features/command-runner): single-user, trusted machine only.
 :::
 
 ### draw.io — diagrams as files, not pictures
 
-`drawio` writes native **`.drawio`** documents (plain mxGraph XML) into a
-[workspace](/features/workspaces) working tree. Because the output is a *file* in
-a git-backed tree, a diagram is reviewable in a `git diff` and commit-able from
-the Workspace UI — and it stays editable in draw.io, unlike a rendered image. It
-is also editable **in Precursor**, via
-[Workspaces → Editing diagrams](/features/workspaces#editing-diagrams).
-
-It shares the [workspace](/features/workspaces) sandbox: every path goes through `safe_join`, so
-nothing outside `workspaces_dir/<slug>` is reachable.
+`drawio` writes native **`.drawio`** files (mxGraph XML) into a
+[workspace](/features/workspaces), inside its sandbox. They diff in git, open in
+draw.io, and are editable in Precursor
+([Editing diagrams](/features/workspaces#editing-diagrams)).
 
 | Tool | What it does |
 | --- | --- |
 | `list_workspaces` | Find the `workspace_id` to write into. |
-| `search_shapes` | Find real product icons (Azure) and their exact style strings. |
-| `list_shapes` | The generic shape / colour / edge presets. |
-| `create_diagram` | Build a laid-out diagram from nodes, edges and groups. |
-| `write_diagram_xml` | Escape hatch — write raw mxGraph XML (validated, wrapper added). |
-| `read_diagram` | Read a diagram back to edit and rewrite it. |
+| `search_shapes` | Find real product icons (~700 verified Azure shapes) and their style strings. |
+| `list_shapes` | Generic shape / colour / edge presets. |
+| `create_diagram` | Build a laid-out diagram from nodes, edges and (nestable) groups. |
+| `write_diagram_xml` | Escape hatch: write raw mxGraph XML (validated). |
+| `read_diagram` | Read a diagram back to edit it. |
 
-Two things exist here because a model left to itself gets them wrong.
-
-**Real icons, not blank boxes.** draw.io's Azure library is a set of **SVG
-images**, *not* `mxgraph.azure2.*` stencils. Models reliably invent the stencil
-form, draw.io can't resolve it, and every service degrades to a featureless
-rectangle. So Precursor ships a **catalogue of ~700 verified Azure shapes** and
-serves it through `search_shapes`; `create_diagram` also resolves free text
-(`"azure firewall"`) and **reports what it matched**, so an unresolved shape is
-something you get told about rather than discover in the rendered file.
-
-::: tip Colours are for boxes, not icons
-`color` tints plain shapes. It's ignored for catalogue icons — painting a fill
-over an SVG icon is precisely what flattens it into a coloured square.
-:::
-
-**Layout, including nested containers.** Models write plausible mxGraph but pick
-poor coordinates, so shapes overlap and edges cross. Describe the *graph*
-instead — nodes, edges and **groups** — and the server derives the geometry.
-`groups` nest freely via their own `group` field, which is what makes real cloud
-topologies expressible (region → VNet → subnet → resource) without dropping to
-raw XML:
+Describe the graph and the server computes the layout. `groups` nest via their
+own `group` field (region → VNet → subnet → resource):
 
 ```text
 create_diagram(
@@ -265,358 +156,123 @@ create_diagram(
 )
 ```
 
-Any field that takes a preset also accepts a **raw mxGraph style**, so the rest
-of the draw.io catalogue — AWS, UML, BPMN — stays reachable. Output is
-deterministic, so regenerating an unchanged diagram produces an empty `git diff`.
-Existing files are never clobbered unless you pass `overwrite=true`.
+- `shape` accepts free text (`"azure firewall"`); the result reports what it
+  matched.
+- `color` tints plain shapes only, never catalogue icons.
+- Any preset field also takes a raw mxGraph style (AWS, UML, BPMN…).
+- Output is deterministic; existing files are kept unless `overwrite=true`.
 
 ### Signing in to WorkIQ and Agent 365
 
-`workiq` has a **preview** toggle: off, it runs the local stdio launcher
-(read-only `ask`); on, it switches to the hosted, **OAuth-protected** HTTP
-endpoint for the full read **and write** surface. Sign-in is a browser flow, and
-when one is needed an inline banner surfaces it right in the app.
+`workiq` has a **preview** toggle: off runs the local stdio launcher (read-only
+`ask`); on uses the hosted, OAuth-protected endpoint with full read **and
+write**. Sign-in is a browser flow, surfaced by an inline banner when needed.
 
-**The prompt waits for the tool that needs it.** A turn is never held up because
-some *other* server's credential has gone stale — with three Entra credentials in
-play, one expired WorkIQ token used to stall a question that had nothing to do
-with WorkIQ, for up to five minutes, before a single word was generated. Now the
-turn starts immediately and the sign-in is asked for only if the model actually
-reaches for a tool on the affected server, naming that tool when it does.
+- A turn never waits on a stale credential it doesn't use. Sign-in is asked for
+  only when the model calls a tool on that server; if it doesn't happen, the
+  call fails explicitly.
+- Tokens are refreshed silently before they expire (a quarter of the token's
+  lifetime ahead, at least five minutes). When several credentials lapse at
+  once you get **one prompt**.
+- Credentials of servers you haven't used for 6 hours stop being kept warm.
+- Servers sharing a credential share the sign-in button: the others read
+  `signs in with WorkIQ Teams`.
 
-That is not the same as hiding the tools. A blocked server still contributes its
-tools to what the model is offered, from the stored catalogue, because quietly
-removing them is what makes a model answer from memory instead of calling the
-tool. If the sign-in doesn't happen, the call comes back as an explicit error
-telling the model it could not reach the tool — never as a confident guess.
-
-Precursor is built to keep those credentials alive **without interrupting you**:
-tokens are refreshed silently before they expire, a lapsed credential is renewed
-hands-free where the browser still holds a live session, and when several servers
-go stale at once you get **one prompt, not one per credential**. The banner is
-the last resort, not the first move.
-
-**Entra's sign-in is taken as Entra serves it.** Both endpoints point at Entra's
-multi-tenant `organizations` authority, which publishes a *templated* issuer
-(`…/{tenantid}/v2.0`) because the real one depends on whose account signs in.
-The MCP SDK's strict issuer check would reject that outright, so Precursor
-accepts exactly that template for exactly those authorities, and a concrete
-tenant issuer on the redirect in its place. It also drops the `prompt=consent`
-the SDK adds whenever it asks for a refresh token: Entra issues one without it,
-and forcing it would put a consent screen in front of every sign-in, defeat the
-silent pass, and stop users whose tenant reserves consent for admins.
-
-**A sign-in counts for every server on that credential.** Several built-ins share
-one Entra token — the five Agent 365 endpoints are a single sign-in between them
-— so when one completes, the rest are re-pointed at the fresh token and
-reconnected on the spot instead of being left showing a sign-in they already
-have. **Settings → MCP** matches that: the button belongs to the *credential*,
-so the servers sharing it read `signs in with WorkIQ Teams` rather than offering
-a redundant prompt of their own.
-
-Idle credentials are allowed to go quiet — a server you enabled months ago and
-never call stops being refreshed, and stops nagging — but a genuine lapse is
-surfaced proactively rather than discovered as a stalled request.
-
-Precursor restores each stored token's **real expiry** when it loads the
-credential, so the SDK's own silent-refresh path actually runs. Before that, a
-token read from disk looked indefinitely fresh, the refresh branch was never
-entered, and every expiry escalated to a full browser sign-in — the refresh
-token was dead weight. Interactive sign-in is now the exception rather than the
-routine.
-
-It also resolves the **authorization server** before that refresh is built. The
-SDK discovers it only while handling a 401, which is *after* the refresh it
-attempts first, so a background renewal would otherwise fall back to guessing the
-token endpoint from the MCP URL and post the grant at the WorkIQ/Agent 365 host
-instead of Entra. Those hosts have no token endpoint, the SDK read the resulting
-404 as a refusal, and a renewable credential was thrown away in favour of a
-browser prompt — the two halves of the same bug, so fixing the expiry alone was
-not enough.
-
-WorkIQ preview refresh grants also retain the stored token's **granted scope**,
-so renewal explicitly targets the same resource as the original sign-in. Entra
-refresh tokens are not resource-bound: omitting the scope leaves resource
-selection implicit and can produce a token-protection refusal (`AADSTS530084`)
-even when an explicit WorkIQ-scope renewal succeeds. Precursor reuses only the
-already-granted scopes; it does not request additional permissions or bypass
-Conditional Access. Legacy tokens without a stored scope retain the SDK's
-default refresh behavior. Agent 365 servers (`workiq-teams`, `workiq-user`, …)
-refresh **without** a scope: their granted list includes entries Entra refuses
-to accept back (`AADSTS70011`, `invalid_scope`).
-
-And when it does decide a token is due, it **says so** to the SDK. The refresh
-branch is gated on the SDK's own freshness check, which was happy with a token
-that still had a few minutes left — so the keep-alive opened a session intending
-to renew, nothing happened, and the untouched token came back looking renewed.
-Renewal only really occurred in the last seconds of a token's life, which is a
-tick's delay away from the interactive prompt this all exists to avoid. The
-deliberate-renewal path now marks the credential spent, so the refresh it asked
-for is the refresh it gets, and a renewal that changed nothing is reported as the
-anomaly it is rather than logged as a success.
-
-Attaching WorkIQ to an agent or workflow is **not** itself a renewal request.
-It uses the stored token's normal expiry check, just like chat, rather than
-forcing a refresh of a still-valid credential. Otherwise an Entra
-token-protection refusal (`AADSTS530084`) could remove WorkIQ from an agent
-even while the same access token still worked in chat. Expired credentials
-still need renewal or sign-in; this does not bypass your organization's policy.
-
-How far ahead of expiry that happens isn't a setting. It follows from the token's
-own lifetime — a quarter of it, never less than five minutes — because the only
-thing that matters is how many attempts fit before the token dies. A typical
-Entra token lands around 17-22 minutes of runway, so a failed or delayed tick has
-a dozen more chances rather than one.
-
-::: tip Sign-ins that were stored before this
-A token saved without a refresh token can't gain one retroactively, so Precursor
-raises the ordinary sign-in banner once instead of attempting a renewal that
-cannot succeed. You sign in one more time and come back with a renewable
-credential.
-:::
-
-Every part of this is tunable; see the `PRECURSOR_WORKIQ_*` entries in the
-[configuration reference](/reference/configuration#mcp-tool-servers) to disable
-automatic re-auth, change how often the keep-alive polls, or restore stricter
-behaviour.
-If a prompt ever appears you can't explain, the browser console carries a
-`[workiq-auth]` trace of each step of the sign-in with timings.
+Tune with the `PRECURSOR_WORKIQ_*` settings
+([configuration](/reference/configuration#mcp-tool-servers)). How the refresh
+works is in the [MCP reference](/reference/mcp#workiq-and-agent-365-credentials).
 
 #### When a sign-in prompt needs explaining
 
-The console trace above is only the SPA's half of the story — the legs it
-*observes*. It can tell you the silent frame never completed; it cannot tell you
-that Entra answered `AADSTS700082: The refresh token has expired due to
-inactivity`. That answer arrives at the **backend**, and until now nothing
-recorded it: the MCP SDK logs a bare `Token refresh failed: 400` naming neither
-the credential nor the reason.
-
-So the backend keeps its own trace, on a dedicated logger. Every decision taken
-about a WorkIQ credential reports to **`precursor.mcp.auth`**, prefixed
-`[workiq-auth]` and stamped with an *episode* id that stitches a keep-alive
-verdict, a hands-free pass and a manual click into one story:
-
-```text
-2026-08-24T09:11:02Z INFO precursor.mcp.auth [workiq-auth] [wq-3f2a1c] workiq +0ms — episode opened reason='keep-alive could not renew silently'
-2026-08-24T09:11:02Z WARN precursor.mcp.auth [workiq-auth] [wq-3f2a1c] workiq +38ms — silent refresh REFUSED by Entra error='invalid_grant' error_description='AADSTS700082: …'
-2026-08-24T09:11:03Z INFO precursor.mcp.auth [workiq-auth] [wq-3f2a1c] workiq +1204ms — leg ① starting: silent prompt=none authorization
-2026-08-24T09:11:23Z INFO precursor.mcp.auth [workiq-auth] [wq-3f2a1c] workiq +21208ms — loopback timed out — no redirect ever arrived
-```
-
-That channel has **its own level**, `workiq_auth_log_level`, independent of the
-app-wide `log_level`. It defaults to `debug` on purpose: a lapse is rare and only
-happens in the wild, so the trace has to already be running when it does. The
-channel is silent outside an auth episode, so it costs nothing the rest of the
-time — raise it to `info` for transitions only, or `warning` to quieten it.
-
-Terminals scroll, though, and a packaged app has none. So the same records are
-kept in memory and served, with the state that explains them, by
-**`GET /api/mcp/auth/diagnostics`**: the settings in force, then per credential —
-whether a token is stored, whether it has a **refresh token** at all, when it
-expires, how far ahead of that it will be renewed, how long it's been idle, and
-whether connects are being fast-failed.
-
-In the SPA, one console call collects both halves and puts them on your
-clipboard, ready to paste into an issue:
+Collect the browser and backend traces of every sign-in decision, redacted, on
+your clipboard, from the browser console:
 
 ```js
 await precursorWorkiqAuthReport()
 ```
 
-(If it reports it couldn't reach the clipboard, DevTools had focus rather than
-the page — the JSON is printed instead, or use `copy(await
-precursorWorkiqAuthReport())`.) Token values never leave the process; secrets and
-account names are reduced to `<present:N chars>`, and the ~37-entry Agent 365
-scope list is summarized to a count plus whether `offline_access` is in it.
-
-Episode records are buffered *apart* from the keep-alive's ambient heartbeat, so
-a credential that lapsed overnight still explains itself the next morning rather
-than having been pushed out by a thousand once-a-minute "nothing to do" ticks —
-and the ticker itself only reports a verdict when it **changes**.
-
-::: tip A failed automatic attempt no longer costs you the credential
-The hands-free passes clear the stored token before they run, so the SDK is
-forced through a fresh grant instead of short-circuiting on a token it still
-considers valid. If the pass then failed, that credential was simply *gone* — and
-since the verdict that triggers a pass can come from a transient 401, a
-refresh token that would have worked perfectly well on the next try was being
-thrown away, turning a blip into a mandatory sign-in. The old credential is now
-put back whenever a hands-free pass doesn't complete, at a cost of at most one
-doomed refresh later. An explicit **Sign in** still clears outright — you're
-right there, and a stale token must not shadow the new grant.
-:::
+The backend side is also at `GET /api/mcp/auth/diagnostics` and logged on the
+`precursor.mcp.auth` channel (`PRECURSOR_WORKIQ_AUTH_LOG_LEVEL`, default
+`debug`). Details: [Auth diagnostics](/reference/mcp#auth-diagnostics).
 
 <!-- The anchor is pinned: it predates the Planner/Word/Excel servers and is
      linked from the changelog and released docs. -->
 ### Agent 365: the hosted `workiq-*` servers {#agent-365-workiq-teams-and-workiq-user}
 
-Microsoft's **Agent 365** platform exposes more hosted MCP endpoints, and
-Precursor ships the five that one sign-in reaches:
-
 | Server | Covers |
 | --- | --- |
-| `workiq-teams` | Teams: list/send chat and channel messages, members, presence, files. |
-| `workiq-user` | Directory: your profile, other users, managers, direct reports. |
-| `workiq-planner` | Planner: create and query plans, tasks and goals. |
-| `workiq-word` | Word: create a document, read its content, add and reply to comments. |
-| `workiq-excel` | Excel: create a workbook, read its content, add and reply to comments. |
+| `workiq-teams` | Teams: chat and channel messages, members, presence, files. |
+| `workiq-user` | Directory: profiles, managers, direct reports. |
+| `workiq-planner` | Planner: plans, tasks and goals. |
+| `workiq-word` | Word: create a document, read it, add and reply to comments. |
+| `workiq-excel` | Excel: create a workbook, read it, add and reply to comments. |
 
-**One sign-in covers all five.** They authenticate as the same Entra client
-against the same resource, so Precursor caches a single Agent 365 credential —
-sign in from any of them and the other four are re-pointed at that token and
-reconnected immediately, with no second prompt. In **Settings → MCP** only the
-first of them carries a sign-in button; the rest read `signs in with WorkIQ
-Teams`. The WorkIQ preview is a *different* client and resource, so it keeps its
-own token; signing in to Teams never disturbs it.
+- **One sign-in covers all five.** The WorkIQ preview is a separate credential.
+- **They need your tenant GUID** (`common` / `organizations` are rejected).
+  Resolved from **Settings → MCP servers → Microsoft 365 tenant**, then
+  `PRECURSOR_WORKIQ_TENANT_ID`, then auto-discovered from a WorkIQ preview
+  sign-in. Until known, the entries say they are unconfigured.
 
 ::: tip Why not `workiq-productivity` (or `-mail`, `-files`, `-sharepoint`)?
-Agent 365 hosts those too, but they sit behind a **second** Entra resource — the
-shared credential is rejected there with `invalid_audience`, so each would cost
-another consent and another sign-in. Their ground is already covered by the
-hosted `workiq` preview server, which reaches mail, calendar and files through
-Graph paths on the credential you have.
-
-Note also that Microsoft's **`workiq-productivity`** *plugin* is a different kind
-of thing entirely: a bundle of read-only prompt **skills** that drive the
-`workiq` tools you already have — not a server to add here.
+Those sit behind a second Entra resource (`invalid_audience` with the shared
+credential), and the hosted `workiq` preview already covers mail, calendar and
+files. Microsoft's `workiq-productivity` *plugin* is a set of prompt skills, not
+a server.
 :::
-
-**They need your Microsoft tenant.** The endpoint URL embeds a tenant **GUID**,
-and Entra rejects the `common` / `organizations` aliases there. Precursor
-resolves one in order: **Settings → MCP → "Microsoft 365 tenant"**, then
-`PRECURSOR_WORKIQ_TENANT_ID`, then **auto-discovery** from a token you already
-hold via a hosted WorkIQ sign-in. In practice, if you've signed in to the WorkIQ
-preview the servers configure themselves with nothing to fill in. Until a
-tenant is known the entries stay unconfigured and say so.
 
 ### Approving tool calls
 
-Whether an attached tool runs on its own is governed by the conversation's
-[tool approval policy](/features/approvals). Under **balanced**, a tool runs
-without asking only when its server marks it read-only (the MCP `readOnlyHint`
-annotation); a tool that says nothing is treated as a change and waits for you.
+Whether a tool runs on its own follows the conversation's
+[tool approval policy](/features/approvals). Under **balanced**, only tools the
+server marks read-only (`readOnlyHint`) run without asking.
 
 ## As a server — exposing your conversations
 
-Precursor runs an MCP server (the SDK's `MCPServer`) named **`precursor`** that exposes its own data
-to MCP hosts (VS Code, CLI agents): topics, messages, chats, agents, live
-(meeting) sessions, cross-entity search, [Precursor IQ](/features/iq)
-retrieval and cited answers, skills, memory,
-[agent state](/features/agents-mode/artifacts-state#durable-state-the-private-scratchpad),
-[workflow state](/features/workflows/steps#pipeline-state-what-a-workflow-remembers),
-`append_note`, `post_message`, [side chats](/features/chats#side-chats), schedules,
-reminders, [workspaces](/features/workspaces), and a few **basic tools**.
+The built-in **`precursor`** server exposes Precursor's data to MCP hosts. Every
+section is **off by default**; enable them in **Settings → MCP servers →
+Precursor capabilities** (**Select all** / **Unselect all** flip them at once).
+Only the tools of exposed sections are advertised.
 
-**Basic tools** is a section of small stateless helpers that read none of your
-data, so a model stops guessing at things it is bad at. Like every section it is
-off by default.
+| Section(s) | Tools / what they give |
+| --- | --- |
+| Topics, messages, chats, agents, live | Read topics (with their slug `path`), messages (with a `permalink` per message), chats, agent tasks, meetings. |
+| Search | Substring search across every exposed surface; each hit names its `accessor` (`get_chat`, `get_agent`, …). |
+| [IQ](/features/iq) (`iq`, `iq_ask`) | `retrieve` (ranked, cited passages) and `ask` (a cited answer). Each hit is gated by its source's section. |
+| Notes and posting | `append_note` files text into a topic; `post_message` runs a full reply. Both return the topic's title, path and URL. |
+| [Side chats](/features/chats#side-chats) (`side_chats`) | `create_side_chat` from a topic, a reply or a quote. |
+| [Step plans](/features/step-by-step) (`step_plans`) | `create_step_plan`, `list_step_plans`, `get_step_plan`, `amend_step_plan`, `edit_step_plan`, `run_step_plan`, `pause_step_plan`. |
+| Skills, memory (`memory_write`), schedules, reminders | Read and manage them. |
+| [Agent](/features/agents-mode/artifacts-state#durable-state-the-private-scratchpad) and [workflow](/features/workflows/steps#pipeline-state-what-a-workflow-remembers) state | Durable key/value state. |
+| [Workspaces](/features/workspaces) / Edit workspaces | `list_workspaces`, `list_workspace_files`, `read_workspace_file`; edit adds `create_workspace` (empty or git clone), `create_workspace_file`, `write_workspace_file`, `create_workspace_folder`. Agents still ask before each write. |
+| Basic tools | Stateless helpers ([below](#basic-tools)). |
+
+With nothing exposed, only `precursor_info` is advertised. The tool-by-tool
+behaviour of step plans and the event relay are in the
+[MCP reference](/reference/mcp#the-precursor-server).
+
+### Basic tools
 
 | Tool | What it does |
 | --- | --- |
-| `get_datetime` | Current date, time, weekday, ISO week and UTC offset, in this machine's zone or any IANA `timezone`. |
-| `convert_timezone` | Convert an ISO 8601 date-time between IANA zones. |
-| `date_math` | Shift a date by years/months/weeks/days/hours/minutes, or measure the gap between two dates (including business days). |
-| `calculate` | Evaluate arithmetic and common math functions (`sqrt`, `log`, `round`, …) without running arbitrary code. |
-| `convert_units` | Length, mass, volume, time, data size, speed and temperature. |
-| `generate_uuid` | UUID v4 (random) or v7 (time-ordered), up to 100 at a time. |
-| `random_value` | Cryptographically secure URL-safe or hex tokens, and integers in a range. |
-| `hash_or_encode` | MD5/SHA hashes and base64, URL, hex and HTML encode/decode. |
-| `count_text` | Characters, words, lines, sentences, paragraphs and an estimated token count. |
-| `get_system_info` | App version, OS, architecture, Python, locale and time zone. Never host or user names, paths or environment variables. |
+| `get_datetime` | Current date, time, weekday, ISO week and UTC offset, in any IANA `timezone`. |
+| `convert_timezone` | Convert an ISO 8601 date-time between zones. |
+| `date_math` | Shift a date, or measure a gap (including business days). |
+| `calculate` | Arithmetic and common math functions, no arbitrary code. |
+| `convert_units` | Length, mass, volume, time, data size, speed, temperature. |
+| `generate_uuid` | UUID v4 or v7, up to 100 at a time. |
+| `random_value` | Secure URL-safe or hex tokens, integers in a range. |
+| `hash_or_encode` | MD5/SHA hashes; base64, URL, hex and HTML encode/decode. |
+| `count_text` | Characters, words, lines, sentences, paragraphs, estimated tokens. |
+| `get_system_info` | App version, OS, architecture, Python, locale, time zone (no host/user names or paths). |
 
-**Workspaces are part of this server.** The standalone `workspace-fs` server was
-folded in. The **Workspaces** section serves `list_workspaces`,
-`list_workspace_files` and `read_workspace_file`; **Edit workspaces** adds
-`create_workspace` (an empty local workspace, or a git clone from a repository
-URL), `create_workspace_file`, `write_workspace_file` and
-`create_workspace_folder`. Both sections are opt-in even for Precursor's own
-agents, and an agent still gets a permission prompt before each write. An
-existing `workspace-fs` enablement is migrated automatically on upgrade (and a
-`workspace-fs` agent scope now resolves to `precursor`).
+### Transports
 
-In **Settings → MCP → Precursor capabilities**, **Select all** and **Unselect
-all** flip every section at once.
-
-`append_note` and `post_message` are deliberately different tools. `append_note`
-persists the text you hand it and returns — the right call for filing an
-already-written briefing into a topic. `post_message` spends a whole generation
-replying to it, which is what you want for a question and pure overhead for a
-note.
-
-**Both name the topic they wrote to.** Their result carries a `topic` object
-with the **title**, the slug **path** and the in-app **URL**, not just the
-numeric `topic_id` — which is an internal detail the app never shows you, so
-"filed under topic 42" was impossible to check. You get
-`customers/sanofi/avm-alz` and a link you can open, which makes a note filed
-under the wrong topic obvious immediately.
-
-**A write from the server shows up live.** The `precursor` server runs as a
-stdio subprocess: it shares the app's database but not its in-memory event bus,
-so a note filed through it used to land in the database while every open window
-kept rendering the topic as it was, until someone reloaded. Child processes are
-now handed a loopback relay URL plus a per-run token and forward their events to
-the app, which republishes them to every window — including the one whose chat
-turn called the tool. Only data-refresh event types are accepted, and only with
-the token, so the relay can never do more than make a window refetch what it is
-already entitled to.
-
-That covers every server Precursor launches itself, which includes the built-in
-`precursor` entry and the one an [agent](/features/agents-mode) is given. An
-external host that launches `python -m …precursor_server` on its own gets no
-token and so relays nothing; point it at the **HTTP endpoint** below instead,
-which runs inside the app process and therefore updates the UI directly.
-
-**Search spans every surface**, using the same substring lookup the ⌘K palette
-falls back to, so a host can find a topic, chat, agent task or meeting by content and then follow the hit's
-`accessor` hint (`get_chat`, `get_agent`, …) to read the full record. Chat, agent
-and live hits only appear when their own section is exposed, since their snippets
-disclose that content.
-
-**[Precursor IQ](/features/iq) adds ranked, cited retrieval.** `retrieve`
-returns the passages most relevant to a natural-language query, plus a
-grounding Markdown block that numbers them as `[^n]` citations, WorkIQ-style.
-`ask` has Precursor's model write a cited answer from those passages. Each has
-its own toggle (`iq`, `iq_ask`), and every hit is also gated by its source's
-section, so IQ never returns more than the per-section tools would.
-
-**Side chats.** `create_side_chat` starts a chat linked to a topic, optionally
-from one of its replies (`message_id`) or an excerpt of it (`quote`). It
-generates nothing: the chat is created empty for the user, and the result
-carries its in-app URL. It has its own write toggle, `side_chats`. `get_topic`
-lists the topic's side chats only when `chats` is exposed too, since their
-titles disclose chat content.
-
-**Step-by-step plans.** The `step_plans` section (write-capable, off by default) lets a
-model delegate a long, multi-part ask to [Step by step](/features/step-by-step):
-`create_step_plan`, `list_step_plans`, `get_step_plan`, `amend_step_plan`, `edit_step_plan`,
-`run_step_plan` and `pause_step_plan`. A follow-up can amend a related plan from its source topic
-or chat, retaining prior work and final-output history. The run happens inside the Precursor app and follows the
-source conversation's autonomy: autonomous conversations close the plan by themselves, balanced ones ask for one final
-review, plan ones only draft the plan until you start it, manual ones for every step, and the model is woken once the output is filed; the source conversation shows a live task card for it.
-For same-conversation tool calls made by the app, the current source is supplied when
-omitted and the original user turn is preserved with the delegated scope, including after
-an approval pause. `get_step_plan` reports whether a recorded copy of the exact current final
-still exists in the linked source; a false value does not rule out an independently posted copy.
-Archived plans are excluded from
-normal listings and must be restored before they can be amended or run.
-
-**Topics come back with their tree position resolved.** Every topic payload
-carries a `path` — the ancestor slugs joined root-first with `/` — so a caller
-never has to walk `parent_id` upward with a chain of `get_topic` round trips.
-
-Every tool is gated by a per-section **`mcp_expose`** toggle — **off by default**,
-because exposing conversation history outbound is opt-in. The server only
-*advertises* the tools of exposed sections (with nothing exposed, just
-`precursor_info`), so the tool count on the `precursor` card in Settings follows
-the toggles; saving them reloads that server's tool list.
-
-Two transports serve the same tools:
-
-- **stdio** — `python -m precursor.backend.services.mcp.precursor_server`; how a
-  host launches it as a subprocess.
-- **HTTP** — mounted in-process at `/mcp` (streamable-http). **Off by default**,
-  **loopback-only**, with a Host-header allowlist (DNS-rebinding protection) and
-  no auth — so it never answers on a non-loopback bind.
+- **stdio** — `python -m precursor.backend.services.mcp.precursor_server`, for a
+  host that launches it as a subprocess. Writes made this way reach open windows
+  only when Precursor itself launched the process; an external host should use
+  HTTP.
+- **HTTP** — `/mcp` (streamable HTTP), in-process. **Off by default**,
+  loopback-only, Host-header allowlist, no auth.
 
 ::: warning Keep MCP-over-HTTP local
 The HTTP transport has no authentication and only binds to loopback. Leave it
@@ -624,4 +280,4 @@ that way unless you front it with your own authenticating proxy.
 :::
 
 See the [architecture reference](/reference/architecture#mcp) for the full
-picture of both directions.
+picture.

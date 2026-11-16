@@ -4,9 +4,9 @@ title: Workspaces & files
 
 # Workspaces & files
 
-A **workspace** is a git clone or a plain folder that the assistant can browse
-and edit. The **Files** section lets you explore the workspaces backing your
-sessions, and the assistant operates on them through a **sandboxed** file layer.
+A **workspace** is a git clone or a plain folder that you and the assistant can
+browse and edit, from the **Files** section. The assistant's file tools are
+confined to it.
 
 <Screenshot src="/screenshots/workspaces.png" alt="A file tree on the left and a file's contents with a git diff on the right" caption="Browsing a workspace — a file tree alongside file contents and git diffs." />
 
@@ -14,38 +14,29 @@ sessions, and the assistant operates on them through a **sandboxed** file layer.
 
 **New workspace** offers two kinds:
 
-- **Git repository** — Precursor clones it into a local working copy and can
-  pull / commit, so changes are reviewable as a `git diff`. Needs `git` on the
-  server; the token is injected at operation time and **never stored** on the
-  workspace row.
-- **Local folder** — creates an empty folder for authoring files, with no git
-  behind it. The same file tools apply.
+- **Git repository** — cloned into a local working copy you can pull, commit
+  and push. Needs `git` on the server. The GitHub token is added to each git
+  command and never written to the clone.
+- **Local folder** — an empty folder with no git behind it. The same file tools
+  apply.
 
 ## Syncing with git
 
 The bar above a git workspace shows its branch and where it stands against the
 remote:
 
-- **Behind:** opening the workspace, and **Refresh**, ask the remote for new
-  commits without changing any file. `↓ 2 behind` means **Pull** has something
-  to bring in. A cloud icon with a slash means the remote couldn't be reached,
-  so the count may be out of date. Hover the icon for git's message.
-- **Committing:** see [Reviewing and committing](#reviewing-and-committing)
-  below.
-- **Pushing:** commits that aren't on the remote yet show as **Push 2**.
-- **New branches:** a branch that isn't on the remote yet is marked **not
-  published**, and **Publish** pushes it and tracks it from then on.
-- **Branches:** see [Branches](#branches) below. Pull and Push always use the
-  branch that is checked out, even if you switched it in a terminal or VS Code.
-  With no branch checked out (a detached HEAD), both are off.
+| Bar shows | Means |
+| --- | --- |
+| `↓ 2 behind` | **Pull** has commits to bring in (checked on open and on **Refresh**, without touching files). |
+| Cloud icon with a slash | The remote couldn't be reached; hover for git's message. |
+| **Push 2** | Two local commits aren't on the remote. |
+| **not published** | The branch isn't on the remote; **Publish** pushes and tracks it. |
 
-Pull only fast-forwards. When your branch and the remote have both moved on,
-Pull stops and offers to merge them (see
-[Merging and conflicts](#merging-and-conflicts)).
-
-Paths from the app are checked before git sees them. Git's pathspec magic, such
-as `:/`, is taken as a plain file name, and git never waits on a password
-prompt. The token is added to each command and never written to the clone.
+- Pull and Push act on the checked-out branch, even if you switched it in a
+  terminal or VS Code. With a detached HEAD both are off.
+- Pull only fast-forwards. When both sides have moved, it offers to merge (see
+  [Merging and conflicts](#merging-and-conflicts)).
+- Committing: see [Reviewing and committing](#reviewing-and-committing).
 
 ## Branches
 
@@ -63,23 +54,16 @@ The branch name in the bar opens the branch picker:
 
 <Screenshot src="/screenshots/workspaces-branches.png" alt="The branch picker open under the branch name, listing local branches and branches only on the remote" caption="Switching or creating a branch." />
 
-Switching never throws work away. It is refused while there are uncommitted
-changes (the message names the files), while a merge is in progress, or with
-no branch checked out. Commit, discard or move those changes first; Precursor
-never forces the switch or stashes them for you. New files that the other
-branch would overwrite stop it too.
-
-If the file open in the editor has unsaved edits, you're asked before
-switching. After the switch the file is reloaded from the new branch, or
-closed if that branch doesn't have it. If the remote can't be reached, the
-picker still lists your local branches.
+Switching never throws work away: it is refused with uncommitted changes (the
+message names the files), during a merge, with a detached HEAD, or when the
+other branch would overwrite untracked files. Precursor never forces or
+stashes. Unsaved editor edits are confirmed first; the open file is then
+reloaded from the new branch, or closed if it doesn't exist there.
 
 ## Merging and conflicts
 
-When Pull (or Push) finds that the remote has commits yours doesn't, and yours
-has commits it doesn't, the bar offers **Merge remote changes**. It is
-refused, naming the files, while you have uncommitted changes: commit or
-discard them first.
+When your branch and the remote have both moved on, the bar offers **Merge
+remote changes** (refused while you have uncommitted changes).
 
 - **A clean merge** records a merge commit. **Push** sends it.
 - **A conflict**, where both sides changed the same lines, stops the merge. A
@@ -108,9 +92,8 @@ incoming one:
 - **Backing out:** **Abort merge** (after a confirmation) puts your branch and
   files back as they were before the merge.
 
-The merge always runs as `git merge`, never `git pull`. It doesn't depend on
-your git settings (a rebasing pull, `merge.ff`, the conflict style or your
-editor), so it behaves the same everywhere.
+The merge runs as `git merge` and ignores your git config (rebasing pull,
+`merge.ff`, conflict style), so it behaves the same everywhere.
 
 ## Reviewing and committing
 
@@ -120,9 +103,8 @@ In a git workspace the left pane has three tabs:
 - **Changes:** every file that differs from the last commit.
 - **History:** the commits on the branch (see [History](#history)).
 
-**Review & commit** in the bar opens Changes, and the pane you last used is
-remembered. On a phone, what you had typed or opened in the pane is still
-there when you come back from a file or a diff.
+**Review & commit** in the bar opens Changes; the last pane used is
+remembered.
 
 <Screenshot src="/screenshots/workspaces-changes.png" alt="The Changes tab listing three changed files with checkboxes and a commit message, and a side-by-side diff of one of them" caption="Reviewing a change before committing it." />
 
@@ -140,10 +122,8 @@ there when you come back from a file or a diff.
   **deletes** it. The confirmation says so and its button reads **Delete
   file**. Discarding a rename restores the old name.
 
-While you edit a file in a git workspace, bars in the editor's margin mark the
-lines changed since the last commit: green for added, blue for modified, and a
-red wedge where lines were removed. They refresh when you open or save the
-file.
+In the editor, margin bars mark lines changed since the last commit (green
+added, blue modified, red wedge removed), refreshed on open and save.
 
 ## History
 
@@ -165,16 +145,14 @@ file.
 
 ## The Definitions workspace
 
-Once Agents mode is on — or as soon as you edit a
-[summary template](/features/live-sessions#your-own-templates) —
-the list starts with a built-in **Definitions** workspace: the folder that holds
-your [definition files](/features/definitions) — agents and workflows (work in
-progress) and live summary templates. It can't be removed while it holds
-definition files, and the assistant's file tools can only read it. (It was
-called *Agents & workflows* before it held summary templates; it's renamed in
-place.)
+Once Agents mode is on, or once you edit a
+[summary template](/features/live-sessions#your-own-templates), the list starts
+with a built-in **Definitions** workspace holding your
+[definition files](/features/definitions) (agents, workflows, summary
+templates). It can't be removed while it holds definition files, and the
+assistant can only read it.
 
-Definition files get help while you edit them:
+Editing help:
 
 - **As you type:** the editor knows the file format, so it suggests keys
   (<kbd>Ctrl</kbd>+<kbd>Space</kbd>) and underlines unknown keys and wrong
@@ -189,51 +167,34 @@ Definition files get help while you edit them:
 
 ## The sandbox
 
-Every file operation is routed through `safe_join`, which:
-
-- rejects path traversal outside the workspace root, and
-- blocks access to `.git`.
-
-The same sandbox backs the workspace tools of the **`precursor`** and the **`drawio`**
-[MCP servers](/features/mcp), so when the assistant reads, edits or diagrams
-files during a turn, it stays inside the jail.
+Every file operation goes through `safe_join`, which rejects paths outside the
+workspace root and blocks `.git`. The same sandbox backs the workspace tools of
+the `precursor` and `drawio` [MCP servers](/features/mcp). Paired with the
+[command runner](/features/command-runner), the assistant can edit, test and
+review a repository inside a conversation.
 
 ## Working with files
 
-From the Files section you can browse the tree, open files, and view **git
-diffs** for changes. Combined with the [command runner](/features/command-runner)
-and the workspace tools of the `precursor` MCP server, this lets the assistant make and review changes
-to a repository as part of a conversation — while everything stays confined to the
-workspace root.
+| File type | Opens as |
+| --- | --- |
+| Markdown | editor + rendered **Preview** |
+| HTML | editor + sandboxed preview frame |
+| `.drawio` | the [diagram editor](#editing-diagrams) |
+| Images (PNG, JPEG, GIF, WebP, BMP, ICO, AVIF), PDF | view-only |
+| Anything else | the [editor](#the-editor) |
 
-Markdown files get a rendered **Preview**, HTML files render in a sandboxed
-frame, and `.drawio` files open in a full diagram editor (below). Images (PNG,
-JPEG, GIF, WebP, BMP, ICO, AVIF) are displayed scaled to fit, and PDFs open in
-the browser's built-in viewer; both are view-only.
-
-**Refresh file** (the circular arrow beside the file actions) reloads the
-displayed file from disk without leaving its current edit or preview mode.
-Use it to pick up changes made by an assistant or an external editor, including
-updated image and PDF previews. If you have unsaved edits, it asks before
-discarding them; cancelling leaves your buffer untouched.
-
-**Refresh files** (the circular arrow in the Files header) reloads the tree
-and its git status, for files an assistant, a command or another app created,
-moved or deleted. Double-click a file or folder name to rename it in place.
-
-Hover a folder in the tree for its actions: **New file**, **New folder**, and
-**Delete folder**, which removes the folder with everything in it once you
-confirm by typing its name (a **Copy** button in the dialog saves retyping it).
-The confirmation says how many files go, and whether they can come
-back: in a git workspace, committed files can be restored from **Changes** until
-you commit; anywhere else, deleting can't be undone. A folder that holds your
-agent and workflow [definition files](/features/definitions) can't be deleted,
-and a symlinked folder loses only the link, never what it points to.
-
-Removing a whole workspace (the trash icon in its header bar) asks the same way:
-you must type the workspace's name, with a **Copy** button, before **Remove
-workspace** becomes available. For a local workspace this deletes its folder; for
-a git workspace it deletes the local working copy and leaves the remote alone.
+- **Refresh file** (circular arrow by the file actions) reloads the file from
+  disk, keeping edit/preview mode; it asks before dropping unsaved edits.
+- **Refresh files** (circular arrow in the Files header) reloads the tree and
+  git status after an assistant, command or other app changed files.
+- Double-click a name to rename it. Hover a folder for **New file**, **New
+  folder** and **Delete folder**.
+- Deleting a folder or a whole workspace (trash icon in its header) needs you to
+  type its name (a **Copy** button helps). The dialog says how many files go and
+  whether they can come back (in git, committed files are restorable from
+  **Changes** until you commit). Folders holding definition files can't be
+  deleted; a symlinked folder loses only the link. Removing a git workspace
+  deletes the local copy, never the remote.
 
 ## The editor
 
@@ -250,36 +211,23 @@ Files open in **Monaco**, the editor core of VS Code:
 - **Previews:** switching a Markdown, HTML or diagram file to **Preview** and
   back keeps your undo history, cursor and scroll position.
 
-The editor follows the app's light or dark theme, and works on phones too.
+It follows the app theme and works on phones. Monaco is downloaded the first
+time you edit a file.
 
 <Screenshot src="/screenshots/workspaces-editor.png" alt="A Markdown file open in the Monaco editor, with line numbers and syntax highlighting" caption="Editing a file in Monaco." />
 
-Monaco only downloads the first time you edit a file, so opening Precursor
-stays as fast as before.
-
 ## Opening in VS Code
 
-When a change is easier to make in a full editor, **Open in VS Code** hands it
-over:
-
-- the button beside an open file's path opens that file;
-- the one in the workspace bar opens the whole working copy as a folder.
-
-Both are `vscode://file/…` links to the **server's** copy. They only work when VS
-Code runs on the same computer as Precursor, which is the usual local setup.
-Changes you save there appear in the Files section and in the git status like any
-other edit.
-
-**Copy local path** gives the same absolute path, including a workspace's
-subdirectory.
+**Open in VS Code** beside a file's path opens that file; the one in the
+workspace bar opens the working copy. Both are `vscode://file/…` links to the
+server's copy, so they work only when VS Code runs on the same machine.
+**Copy local path** copies the absolute path.
 
 ## Discussing a workspace
 
-The discussion panel is hidden until you press **Discuss** in the workspace
-header. It isn't a separate assistant: it renders a real [chat](/features/chats)
-or [topic](/features/topics) beside the files, so everything those surfaces do —
-history, tools, approvals, rewind, stop, roles — works the same, and a chat you
-start here shows up in **Chats** like any other.
+Press **Discuss** in the workspace header to open a real
+[chat](/features/chats) or [topic](/features/topics) beside the files, with all
+its features; a chat started here is listed in **Chats**.
 
 <Screenshot src="/screenshots/workspaces-discussion.png" alt="A workspace with a chat open beside the file, and the picker listing discussions that attach files" caption="Pressing Discuss offers a new chat, the discussions already attaching files from this workspace, or any other chat or topic." />
 
@@ -289,28 +237,25 @@ The picker offers:
 - **Continue a discussion** — the chats and topics that already attach files
   from this workspace, those attached to the open file first. Archived chats are
   left out.
-- **Open another** — search any chat or topic and bring it in. One discussion is
-  open at a time; **Switch** returns to the picker.
+- **Open another** — search any chat or topic. One discussion is open at a
+  time; **Switch** returns to the picker.
 
-The discussion's title in the panel header links to the chat or topic itself,
-to carry on there with the full view.
+While it is open:
 
-Opening a discussion attaches the file you are viewing to it, and it keeps
-attaching whichever file you move to while it is open. The open file also rides
-along on each turn, so the model knows what "this" means. The address carries the
-discussion (`/ws/<slug>/<file>?chat=<chat>` or `?topic=<id>`), so a reload, a
-shared link and Back all land on the same view; closing the panel removes it.
-
-Drag the panel's left edge to **resize** it (320–800 px, at most 65% of the
-window). The width is remembered per browser. On narrow screens the panel is a
-full-width overlay and has no handle. When the panel is too narrow for the
-composer's pickers, it switches to its [compact mode](/features/chats#compact-composer).
+- The file you view, and each file you move to, is attached to the discussion
+  and sent with each turn, so "this" means the open file.
+- The URL carries the discussion (`/ws/<slug>/<file>?chat=<chat>` or
+  `?topic=<id>`), so reloads, links and Back keep it.
+- The panel title links to the full chat or topic.
+- Drag the left edge to resize (320–800 px, at most 65% of the window). On
+  narrow screens it is a full-width overlay; when too narrow for the composer's
+  pickers it uses [compact mode](/features/chats#compact-composer).
 
 ### Artifacts
 
-Every file a conversation attaches is one of its **artifacts**. They are listed
-in the **Artifacts** section of the stats area on the right of a chat or topic
-(under the reminder), with a count on the collapsed rail.
+Files attached to a conversation are its **artifacts**, listed in the
+**Artifacts** section of the chat or topic stats panel (count on the collapsed
+rail).
 
 - A file the assistant **creates or modifies** through the workspace tools is
   attached automatically, from a chat, a topic or the workspace panel. Reading a
@@ -324,51 +269,29 @@ in the **Artifacts** section of the stats area on the right of a chat or topic
 
 ## Jumping from a conversation to the file
 
-When the assistant touches a file in a workspace — a diagram via the
-[`drawio` MCP server](/features/mcp), or any file via the `precursor` workspace tools — the tool
-call in the transcript carries an **Open** chip naming it. That holds in a chat
-or a topic, including one opened beside a workspace. One click switches to the
-Files section with that file already open, and the tree unfolded down to it
-as if you had browsed there, so a
-diagram produced (or merely inspected) mid-conversation doesn't have to be
-hunted down in the tree. Browser **Back** returns to the discussion.
-
-This covers reads as well as writes: `read_diagram` and `read_file` link to what
-they read, which is handy when the assistant quotes a fragment and you want the
-whole thing — or when the read was truncated.
-
-A failed call, a folder, or a path that can't be turned into a safe route
-carries no link — so a chip never points somewhere unexpected.
+A tool call that reads or writes a workspace file (`drawio` or the `precursor`
+workspace tools, including `read_diagram` and `read_file`) carries an **Open**
+chip in the transcript. It opens the file in Files with the tree unfolded to it;
+**Back** returns to the conversation. Failed calls and folders get no chip.
 
 ## Editing diagrams
 
-A `.drawio` file — whether you drew it yourself or the assistant authored it
-with the [`drawio` MCP server](/features/mcp) — opens in an embedded draw.io
-editor, with an **XML / Diagram** toggle to drop down to the raw mxGraph source.
-Edits stream back into the same buffer as any other file, so the usual dirty
-marker, **Save** (or <kbd>Cmd/Ctrl</kbd>+<kbd>S</kbd> inside the diagram), and
-`git diff` apply unchanged.
+A `.drawio` file (yours, or one the [`drawio` MCP server](/features/mcp)
+wrote) opens in an embedded draw.io editor, with an **XML / Diagram** toggle for
+the raw mxGraph source. Saving (<kbd>Cmd/Ctrl</kbd>+<kbd>S</kbd>) and `git diff`
+work as for any file.
 
-The editor follows the app's light or dark theme. Change the theme in
-**Settings** and an open diagram reloads in the new one, keeping your unsaved
-edits (draw.io's own undo history starts over). To change only the diagram,
-use the sun/moon button in the file header: it switches the editor between
-light and dark and leaves the rest of the app alone. Your choice is remembered
-for every diagram. Switching back to match the app theme makes the editor
-follow the app again.
-
-The editor is **self-hosted**: Precursor serves its own copy of the draw.io
-webapp at `/drawio/`, and the frame runs with `offline=1&stealth=1`, so diagram
-content never reaches `diagrams.net` or any other external origin — and editing
-keeps working with no network at all.
-
-That copy is **not** bundled in the wheel (the release is ~53 MB, ~150 MB
-extracted). The first time you open a diagram, the Files pane offers a one-time
-install that downloads the pinned release into `<data_dir>/drawio/<version>/`.
-Set `PRECURSOR_DRAWIO_VERSION` to pin a different release, or
-`PRECURSOR_DRAWIO_DOWNLOAD_URL` to fetch it from an internal mirror — see
-[configuration](/reference/configuration). Superseded versions are removed when
-a new one installs.
+- **Theme:** follows the app (an open diagram reloads, keeping unsaved edits but
+  not draw.io's undo history). The sun/moon button in the file header overrides
+  it for all diagrams.
+- **Self-hosted and offline:** Precursor serves draw.io at `/drawio/` with
+  `offline=1&stealth=1`; diagram content never leaves your machine.
+- **One-time install:** draw.io isn't in the wheel (~53 MB download). The first
+  time you open a diagram, the Files pane offers to download the pinned release
+  into `<data_dir>/drawio/<version>/`. `PRECURSOR_DRAWIO_VERSION` pins another
+  release; `PRECURSOR_DRAWIO_DOWNLOAD_URL` uses an internal mirror (see
+  [configuration](/reference/configuration)). Old versions are removed on
+  upgrade.
 
 See the [architecture reference](/reference/architecture#workspaces) for the
 data model.

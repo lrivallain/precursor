@@ -4,278 +4,154 @@ title: Topics
 
 # Topics
 
-A **topic** is a long-lived conversation that keeps its own history and context.
-Where a [chat](/features/chats) is throwaway, a topic is a thread of work you
-return to over days or weeks — and it can be **linked to a GitHub issue** whose
-body, comments, and labels become live context on every turn.
+A **topic** is a long-lived conversation you return to over days or weeks, optionally
+**linked to a GitHub issue** that feeds every turn. For a throwaway question, use a
+[chat](/features/chats).
 
 <Screenshot src="/screenshots/topics.png" alt="An onboarding topic beside the collection picker and topic tree" caption="A persistent conversation beside its topic tree, with collections keeping related work together." />
 
-## Provider per topic
+## Model per topic
 
-The composer's single model picker lists all configured providers' models and
-presets, grouped by provider. Choosing one saves its provider automatically,
-alongside reasoning effort and context size, independently of other conversations.
-Use GitHub Copilot for one
-topic and Azure AI Foundry for another without changing the global default.
-**Use global default** clears the override.
-
-Replies, retries, compaction, summaries, naming and scheduled/MCP-driven turns
-use the same selection. Side chats copy it and promotion preserves it; ordinary
-child topics start on the global default. An unconfigured explicit provider
-shows an error rather than returning a Mock reply or switching providers.
-See [configuration](/guide/configuration#which-model-gets-used); agents and
-workflows remain Copilot SDK-only.
+The composer's model picker lists every configured provider's models and presets. The choice
+(with reasoning effort and context size) is saved on the topic; **Use global default** clears
+it. Replies, retries, compaction, summaries, naming and scheduled/MCP-driven turns all use it.
+Side chats copy it; child topics start on the global default. An unconfigured provider shows
+an error instead of falling back. Agents and workflows remain Copilot SDK-only. See
+[which model gets used](/guide/configuration#which-model-gets-used).
 
 ## Issue-linked context
 
-Link a topic to a GitHub issue — paste a URL or number, or create a new issue
-from the topic. Every turn then rebuilds the assistant's context from the issue's
-**body**, its **most-recent comments** (newer outweigh older), and its
-**labels**, which also tag the chat.
-
-Because that happens on *every* turn, edits to the issue propagate immediately —
-the assistant always reasons over the current state of the work.
-
-Precursor writes back too: create or update the issue, and post comments, from
-the composer's GitHub actions and the shared draft panel.
+Link a topic to a GitHub issue (paste a URL or number, or create one from the topic). Every
+turn rebuilds context from the issue's **body**, **most recent comments** and **labels**, so
+edits to the issue apply immediately. The composer's GitHub actions and the shared draft panel
+create or update the issue and post comments.
 
 ## Tree organization
 
-Topics form a tree — nest one under a parent to group related threads.
-Right-click any topic in the sidebar to act on it without opening it: rename,
-pin, set a reminder, move it to another [collection](/features/collections), or
-archive.
-
-Not sure what to call one? `/suggest-name` reads the conversation so far and
-renames the topic for you — the same naming pass that
-[names new chats](/features/chats#chats-name-themselves).
-
-Over [MCP](/features/mcp), a topic's place in that tree comes back already
-resolved as a `path` — the collection slug followed by the ancestor chain
-(`client-a/csu/capacity-review`) — so an agent never has to walk `parent_id`
-upward. It mirrors the URL exactly, so a `path` can be pasted into the
-browser.
-
-Above the tree, [**collections**](/features/collections) split your topics into
-separate workspaces and filter the sidebar to one at a time.
+- Nest topics under a parent. Right-click a topic in the sidebar to rename, pin, set a
+  reminder, move it to another [collection](/features/collections), or archive.
+- `/suggest-name` renames the topic from its conversation (as
+  [chats name themselves](/features/chats#chats-name-themselves)).
+- Over [MCP](/features/mcp), a topic carries a `path` (collection slug + ancestor chain,
+  e.g. `client-a/csu/capacity-review`) that matches its URL.
 
 ## Addressing a topic
 
-Every topic has two addresses.
+| Address | Example | Stable? |
+| --- | --- | --- |
+| Readable | `/topics/client-a/csu/cto/capacity-review` | Changes when you rename, move or re-parent the topic. |
+| Permalink | `/topics/id/6f2b1c9e-…` | Never changes. Copy it from **topic settings → Permalink**. |
 
-The **readable** one describes where the topic sits — its collection, then the
-ancestor chain, then its own slug:
-
-```
-/topics/client-a/csu/cto/capacity-review
-```
-
-It's the URL the address bar shows, and it's meant to be legible. That also
-means it *moves*: rename the topic, drag it under a different parent, or send it
-to another collection and the readable URL changes with it.
-
-The **permalink** never moves:
-
-```
-/topics/id/6f2b1c9e-6b1a-4a0e-9f0f-2f5b0f9f1c2a
-```
-
-It's an immutable UUID minted when the topic is created. Opening it resolves the
-topic and rewrites the address bar to the readable URL, so you land in the right
-place with a legible address. Copy it from **topic settings → Permalink** — it's
-the address to paste into an issue, a commit message, or a bookmark that has to
-survive reorganising.
-
-::: tip Old links keep working
-The original `/t/<uuid>` permalinks still resolve.
-Links minted before collections joined the URL (`/topics/csu/capacity-review`)
-still resolve: the trailing slug is unique on its own, and Precursor rewrites the
-address to the current readable form once it has loaded.
-:::
+Opening a permalink rewrites the address bar to the readable URL. Old `/t/<uuid>` links and
+pre-collection links (`/topics/csu/capacity-review`) still resolve.
 
 ### Link to an exact message
 
 <Screenshot src="/screenshots/message-links.png" alt="A topic reply with Copy link to message in its hover action bar" caption="Copy a stable link to the exact prompt or reply, not just its discussion." />
 
-Choose **Copy link to message** in a prompt or reply's action bar, revealed on
-hover or keyboard focus (always visible on touch devices). The copied URL
-uses the immutable topic address plus `#message=<message-uuid>`, so renaming or
-moving the topic does not break it. Scheduled prompts offer the same action
-in their action bar, even while collapsed.
+**Copy link to message** in a message's action bar copies the permalink plus
+`#message=<message-uuid>`. Opening it loads earlier pages if needed and highlights the
+message; deleted or rewound messages show **This message is no longer available**. Links work
+on the same Precursor instance only.
 
-Opening the link loads earlier pages when needed, focuses the exact message
-and briefly highlights it without following new replies to the bottom.
-Back/Forward and reload keep the target. Deleted or rewound messages show
-**This message is no longer available** rather than jumping to another reply.
-Links open on the same Precursor instance; they do not publish the discussion
-or grant access to it.
-
-The model also receives a separate reference index for up to 50 recent messages
-in its available history, so it can write references such as **the previous
-reply** as clickable Markdown links. These open the exact message in place,
-without reloading the app. Navigation metadata is kept out of the conversation
-text sent to the model, so it is not presented as a reply header to reproduce.
-
-The same action works in [chats](/features/chats#message-links) and
+The model gets a reference index of up to 50 recent messages, so it can link to "the previous
+reply" in its answers. The same action works in [chats](/features/chats#message-links) and
 [agents](/features/agents-mode/running#message-links).
 
-## Status at a glance
+## Summary, approvals, schedules
 
-Each topic can carry an editable [**summary**](/features/topic-summary) — a
-short brief of where it stands and what is still open, generated on request
-from the conversation, notes and attachments, and merged change by change once
-you have edited it yourself.
-
-## Tool approvals
-
-A topic can override the default [tool approval policy](/features/approvals) from
-the shield pill in its composer. Calls that wait for you show up as inline cards under the
-conversation, and the topic's sidebar row carries an amber shield badge with the
-number of pending approvals, even after a reload. The topic's settings list its
-[approval rules](/features/approvals#rules).
+- **[Summary](/features/topic-summary)**: an editable status brief above the transcript.
+- **[Tool approvals](/features/approvals)**: override the policy from the composer's shield
+  pill. Pending calls appear as inline cards and as an amber badge on the sidebar row. Topic
+  settings list its [approval rules](/features/approvals#rules).
+- **[Scheduler](/features/scheduler)**: run a prompt on a cadence, or set a one-shot reminder.
 
 ## Side chats
 
-To explore a tangent without adding it to the topic's conversation, start a
-[**side chat**](/features/chats#side-chats). Start one from a reply's toolbar,
-from text you select in a reply, the **New side chat** button in the topic's header, **New side chat** when you
-right-click the topic in the sidebar, **Side chats** in the right panel, or
-`/side-chat`. The chat knows the
-topic's title, description and summary. The topic's right panel lists its side
-chats, and a reply that side chats were started from links to them underneath. A side chat
-can [send its outcome back](/features/chats#sending-the-outcome-back-to-the-topic)
-to the topic as a note.
+Explore a tangent without adding it to the topic. Start a
+[side chat](/features/chats#side-chats) from a reply's toolbar, a text selection, the **New
+side chat** header button, the sidebar right-click menu, **Side chats** in the right panel, or
+`/side-chat`. It knows the topic's title, description and summary, and can
+[send its outcome back](/features/chats#sending-the-outcome-back-to-the-topic) as a note.
 
 <Screenshot src="/screenshots/side-chats-panel.png" alt="A topic's right panel listing three side chats with unread, reminder and activity details" caption="The topic's side chats in its right panel: unread counts, reminders and last activity at a glance." />
 
 ## Editing replies
 
-When the model drafts something you want to tweak, such as an email, edit its
-reply in place rather than asking for another round. Click **Edit reply** (the
-pen) in an assistant reply's toolbar, change the Markdown, and **Save**
-(⌘/Ctrl+Enter). Esc cancels.
-
-Later turns use your version: the model sees the edited reply as its own
-answer. The original isn't lost. An **Edited** chip appears under the reply.
-Click it to show the original answer in a tinted block, and **Restore** it to
-drop your edit.
+Click **Edit reply** (the pen) in an assistant reply's toolbar, change the Markdown, **Save**
+(⌘/Ctrl+Enter) or Esc to cancel. Later turns see your version as the model's answer. An
+**Edited** chip shows the original and lets you **Restore** it.
 
 <Screenshot src="/screenshots/reply-edit.png" alt="An edited email draft with its original reply shown below in an amber block, with Restore and Hide buttons" caption="An edited reply: the Edited chip opens the model's original underneath, ready to restore." />
 
 ### Acting on a selection
 
-Select text inside an assistant reply and a small toolbar appears over it:
+Select text in an assistant reply for a small toolbar:
 
-- **Side chat** (topics): start a [side chat](#side-chats) quoting only the
-  selection.
-- **Edit**: open the reply editor with the selected text already selected.
-- **Note**: add the selection's **Markdown source** to the [`/notes`](#under-the-composer)
-  pad, opening it if needed. Lists, headings and code fences keep their
-  formatting. The excerpt goes below any notes already in the pad or saved draft,
-  including a popped-out notes window.
-
-Both work the same way in [chats](/features/chats).
-
-## Scheduling & reminders
-
-Any topic can carry a **schedule** so a prompt runs on a cadence, or a one-shot
-**reminder** that resurfaces the thread at a set time. See the
-[scheduler](/features/scheduler).
+- **Side chat** (topics): start a [side chat](#side-chats) quoting the selection.
+- **Edit**: open the reply editor with that text selected.
+- **Note**: append the selection's Markdown to the [`/notes`](#under-the-composer) pad.
 
 ## Under the composer
 
-- **Streaming** replies with markdown, mermaid, and code highlighting.
-- **`/` slash commands** — [skills](/features/skills-memory), memory, GitHub
-  actions, `/notes`, [summary](/features/topic-summary) commands.
-- **[Attachments](/features/attachments)** — images (vision) and documents.
-- **[MCP tools](/features/mcp)** — shown inline as they are called.
+- Streaming Markdown, Mermaid and code highlighting.
+- `/` slash commands: [skills](/features/skills-memory), memory, GitHub actions, `/notes`,
+  [summary](/features/topic-summary) commands.
+- [Attachments](/features/attachments): images (vision) and documents.
+- [MCP tools](/features/mcp), shown inline as they run.
 
 ## Watching the model think
 
-Reasoning models think before they answer, and Precursor shows it. While the
-model thinks, a pulsing **Thinking…** row sits where the reply will appear,
-previewing the step it is on — so a long pause reads as progress rather than a
-stall. Click it to read the thinking in full.
+While a reasoning model thinks, a pulsing **Thinking…** row previews its current step; click
+it to read the full thinking. It stays collapsed above the answer after a reload, is kept per
+tool round, and survives **Stop**.
 
 <Screenshot src="/screenshots/thinking.png" alt="An assistant reply with its Thinking area expanded above the answer" caption="The model's thinking, opened above its answer. Collapsed, the row shows only the latest step." />
 
-Once the answer lands the area stays with it, collapsed, and survives a reload. A
-turn that [calls tools](/features/mcp) keeps the thinking of each round with that
-round, so you can see *why* the model reached for a tool. Stopping a turn keeps
-the thinking received so far with the partial reply.
+| Model | What shows |
+| --- | --- |
+| Gemini, GPT-5.5 and later | A streamed summary, one titled step at a time. |
+| Older GPT models | Nothing (their API doesn't expose it). |
+| Claude | Only when an effort is picked; the summary arrives just before the answer. |
+| Non-reasoning models | No Thinking area. |
 
-What appears depends on the model:
-
-- **Gemini, and GPT-5.5 and later**, stream a summary of their reasoning as they
-  go, one titled step at a time — the preview follows those titles. Older GPT
-  models answer on an API that doesn't expose their thinking, so they show none.
-- **Claude** thinks only when an effort is picked under the composer, and sends
-  a summary of its thinking just before the answer, so it shows up with the
-  reply rather than ahead of it.
-- A model that doesn't reason, or decides a question needs no thinking, shows no
-  Thinking area at all.
-
-The effort picker under the composer sets how hard the model thinks. The thinking
-is for you only: it is never sent back to the model on later turns. It follows
-the tool-result retention window (**Settings → System → Storage / retention**):
-past it, a reply keeps its answer but loses its Thinking area — see
-[Storage & retention](/features/storage).
+The effort picker sets how hard the model thinks. Thinking is never sent back to the model,
+and is removed after the tool-result retention window (**Settings → System → Storage /
+retention**, see [Storage & retention](/features/storage)).
 
 ## Copying a reply
 
-An assistant reply's hover toolbar has three copy buttons, in topics and chats:
+| Button | Copies |
+| --- | --- |
+| **Copy message** | Plain text. |
+| **Copy formatted** (envelope) | HTML that keeps its spacing when pasted into Outlook or a document. Diagrams are copied as source. |
+| **Copy raw markdown** | The Markdown source. |
 
-- **Copy message**: the text without the Markdown.
-- **Copy formatted** (the envelope): the reply as formatted HTML, ready to
-  paste into an email or a document. Every block carries its own spacing, so
-  paragraphs, lists, tables and code keep their layout after the email is sent.
-  Without this, Outlook on the web and the desktop app strip the spacing when
-  the message is sent. Diagrams are copied as their source, since mail clients
-  drop inline drawings.
-- **Copy raw markdown**: the Markdown source.
-
-Final-output documents returned by [Step by step](/features/step-by-step) also have the
-**Copy formatted** envelope. It copies the document body without its plan metadata or link.
-
-The **Copy** button over summaries, notes and workflow outputs uses the same
-formatted copy.
+The same formatted copy backs **Copy** on summaries, notes, workflow outputs and
+[Step by step](/features/step-by-step) final outputs.
 
 ## Deleting, clearing and stopping
 
-- **Delete** a message from its hover toolbar. It disappears at once, and an
-  undo toast above the composer counts down — *"Your message removed · undo in
-  5s"* — before the delete is committed. Switching away commits it straight away.
-- **`/clear`** (or **Topic settings → Clear chat**) erases the whole transcript
-  after a confirmation. It always leaves it empty: a reply still streaming is
-  stopped first, so its answer can't land afterwards without its prompt.
-- **`/compact [focus]`** summarises a long conversation so it fits the model's
-  window again. The older messages stay visible, and **Undo** on the marker
-  restores them for the model. See
-  [context compression](/features/context-compression).
-- **Rewind** to an earlier turn from the timeline on the right edge of the
-  transcript, or from a prompt's hover toolbar. It deletes every later turn after a preview and an undo
-  countdown. **Edit & resend** also puts that turn's prompt back in the
-  composer. See [timeline & rewind](/features/rewind).
-- **Stop** keeps what already streamed, marked _(stopped)_. A
-  [tool call](/features/mcp) still running settles as **stopped** instead of
-  spinning, and stays in the transcript after a reload — so the next turn knows
-  the call was cut short.
+- **Delete** a message from its toolbar; an undo toast gives you **5 s** (switching away
+  commits it).
+- **`/clear`** (or **Topic settings → Clear chat**) empties the transcript after confirmation,
+  stopping any streaming reply first.
+- **`/compact [focus]`** summarises the conversation to free the context window; **Undo** on
+  the marker reverts it. See [context compression](/features/context-compression).
+- **Rewind** to an earlier turn, or **Edit & resend** a prompt. See
+  [timeline & rewind](/features/rewind).
+- **Stop** keeps what streamed, marked _(stopped)_; a running tool call settles as
+  **stopped**.
 
-Chats behave the same way, and so does a discussion opened beside a
-[workspace](/features/workspaces#discussing-a-workspace) — it *is* a chat or a topic.
+Chats and [workspace discussions](/features/workspaces#discussing-a-workspace) behave the same.
 
 ## Artifacts
 
-Workspace files a topic created or that you attached are listed as **Artifacts**
-in the stats area on the right, under the reminder. See
-[Discussing a workspace](/features/workspaces#discussing-a-workspace).
+Workspace files the topic created or you attached are listed as **Artifacts** in the right
+stats area. See [Discussing a workspace](/features/workspaces#discussing-a-workspace).
 
 ## When a turn fails
 
-A failed turn — a rejected model, bad credentials, a tool loop that hits its cap
-— is persisted as a **red error notice**, never a green acknowledgement, and it
-survives a reload. The prompt that failed grows a **Retry** button that replays
-it against the current model and settings, dropping the failed tail. Fix the
-cause first (switch model, add a token in **Settings → Models**) and the retry
-picks it up.
+A failed turn (rejected model, bad credentials, tool loop cap) is saved as a **red error
+notice**. The failed prompt gets a **Retry** button that replays it with the current model and
+settings, so fix the cause first (switch model, add a token in **Settings → Models**).

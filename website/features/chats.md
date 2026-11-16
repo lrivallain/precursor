@@ -4,277 +4,141 @@ title: Chats
 
 # Chats
 
-**Chats** are quick, throwaway conversations — for when you just need an answer
-and don't want the ceremony of a [topic](/features/topics). Type a prompt and get
-going in seconds.
+**Chats** are quick, throwaway conversations: type a prompt and go. Use a
+[topic](/features/topics) for tracked work you'll return to.
 
 <Screenshot src="/screenshots/chats.png" alt="A quick chat with a streamed markdown reply and a mermaid diagram" caption="A quick chat — streaming markdown, code highlighting, and mermaid diagrams, no setup required." />
-
-## When to use a chat vs a topic
 
 | | Chat | Topic |
 | --- | --- | --- |
 | Lifespan | Throwaway | Long-lived |
-| GitHub issue link | — | Optional, used as live context |
+| GitHub issue link | — | Optional, live context |
 | Tree nesting | — | Yes |
-| Scheduling / reminders | — | Yes |
-| Best for | A one-off question | A tracked thread of work |
+| Scheduled prompts | — | Yes |
 
-Reach for a **chat** to draft a message, explain an error, or brainstorm. Reach
-for a **topic** when the conversation is part of ongoing work you'll return to.
+## Same composer as topics
 
-## Same rich composer
+Chats share the topic conversation experience. Specifics:
 
-Chats share the same conversation experience as topics:
-
-- **Providers side by side**: configure GitHub Copilot and Azure AI Foundry once,
-  then choose a model or preset from one picker, grouped by configured provider.
-  Its provider is saved automatically alongside effort and context size.
-  **Use global default** in the same menu resets the whole selection. Replies, retries,
-  compaction, naming and notes follow it; agents remain Copilot-only.
-  See [model selection](/guide/configuration#which-model-gets-used).
-- **Multiple Azure AI Foundry deployments** in the model picker: configure
-  individual deployment names as removable bubbles on one endpoint in
-  [Settings -> Model](/guide/configuration#which-model-gets-used), then select
-  the deployment for your conversation.
-- **Streaming** replies over Server-Sent Events with live markdown rendering.
-- **The model's thinking** in a collapsed area above its reply, previewing the
-  step it is on while it works — see
-  [watching the model think](/features/topics#watching-the-model-think).
-- **Mermaid diagrams**, fenced code blocks, and syntax highlighting.
-- **`/` slash commands**, including [skills](/features/skills-memory) and the
-  memory commands (`/memory-store`, `/memory-list`, `/memory-update`).
-- **[Attachments](/features/attachments)** — images as vision input, PDF / DOCX /
-  PPTX text-extracted.
-- **[MCP tools](/features/mcp)** — the same enabled tool servers, with tool calls
-  shown inline.
-- **Long-term [memory](/features/skills-memory)** is injected into chats too, so
-  your standing preferences and facts follow you here as well.
-- **Failed turns** surface as a red error notice with a **Retry** button on the
-  prompt that failed — see
-  [when a turn fails](/features/topics#when-a-turn-fails).
-  Azure AI Foundry keeps bounded SDK retries but does not repeat rate-limit or
-  server failures through the other API; see
-  [Foundry retry behaviour](/guide/configuration#which-model-gets-used).
-- **`/compact`** summarises a long chat to free the model's context window —
-  see [context compression](/features/context-compression).
-- **Optional model alternatives** recover missing-model or rejected-effort/context
-  requests using ordered presets, which may span providers, in the same
-  category. Configure them in [Settings -> Presets](/guide/configuration#optional-model-alternatives);
-  nothing changes until configured, and retries never replay already-streamed output.
-- **Preset profiles in the model dropdown**: pick **Presets -> Efficiency,
-  Balanced or Intelligence** to let the engine choose from that category's
-  ordered model/configuration presets. The category stays selected across
-  model substitutions. Ordinary model choices exit category mode.
-- **A timeline and rewind**: jump between turns from the rail on the right
-  edge, or rewind the chat to an earlier turn — see
+- **Model picker**: models and presets of every configured provider, grouped by provider,
+  including several Azure AI Foundry deployments on one endpoint. The choice is saved with
+  effort and context size; **Use global default** resets it. See
+  [which model gets used](/guide/configuration#which-model-gets-used).
+- **Presets → Efficiency / Balanced / Intelligence** let the engine pick from that category's
+  ordered presets. **Optional model alternatives** (Settings → Presets) retry a missing model
+  or rejected effort/context with the next preset; see
+  [optional model alternatives](/guide/configuration#optional-model-alternatives). Retries
+  never replay streamed output.
+- Streaming Markdown, Mermaid, code highlighting, and the model's
+  [thinking](/features/topics#watching-the-model-think).
+- `/` commands, including [skills](/features/skills-memory) and memory (`/memory-store`,
+  `/memory-list`, `/memory-update`); long-term memory is injected too.
+- [Attachments](/features/attachments) and [MCP tools](/features/mcp).
+- [Failed turns](/features/topics#when-a-turn-fails) with **Retry**.
+- `/compact` ([context compression](/features/context-compression)) and
   [timeline & rewind](/features/rewind).
-- **Delete with undo, `/clear` and Stop** work exactly as in topics — see
+- Delete with undo, `/clear`, Stop: see
   [deleting, clearing and stopping](/features/topics#deleting-clearing-and-stopping).
-- **Editing replies and notes from a selection**: fix an assistant reply in
-  place, or lift part of it into `/notes` — see
-  [editing replies](/features/topics#editing-replies).
+- [Editing replies](/features/topics#editing-replies) and selection actions.
 
 ### Compact composer
 
-The composer only goes compact when it has to. If the model, reasoning effort,
-context size, approval and role pickers no longer fit on one row — a narrow
-window, the [workspace discussion](/features/workspaces#discussing-a-workspace)
-panel, a phone — they shrink to **icons**. The current value moves into the
-tooltip and the accessible name (for example "Model: GPT-5 · Medium"), and the
-menus open as viewport-clamped popups so they never spill past the edge. It
-applies to topics, chats, agents and the start screen alike, and the labelled
-pills come back as soon as there is room again.
+When the model, effort, context, approval and role pickers don't fit on one row (narrow
+window, [workspace discussion](/features/workspaces#discussing-a-workspace), phone), they
+shrink to icons. The value moves to the tooltip and accessible name ("Model: GPT-5 ·
+Medium"). Applies to topics, chats, agents and the start screen.
 
 ## Starting a chat
 
-The **Start a new chat** screen (and the *New chat* card on the home screen) is a
-full composer: type a prompt, pick a model and [role](/features/skills-memory),
-use a [skill](/features/skills-memory) with `/`, or [attach files](/features/attachments)
-with the paperclip, paste or drag and drop. Only skills are suggested after `/`;
-built-in commands such as `/clear` need an open chat. Attaching a file creates
-the chat right away so the upload has a home, and it is deleted again if you
-leave without sending.
+**Start a new chat** (or the *New chat* card on home) is a full composer: prompt, model,
+[role](/features/skills-memory), skills with `/`, and [attachments](/features/attachments).
+Only skills are suggested after `/` there; built-in commands like `/clear` need an open chat.
+Attaching a file creates the chat at once; it is deleted if you leave without sending.
 
 ## Chats name themselves
 
-A new chat starts as **"New chat"** — which, after a busy afternoon, leaves a
-sidebar full of rows you can't tell apart. So Precursor names it for you: as soon
-as you send the first message, a short side request derives a title from what you
-asked and renames the chat in place.
+On the first message, a side request names the chat from your prompt, in parallel with the
+reply. If it fails, the chat keeps its placeholder. A title you set (sidebar, header, or
+`/rename`) always wins. Only the title changes, never the slug.
 
-It runs **alongside** the answer rather than after it, so the name usually lands
-while the reply is still streaming — you never wait on it. If the model is
-unreachable or returns something unusable, the placeholder simply stays; naming
-never delays or fails the turn it rides along with.
-
-A title **you** set always wins. Rename a chat — from the sidebar's right-click
-menu, the header, or `/rename` — and auto-naming steps aside for good, even if a
-naming request was already in flight.
-
-Only the title changes; auto-naming does not change the chat's slug.
+- **`/suggest-name`** renames a chat or topic from the conversation so far (slugs untouched).
+- **Settings → Chat → Auto-naming** turns it off or picks a dedicated (preferably small, fast)
+  model. `/suggest-name` works either way.
 
 ### Message links
 
-Choose **Copy link to message** in a prompt or reply's action bar, revealed on
-hover or keyboard focus (always visible on touch devices):
+**Copy link to message** in a message's action bar copies:
 
 ```text
 /chats/id/<chat-uuid>#message=<message-uuid>
 ```
 
-The long-form permalink uses immutable IDs, so it survives both title and slug
-changes. Existing `/chats/<slug>` addresses still work; opening a UUID permalink
-rewrites the address bar to the current readable route while retaining the
-message target.
-
-Earlier messages are loaded automatically, and the exact message receives
-focus and a brief highlight. Reload and Back/Forward retain the target.
-If the message was deleted or rewound, the discussion reports that it is no
-longer available. Links belong to the same Precursor instance, not a public
-sharing service. Promoting or deleting the chat removes its old chat address.
-
-Models receive these links in a separate reference index for up to 50 recent
-messages, not as headers in their conversation history, and
-can include clickable references to a particular earlier reply. Following one
-opens the target in place without reloading the app; the model-only reference
-metadata does not change the saved transcript.
-
-### `/suggest-name`
-
-To re-name a conversation later — the opening question turned out not to be the
-point, or you want a tidier title before archiving — run:
-
-```
-/suggest-name
-```
-
-It reads the conversation so far and renames it. Available in both **chats** and
-**[topics](/features/topics)** (topic slugs are left untouched too, so existing
-links keep resolving).
-
-### Turning it off
-
-**Settings → Chat → Auto-naming** disables it, and lets you point naming at a
-specific model. Naming is a one-line request, so a small fast model is usually
-the better choice; leave it on *Use default chat model* to reuse your main one.
-`/suggest-name` keeps working either way.
+It survives title and slug changes; `/chats/<slug>` addresses still work. Behaviour matches
+[topic message links](/features/topics#link-to-an-exact-message). Promoting or deleting the
+chat removes its chat address.
 
 ## Unread badges & notifications
 
-Chats — like topics and agents — track unread activity. When a reply arrives
-while you're looking elsewhere, the chat's row shows an unread count, the sidebar
-tab highlights, and (when notifications are enabled and the window is unfocused) a
-browser notification fires. Opening the chat clears its badge.
+A reply that arrives while you're elsewhere adds an unread count on the chat's row, highlights
+the sidebar tab, and (when enabled and the window is unfocused) fires a browser notification.
+**Settings → Chat → Play a sound when a reply finishes** adds a short pop (off by default;
+stopped or failed turns stay silent).
 
-For an audible cue, turn on **Play a sound when a reply finishes** in Settings →
-Chat: a short, quiet pop plays when a reply you asked for in a topic or chat
-completes. It's off by default, and stopped or failed turns stay silent.
-
-Right-click a chat in the left sidebar to rename, pin, set a reminder, open
-`/notes`, or archive it.
+Right-click a chat in the sidebar to rename, pin, set a reminder, open `/notes`, or archive.
 
 ## Tool approvals
 
-Each chat can have its own [tool approval policy](/features/approvals) —
-**manual**, **balanced** or **autonomous** — set from the shield pill in the composer.
-A call that needs your go-ahead appears as an inline card in the transcript, and
-the chat's row in the sidebar shows an amber shield badge until you answer.
-The chat's settings list its [approval rules](/features/approvals#rules).
+Each chat can set its own [tool approval policy](/features/approvals) (**manual**,
+**balanced**, **autonomous**) from the composer's shield pill. Pending calls show as inline
+cards and an amber badge on the sidebar row. Chat settings list its
+[approval rules](/features/approvals#rules).
 
 ## Side chats
 
-A **side chat** is a chat started from a [topic](/features/topics), for a
-tangent you want to explore without adding it to the topic's own conversation.
-It stays linked to that topic.
+A **side chat** is a chat started from a [topic](/features/topics) for a tangent, linked to
+that topic.
 
 <Screenshot src="/screenshots/side-chats.png" alt="A side chat quoting the topic reply it was started from, with a back-link to the topic in the header" caption="A side chat started from a reply: the reply is quoted on top and the header links back to the topic." />
 
-Start one from a topic in four ways:
+| Start from | How | Quotes |
+| --- | --- | --- |
+| A reply | **Start a chat from this reply** in its toolbar | The reply |
+| Part of a reply | Select text → **Side chat** | The selection |
+| The topic | **New side chat** in the header, sidebar right-click, or **New** under **Side chats** in the right panel | — |
+| The composer | `/side-chat [first message]` | — |
 
-- **From a reply**: hover an assistant reply and click **Start a chat from this
-  reply** in its toolbar. The chat quotes that reply at the top.
-- **From part of a reply**: select some text in an assistant reply and click
-  **Side chat** in the toolbar that appears over it. The chat quotes only the
-  selected text.
-- **From the whole topic**: click the **New side chat** button (a speech bubble
-  with a plus) in the topic's header, choose **New side chat** when you
-  right-click the topic in the sidebar, or click **New** under **Side chats**
-  in the topic's right panel.
-- **With `/side-chat`** in the topic's composer. Any text after the command is
-  sent as the chat's first message.
-
-What the side chat knows:
-
-- On every turn, the model gets the parent topic's **title**, **description**
-  and **[summary](/features/topic-summary)** (when it has one) as background.
-- A chat started from a reply also gets **a copy of that reply**. It's a copy,
-  not a live link: it stays if the reply is later
-  [rewound](/features/rewind) or deleted in the topic. Only the **Open in
-  topic** shortcut on the quote goes away then.
-- The chat starts with the topic's assistant [role](/features/skills-memory).
-  You can change it like in any chat.
-- A new side chat is called **Side chat** until its first message, when it
-  [names itself](#chats-name-themselves).
-- If you open a side chat and leave without using it, it's deleted, so a
-  quick look leaves nothing behind. It's kept as soon as it has a message, a
-  title you chose, a reminder, a description, a pin or notes.
-
-Getting around:
-
-- The chat header shows the parent topic with a back arrow. Click it to return
-  to the topic.
-- **Open in topic**, on the quoted reply, opens the topic and scrolls to that
-  reply.
-- In the topic, a reply that side chats were started from shows a link chip
-  for each of them under it. A chip shows the chat's title, its unread count
-  and a bell when it has a reminder. Click it to open the chat.
-- The topic's right panel lists its side chats. Each row shows the chat's
-  unread count, a bell when it has a [reminder](/features/scheduler), how many
-  messages it has, and when it was last active. Archived side chats leave
-  that list. Unarchiving one brings it back.
-- In the Chats list, a side chat has a small split icon. Hover it to see which
-  topic the chat belongs to.
+- Every turn gets the topic's **title**, **description** and
+  **[summary](/features/topic-summary)** as background. A quoted reply is a copy: it stays if
+  the original is [rewound](/features/rewind) or deleted.
+- It starts with the topic's [role](/features/skills-memory) and model, and
+  [names itself](#chats-name-themselves) on its first message.
+- An unused side chat is deleted when you leave it (kept once it has a message, a custom title,
+  reminder, description, pin or notes).
+- Navigation: the header's back arrow returns to the topic; **Open in topic** on the quote
+  scrolls to the reply; replies show chips for their side chats; the topic's right panel lists
+  them with unread count, reminder, message count and last activity. In the Chats list a side
+  chat has a split icon.
 
 ### Sending the outcome back to the topic
 
-When a side chat has settled something, file it into its topic so the topic's
-history and [summary](/features/topic-summary) pick it up. Click **Send to
-topic** (the merge icon) in the chat's header, or run `/send-to-topic`. Any
-text after the command says what to focus on.
-
-The model writes a short note: what was explored, the conclusions and the
-follow-ups. You review and edit it, then **Send to topic** files it into the
-topic as a note, headed by a link back to the side chat. Nothing is sent until
-you confirm.
+Click **Send to topic** (merge icon) in the header, or `/send-to-topic [focus]`. The model
+drafts a short note (what was explored, conclusions, follow-ups); you edit it, then confirm to
+file it in the topic with a link back to the side chat.
 
 ### Archiving and deleting
 
-When you archive a topic that has open side chats, Precursor asks whether to
-archive them too. **Keep them open** archives only the topic. Restoring the
-topic brings back the side chats that were archived with it, but not ones you
-archived on their own.
-
-Deleting the topic keeps its side chats. They just stop being linked to it,
-and a chat started from a reply keeps its copy of that reply.
-
-**Promoting** a side chat to a topic (from its settings) creates a
-**sub-topic of the topic it was started from**, in that topic's collection. A
-chat started from a reply keeps its quoted reply: the new topic shows it above
-its transcript and gives it to the model on every turn, as the chat did. A
-side chat whose topic was deleted becomes a top-level topic, like any other
-promoted chat.
-
-Promoting an ordinary chat asks, in the confirmation dialog, for the **target collection** and the
-**parent topic** (or top level) before promoting; the topic lands in the
-parent's collection.
+- Archiving a topic asks whether to archive its open side chats too. Restoring the topic
+  restores those archived with it.
+- Deleting the topic keeps its side chats, unlinked.
+- **Promoting** a side chat (from its settings) creates a **sub-topic** of its topic, keeping
+  any quoted reply as context. If the topic was deleted, it becomes a top-level topic.
+- Promoting an ordinary chat asks for the **target collection** and **parent topic**.
 
 ## Artifacts and workspaces
 
-A chat — like a topic — keeps the [workspace files](/features/workspaces#artifacts)
-it created or you attached as **Artifacts** in the stats area on the right. Click
-one to open the workspace on that file with the chat beside it. A chat started
-from a workspace's **Discuss** button is an ordinary chat and appears in this
-list.
+Workspace files the chat created or you attached are listed as **Artifacts** in the right
+stats area; click one to open the workspace with the chat beside it. Chats started from a
+workspace's **Discuss** button are ordinary chats. See
+[workspace artifacts](/features/workspaces#artifacts).
 
 <Screenshot src="/screenshots/chat-artifacts.png" alt="A chat whose stats area lists two workspace files under Artifacts" caption="The Artifacts section sits under the reminder in the chat's stats area." />

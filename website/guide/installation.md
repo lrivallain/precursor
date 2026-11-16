@@ -4,253 +4,116 @@ title: Installation
 
 # Installation
 
-One prerequisite, one command. At the end Precursor is running, comes back after
-every reboot, and updates itself — nothing to clone, build or configure.
+Install Precursor as a background app that starts at login and updates itself.
+The only prerequisite is [uv](https://docs.astral.sh/uv/) (it brings its own Python).
 
-## 1. Install uv
-
-[uv](https://docs.astral.sh/uv/) is the **only** prerequisite. It brings its own
-Python, so there is nothing else to line up first.
+## Install
 
 ::: code-group
 
 ```bash [macOS / Linux]
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-```powershell [Windows]
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-```
-
-:::
-
-Already have it? Skip ahead. Other ways to get uv — Homebrew, winget, pipx — are
-in the [uv install guide](https://docs.astral.sh/uv/getting-started/installation/).
-
-## 2. Install Precursor
-
-::: code-group
-
-```bash [macOS / Linux]
+curl -LsSf https://astral.sh/uv/install.sh | sh   # skip if you have uv
 curl -fsSL https://raw.githubusercontent.com/lrivallain/precursor/main/scripts/install.sh | sh
 ```
 
 ```powershell [Windows]
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"   # skip if you have uv
 irm https://raw.githubusercontent.com/lrivallain/precursor/main/scripts/install.ps1 | iex
 ```
 
 :::
 
-That is the whole installation. **No clone, no Node.js, no build step, no
-database to create** — the published package already carries the interface, and
-the schema is created the first time the app starts.
+The script installs the **nightly** build with the Kanban and tray extras,
+registers a login item and starts the app. Open <http://localhost:8000> (or the
+port it reports if `8000` was taken). No clone, Node.js or database setup is
+needed.
 
-The script installs Precursor, registers it to **start when you log in**, and
-starts it now:
+If you're signed in with `gh`, models work immediately. Otherwise the app runs
+on a mock model until you [connect one](/guide/configuration#connecting-a-model).
+Next: [Quick start](/guide/quick-start).
 
-```
-Precursor is installed and will start when you log in.
-```
+### Installer options
 
-Open <http://localhost:8000> — or whichever port it reported, if `8000` was
-already taken — and you're in.
+Set these before running the script (`VAR=value sh -c "$(curl -fsSL …)"` or
+`$env:VAR = 'value'` in PowerShell):
 
-::: tip Signed in with the GitHub CLI?
-Then you're done: Precursor reuses your `gh` session for model access. If not, it
-starts on a built-in mock model so the app is usable straight away, and
-[Configuration](/guide/configuration) shows how to connect a real one.
-:::
-
-## 3. Start using it
-
-- **[Quick start](/guide/quick-start)** — your first topic, in a couple of minutes.
-- **[Configuration](/guide/configuration)** — connect GitHub and a real model.
-
-## Living with it
-
-Precursor is *managed* rather than launched, so there is no terminal window to
-keep open:
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `PRECURSOR_CHANNEL` | `nightly` | `stable` installs the latest tagged release from PyPI. |
+| `PRECURSOR_EXTRAS` | `kanban,tray` | Extras to install; `none` for the lean core. |
+| `PRECURSOR_NO_START` | — | `1` installs the command without registering or starting anything. |
+| `PRECURSOR_WHEEL` | — | Install this wheel (path or URL). |
+| `PRECURSOR_REPO` | `lrivallain/precursor` | Repository whose nightly builds to install. |
 
 ```bash
-precursor service status    # is it up, and on which port
-precursor service update    # newest build + restart
-precursor service logs      # tail the instance log
+PRECURSOR_CHANNEL=stable sh -c "$(curl -fsSL https://raw.githubusercontent.com/lrivallain/precursor/main/scripts/install.sh)"
 ```
 
-The menu-bar icon (`precursor tray`; the notification area on Windows) does the
-same things with the mouse and shows at a glance whether the app is up. See
-[Background app](/features/background-app) for the whole surface — the login
-item, update channels, and where your data lives.
-
-To remove it:
+## Manage it
 
 ```bash
-precursor service uninstall   # drop the login items and stop it
+precursor service status      # running? which port?
+precursor service update      # newest build + restart
+precursor service logs        # tail the log
+precursor service restart
+precursor service uninstall   # remove login items and stop
 uv tool uninstall precursor-ai
 ```
 
-## On Windows
+The tray icon (`precursor tray`) does the same from the menu bar or notification
+area. Channels, extras, ports and data location: [Background app](/features/background-app).
 
-The PowerShell installer gives Windows the same result as the shell one — the
-same build, the same extras, a login item and the notification-area icon — and
-every `precursor service …` command works the same way. What differs is what
-Windows itself does differently:
+The PyPI package is **`precursor-ai`**; it installs the `precursor-ai` and
+`precursor` commands. [Agents mode](/features/agents-mode) needs no extra
+install: its runtime is a one-click download in **Settings → Agents**. Other
+[plugins](/features/plugins) can be added at any time.
 
-- **The login item is a `Run` entry**, not a service. It shows in Task Manager's
-  *Startup apps* (as *pythonw*, the windowless Python that runs it), where you
-  can switch it off like any other. It starts Precursor at login and steps
-  aside — no console window stays open.
-- **Nothing restarts a crashed instance.** macOS and Linux hand the process to a
-  service manager that brings it back; Windows has none for a per-user app. The
-  tray shows the instance as stopped, and **Start** brings it back.
-- **Updating stops Precursor for a minute.** Windows can't replace files that a
-  running program holds open, so `precursor service update` (or the tray's
-  update entry) stops the app and the icon, installs the new build, and starts
-  both again. Progress goes to `logs\update.log` in the
-  [data directory](/features/background-app#where-the-data-lives), and the icon
-  says how it went when it comes back.
-- **Plugins install from a terminal.** For the same reason, *Settings → Plugins*
-  can't reinstall a running Precursor. It shows the command to run while
-  Precursor is stopped: `precursor service stop`, that command, then
-  `precursor service start`.
+## Other ways to run it
 
-## On a Linux server
+| Goal | Command |
+| --- | --- |
+| Try it without installing | `uvx precursor-ai` |
+| Install without a login item | `uv tool install precursor-ai`, then run `precursor` |
+| Work on Precursor | a source checkout; see the [contribution guide](/contributing/) (needs Node.js) |
 
-The same installer works over SSH on a headless box. Two things differ from a
-desktop:
+**As a browser app (PWA).** Chromium browsers offer *Install Precursor…* (address
+bar or browser menu) for a standalone window. It has no offline cache: it only
+works while the local instance is running.
 
-- **No tray.** With no `DISPLAY` or `WAYLAND_DISPLAY`, `precursor service
-  install` registers only the app and says why it skipped the icon.
-- **Logging out stops it.** A systemd *user* unit lives as long as your login
-  session, so Precursor would stop when your SSH session closes and wouldn't
-  come back at boot. The installer points this out. To keep it running, turn on
-  lingering once:
+## Platform notes
+
+### Windows
+
+- The login item is a `Run` entry (*pythonw* in Task Manager → *Startup apps*),
+  not a service. **A crashed instance is not restarted**; use **Start** in the
+  tray.
+- `precursor service update` stops the app and the icon, updates, and restarts
+  them. Progress goes to `logs\update.log` in the
+  [data directory](/features/background-app#where-the-data-lives).
+- **Settings → Plugins** can't install into a running instance; it shows the
+  command to run between `precursor service stop` and `precursor service start`.
+
+### Linux server (headless)
+
+- Without `DISPLAY` / `WAYLAND_DISPLAY`, no tray icon is registered.
+- The systemd *user* unit stops when you log out. To keep it running and start
+  at boot:
 
   ```bash
   loginctl enable-linger
   ```
 
-Precursor listens on `127.0.0.1` only. The safest way to reach it from another
-machine is an SSH tunnel: run `ssh -L 8000:127.0.0.1:8000 you@server`, then
-open `http://127.0.0.1:8000/`. To serve it on the network instead, set the
-bind address in the `.env` of the
-[data directory](/features/background-app#where-the-data-lives) and restart:
+- Reach it through an SSH tunnel: `ssh -L 8000:127.0.0.1:8000 you@server`, then
+  open `http://127.0.0.1:8000/`. To listen on the network instead:
 
-```bash
-echo 'PRECURSOR_HOST=0.0.0.0' >> "$(precursor service data-dir)/.env"
-precursor service restart
-```
+  ```bash
+  echo 'PRECURSOR_HOST=0.0.0.0' >> "$(precursor service data-dir)/.env"
+  precursor service restart
+  ```
 
 ::: warning No authentication
-Precursor has no login of its own. Anyone who can reach the port can use your
-GitHub credentials and everything the app can do, so only do this on a network
-you trust. Off loopback, the MCP HTTP endpoint and in-app plugin installs are
-turned off.
-:::
-
-## Other ways to install
-
-The command above is the supported path; use it unless one of these reasons
-applies to you.
-
-### Just to try it out
-
-Runs the latest published build without installing anything and leaves nothing
-behind:
-
-```bash
-uvx precursor-ai
-```
-
-### Without a login item
-
-Installs the command but registers no autostart, so you decide when it runs:
-
-```bash
-uv tool install precursor-ai
-precursor                     # run it in the foreground
-```
-
-### Tagged releases instead of nightly
-
-The script installs the **nightly** build — a rolling prerelease of `main`. For
-tagged releases only:
-
-::: code-group
-
-```bash [macOS / Linux]
-PRECURSOR_CHANNEL=stable sh -c "$(curl -fsSL https://raw.githubusercontent.com/lrivallain/precursor/main/scripts/install.sh)"
-```
-
-```powershell [Windows]
-$env:PRECURSOR_CHANNEL = 'stable'
-irm https://raw.githubusercontent.com/lrivallain/precursor/main/scripts/install.ps1 | iex
-```
-
-:::
-
-The same choice is available afterwards from the tray and from
-`precursor service update`.
-
-### From source, to work on Precursor
-
-A source checkout is for **contributing**, not for using the app: it additionally
-needs Node.js for the frontend toolchain, and takes more steps to reach the same
-result. The [contribution guide](/contributing/) covers the dev stack.
-
-### As a browser app (PWA)
-
-Precursor ships a web app manifest, so Chromium browsers offer to **install it as
-a standalone app** — its own window, a dock/taskbar icon, no address bar. Look
-for the install icon in the address bar, or the browser menu →
-*Install Precursor…*.
-
-::: warning It's a window, not an offline app
-The installed app is a convenience wrapper around your **local** Precursor
-instance — there is deliberately **no offline caching**. It only works while the
-instance is running, on the same machine, over `localhost` (which counts as a
-secure context, so plain HTTP is fine).
-:::
-
-## Add-ons
-
-The one-command install already includes the
-[Kanban board](/features/kanban) and the
-[menu-bar icon](/features/background-app#the-menu-bar-icon), so there is nothing
-to add for a normal setup. For a lean core without them:
-
-::: code-group
-
-```bash [macOS / Linux]
-PRECURSOR_EXTRAS=none sh -c "$(curl -fsSL https://raw.githubusercontent.com/lrivallain/precursor/main/scripts/install.sh)"
-```
-
-```powershell [Windows]
-$env:PRECURSOR_EXTRAS = 'none'
-irm https://raw.githubusercontent.com/lrivallain/precursor/main/scripts/install.ps1 | iex
-```
-
-:::
-
-Both installers read the same variables:
-
-| Variable | Default | Effect |
-| --- | --- | --- |
-| `PRECURSOR_CHANNEL` | `nightly` | `stable` installs the latest tagged release from PyPI |
-| `PRECURSOR_EXTRAS` | `kanban,tray` | the extras to install; `none` for the lean core |
-| `PRECURSOR_NO_START` | — | `1` installs the command without registering or starting anything |
-| `PRECURSOR_WHEEL` | — | install this wheel (a path or URL) instead of a channel's build |
-| `PRECURSOR_REPO` | `lrivallain/precursor` | the repository whose nightly builds to install |
-
-Other [plugins](/features/plugins) release on their own cadence and can be added
-at any time, the way any Python package is.
-
-[Agents mode](/features/agents-mode) needs no install step either: the Copilot
-SDK ships as a normal dependency, and the native runtime it drives is a one-click
-button in **Settings → Agents**.
-
-::: info Package & command names
-The PyPI distribution is **`precursor-ai`** (the plain `precursor` name was
-already taken). It installs a matching **`precursor-ai`** command plus a shorter
-**`precursor`** alias. The import package is `precursor`.
+Precursor has no login. Anyone who can reach the port can use your GitHub
+credentials and everything the app can do, so only listen on a trusted network
+or behind an authenticating proxy. Off loopback, the MCP HTTP endpoint and
+in-app plugin installs are disabled.
 :::

@@ -7,20 +7,17 @@ Precursor uses **CalVer** (`YYYY.M.MICRO`); the version is derived from the
 latest git tag (`v<version>`) by hatch-vcs at build time. See
 [RELEASING.md](RELEASING.md).
 
-The development notes below are maintained with each change. For automated
-releases, the [GitHub Release notes](https://github.com/lrivallain/precursor/releases)
-are the per-version history; releasing does not rewrite this file.
+Contributors add notes under `[Unreleased]` with each change. Release
+preparation moves them into a version section, most significant first; the
+[GitHub Release notes](https://github.com/lrivallain/precursor/releases) remain
+the exact per-version history.
 
 ## [Unreleased]
 
+## [2026.11.8] - 2026-11-17
+
 ### Added
 
-- **MCP servers that sign in with Entra ID.** A user-defined HTTP server can
-  now authenticate with a token from your Azure CLI sign-in (`az login`)
-  instead of a static header. Paste the URL and Precursor detects the tenant
-  and resource from the server's OAuth metadata. Tokens are refreshed
-  automatically, and sign-in errors say which `az login` to run. Works for
-  servers such as EngOps IQ that accept the Azure CLI client.
 - **Settings → Updates.** Pick the update channel (Releases or Nightly), turn
   the tray's background update checks off, and choose whether a new build posts
   a system notification. The tray reads them whether or not the app is running,
@@ -38,40 +35,12 @@ are the per-version history; releasing does not rewrite this file.
   checks on, the Releases channel (a dev build no longer follows nightly unless
   you pick it), and notifications **off**. `PRECURSOR_UPDATE_NOTIFY=prompt` now
   means a plain notification.
-- **No Microsoft 365, no M365 features in live sessions.** When the WorkIQ MCP
-  server is off, the live start screen and the Context tab no longer show (or
-  fetch) your meetings, and the Summary tab no longer offers the Teams
-  transcript source. Nothing calls WorkIQ or prompts for a sign-in.
-- **MCP tools are loaded on demand.** Chats and topics no longer send every
-  enabled tool's schema with every request. A small set is sent up front (tools
-  the prompt names, recently used tools, and servers marked **always load**);
-  the rest are listed by name and the model loads them with `search_tools` when
-  needed. Requests with many MCP servers shrink from ~100k tokens to a few
-  thousand. Turn it off, or pin servers, in **Settings → MCP servers**.
-- **Claude on Azure AI Foundry uses the native Messages API with prompt
-  caching.** Deployments named `claude…` are called through
-  `/anthropic/v1/messages` first (falling back to the OpenAI-compatible APIs),
-  with cache breakpoints on tools, system prompt and conversation. Cached reads
-  don't count against Foundry's input-token quota, so low-quota deployments
-  work. Claude deployments also offer the effort picker. The conversation
-  panel's context window shows how much of the latest request came from the
-  prompt cache.
+- **Leaner documentation.** The website and README were reviewed end to end:
+  pages lead with what a feature does and how to use it, long pages were split,
+  and exhaustive detail moved to the Reference section.
 
 ### Fixed
 
-- **Cmd/Ctrl+S saves a workspace diagram.** In the draw.io editor, and with the
-  focus anywhere else on a workspace file (a preview, the toolbar, the tree),
-  the shortcut now saves the file instead of opening the browser's "Save page"
-  dialog.
-- **A link to a workspace file unfolds the tree down to it.** Opening a file
-  from a link (a tool call's chip, a shared URL) or from the Changes pane now
-  expands its folders and scrolls it into view, as if you had browsed to it.
-- **Renaming a draw.io file from the workspace tree works.** Double-clicking
-  its name loaded the diagram twice, and the editor then took focus from the
-  rename field. A double-click no longer reopens the file, and the diagram
-  editor waits until you point at it before taking focus.
-- **A narrow workspace Files pane no longer spills over the editor.** Its tabs
-  and buttons wrap onto extra lines instead of overlapping the open file's name.
 - **A direct link to a workspace file opens it again when the folder's case
   differs.** A link to `Customers/…` now opens `customers/…`: on a
   case-insensitive disk the tool that wrote the file accepted either spelling,
@@ -79,32 +48,33 @@ are the per-version history; releasing does not rewrite this file.
   and an ambiguous one opens nothing. The workspace and draw.io file tools now
   also report the path as it is spelled on disk, so the link, the "Open" chip
   and what the assistant reads back name the file the tree lists.
-- **WorkIQ Teams and the other Agent 365 servers stay signed in again.** Since
-  silent renewal started sending back the stored token's granted scope, Entra
-  refused every Agent 365 refresh with `AADSTS70011` (`invalid_scope`): its
-  granted list includes the bare resource, which is not a requestable scope. The
-  keep-alive could never renew, so `workiq-teams` and `workiq-user` asked for a
-  new sign-in each time the access token expired. Agent 365 now refreshes
-  without a scope, as it did before; the WorkIQ preview still sends its scope.
+- **A link to a workspace file unfolds the tree down to it.** Opening a file
+  from a link (a tool call's chip, a shared URL) or from the Changes pane now
+  expands its folders and scrolls it into view, as if you had browsed to it.
+- **Cmd/Ctrl+S saves a workspace diagram.** In the draw.io editor, and with the
+  focus anywhere else on a workspace file (a preview, the toolbar, the tree),
+  the shortcut now saves the file instead of opening the browser's "Save page"
+  dialog.
+- **Renaming a draw.io file from the workspace tree works.** Double-clicking
+  its name loaded the diagram twice, and the editor then took focus from the
+  rename field. A double-click no longer reopens the file, and the diagram
+  editor waits until you point at it before taking focus.
+- **A narrow workspace Files pane no longer spills over the editor.** Its tabs
+  and buttons wrap onto extra lines instead of overlapping the open file's name.
 
-- **Settings warns about every unsaved change.** Closing the settings panel
-  now asks before discarding edits to **Load tools on demand** and the
-  per-server **always load** switches, and no longer asks after you saved the
-  removal of a stored provider secret.
-- **Reloading the page no longer loses a reply in progress.** A chat or topic
-  turn now runs on the server independently of the browser connection: reload
-  or close the tab and the turn still finishes and is saved. A reloaded window
-  shows the turn as running and displays the reply when it lands. **Stop**
-  still stops it (now through an explicit request), and clearing a transcript
-  stops a reply still being written.
+## [2026.11.0 – 2026.11.7] - 2026-11-02 to 2026-11-12
 
-- **Bounded Azure AI Foundry retries.** Rate limits, timeouts, conflicts, server
-  errors and authentication failures no longer trigger another batch of requests
-  through the other API surface after SDK retries. API compatibility fallback
-  remains available for `400`/`404` failures, without replaying streamed output.
+Development notes for the 2026.11 releases; see the
+[GitHub Releases](https://github.com/lrivallain/precursor/releases) for each version.
 
 ### Added
 
+- **MCP servers that sign in with Entra ID.** A user-defined HTTP server can
+  now authenticate with a token from your Azure CLI sign-in (`az login`)
+  instead of a static header. Paste the URL and Precursor detects the tenant
+  and resource from the server's OAuth metadata. Tokens are refreshed
+  automatically, and sign-in errors say which `az login` to run. Works for
+  servers such as EngOps IQ that accept the Azure CLI client.
 - **Azure AI Speech can sign in with the Azure CLI.** Under **Settings →
   Speech-to-text**, choose **Azure CLI (`az login`)** instead of a subscription
   key. Precursor uses Entra ID tokens from the CLI's current tenant, or from a
@@ -237,24 +207,26 @@ are the per-version history; releasing does not rewrite this file.
   under the plan receipt, updating as the plan runs. A running card also refreshes
   periodically if an event is missed, and displays refresh failures.
 
-### Fixed
-
-- **Message links: stop teaching replies to repeat navigation headers.** Topic
-  and chat models now receive a separate reference index instead of
-  `[Message reference: ...]` prefixes on prompts and replies. Earlier messages
-  remain citable, without presenting the metadata as authored conversation text.
-- **Playwright MCP: survive stale package-mirror tags.** Pin the verified
-  `@playwright/mcp@0.0.83` release instead of `latest`, which some mirrors resolve
-  to a March 2025 alpha. That alpha rejects the persistent-profile flag and exits
-  with **Connection closed**, even after app restarts. Browser selection and
-  existing profile paths are preserved.
-
 ### Changed
 
-- **macOS: idempotent login-item installation.** Repeating `precursor service
-  install` preserves an unchanged plist and leaves an already-loaded app or tray
-  job alone, avoiding unnecessary background-item re-registration notifications.
-  Unloaded jobs are loaded again, and changed configurations are still replaced.
+- **No Microsoft 365, no M365 features in live sessions.** When the WorkIQ MCP
+  server is off, the live start screen and the Context tab no longer show (or
+  fetch) your meetings, and the Summary tab no longer offers the Teams
+  transcript source. Nothing calls WorkIQ or prompts for a sign-in.
+- **MCP tools are loaded on demand.** Chats and topics no longer send every
+  enabled tool's schema with every request. A small set is sent up front (tools
+  the prompt names, recently used tools, and servers marked **always load**);
+  the rest are listed by name and the model loads them with `search_tools` when
+  needed. Requests with many MCP servers shrink from ~100k tokens to a few
+  thousand. Turn it off, or pin servers, in **Settings → MCP servers**.
+- **Claude on Azure AI Foundry uses the native Messages API with prompt
+  caching.** Deployments named `claude…` are called through
+  `/anthropic/v1/messages` first (falling back to the OpenAI-compatible APIs),
+  with cache breakpoints on tools, system prompt and conversation. Cached reads
+  don't count against Foundry's input-token quota, so low-quota deployments
+  work. Claude deployments also offer the effort picker. The conversation
+  panel's context window shows how much of the latest request came from the
+  prompt cache.
 - **Delegated discussions inherit source approvals.** Step and final-output discussions
   now default to the plan's recorded autonomy and use source-conversation rules as well
   as their own and global rules. A discussion's explicit policy and rules still take
@@ -305,7 +277,6 @@ are the per-version history; releasing does not rewrite this file.
 - **Redoing a validated step.** A model reply with a new deliverable on a validated
   step now applies as a new version and reopens it for your validation, instead of
   being dropped. The validated version stays in the history.
-
 - **A finished delegated plan now says what it is waiting for.** Once every step
   is approved, the discussion card offers **Generate the final output** when none
   exists, **Regenerate the final output** when it needs updating, or **Send to the
@@ -318,6 +289,10 @@ are the per-version history; releasing does not rewrite this file.
   with questions instead of a draft is asked once more to write it; if it still
   has none, the run pauses and says which step needs you, instead of building the
   final output without it.
+- **macOS: idempotent login-item installation.** Repeating `precursor service
+  install` preserves an unchanged plist and leaves an already-loaded app or tray
+  job alone, avoiding unnecessary background-item re-registration notifications.
+  Unloaded jobs are loaded again, and changed configurations are still replaced.
 - **Settings: save without closing.** Saving keeps the panel open on the current
   category with a confirmation. Closing only warns about edits made since the
   last successful save; failed saves keep your changes available to retry.
@@ -330,7 +305,6 @@ are the per-version history; releasing does not rewrite this file.
   focus and always visible on touch devices. Models receive exact
   message references and can cite earlier replies with in-app Markdown links;
   Precursor MCP transcript tools expose the same permalinks.
-
 - **Storage: workflow step inputs are now bounded.** The prompt archived on each
   workflow run step (`workflow_run_steps.input_context`) was the largest table
   in a busy install and had no retention. The new `workflow_step_retention_days`
@@ -345,44 +319,49 @@ are the per-version history; releasing does not rewrite this file.
   attachments open in a modal viewer with image/text zoom, fit/reset controls,
   embedded PDFs, and an optional **Open in new tab** link. Unsupported formats
   and preview failures explain how to access the original file.
-- **Step by step: copy returned outputs for email.** Final-output documents in
-  a topic now expose the usual *Copy formatted* envelope. It preserves the
-  document's layout without copying the plan metadata or footer link, and its
-  plain-text fallback likewise contains only the document body.
-- **Step by step: a quiet request receipt, then a clear document.** Topic
-  creation traces now show *Request sent to Step by step*, a blue plan link
-  and the original prompt under a quote rule, with a thin feature-coloured
-  border around the entire receipt rather than a blue card.
-  Returned final outputs use a soft Step by step teal-tinted document surface
-  to stand apart from ordinary discussion, understated version
-  and provisional metadata, and a footer plan link so their Markdown content
-  leads without a duplicated title. Both retain the existing checklist icon;
-  immutable prompt snapshots, expansion, legacy messages and output history
-  are unchanged.
-- **Step by step: keep the original prompt beside the process link.** Creating
-  a plan from a topic now saves the full effective ask in an immutable topic
-  trace, including asks derived by a bare `/steps` or the topic button. The
-  trace shows short prompts immediately,
-  with accessible *Show all / Show less* for long ones. Plan edits never change
-  the snapshot, prompt syntax stays literal, and historical link-only traces
-  remain navigable without pretending to recover their original ask.
-- **Nightly waits for green CI.** Rolling builds publish only after successful
-  main-push CI on the exact source commit, including manual retries. Checkout,
-  tag and manifest stay pinned to that commit, and superseded builds cannot
-  roll the channel back. Website deployment remains independent.
-- **Step by step: identifiable final outputs filed in a topic.** The note
-  separates *Final output* metadata from its Markdown content, including the
-  version (*v2*) and a *Provisional* label when filed before every step was
-  approved. The stored message is unchanged Markdown, so the model and
-  exports still read it, and notes filed earlier get the same presentation.
-- **Step by step: one panel for step artifacts and the final output.** Both
-  are now the same editor (version label, history, save, edit/preview, the
-  *newer version* guard), so the final output gets the resizable box and the
-  **Refine with AI** rewrite helper it was missing, and opens in *Edit* like a
-  step. Generating the final output or sending a discussion reply to it no
-  longer asks to discard unsaved edits: they stay behind the *newer version*
-  banner, as in a step. The code behind both is shared (`DocumentEditor`,
-  `useProposals`).
+
+### Fixed
+
+- **WorkIQ Teams and the other Agent 365 servers stay signed in again.** Since
+  silent renewal started sending back the stored token's granted scope, Entra
+  refused every Agent 365 refresh with `AADSTS70011` (`invalid_scope`): its
+  granted list includes the bare resource, which is not a requestable scope. The
+  keep-alive could never renew, so `workiq-teams` and `workiq-user` asked for a
+  new sign-in each time the access token expired. Agent 365 now refreshes
+  without a scope, as it did before; the WorkIQ preview still sends its scope.
+- **Settings warns about every unsaved change.** Closing the settings panel
+  now asks before discarding edits to **Load tools on demand** and the
+  per-server **always load** switches, and no longer asks after you saved the
+  removal of a stored provider secret.
+- **Reloading the page no longer loses a reply in progress.** A chat or topic
+  turn now runs on the server independently of the browser connection: reload
+  or close the tab and the turn still finishes and is saved. A reloaded window
+  shows the turn as running and displays the reply when it lands. **Stop**
+  still stops it (now through an explicit request), and clearing a transcript
+  stops a reply still being written.
+- **Bounded Azure AI Foundry retries.** Rate limits, timeouts, conflicts, server
+  errors and authentication failures no longer trigger another batch of requests
+  through the other API surface after SDK retries. API compatibility fallback
+  remains available for `400`/`404` failures, without replaying streamed output.
+- **Message links: stop teaching replies to repeat navigation headers.** Topic
+  and chat models now receive a separate reference index instead of
+  `[Message reference: ...]` prefixes on prompts and replies. Earlier messages
+  remain citable, without presenting the metadata as authored conversation text.
+- **Playwright MCP: survive stale package-mirror tags.** Pin the verified
+  `@playwright/mcp@0.0.83` release instead of `latest`, which some mirrors resolve
+  to a March 2025 alpha. That alpha rejects the persistent-profile flag and exits
+  with **Connection closed**, even after app restarts. Browser selection and
+  existing profile paths are preserved.
+- **WorkIQ refreshes keep their granted scope.** Silent renewal now explicitly
+  requests the stored token's WorkIQ or Agent 365 scopes instead of leaving the
+  target resource implicit. A scope-less grant could fail with Entra's
+  `AADSTS530084` token-protection error even when renewal of the same credential
+  for its granted WorkIQ scope succeeded, causing repeated reauthentication.
+
+## [2026.10.0 – 2026.10.16] - 2026-10-01 to 2026-10-30
+
+Development notes for the 2026.10 releases; see the
+[GitHub Releases](https://github.com/lrivallain/precursor/releases) for each version.
 
 ### Added
 
@@ -457,7 +436,6 @@ are the per-version history; releasing does not rewrite this file.
   app's top bar. *Use latest reply* became a
   prominent *Send the latest reply to the artifact* arrow from the discussion to
   the artifact.
-
 - **Step by step.** A new section splits a long ask (a customer email, a brief)
   into a tree of steps. Each step has its own Markdown artifact with version
   history, a status (open, in progress, to validate, validated, cancelled) and a
@@ -468,26 +446,22 @@ are the per-version history; releasing does not rewrite this file.
   also see the source topic's conversation, the requested output and the other
   steps' work; the discussion gets more room and "Split" is a compact button
   beside the status actions.
-
 - **Live insights are easier to scan.** Insight categories now have clearer
   visual grouping, and proactive suggestions lead with a short recommendation
   followed by concise bullets for alternatives or next steps when useful. See
   [Live sessions](website/features/live-sessions.md).
-
 - **Live sessions inherit the topic's role.** Attaching a topic to a live
   session now copies its assistant role into the session, and the role picker
   moved from the Transcript tab to the session header because it applies to the
   whole session. The role now also shapes the recap and the topic context
   brief, not just insights, suggestions and Ask assistant, and is mirrored on
   the session's chat. See [Live sessions](website/features/live-sessions.md).
-
 - **More keyboard shortcuts.** **C** focuses the message composer, **N** starts a new chat, topic or other
   item in the current section, **?** opens a
   new keyboard-shortcuts cheat-sheet (also in the ⌘K palette), and **Esc** in the
   composer stops a streaming reply. The single-key shortcuts are ignored while
   you type or a dialog is open. See
   [Keyboard shortcuts](website/features/keyboard-shortcuts.md).
-
 - **Precursor IQ has its own Settings page.** The IQ card moved out of
   **Settings → MCP servers** to **Settings → Precursor IQ**. Embeddings now pick
   any provider configured under **Settings → Model** (Azure AI Foundry reuses
@@ -496,14 +470,12 @@ are the per-version history; releasing does not rewrite this file.
   provider and model selector instead of a free-text field. New settings
   `iq_embedding_provider` and `iq_ask_provider`, and `POST
   /api/iq/embeddings/test`. See [Precursor IQ](website/features/iq.md).
-
 - **Skills and attachments on the "Start a new chat" screen.** The start
   composer now offers your `/skills` in the autocomplete (built-in commands such
   as `/clear` stay out, since they act on an open chat) and accepts files via
   the paperclip, paste or drop. Attaching creates the chat in the background so
   the upload has somewhere to live; leaving the screen without sending deletes
   it again. See [Chats](website/features/chats.md#starting-a-chat).
-
 - **Suggested answers in Live sessions.** An opt-in feature: when another
   participant asks a question, the assistant streams a short first-person reply
   in a card above the transcript (one fast-model call; `[[NONE]]` suppresses
@@ -513,7 +485,6 @@ are the per-version history; releasing does not rewrite this file.
   answered. New `POST /api/live/{id}/suggest` SSE endpoint and `me_labels` on
   live sessions. See
   [Suggested answers](website/features/live-sessions.md#suggested-answers).
-
 - **Context window breakdown in the stats panels.** The conversation stats
   panel (topics, chats) and the agent Insights panel now show a segmented
   context bar and a legend splitting the window into system prompt, system
@@ -529,7 +500,6 @@ are the per-version history; releasing does not rewrite this file.
   approval and role pickers collapse to icons with their value in the tooltip, and their menus open as viewport-clamped popups. See
   [Workspaces](website/features/workspaces.md#discussing-a-workspace) and
   [Chats](website/features/chats.md#compact-composer).
-
 - **Workspace discussions are real chats and topics, with artifacts.** The
   ephemeral workspace assistant is gone. A **Discuss** button in the workspace
   header (the panel is hidden until you press it) opens a real chat or topic
@@ -542,12 +512,10 @@ are the per-version history; releasing does not rewrite this file.
   `GET/POST/DELETE /api/{topics|chats}/{id}/artifacts` and
   `GET /api/workspaces/{id}/discussions`; the stream endpoints accept
   `workspace_context`. See [Workspaces](website/features/workspaces.md#discussing-a-workspace).
-
 - **The persona shows the proxy user.** With no GitHub account, the sidebar
   persona falls back to the `X-Forwarded-User` header (e.g. behind an OAuth
   proxy) instead of "Guest", shown with an initials avatar and a shield badge
   so it reads as signed in. Display only; it grants no access.
-
 - **Tool approval policies for topics and chats.** Choose `manual`, `balanced`
   or `autonomous` per conversation from a shield pill in the composer (defaults
   in Settings → Chat, `autonomous` so nothing changes until you opt in). Calls
@@ -556,21 +524,18 @@ are the per-version history; releasing does not rewrite this file.
   `allow` / `ask` rules can match a server, tool and arguments, and the model can
   ask first. Scheduled runs notify you and auto-deny after a timeout. See
   [Tool approvals](website/features/approvals.md).
-
 - **A new install starts in files mode.** When nothing is declared in the
   database yet (no agent, no workflow, no role beyond the untouched `default`)
   and no source was ever chosen, Precursor records the install as migrated and
   reads definition files from the first start — the migration wizard is skipped.
   Existing installs are unchanged. The wizard's **Review** step now also lists
   roles, each with the file it would write.
-
 - **Assistant roles are definition files.** A role is a `roles/<slug>.role.yaml`
   file (`name`, `description`, `prompt`) with a published JSON Schema, checked by
   the folder check and `precursor validate`. In files mode **Settings → Roles**
   reads and writes those files, `roles/default.role.yaml` is always re-created,
   and the migration wizard writes, verifies, reverts and cleans up roles along
   with agents and workflows. Documented in `docs/definitions.md` and the website.
-
 - **`create_workspace` over MCP, and workspace tools in the `precursor` server.**
   The standalone `workspace-fs` server is folded into the built-in `precursor`
   server as two new opt-in sections: **Workspaces** (`list_workspaces`,
@@ -588,7 +553,6 @@ are the per-version history; releasing does not rewrite this file.
   `get_system_info` (OS, Python, locale, version; never host or user names).
 - **Select all / Unselect all** for the Settings → MCP → Precursor capabilities
   section list.
-
 - **Closing Settings with unsaved changes asks for confirmation** (Esc, the close button, Cancel or a click outside).
 - **Disable the Mock provider** via Settings → Model → Configure provider → Mock: it disappears from provider lists and unconfigured providers fail visibly instead of answering with canned replies.
 - **Provider shown with the model on each reply**, and a **Global default model** selector next to the global default provider in Settings → Model.
@@ -608,7 +572,6 @@ are the per-version history; releasing does not rewrite this file.
   gone): create your own categories, drag models from any configured provider
   into them, and reorder by dragging. Each preset carries its provider, so one
   category can fail over across providers.
-
 - **Pick where a promoted chat lands.** The "Promote to topic" confirmation now
   offers a target collection and parent topic (or top level); the API takes
   `parent_id` alongside `collection_id`.
@@ -617,7 +580,6 @@ are the per-version history; releasing does not rewrite this file.
   Each is available in the
   composer model picker and model alternatives, with the first as the default.
   Existing single-deployment configurations remain compatible.
-
 - **Backups include the Definitions workspace.** Each backup run now also zips
   the definitions folder (workflow, agent and summary files) into
   `definitions/definitions-<timestamp>.zip` in the backup folder, pruned by the
@@ -696,7 +658,6 @@ are the per-version history; releasing does not rewrite this file.
     exposed. Chats gain `parent_topic_id`, `parent_topic_title`,
     `parent_message_id` and `seed_content`. In-app `/chats/…` links now open
     without reloading the page.
-
 - **Timeline and rewind for topics and chats.** A column of short dashes on the
   right edge of the transcript shows one dash per turn. Dashes for turns on
   screen are brighter, and the turn you're reading is blue, with a matching blue
@@ -708,7 +669,6 @@ are the per-version history; releasing does not rewrite this file.
   or from the **Reading turn N of M** bar shown while you're scrolled back. Every rewind is previewed first: a cut line marks it and the
   turns to delete are greyed out. After you confirm, an 8-second undo bar counts
   down. New endpoints: `GET …/messages/turns` and `POST …/messages/rewind`.
-
 - **Timeline and rewind for agent sessions** (experimental). The agent Activity
   tab gets the same rail, prompt toolbar and *Reading turn N of M* bar. Rewind
   cuts the agent's Copilot session history and its transcript together, so the
@@ -726,7 +686,6 @@ are the per-version history; releasing does not rewrite this file.
   `POST /api/agents/{id}/rewind` (`mode: conversation | conversation-and-files`).
   Agent event pages carry an `epoch` (sent back as `?epoch=`) so a live reader
   resets after a rewind, and `rewindable_run_ids`.
-
 - **See a conversation's pending reminder in the stats panel.** A scheduled
   reminder used to be invisible until it fired. The conversation stats panel
   now has a **Reminder** section with the time, how far away it is, and the
@@ -734,7 +693,6 @@ are the per-version history; releasing does not rewrite this file.
   **Set reminder** when none is set. The collapsed stats rail shows an
   alarm-clock icon while a reminder is set. The section updates live when an
   agent sets or changes the reminder over MCP.
-
 - **Context compression for long conversations.** Type `/compact [focus]`, or
   click **Compact context** in the conversation stats panel, to have the model
   summarise a topic or chat into a compaction marker. From the next turn on, the
@@ -781,6 +739,187 @@ are the per-version history; releasing does not rewrite this file.
   topic, chat, agent or live session, then a cited answer follows whose
   citations are clickable. Questions aren't saved. **⌘⇧K** (Ctrl+Shift+K)
   opens it from anywhere, with any selected text pre-filled as the question.
+
+### Changed
+
+- **Step by step: copy returned outputs for email.** Final-output documents in
+  a topic now expose the usual *Copy formatted* envelope. It preserves the
+  document's layout without copying the plan metadata or footer link, and its
+  plain-text fallback likewise contains only the document body.
+- **Step by step: a quiet request receipt, then a clear document.** Topic
+  creation traces now show *Request sent to Step by step*, a blue plan link
+  and the original prompt under a quote rule, with a thin feature-coloured
+  border around the entire receipt rather than a blue card.
+  Returned final outputs use a soft Step by step teal-tinted document surface
+  to stand apart from ordinary discussion, understated version
+  and provisional metadata, and a footer plan link so their Markdown content
+  leads without a duplicated title. Both retain the existing checklist icon;
+  immutable prompt snapshots, expansion, legacy messages and output history
+  are unchanged.
+- **Step by step: keep the original prompt beside the process link.** Creating
+  a plan from a topic now saves the full effective ask in an immutable topic
+  trace, including asks derived by a bare `/steps` or the topic button. The
+  trace shows short prompts immediately,
+  with accessible *Show all / Show less* for long ones. Plan edits never change
+  the snapshot, prompt syntax stays literal, and historical link-only traces
+  remain navigable without pretending to recover their original ask.
+- **Nightly waits for green CI.** Rolling builds publish only after successful
+  main-push CI on the exact source commit, including manual retries. Checkout,
+  tag and manifest stay pinned to that commit, and superseded builds cannot
+  roll the channel back. Website deployment remains independent.
+- **Step by step: identifiable final outputs filed in a topic.** The note
+  separates *Final output* metadata from its Markdown content, including the
+  version (*v2*) and a *Provisional* label when filed before every step was
+  approved. The stored message is unchanged Markdown, so the model and
+  exports still read it, and notes filed earlier get the same presentation.
+- **Step by step: one panel for step artifacts and the final output.** Both
+  are now the same editor (version label, history, save, edit/preview, the
+  *newer version* guard), so the final output gets the resizable box and the
+  **Refine with AI** rewrite helper it was missing, and opens in *Edit* like a
+  step. Generating the final output or sending a discussion reply to it no
+  longer asks to discard unsaved edits: they stay behind the *newer version*
+  banner, as in a step. The code behind both is shared (`DocumentEditor`,
+  `useProposals`).
+- **Deleting a workspace or a folder asks you to type its name.** Removing a
+  workspace, or deleting a folder in Files, now needs the exact name typed into
+  the confirmation (with a **Copy** button) before the button is enabled, so a
+  stray click or Enter can't wipe one out.
+- **Roles are referenced by name, not id.** Topics, chats, workspaces, live
+  sessions, agents, workflows and collections store the role's `name`
+  (case-insensitive); an unknown name falls back to the `default` role with a
+  warning. The API follows: `/api/roles/{name}`, `role` / `default_role` replace
+  `role_id` / `default_role_id`, and a role can no longer be renamed. An Alembic
+  migration backfills the names; the `roles` table and legacy `role_id` columns
+  stay for the time being.
+- **MCP servers are listed in a fixed order.** Settings → MCP now shows
+  `precursor`, `cmd-runner`, `fetch`, `github`, `playwright`, the `workiq*`
+  servers and `drawio`, then plugin-contributed servers, then your own.
+- **Breaking:** the `workspace-fs` MCP server is removed. A migration carries an
+  existing `workspace-fs` enablement over to `precursor` plus the two workspace
+  sections, and a `workspace-fs` agent scope now resolves to `precursor` (so
+  that step sees the rest of the server's enabled sections too).
+
+### Removed
+
+- **`POST /api/workspaces/{id}/chat/stream` and the workspace `role`.** A
+  workspace discussion is an ordinary chat, which has its own role. Existing
+  workspace roles are dropped by a migration.
+- **The "Engine selects model" label in the composer.** With a preset category
+  selected, the model picker already shows the category, so the extra caption
+  is gone. The amber "Category needs presets" warning stays.
+
+### Fixed
+
+- **Agents start with headerless HTTP MCP servers.** Send an empty headers
+  object instead of `null` to the Copilot runtime so enabling servers such as
+  Microsoft Learn no longer blocks the first prompt with `headers: Expected
+  object`. Configured authentication headers are unchanged.
+- **Step by step: "Regenerate with model" ignored the discussion.** A race
+  could create two discussions for the same step, so the model drafted from one
+  while the panel showed the other. A step has one discussion again.
+- **Agents and workflows keep valid WorkIQ access.** Attaching WorkIQ to an
+  agent no longer forces an OAuth refresh of a still-valid access token. That
+  unnecessary refresh could be refused by Entra's token-protection policy,
+  leaving workflows without mailbox tools even while chat worked. The
+  keep-alive still explicitly renews credentials when renewal is due.
+- **Deleted roles stay cleared in files mode.** Role deletion now removes
+  matching assignments from agent and workflow definition files, including
+  definitions with stale database columns or no database row yet. Reloads and
+  restarts no longer restore the deleted role. Workflow run snapshots retain
+  their steps, and permission reviews are preserved. Unsafe file edits report
+  a conflict and keep the role instead of claiming success.
+- **Workspace layout with the discussion panel open.** The discussion panel
+  and Files tree now shrink before the editor, so the workspace no longer
+  scrolls horizontally or clips the composer, and the file header wraps its
+  actions cleanly instead of scattering the icons in a narrow pane.
+- **Panel resizing over iframes.** Dragging a panel edge over a draw.io, HTML
+  or PDF preview no longer loses the drag when the cursor enters the preview.
+- **Live suggestions no longer pile up.** The Live view's Insights tab kept
+  every proactive suggestion as its own card (up to 12), pushing the insights
+  out of view. It now shows a single suggestion that a newer one replaces, and
+  it resets when you switch sessions. See
+  [Live sessions](website/features/live-sessions.md#insights-q-a-and-summary).
+- **A new chat's first prompt no longer flashes twice.** Starting a chat from
+  the hero briefly showed the prompt both as the optimistic bubble and as the
+  just-persisted message; the duplicate is now dropped immediately.
+- **The collapsed Summary bar no longer shows on topics without a summary.** It
+  only appears once a brief exists; the header document icon and
+  `/show-summary` still open an empty panel to generate one. See
+  [Topic summary](website/features/topic-summary.md).
+- **The persona no longer claims the mock provider is in use.** The "GitHub not
+  connected" tooltip dropped "using mock provider": other providers work
+  without a GitHub account.
+- **An install already in files mode lost its roles.** Installs that had
+  migrated agents and workflows before roles became files kept their roles in
+  the database only, so every role read as missing (warnings like "no role named
+  'Azure CSA'") and the default persona applied. On the first start in files mode
+  Precursor now writes a `roles/<slug>.role.yaml` for each role row that has no
+  file, once and without overwriting any file.
+- **The `precursor` MCP server listed every tool even with no capability
+  exposed.** `tools/list` now advertises only the exposed sections (just
+  `precursor_info` when none is on), so the tool count in Settings and the tools
+  a chat offers the model follow the Precursor capabilities toggles; saving them
+  reloads the server's tool list.
+- **Images and PDFs open in a workspace.** Opening a picture (PNG, JPEG, GIF,
+  WebP, BMP, ICO, AVIF) in the Files browser showed a "Not a text file" error;
+  it's now displayed, scaled to fit, on a checkerboard backdrop so transparency
+  shows. PDFs open in the browser's built-in viewer. Other binary files show
+  that they can't be edited here instead of an error.
+- **The draw.io editor switches theme while a diagram is open.** It used to
+  stay in the theme it opened with until you reopened the file. Saving a new
+  theme in Settings now reloads it in light or dark, keeping your unsaved edits
+  (draw.io's own undo history starts over).
+- **A workflow gate can now recover from a FAIL.** Each loop-back re-ran the
+  producing step as a new execution, and the gate was handed every attempt's
+  artifacts side by side, so it saw two copies of the deliverable, then three,
+  then four. It then failed on the duplicates themselves until `max_loops` ran
+  out. A retry's artifacts now replace the attempt they supersede, both in the
+  hand-off and on the shared board, so the gate judges only the current attempt.
+- **MCP servers over streamable HTTP work with `mcp` 2.3.** A fresh install
+  that resolved `mcp` 2.3.0 failed every streamable-HTTP call with "SSE stream
+  ended without a response": Precursor's patch raising the SDK's 1 MiB limit on
+  a single server-sent event rejected the argument 2.3 now passes. On 2.3+ the
+  16 MiB limit is handed to the SDK's own `max_sse_event_size` setting instead;
+  2.2 keeps the patch. Tool results over 1 MiB still arrive on both.
+- **The macOS menu-bar icon no longer crashes on launch.** `precursor tray`
+  died with a `trace trap` a moment after starting on recent macOS releases:
+  its periodic refresh redrew the status item from a background thread, which
+  AppKit now refuses with a hard trap. Redraws are handed to the main thread.
+- **Large attached documents are no longer cut after a page or two.** Text
+  extracted from PDF, DOCX, PPTX and text attachments was capped at 4,000
+  characters, often less than a paper's introduction, and the only sign of the
+  cut was a trailing `…`. The cap is now 200,000 characters and configurable
+  (`llm_max_attachment_chars`, **Settings → Model → Prompt budgeting**). When
+  a document goes past it, the model is told how much it's seeing out of the
+  total. The per-tool-result cap also stopped applying to user messages, where
+  it had been cutting attachment text at about 60k characters. Extracted text
+  is cached next to its blob and parsed off the event loop, so a large PDF
+  isn't re-parsed on every later turn.
+- **Large MCP tool results no longer fail with "SSE stream ended without a
+  response".** Since the move to MCP 2, the client parsed server-sent events
+  with httpx2, which caps a single event at 1 MiB. A tool result is one event,
+  so anything bigger was dropped. The Live agenda was the most visible case:
+  "Couldn't read the agenda" as soon as a week of meetings exceeded the cap.
+  Precursor's MCP transport now allows events of up to 16 MiB. The agenda list
+  also stops downloading every meeting's full HTML body; the body is fetched
+  for one meeting when you link it.
+- **Workflow steps now publish their artifacts.** Every task step is told to
+  publish its deliverable with an `ARTIFACT` block, but the block was only read
+  for autonomous agents, and a step's agent usually isn't one. Its artifacts
+  were silently dropped, so later steps never saw the earlier steps' output that
+  `auto` and `selected` context promise. A step's `ARTIFACT:` and `PROGRESS:`
+  lines are now read whether or not its agent is autonomous. The step's
+  instructions now spell out the block syntax, and the next step receives each
+  artifact once instead of twice. A plain agent outside a workflow still
+  ignores these lines.
+
+## [2026.9.0 – 2026.9.6] - 2026-09-20 to 2026-09-30
+
+Development notes for the 2026.9 releases; see the
+[GitHub Releases](https://github.com/lrivallain/precursor/releases) for each version.
+
+### Added
+
 - **An OpenAI-compatible endpoint for your models.** Point VS Code (as a
   *Custom Endpoint* model provider), Open WebUI, Continue or the `openai` SDK at
   `/api/openai/v1` and use the active provider's models through Precursor —
@@ -796,7 +935,6 @@ are the per-version history; releasing does not rewrite this file.
   `max_output_tokens` and `vision`, and providers `openai_proxy`. With Copilot
   as the provider, keep it to interactive use: proxied, automated traffic can
   trip GitHub's abuse detection.
-
 - **See the model think.** In topics and chats, a reasoning model's thinking
   now streams into a collapsed **Thinking** area above its reply. While the
   model works, the row pulses and previews the step it is on, so a long pause
@@ -809,7 +947,6 @@ are the per-version history; releasing does not rewrite this file.
   retention*) clears it from older replies.
   Messages gain a `reasoning` field, the chat stream a `reasoning` event, and
   `POST …/messages/stopped` an optional `reasoning`.
-
 - **Agents and workflows show the model think, too.** While an agent's model
   thinks, its timeline ends in the same pulsing **Thinking…** row, and its
   dashboard card and a workflow's active step show the step it is on. A finished
@@ -819,12 +956,10 @@ are the per-version history; releasing does not rewrite this file.
   Claude streams its thinking live (with a reasoning effort picked), Gemini
   sends it with each round, GPT keeps it encrypted. The events page gains a
   `thinking` field, agents and workflow step agents an `active_thinking` field.
-
 - **Empty agent events cleanup.** A new target under **Settings → Usage stats →
   Storage cleanup** deletes the streaming fragments and empty messages older
   versions archived — nearly nine agent-event rows in ten on a busy install.
   Preview it, run it, then Compact.
-
 - **Summary templates for live sessions.** The Summary tab's single
   **Generate** button opens a small form: the **source** (the recording, or the
   linked Teams meeting's transcript — replacing the separate "Generate from
@@ -843,473 +978,12 @@ are the per-version history; releasing does not rewrite this file.
   `PUT /api/live/summary-templates/selection` and
   `POST /api/live/summary-templates/files`; `POST /api/live/{id}/summary` and
   `/summary/from-transcript` accept `template` and `language`.
-
-- **Windows gets the same one-command install.** `scripts/install.ps1` is the
-  PowerShell twin of `install.sh`: `irm …/install.ps1 | iex` installs the nightly
-  build with the Kanban and tray extras, registers the login items and starts
-  Precursor. It reads the same `PRECURSOR_*` variables. Both installers now also
-  accept `PRECURSOR_EXTRAS=none` for the lean core, since PowerShell can't set a
-  variable to an empty string, and `PRECURSOR_WHEEL` to install a given wheel.
-- **Windows CI.** The backend suite now runs on `windows-latest`, and a new job
-  runs the whole Windows journey on the wheel CI builds. It installs with
-  `install.ps1` in Windows PowerShell 5.1, checks the login items, stops and
-  restarts the app, replays the login entry, self-updates, and uninstalls.
-
-### Removed
-
-- **`POST /api/workspaces/{id}/chat/stream` and the workspace `role`.** A
-  workspace discussion is an ordinary chat, which has its own role. Existing
-  workspace roles are dropped by a migration.
-
-- **The "Engine selects model" label in the composer.** With a preset category
-  selected, the model picker already shows the category, so the extra caption
-  is gone. The amber "Category needs presets" warning stays.
-
-### Fixed
-
-- **WorkIQ refreshes keep their granted scope.** Silent renewal now explicitly
-  requests the stored token's WorkIQ or Agent 365 scopes instead of leaving the
-  target resource implicit. A scope-less grant could fail with Entra's
-  `AADSTS530084` token-protection error even when renewal of the same credential
-  for its granted WorkIQ scope succeeded, causing repeated reauthentication.
-
-- **Agents start with headerless HTTP MCP servers.** Send an empty headers
-  object instead of `null` to the Copilot runtime so enabling servers such as
-  Microsoft Learn no longer blocks the first prompt with `headers: Expected
-  object`. Configured authentication headers are unchanged.
-
-- **Step by step: "Regenerate with model" ignored the discussion.** A race
-  could create two discussions for the same step, so the model drafted from one
-  while the panel showed the other. A step has one discussion again.
-
-- **Agents and workflows keep valid WorkIQ access.** Attaching WorkIQ to an
-  agent no longer forces an OAuth refresh of a still-valid access token. That
-  unnecessary refresh could be refused by Entra's token-protection policy,
-  leaving workflows without mailbox tools even while chat worked. The
-  keep-alive still explicitly renews credentials when renewal is due.
-
-- **Deleted roles stay cleared in files mode.** Role deletion now removes
-  matching assignments from agent and workflow definition files, including
-  definitions with stale database columns or no database row yet. Reloads and
-  restarts no longer restore the deleted role. Workflow run snapshots retain
-  their steps, and permission reviews are preserved. Unsafe file edits report
-  a conflict and keep the role instead of claiming success.
-
-- **Workspace layout with the discussion panel open.** The discussion panel
-  and Files tree now shrink before the editor, so the workspace no longer
-  scrolls horizontally or clips the composer, and the file header wraps its
-  actions cleanly instead of scattering the icons in a narrow pane.
-- **Panel resizing over iframes.** Dragging a panel edge over a draw.io, HTML
-  or PDF preview no longer loses the drag when the cursor enters the preview.
-- **Live suggestions no longer pile up.** The Live view's Insights tab kept
-  every proactive suggestion as its own card (up to 12), pushing the insights
-  out of view. It now shows a single suggestion that a newer one replaces, and
-  it resets when you switch sessions. See
-  [Live sessions](website/features/live-sessions.md#insights-q-a-and-summary).
-- **A new chat's first prompt no longer flashes twice.** Starting a chat from
-  the hero briefly showed the prompt both as the optimistic bubble and as the
-  just-persisted message; the duplicate is now dropped immediately.
-
-- **The collapsed Summary bar no longer shows on topics without a summary.** It
-  only appears once a brief exists; the header document icon and
-  `/show-summary` still open an empty panel to generate one. See
-  [Topic summary](website/features/topic-summary.md).
-
-- **The persona no longer claims the mock provider is in use.** The "GitHub not
-  connected" tooltip dropped "using mock provider": other providers work
-  without a GitHub account.
-
-- **An install already in files mode lost its roles.** Installs that had
-  migrated agents and workflows before roles became files kept their roles in
-  the database only, so every role read as missing (warnings like "no role named
-  'Azure CSA'") and the default persona applied. On the first start in files mode
-  Precursor now writes a `roles/<slug>.role.yaml` for each role row that has no
-  file, once and without overwriting any file.
-
-- **The `precursor` MCP server listed every tool even with no capability
-  exposed.** `tools/list` now advertises only the exposed sections (just
-  `precursor_info` when none is on), so the tool count in Settings and the tools
-  a chat offers the model follow the Precursor capabilities toggles; saving them
-  reloads the server's tool list.
-- **Images and PDFs open in a workspace.** Opening a picture (PNG, JPEG, GIF,
-  WebP, BMP, ICO, AVIF) in the Files browser showed a "Not a text file" error;
-  it's now displayed, scaled to fit, on a checkerboard backdrop so transparency
-  shows. PDFs open in the browser's built-in viewer. Other binary files show
-  that they can't be edited here instead of an error.
-
-- **The draw.io editor switches theme while a diagram is open.** It used to
-  stay in the theme it opened with until you reopened the file. Saving a new
-  theme in Settings now reloads it in light or dark, keeping your unsaved edits
-  (draw.io's own undo history starts over).
-
-- **A workflow gate can now recover from a FAIL.** Each loop-back re-ran the
-  producing step as a new execution, and the gate was handed every attempt's
-  artifacts side by side, so it saw two copies of the deliverable, then three,
-  then four. It then failed on the duplicates themselves until `max_loops` ran
-  out. A retry's artifacts now replace the attempt they supersede, both in the
-  hand-off and on the shared board, so the gate judges only the current attempt.
-
-- **MCP servers over streamable HTTP work with `mcp` 2.3.** A fresh install
-  that resolved `mcp` 2.3.0 failed every streamable-HTTP call with "SSE stream
-  ended without a response": Precursor's patch raising the SDK's 1 MiB limit on
-  a single server-sent event rejected the argument 2.3 now passes. On 2.3+ the
-  16 MiB limit is handed to the SDK's own `max_sse_event_size` setting instead;
-  2.2 keeps the patch. Tool results over 1 MiB still arrive on both.
-
-- **The macOS menu-bar icon no longer crashes on launch.** `precursor tray`
-  died with a `trace trap` a moment after starting on recent macOS releases:
-  its periodic refresh redrew the status item from a background thread, which
-  AppKit now refuses with a hard trap. Redraws are handed to the main thread.
-
-- **Large attached documents are no longer cut after a page or two.** Text
-  extracted from PDF, DOCX, PPTX and text attachments was capped at 4,000
-  characters, often less than a paper's introduction, and the only sign of the
-  cut was a trailing `…`. The cap is now 200,000 characters and configurable
-  (`llm_max_attachment_chars`, **Settings → Model → Prompt budgeting**). When
-  a document goes past it, the model is told how much it's seeing out of the
-  total. The per-tool-result cap also stopped applying to user messages, where
-  it had been cutting attachment text at about 60k characters. Extracted text
-  is cached next to its blob and parsed off the event loop, so a large PDF
-  isn't re-parsed on every later turn.
-
-- **Large MCP tool results no longer fail with "SSE stream ended without a
-  response".** Since the move to MCP 2, the client parsed server-sent events
-  with httpx2, which caps a single event at 1 MiB. A tool result is one event,
-  so anything bigger was dropped. The Live agenda was the most visible case:
-  "Couldn't read the agenda" as soon as a week of meetings exceeded the cap.
-  Precursor's MCP transport now allows events of up to 16 MiB. The agenda list
-  also stops downloading every meeting's full HTML body; the body is fetched
-  for one meeting when you link it.
-- **Workflow steps now publish their artifacts.** Every task step is told to
-  publish its deliverable with an `ARTIFACT` block, but the block was only read
-  for autonomous agents, and a step's agent usually isn't one. Its artifacts
-  were silently dropped, so later steps never saw the earlier steps' output that
-  `auto` and `selected` context promise. A step's `ARTIFACT:` and `PROGRESS:`
-  lines are now read whether or not its agent is autonomous. The step's
-  instructions now spell out the block syntax, and the next step receives each
-  artifact once instead of twice. A plain agent outside a workflow still
-  ignores these lines.
-- **Nightly installs no longer 404 after a quick run of pushes.** Two nightly
-  builds seconds apart could leave the new `nightly` release stuck as a draft.
-  Its files then answered 404, so installing, updating and adding a plugin all
-  failed on a nightly install while the build showed green. The workflow now
-  moves the tag instead of deleting it. It also checks the published files
-  download, and fails the build if they don't.
-- **An older build no longer breaks the database for newer ones.** Starting an
-  older Precursor on a database a newer build had migrated used to rewind its
-  schema version without changing the schema. The next newer build then tried
-  to re-apply those migrations and failed to start on every retry
-  (`duplicate column name`). Now the older build refuses to start, names the
-  unknown revision, and leaves the database untouched. Run a build at least as
-  new as the last one that used the database.
-- **A disabled or uninstalled plugin no longer warns on every prompt.** Its MCP
-  server's on/off switch outlived it, so each turn still asked for the server
-  and reported "MCP server 'kanban.board' unavailable: Unknown MCP server". A
-  turn now skips servers that aren't registered. The switch itself is kept, so
-  re-enabling or reinstalling the plugin brings the server back as you left it.
-  Disabling a plugin also closes its running MCP server at once instead of
-  after the idle timeout.
-- **Linux: a first install no longer fails to start.** The systemd units run in
-  the data directory, but nothing created it when port `8000` was free. systemd
-  then refused to start the app (`status=200/CHDIR`) and the installer reported
-  "did not come up on port 8000", pointing at a log that didn't exist. Writing
-  a login item now creates its working directory.
-- **Linux servers: no crash-looping tray.** The tray unit was registered
-  whenever the `tray` extra was installed, which it is by default. Over SSH onto
-  a headless box it crashed every 30 seconds for want of a display. The
-  installer now skips it when there is no `DISPLAY` or `WAYLAND_DISPLAY`, and
-  says so. With no desktop and lingering off, it also warns that Precursor stops
-  at logout and suggests `loginctl enable-linger`. See
-  [On a Linux server](website/guide/installation.md#on-a-linux-server).
-- **Windows: no console window left on screen.** The login items were
-  Startup-folder `.cmd` files that ran the console script, so a terminal window
-  stayed open for as long as Precursor ran, and closing it killed the app. They
-  are now per-user `Run` entries that run `pythonw`. Older `.cmd` files are
-  removed on install and uninstall. The tray now starts at install time rather
-  than at the next login, and only one runs per data directory.
-- **Windows: busy ports looked free.** The port probes set `SO_REUSEADDR`. On
-  Windows that option lets a bind succeed over a live listener, so
-  `service install` never moved off a busy `8000` and the instance then failed
-  to bind. The WorkIQ sign-in port check had the same bug. Ports in a Hyper-V or
-  WSL excluded range now count as busy too.
-- **Windows: stopping is graceful.** `service stop` used `taskkill` without
-  `/F`, which can't stop a windowless process. So every stop waited 20 seconds
-  and then killed the app hard. It now sends Ctrl+Break, which uvicorn treats
-  like SIGTERM.
-- **Windows: no console flashes.** The tray checked the instance with
-  `tasklist` every 3 seconds, and each call flashed a console window. The check
-  now uses the Win32 API. Detached instances get a hidden console, so the `git`,
-  `gh` and MCP processes they start stay hidden too.
-- **Windows: self-update works.** `uv tool install --force` can't replace files
-  a running Precursor holds open, and the command asking for the update is one
-  of them. On Windows the update now stops the app and the tray, then hands the
-  install to a helper run by the base interpreter. The helper installs the new
-  build, restarts both, and logs to `logs/update.log`. The returning tray says
-  how it went. In-app plugin installs, which hit the same limit, now show the
-  command to run while Precursor is stopped.
-- **Windows: `pythonw` no longer crashes on startup.** `pythonw` has no
-  stdout/stderr, so it died on its first log line. Its output now goes to
-  `logs/windows.<app|tray>.out.log`.
-- **Windows: text encodings.** Output from `uv`, `gh` and `npm` is decoded as
-  UTF-8 rather than the ANSI code page, which garbled `uv`'s error trees or
-  raised on them. `precursor --dev` now finds `npm.cmd`.
-- **Self-update with a relocated `UV_TOOL_DIR`.** A `uv tool` install was only
-  recognised by a `…/uv/tools/…` path, so one moved with `UV_TOOL_DIR` was
-  treated as a plain wheel install that couldn't update itself. uv's install
-  receipt is now the signal, on every platform.
-
-### Changed
-
-- **Deleting a workspace or a folder asks you to type its name.** Removing a
-  workspace, or deleting a folder in Files, now needs the exact name typed into
-  the confirmation (with a **Copy** button) before the button is enabled, so a
-  stray click or Enter can't wipe one out.
-- **Roles are referenced by name, not id.** Topics, chats, workspaces, live
-  sessions, agents, workflows and collections store the role's `name`
-  (case-insensitive); an unknown name falls back to the `default` role with a
-  warning. The API follows: `/api/roles/{name}`, `role` / `default_role` replace
-  `role_id` / `default_role_id`, and a role can no longer be renamed. An Alembic
-  migration backfills the names; the `roles` table and legacy `role_id` columns
-  stay for the time being.
-
-- **MCP servers are listed in a fixed order.** Settings → MCP now shows
-  `precursor`, `cmd-runner`, `fetch`, `github`, `playwright`, the `workiq*`
-  servers and `drawio`, then plugin-contributed servers, then your own.
-- **Breaking:** the `workspace-fs` MCP server is removed. A migration carries an
-  existing `workspace-fs` enablement over to `precursor` plus the two workspace
-  sections, and a `workspace-fs` agent scope now resolves to `precursor` (so
-  that step sees the rest of the server's enabled sections too).
-
-- **Agents stop archiving streaming fragments.** Every token of an agent's reply
-  and thinking was written to `agent_events` as its own row and commit, with its
-  text dropped on the way. Those fragments now only feed the live view; the
-  archive keeps the complete messages, thinking and tool events. That frees
-  `agent_event_max_per_session` for real history, and the live narration on
-  agent cards reads the streamed text again.
-
-- **Git workspaces merge, and conflicts are resolved in the editor.**
-  - **Starting a merge:** when Pull (or Push) finds that the branch and the
-    remote have both moved on, the bar offers **Merge remote changes**. It
-    records a merge commit and is refused while anything is uncommitted.
-  - **Conflicts:** a **Merge in progress** bar stays up, and the Changes tab
-    lists the conflicted files first.
-    - A text conflict opens in the editor, tinted, with **Accept current /
-      incoming / both** above each block. Save, then **Mark resolved**, which is
-      refused while a conflict marker remains.
-    - A binary conflict, or one side deleting the file, offers **Keep yours** or
-      **Keep theirs**, after a confirmation.
-  - **Finishing:** **Complete merge** once none are left, or **Abort merge**
-    after a confirmation.
-  - **Consistent behaviour:** the merge always runs as `git merge` and ignores
-    the user's git settings (rebasing pulls, `merge.ff`, conflict style,
-    editor).
-  - **API:** new `POST /api/workspaces/{id}/git/merge`, `GET /git/conflict`,
-    `POST /git/resolve`, `/git/merge/complete` and `/git/merge/abort`.
-  - **Stricter names:** branch names and paths with surrounding whitespace or
-    control characters are refused instead of trimmed. A new branch can't be
-    named like another kind of ref (`refs/…`, `origin/…`, `HEAD`…).
-- **Git workspaces switch and create branches.** The branch name in the git bar
-  opens a picker.
-  - **What it lists:** local branches (unpublished ones marked) and the
-    branches only the remote has. Picking a remote one creates a local branch
-    that tracks it, even in a single-branch clone.
-  - **Creating:** a new branch starts from the current commit and stays local
-    until published.
-  - **Nothing is lost:** switching is refused while anything is uncommitted
-    (the files are named), during a merge, or on a detached HEAD. Nothing is
-    ever forced or stashed.
-  - **The open file:** unsaved edits ask first. After the switch the file is
-    reloaded, or closed if the branch doesn't have it.
-  - **Robustness:** remote branch names git wouldn't accept are never listed,
-    and a new branch never tracks the one it started from, even with
-    `branch.autoSetupMerge=always`.
-  - **API:** new `GET`/`POST /api/workspaces/{id}/git/branches` and
-    `POST /git/switch`.
-- **Git workspaces have a History tab.**
-  - **Browsing:** the branch's commits, newest first, with **Load more**. A
-    commit opens to its message and changed files, and each file's diff
-    against the commit before it.
-  - **Merges and the first commit:** a merge is compared with its first parent
-    and says so. The first commit shows its files as added.
-  - **One file's history:** **File history** beside an open file's name lists
-    the commits that changed it, across renames, and opens that file's diff
-    directly.
-  - **Phones:** the commit message and opened commits now survive a look at a
-    file or diff.
-  - **API:** new `GET /api/workspaces/{id}/git/log` and
-    `/git/commits/{sha}`. The status gains `head`, and `file-versions`
-    compares against an empty original when given `head` without `base`.
-- **Git workspaces review changes in a Changes tab, with a real diff.** The
-  Files section's left pane gains a **Changes** tab beside **Files**, replacing
-  the Review & Push dialog.
-  - **What it shows:** every changed file, ticked to be committed, with a
-    commit message box and **Commit** or **Commit & Push**. The pane you last
-    used is remembered.
-  - **The diff:** a file opens in Monaco's diff editor, comparing the last
-    commit with the working copy, side by side or inline (always inline on a
-    phone). Binary and very large files say so.
-  - **Change bars:** the editor's margin marks lines added, modified or removed
-    since the last commit, refreshed on open and on save.
-  - **Discard asks plainly:** a new file's confirmation says that discarding
-    deletes it, with a **Delete file** button. A rename's says it restores the
-    old name.
-  - **Phones:** the git bar wraps instead of pushing Pull and Push off-screen.
-  - **API:** new `GET /api/workspaces/{id}/git/file-versions`.
-- **Git workspaces know where they stand against the remote.**
-  - **Refresh:** opening a git workspace, and Refresh, fetch from the remote,
-    so "↓ N behind" is real (fetching changes no file). If the remote can't be
-    reached, an icon says so.
-  - **Commit and Push are separate:** the review can commit locally, and
-    **Push N** sends commits later.
-  - **New branches:** a branch that isn't on the remote shows **not published**,
-    and **Publish** pushes it and sets its upstream. A branch that only tracks a
-    local one counts as unpublished too.
-  - **Branch switches outside Precursor:** Pull and Push follow the checked-out
-    branch, even when it was switched in a terminal or VS Code, and the
-    workspace remembers it.
-  - **Fixes:**
-    - A pushed branch other than the cloned one stays tracked.
-    - File names with spaces, non-ASCII characters and renames are reported
-      correctly.
-    - Change badges show in a workspace limited to a subfolder.
-    - Discard now also resets staged changes, and removes a file the last commit
-      doesn't have. It used to do nothing to such a file.
-  - **Hardening:** request paths are checked before git sees them. Pathspec
-    magic such as `:/` is literal, git never waits on a prompt, and a clone URL
-    can't pass options to git.
-  - **API:** new `POST /api/workspaces/{id}/git/fetch`, `/git/commit` and
-    `/git/push`. The status gains `upstream`, `detached`, `merging`, and per-file
-    `orig_path`, `conflicted` and `browse_path`.
-  - **Definition schemas:** `docs/schemas/` drops the titles Pydantic generated
-    from field names. The Files editor's hovers show only descriptions.
-- **The Files section edits with Monaco, the VS Code editor core.** It replaces
-  the plain text box:
-  - syntax highlighting, find and replace, multiple cursors and folding;
-  - <kbd>Cmd/Ctrl</kbd>+<kbd>S</kbd> saves;
-  - YAML and JSON are checked as you type;
-  - switching to a preview and back keeps undo history.
-
-  The editor follows the app's theme and works on phones. It downloads the first
-  time a file is edited, so the rest of the app is unchanged in size. New
-  frontend dependencies: `monaco-editor` and `monaco-yaml`.
-- **An agent's page now separates its result from its activity.** Refining a
-  deliverable over several follow-ups used to stack every draft at the foot of
-  the page, oldest last, so the current one was the hardest to find. The body
-  also showed twice: once in the answer bubble, and again as a deliverable.
-  - **Result tab.** Once an agent publishes an artifact, its page offers
-    **Result** and **Activity** tabs. Result opens on the newest version, with
-    the earlier ones on a rail (newest first). Each version shows the prompt that
-    produced it and the agent's summary of what changed. Artifact permalinks open
-    the Result tab on their version. The page shows Activity while a turn runs,
-    needs you or stopped short, and Result once the agent comes to rest on a new
-    version. Approvals, questions and **Resume** show on both tabs.
-  - **No duplicate result.** The frontend now parses multi-line `ARTIFACT:` …
-    `END_ARTIFACT` blocks, as the backend already did. The answer bubble shows
-    only the prose around the block, plus a compact card (*v2 · superseded by
-    v3*) that opens the version in the Result tab.
-  - **Finished turns fold.** A turn with an answer folds its steps into one
-    line (*Worked for 3m 13s · 19 tool calls · 7 updates*) that opens on click.
-    The turn in flight and any turn awaiting approval stay open. **Show → Fold
-    finished turns** turns this off. The goal loop's nudge between autonomous
-    steps shows as a *Continued autonomously* marker, not as your message.
-    Progress-only messages no longer leave an empty bubble above their milestone,
-    and suggested replies appear on the newest answer only.
-
-- **Topics, chats and the workspace assistant now behave the same when you
-  delete, clear or stop** (#343). The #335 refactor had kept three differences
-  on purpose:
-
-  - **Deleting a message** shows the same undo toast everywhere: *"Your message
-    removed · undo in 5s"*, with a countdown that tracks the real grace timer.
-    Chats used to show a static *"Message deleted"* strip.
-  - **Clearing a transcript always leaves it empty.** A topic's `/clear` now drops
-    the client-side stream buffer too, like a chat's, so a finished turn whose
-    post-stream reload had failed can no longer reappear. Clearing while a reply
-    is streaming — **Settings → Clear chat**, or the workspace assistant's
-    **Clear** — stops the reply first, instead of letting its tool results and
-    answer land afterwards without their prompt. The confirmation reads the same
-    on every surface.
-  - **Stop settles a running tool call as _stopped_.** The workspace assistant's
-    tool bubble no longer spins "running…" forever, and in topics and chats the
-    interrupted call no longer vanishes on the post-stop reload: it is saved as a
-    stopped tool result, so it survives a reload and the next turn's model
-    context sees the call was cut short. `POST …/messages/stopped` accepts
-    `tool_call_ids` next to `content` (either may be omitted, not both) and now
-    returns the list of rows it created.
-
-- **Precursor now runs on MCP 2 (`mcp>=2.2,<3`); MCP 1 is no longer supported.**
-  The 2026.9.1 release never shipped: its fresh-install smoke gate resolved
-  `mcp 2.2.0`, which dependabot's `<3` bound allowed, and the app died on import
-  (`cannot import name 'streamablehttp_client'`). The lockfile had kept every
-  other check on MCP 1, so nothing else noticed. This is the whole migration,
-  not just the import rename:
-
-  - The client opens streamable-HTTP sessions through `streamable_http_client`
-    over an `httpx2` client, with MCP 1's 30 s / 300 s timeouts kept. `httpx2`
-    is now a direct dependency because MCP 2's transports and OAuth providers
-    take it instead of `httpx`.
-  - The built-in servers (`precursor`, `fetch`, `workspace-fs`, `drawio`,
-    `cmd-runner`) are `MCPServer`s, and the in-app `/mcp` endpoint takes its
-    path and Host allowlist on `streamable_http_app()`.
-  - Tool results are read by MCP 2's snake_case field names. Under MCP 2 the
-    old `isError` / `structuredContent` spellings read as missing *without an
-    error*. That would have made failed tool calls look successful, hosted
-    WorkIQ reads look empty, and workspace file links disappear.
-  - MCP 2 no longer raises on an HTTP error. It fails the call with the server's
-    JSON-RPC error, or a generic message when there is none, and drops the
-    status. Precursor re-attaches the status, so a 404 (a remote that forgot the
-    session, such as MCP 2's own `Session not found`) or a 5xx still recycles the
-    session and retries once, and a 4xx still doesn't.
-  - **WorkIQ and Agent 365 sign-in.** MCP 2's OAuth client rejected Entra's
-    multi-tenant metadata ("issuer mismatch"), which would have blocked every
-    sign-in, and it forced `prompt=consent` onto each one. Precursor now accepts
-    Entra's templated issuer for its multi-tenant authorities only, and drops
-    the forced consent.
-  - **Plugins** that ship an MCP server run in Precursor's environment, so they
-    must use MCP 2's `MCPServer` too. See the plugin reference. The `kanban`
-    extra now requires `precursor-kanban>=2026.9.1`, its first MCP 2 release
-    (lrivallain/precursor-kanban#8).
-  - CI gains a **fresh wheel install** job. It builds the wheel and installs it
-    with the `kanban` extra, unlocked, outside the checkout. It then runs the
-    release smoke gate plus a new `scripts/smoke_mcp.py`, which drives the stdio
-    servers, the HTTP endpoint and every installed plugin's MCP server through
-    Precursor's own client. This is the coverage the lockfile alone could never
-    give.
-
-- **The assistant-role picker now lives in every composer toolbar, not in the
-  app header.** The header selector was an odd one out: a bordered pill floating
-  far from the text you were writing, duplicating a control that already existed
-  on the two creation surfaces.
-
-  Every prompt surface — a topic, a chat, a workspace assistant, a new agent
-  task, and a follow-up turn on a running agent — now carries the role picker in
-  its own composer toolbar, beside the model and context pills and rendered by
-  the same control. The follow-up composer gains one for the first time. On an
-  existing conversation the meaning is unchanged: picking a role **saves it to
-  that conversation**, exactly as the header did. `/role <name>` still works
-  everywhere, and a bare `/role` now opens the picker next to your cursor
-  instead of one in the header.
-
-  [Live sessions](https://lrivallain.github.io/precursor/features/live-sessions)
-  have no composer, so their picker sits in the capture toolbar next to the
-  meeting language, matching its neighbours.
-
-- **`/role` now works in agent sessions too.** The pill was there but the
-  command was not: agent slash commands are validated against a backend registry
-  that had no `role` entry, so typing it was rejected and the command palette
-  never offered it. The registry gains a handler, the palette gains the surface,
-  and a bare `/role` opens the follow-up composer's picker like it does
-  everywhere else.
-
-### Added
-
 - **Delete a folder in Files.** Hover a folder in the tree and choose **Delete
   folder**: it goes with everything in it, after a confirmation that counts the
   files and says whether they can be restored (committed files in a git
   workspace, from Changes). The workspace's own folder, `.git`, and the folder
   holding the agent and workflow definitions can't be deleted; a symlinked
   folder loses only the link.
-
 - **Definition files get editor help in the Files section.** A `*.agent.yaml`
   or `*.workflow.yaml` file is completed and validated against its JSON Schema
   as you type: key suggestions, and unknown keys and wrong types underlined.
@@ -1381,7 +1055,16 @@ are the per-version history; releasing does not rewrite this file.
     database instead of the workflow's file; agents stamped from a blueprint
     got no file; search didn't find prompts that only the files held; titles
     and names edited in files didn't reach search and name matching.
-
+- **Windows gets the same one-command install.** `scripts/install.ps1` is the
+  PowerShell twin of `install.sh`: `irm …/install.ps1 | iex` installs the nightly
+  build with the Kanban and tray extras, registers the login items and starts
+  Precursor. It reads the same `PRECURSOR_*` variables. Both installers now also
+  accept `PRECURSOR_EXTRAS=none` for the lean core, since PowerShell can't set a
+  variable to an empty string, and `PRECURSOR_WHEEL` to install a given wheel.
+- **Windows CI.** The backend suite now runs on `windows-latest`, and a new job
+  runs the whole Windows journey on the wheel CI builds. It installs with
+  `install.ps1` in Windows PowerShell 5.1, checks the login items, stops and
+  restarts the app, replays the login entry, self-updates, and uninstalls.
 - **Plugins install from GitHub, show their newest release, and upgrade on
   their own.** Settings → Plugins now takes a GitHub repository link as well as
   a package name, and installs the wheel attached to one of its releases. For a
@@ -1395,7 +1078,6 @@ are the per-version history; releasing does not rewrite this file.
   New endpoints: `GET /api/plugins/versions`, `GET /api/plugins/updates` and
   `POST /api/plugins/installed/{id}/upgrade`; `POST /api/plugins/install`
   accepts a `version`.
-
 - **The browser tab names what's open.** The tab title was always just
   `Precursor`, so a row of Precursor tabs — or the long-press list behind the
   Back and Forward buttons — gave no clue which page was which. It now reads
@@ -1411,7 +1093,6 @@ are the per-version history; releasing does not rewrite this file.
 
   Plugin sections get `host.setPageTitle(title)` to name their own open item;
   until a plugin calls it, its tab shows the section label.
-
 - **Pick which Teams transcription session to summarize.** *Generate from Teams
   transcript* silently used the most recent transcript, which is the wrong one
   as soon as a meeting has several: Teams starts a **new transcript every time
@@ -1432,7 +1113,6 @@ are the per-version history; releasing does not rewrite this file.
   New endpoint `GET /api/live/{id}/transcripts`; `POST
   /api/live/{id}/summary/from-transcript` now accepts an optional
   `transcript_ids` body and echoes back the sessions that fed the recap.
-
 - **Pick an assistant role while creating a chat or an agent.** A role could
   only be assigned after the fact, so the very first turn — often the one that
   sets the tone — always ran as the default persona.
@@ -1444,7 +1124,6 @@ are the per-version history; releasing does not rewrite this file.
   role is applied at creation, so it is in force for the opening message.
   Leaving it untouched still means the `default` role. `POST /api/chats` now
   honours `role_id` (it was accepted but silently dropped).
-
 - **Install the Copilot CLI directly from Agents.** The Agents section and Home
   launcher share Settings' confirmed download, progress, and recovery actions
   instead of presenting an unusable task form. Setup remains available while
@@ -1453,7 +1132,6 @@ are the per-version history; releasing does not rewrite this file.
   accessible during recovery. **Enable Agents mode** can no longer be switched
   on while no runtime resolves — the backend rejects those requests anyway —
   while an already-saved *on* survives an outage untouched.
-
 - **Autonomous stable releases every night at 01:17 UTC.** Unreleased changes
   on `main` receive the next CalVer tag once CI passes on that exact revision.
   The release includes the SPA and in-app docs, exercises a fresh wheel
@@ -1461,7 +1139,6 @@ are the per-version history; releasing does not rewrite this file.
   Release. Unchanged revisions are skipped; interrupted releases resume the
   same tag and checksum-pinned artifacts. Manual runs, planning-only dry runs,
   and manual tags remain available alongside the rolling nightly channel.
-
 - **Topics carry an editable summary.** Coming back to a long topic meant
   re-reading the transcript to work out where it stood and what was still open.
 
@@ -1499,14 +1176,12 @@ are the per-version history; releasing does not rewrite this file.
   pending, re-based against the brief after each decision. The expanded area is
   vertically resizable with a remembered height, pointer/keyboard controls and
   scrolling for the complete summary and review.
-
 - **Workflow agents have their own section in the Agents overview and sidebar.**
   Reusable agents referenced by non-archived workflows are grouped separately
   from standalone agents, without duplicating shared agents. Untick **Show
   workflow agents** in either view to focus on standalone agents; the shared
   filter also scopes the overview's KPI counts and inbox, while direct links and
   fleet-wide totals remain available.
-
 - **Agents and Workflows now share the standard sidebar.** Both sections have
   searchable item lists and an **Overview** entry alongside their existing card
   dashboards. Section navigation always opens the overview; rows, cards and
@@ -1515,12 +1190,10 @@ are the per-version history; releasing does not rewrite this file.
   The sidebar can resize or collapse in every section without shifting the
   navigation rail's icons or account controls, and the lists work in the mobile
   drawer too.
-
 - **Agents have a Run play button in their header.** Start a parked agent or
   rerun its saved task without opening settings or sending a follow-up. The
   button shows launch progress, surfaces errors, and is disabled for active or
   interrupted agents and when the runtime is unavailable.
-
 - **Selectable reading font, including dyslexia-friendly options.** Settings →
   Appearance now has a *Reading font* picker alongside the existing theme
   toggle: the default Inter stack, **OpenDyslexic** (wide, weighted letterforms
@@ -1534,7 +1207,6 @@ are the per-version history; releasing does not rewrite this file.
   mirrored to the new `font_family` setting so it round-trips with the rest of
   your preferences. See the new [Accessibility](/features/accessibility) page.
   Closes #319.
-
 - **The Workflows gallery shows live progress bars.** Following more than one
   running pipeline meant opening each workflow's board in turn: the gallery card
   offered a `2/5` badge derived from its step agents' *current* statuses — which
@@ -1550,7 +1222,6 @@ are the per-version history; releasing does not rewrite this file.
   double-counts, and a replay (which advances nothing) never moves it. The
   in-flight step's own progress is blended in so a long stage still shows
   movement, and the fill takes the run's colour. Resting cards are unchanged.
-
 - **Precursor is usable on a phone.** The shell assumed a permanent sidebar
   beside the content, so on a 390px screen the sidebar and its rail took ~330px
   and left a sliver for the conversation — the app was effectively unusable on
@@ -1579,7 +1250,6 @@ are the per-version history; releasing does not rewrite this file.
   is sized with `100dvh` so the composer isn't buried under a collapsing address
   bar; `viewport-fit=cover` plus safe-area padding clears the home indicator;
   and page-level rubber-banding is pinned.
-
 - **Chats name themselves from the first message.** A new chat was created as
   "New chat" and stayed that way unless you renamed it, so an afternoon of quick
   questions left a sidebar of identical rows that had to be opened one by one to
@@ -1600,7 +1270,6 @@ are the per-version history; releasing does not rewrite this file.
   transcript, in both chats and topics. **Settings → Chat → Auto-naming** turns
   the automatic pass off and can point naming at a cheaper, faster model than the
   default chat one.
-
 - **Several schedules on one item — "every day at 07:00" *and* "every weekday at
   noon".** A scheduled topic, agent or workflow held exactly one recurrence rule,
   so any cadence that wasn't a single interval or a single time-of-day meant
@@ -1623,7 +1292,6 @@ are the per-version history; releasing does not rewrite this file.
   client that PATCHes just an interval can't silently drop rules added in the UI.
   The `precursor` MCP server's `create_schedule` takes the extra rules too, and
   YAML export/import carries all of them.
-
 - **A workflow authoring spec, so a coding assistant can generate a pipeline
   without reading the source.** The docs site publishes
   [`/reference/workflow-authoring`](https://precursor.vuptime.io/reference/workflow-authoring):
@@ -1641,7 +1309,6 @@ are the per-version history; releasing does not rewrite this file.
   omits `precursor`; and that a gate's PASS reason mentioning an opposite-verdict
   word like "unsafe" trips the FAIL pattern. Ends with an authoring checklist and
   a worked stateful example.
-
 - **Three more Agent 365 MCP servers — `workiq-planner`, `workiq-word` and
   `workiq-excel` — on the sign-in you already have.** Precursor shipped two of
   Microsoft's hosted [Agent 365](https://precursor.vuptime.io/features/mcp.html#agent-365-workiq-teams-and-workiq-user)
@@ -1659,7 +1326,6 @@ are the per-version history; releasing does not rewrite this file.
   Entra resource and reject the shared token with `invalid_audience`, so each
   would cost another consent and another sign-in — for ground the hosted `workiq`
   preview already covers over Graph paths.
-
 - **A plugin catalogue, so finding a plugin no longer means already knowing its
   package name.** **Settings → Plugins** now opens with an **Available** list —
   a curated directory of plugins with a one-click install — and the docs site
@@ -1735,723 +1401,6 @@ are the per-version history; releasing does not rewrite this file.
   can't pop a browser window at you. Tunable via `PRECURSOR_MCP_WARMUP_ENABLED`,
   `PRECURSOR_MCP_WARMUP_DELAY_SECONDS` and `PRECURSOR_MCP_WARMUP_GAP_SECONDS`;
   each server that resolves publishes an `mcp.server_state` event.
-
-### Changed
-
-- **Installation is one prescriptive path instead of a menu of three.** The guide
-  used to open with "Option A / Option B / Option C" and expect a newcomer to
-  weigh a background install against `uvx` against a source checkout before they
-  had run the app once — with plugin extras, the retired `agents` extra and the
-  Copilot CLI resolution order interleaved into the same page. For an opinionated
-  tool that is the wrong shape: the first page should say what to do, not offer a
-  decision.
-
-  It now reads *install uv → run one command → open the URL*, with everything
-  else demoted to an **Other ways to install** section that names the reason each
-  alternative exists (try it out, no login item, Windows, stable channel,
-  contributing). The Copilot CLI resolution order moved to
-  [agents mode](https://precursor.vuptime.io/features/agents-mode#pointing-at-a-specific-cli),
-  where it belongs, and the dev-stack launch options moved to the contribution
-  guide. The quick start now starts from a *running* app rather than re-teaching
-  how to launch one, and the README leads with the install rather than the stack.
-
-- **The kanban board now ships from
-  [its own repository](https://github.com/lrivallain/precursor-kanban).** It was
-  the last in-repo plugin, and being in-repo was doing it no favours: it built
-  with the host's Vite config, borrowed the host's TypeScript `paths` for
-  `@precursor/host`, and — because Tailwind scans from the git root — had its
-  utilities land in the host's stylesheet, so a *real* install would have
-  rendered the board unstyled. Out of tree it builds and injects its own.
-
-  Nothing changes for users: `precursor-ai[kanban]` still installs it, now
-  resolved from PyPI (`precursor-kanban>=2026.9`) instead of a workspace member,
-  and the board keeps its own release cadence rather than inheriting the host's
-  CalVer. `precursor.plugin_api` and the `py.typed` marker are what make that
-  work.
-
-  For this repository it means no `plugins/` tree, no `uv` workspace, no
-  `make plugins-build`, and a release that builds one distribution again.
-  `tests/test_plugins.py` covers the plugin seam with a stub, so the suite no
-  longer needs a plugin installed to test the host side of it.
-
-- **One stale credential no longer stalls unrelated work.** The MCP sign-in gate
-  ran *before* the model: if any enabled server was parked in `needs_auth`, the
-  turn waited on that sign-in for up to five minutes before generating a single
-  token. With three Entra credentials in play, an expired WorkIQ token held up
-  questions that had nothing to do with WorkIQ.
-
-  The turn now starts immediately and the sign-in is requested at the moment a
-  tool actually needs it — naming the tool, which the old blanket prompt could
-  not. The call then retries while it waits for that sign-in. This is not the
-  tools being hidden: a blocked server still contributes its catalogue to what
-  the model is offered, because dropping it is what makes a model answer from
-  memory instead of calling the tool. A sign-in that never arrives yields an
-  explicit tool error rather than a confident guess. Unattended runs (the
-  scheduler) raise the banner but fail fast, since nobody is there to complete
-  a browser flow.
-
-### Fixed
-
-- **Workflow steps no longer lose their final answer.** Precursor handled each
-  Copilot SDK event in its own task, and a burst of events could be processed
-  out of order. At the end of a turn, *idle* was sometimes handled before the
-  final message. The step was then recorded with an empty or stale output, and
-  its `ARTIFACT` blocks were dropped. The next step saw its input as missing:
-  the Morning AI briefing's email step reported `MISSING_PERSISTENCE` and sent
-  nothing, and a meeting-triage *Collect* step handed on no invitations. SDK
-  events are now handled one at a time per agent, in the order the SDK emits
-  them.
-- **Agents recover when the Copilot CLI crashes.** All agents share a single
-  Copilot CLI process. When it died (seen as a V8 "JavaScript heap out of
-  memory" after about 35 hours), Precursor didn't notice. Every later agent run
-  and workflow step then failed at once with `[Errno 32] Broken pipe` until the
-  app was restarted. Precursor now restarts the CLI on the next agent request,
-  or within a minute through the watchdog.
-- **Finished agent runs no longer leak memory into the Copilot CLI.** A run's
-  live SDK session was never disconnected, and workflows open a new run for
-  every step. A 30-minute schedule left hundreds of idle sessions (and more
-  than 10,000 open handles) in the CLI, which is what exhausted its heap.
-  Sessions now disconnect after 15 minutes at rest. The next turn resumes them
-  from disk.
-- **Agent-timeline retention works on large archives again.** Once more than
-  ~32k archived agent events were due for pruning, the sweep measured them in a
-  single `IN (…)` query and SQLite rejected it with "too many SQL variables" —
-  at every startup, again on the retention ticker, and in the Storage cockpit
-  preview — so the table was never trimmed. The measurement is now chunked like
-  the delete already was. Log tracebacks also clamp any single line to 2,000
-  characters: the failing statement was written out in full, a ~2 MB line per
-  error, which rotated the whole log history away on each restart.
-- **Opening a Live session no longer lights the browser's recording
-  indicator.** Every session opened — ended ones included, or ones you never
-  record — briefly grabbed the microphone just to read the input devices' names,
-  so the tab's favicon turned into the browser's "recording" dot while nothing
-  was being captured. The device list is now read without opening the mic, so
-  the indicator shows only while a recording is actually running. Where the
-  browser still hides device names (microphone access never granted), opening
-  the input picker asks for access once to fill them in.
-- **"Restart now" works under `precursor --dev`.** After a plugin install, the
-  in-app restart re-exec'd the process with its original arguments — but under
-  `--dev` that process is uvicorn's reload worker, a multiprocessing child, and
-  re-running its spawn handshake crashed with `OSError: [Errno 9] Bad file
-  descriptor`. The dev server now hands the worker a watched file, and a restart
-  rewrites it (same bytes) so the reloader starts a fresh worker. Where a
-  process can't restart itself at all, the panel says so and asks for a manual
-  restart instead of offering a button that fails.
-- **Installing a plugin can no longer break Precursor.** Outside a `uv tool`
-  install, the in-app installer ran a bare `uv pip install <plugin>`, which
-  resolves only the plugin and moves anything else to fit. From an index that
-  lagged PyPI, "installing the Kanban board" picked its oldest release, built for
-  MCP 1, and downgraded core's `mcp` — the app then failed on import. Precursor's
-  own requirements now go in as constraints, so a release that doesn't fit fails
-  to install instead. "Latest" also installs as a floor at the newest release
-  (`>=2026.9.2`) rather than a bare name, so a lagging index fails loudly instead
-  of quietly delivering an older release than the one shown. Commands shown for
-  running by hand are now shell-quoted — `pkg>=1.2` pasted bare is a redirect.
-- **Installing a plugin on a nightly build no longer fails with a 404.** A
-  nightly install pins the exact wheel it came from, and adding or removing a
-  plugin restates that pin so the host isn't downgraded. But the `nightly`
-  release is re-created on every push to main, which deletes the old wheel, so
-  once anything newer shipped every in-app install failed with
-  `Failed to download precursor-ai … 404 Not Found`. A pin to a superseded
-  nightly wheel, including a companion wheel from the same release, now points
-  at the one currently published. The manifest is read fresh before each
-  install, and the Settings panel says when Precursor itself moved to a newer
-  nightly as a result (`host_upgrade` in the install response).
-- **The workspace assistant no longer drops the text before a tool call.** A
-  reply that said something and then called a tool ("Let me read the file
-  first.") showed only the tool bubble: the text was read after it had already
-  been reset for the next round.
-- **Settings → System no longer says its values come from `.env`.** The panel
-  opened with "These values default to the server's environment / .env", but
-  every field on it has been database-only since the env twins were removed —
-  including `PRECURSOR_CMD_RUNNER_JAIL`, which the note was still pointing
-  readers at. It now says the values live in the database and apply without a
-  restart: the run timeout on the next scheduled run, retention on the next
-  sweep, and the command runner on its next command. The old claim that only the
-  run timeout was live was wrong too. The same "env default, overridden by the
-  database" description is gone from the architecture and stack docs, the
-  command-runner screenshot is retaken, and a test now fails if the panel's copy
-  points back at the environment (#252).
-- **Back, Forward and reload no longer rewrite browser history.** Three
-  routing bugs in the web app:
-  - **Deep links and reloads added history entries.** Opening or reloading a
-    `/live/<session>` or `/agents/<id>` link added two entries (`/live`, then
-    the session) on every load, so Back returned to the section's start page
-    first. After one reload on an agent, Back bounced between `/agents` and
-    the agent and never got further. The old numeric `/agents/<n>` form added
-    one entry, and a link to a live session that doesn't exist added `/live`.
-    None of these add anything now. Opening a live session from **⌘K** before
-    the Live list had loaded also stops adding an extra entry. Going Back onto
-    a live session that was archived or deleted meanwhile shows the Live start
-    page once and lets you keep going back. Before, it wiped your forward
-    history and kept you on `/live` however often you pressed Back.
-  - **Back to `/chats` kept the chat on screen.** It now shows the chats start
-    page, like `/live` and `/agents`. The stale chat used to cause a worse
-    problem: going Forward onto `/chats` from another section jumped back into
-    that chat and threw away every later history entry.
-  - **The search highlight leaked onto other pages.** Opening a **⌘K** search
-    hit wrote `?q=` onto the page you were leaving, so Back later returned to
-    it with a query it never had. Switching to Workflows, Files or a section's
-    start page kept the "Highlighting …" banner and carried `?q=` along. Now
-    each history entry keeps the query it was created with, and leaving the
-    highlighted conversation clears both the banner and `?q=`. Going Back or
-    Forward onto a highlighted topic or chat, from another one, shows the
-    highlight again. It used to strip the entry's `?q=` and lose it for good.
-
-- **Opening a ⌘K search hit adds exactly one history entry.** Opening a chat
-  hit from another section, while a different chat was still open in Chats,
-  first added an entry for that old chat, so Back showed it instead of the page
-  you searched from. Topic hits did the same with the previously open topic.
-  With no topic open yet, or from Home, a topic hit overwrote the page you were
-  leaving with the collection's start page. A hit now adds a single entry for
-  its target, and Back returns to where you opened the palette. A hit whose
-  item was deleted since the search now leaves you where you were.
-
-- **The Home "New …" cards and fired reminders add exactly one history
-  entry.** Starting a chat, a live session or a topic from its Home card, while
-  that section still had something open, first added an entry for the old item,
-  so Back showed it instead of Home. With no topic open, the **New topic** card
-  overwrote the Home entry with the collection's start page, so Back skipped
-  Home entirely. Clicking a fired reminder from another section did the same
-  with whatever that section had open, or its start page. Each now adds a
-  single entry for the item it opens, and Back returns to where you were. If
-  you click a reminder while Live is recording and choose **Keep recording**,
-  nothing changes now. Before, the reminder's chat or topic was still selected
-  behind the scenes and opened the next time you visited that section.
-
-- **A failed MCP connect now names its cause.** When a remote server could not
-  be reached, for example an Agent 365 endpoint timing out, the server card and
-  the log showed only the SDK's wrapper text, `unhandled errors in a TaskGroup
-  (1 sub-exception)`. They now show the underlying error, such as
-  `ConnectTimeout`. The WorkIQ keep-alive's renewal trace does the same.
-- **Stopping the workspace assistant no longer throws away its reply.** Topics
-  and chats keep whatever streamed before you pressed Stop and mark it
-  `_(stopped)_`. The workspace assistant cancelled the request instead, which
-  skipped the step that adds the reply to the conversation, so the partial
-  answer vanished as soon as streaming ended. It now stays in the transcript
-  with the same marker and goes into the history of your next question.
-- **Token usage from one-shot features is recorded more reliably.** Several
-  features ask the model once with no tools. Each one used to resolve the model
-  and write its usage row on its own, and the copies had drifted apart:
-  - **Missing attribution.** In a flat chat, `/notes rephrase` and naming
-    (automatic or `/suggest-name`) recorded usage with no chat attached. Live
-    meeting analysis and translation didn't record the session's topic, although
-    the recap did. Their usage is now attributed to the chat or topic.
-  - **Dropped rows.** When a topic-brief refresh failed because the model
-    returned an empty brief, the tokens it spent were never recorded, so the
-    **Stats** totals missed them. Usage is now written in its own session, so it
-    is recorded even when the output is thrown away.
-  - **Held connections.** Most of these features kept a database connection
-    open for the whole model call. They now release it first, so several slow
-    providers at once can no longer use up the connection pool.
-
-  All eleven call sites now share one helper
-  (`services/llm/one_shot.complete_once`), and a provider failure that a
-  feature doesn't handle returns a `502 LLM call failed: …`, as the `/gh-*`
-  drafts and `/notes rephrase` already did.
-
-- **Usage stats now count workspace chat and scheduled turns.** Two turn paths
-  never wrote the usage ledger, so **Settings → Usage stats** undercounted
-  tokens: the workspace assistant (it dropped the provider's usage report on
-  every round), and every unattended topic turn — scheduled prompts and MCP
-  `post_message` calls. Both now record one ledger row per model round, like a
-  topic or chat turn does; workspace rows carry `source="workspace"` because
-  there is no conversation to attribute them to.
-
-- **The workspace assistant now shows an Open chip for files its tools touch.**
-  Its `tool_result` events never carried the `link` the topic and chat streams
-  send, so a file read or written from the workspace assistant had no chip to
-  jump to. It also applies the context budget when no MCP tools are enabled —
-  that path used to send the whole history uncapped.
-
-- **Scheduled and `post_message` answers no longer show a raw `suggest` block.**
-  The unattended turn stored the model's follow-up block verbatim in the
-  transcript instead of lifting it into suggestion chips, and saved no model or
-  duration on the answer. It now stores answers exactly as a streamed turn does.
-
-  Under the hood the topic, chat, scheduled and workspace turns now share one
-  preparation service (`services/conversation_turn.py`) and one set of
-  persistence helpers, so fixes to retries, attachments, prompt overrides or the
-  tool loop land everywhere at once
-  ([#332](https://github.com/lrivallain/precursor/issues/332)).
-
-- **A large meeting invite no longer buries the live-session summary.** The
-  Summary tab's *Suggested* attendees were an unbounded wrap of pills, so a
-  meeting with a hundred-plus invitees filled the pane and pushed the recap
-  editor out of view. The suggestions now sit in a compact strip about four rows
-  tall that scrolls on its own, with the *Suggested:* label pinned beside it.
-
-- **An installed Precursor failed to start on the migration step.** Startup
-  runs `alembic upgrade head`, and the config it built pointed at the
-  repository's `alembic.ini` — a file that configures the *CLI* (logging,
-  autogenerate hooks) and is deliberately not shipped in the wheel. The missing
-  path was not inert: the migration environment saw a config file name, tried
-  to apply its logging section and died with
-  `FileNotFoundError: …/site-packages/alembic.ini doesn't exist`, taking the
-  whole application startup with it. `uv tool install precursor-ai` / `uvx`
-  installs could not boot. The runtime now falls back to an in-memory config
-  (everything it needs — the script location and the database URL — was already
-  set programmatically), and the migration environment ignores a config file
-  that isn't there.
-
-- **Enabling plugin tools no longer makes the model reject the request.**
-  Plugin server IDs such as `kanban.board` introduced dots into the tool names
-  sent to the model. Core now generates stable, provider-safe aliases with
-  length limits and collision protection, while routing calls to the original
-  MCP server and tool. Existing unambiguous, provider-safe names stay unchanged;
-  plugin IDs and saved enable toggles do not change.
-
-- **Opening Agents or Workflows briefly claimed the feature was off.** Both
-  cockpits read `agents_enabled` straight from the settings store, which is
-  `null` until its first fetch resolves — so for the width of that request the
-  flag defaulted to `false` and the section rendered its "Agents mode is off" /
-  "Workflows need Agents mode" prompt, complete with an **Open Settings**
-  button, before the user's own agents appeared. A cold load of a perfectly
-  healthy install looked like the feature had been disabled.
-
-  The settings store now tracks whether the first fetch has **resolved** as
-  distinct from what it returned, and both sections hold a neutral loading
-  frame until it has — so a boot reads as "loading", never as "disabled". The
-  agents surface waits on the session list too, which removes a second flash
-  where the empty "Start an agent task" form appeared for a beat before the
-  fleet dashboard replaced it. A genuinely disabled feature still shows its
-  prompt, just once settings actually say so.
-
-- **A running agent flooded the browser with refetches.** Every SDK event an
-  agent emits publishes an `agent.changed` signal, and five listeners answered
-  each one with an immediate refetch: the roster, the run rail, the artifact
-  list, the orchestration panel and — the expensive one — the agent's *entire*
-  transcript. A turn signalling at token cadence therefore fanned into a few
-  hundred overlapping requests per second with no backpressure. The tab
-  flickered as each late response overwrote the last, memory climbed with
-  payloads nobody read, and the browser eventually rejected the pile-up outright
-  with `net::ERR_INSUFFICIENT_RESOURCES` — taking unrelated requests down with
-  it, so the agent view could no longer load at all.
-
-  Those listeners now share a burst-coalescing helper. The first signal still
-  refreshes immediately, so a live agent reads as real-time, but the rest of a
-  burst collapses into a **single trailing refresh** — and a listener never has
-  more than **one request in flight**, with the next window measured from the
-  previous response, so a slow endpoint backs itself off instead of queueing
-  another fetch the moment it answers. A burst always ends with one final
-  refresh, so the settled view is never stale.
-
-  The transcript itself is now read **incrementally**. `GET /api/agents/{id}/events`
-  used to return the agent's entire history on every read, so the cost of a
-  refresh grew with the run while being paid at token cadence — the single
-  biggest contributor to the traffic. It now answers with a page: the events
-  after an `?after=` cursor, the volatile approval cards separately (they aren't
-  archived and vanish once answered), and a `reset` flag for when the cursor no
-  longer addresses that transcript — cleared, pruned by retention, or taken
-  against a different run — so a stale cursor re-syncs instead of silently
-  skipping steps. A live timeline now transfers only the steps it hasn't seen.
-
-- **A fresh install couldn't chat until you picked a model.** The factory
-  default chat model was the hardcoded literal `claude-sonnet-4.5`, which GitHub
-  Copilot has since retired. Nothing validated it, so `resolve_llm_model` handed
-  the dead id straight to the provider and every turn failed — on a new install,
-  and on any existing one that had never opened **Settings → Model**.
-
-  No model id is pinned any more. The chat model is reconciled against the
-  catalogue the active provider advertises: an unset choice uses the first model
-  offered, a stored choice is honoured while it still exists, and one that has
-  been retired falls back to a working model with a logged warning instead of
-  failing every turn. If the catalogue can't be fetched, the stored value is
-  trusted unchanged — an unreachable network shouldn't override the user. The
-  catalogue is cached with a short TTL behind a lock, so this costs no
-  per-turn round-trip, and is invalidated when credentials or the provider
-  change. **Settings → Model** now shows the *effective* model rather than a raw
-  stored value.
-
-  Agents were already immune (they default to `auto`, which the SDK resolves at
-  runtime) — but `SettingsRead.agents_default_model` still declared the same
-  retired literal, contradicting `DEFAULT_AGENTS_MODEL`; it now says `auto`.
-
-- **A long collapsed prompt preview stretched the whole conversation pane.** The
-  truncated one-line preview on a scheduled topic's `Prompt` bubble sat in a
-  flex chain with no `min-width: 0`, so it could not shrink and forced the
-  transcript — and with it the main pane — wider than the viewport, cutting
-  message content off on the right. Only ever visible on a narrow screen, which
-  had no slack to absorb it.
-
-- **A workflow could no longer be switched off "at a time" back to an interval.**
-  `PUT /api/workflows/{id}/schedule` applied `run_at_minute` only when it was
-  non-null, so the payload the editor sends for interval mode — an explicit
-  `run_at_minute: null` — was ignored and the workflow stayed pinned to its old
-  time of day. The field is now honoured as the tri-state it is meant to be.
-
-- **An out-of-tree plugin now survives `precursor service update`.** A plugin
-  installed into a `uv tool` environment was uninstalled by every self-update.
-  uv rebuilds a tool environment from the requirements in its
-  `uv-receipt.toml`, and Precursor read only the *extras* of its own entry —
-  discarding every sibling distribution installed with `--with`. Since a plugin
-  that ships from its own repository has no extra in core's metadata to be named
-  by, `precursor-kanban` persisting at all was an accident of core declaring a
-  `kanban` extra; anything else vanished on the next update, with the plugin's
-  settings still in the database and no message explaining where it went.
-
-  The receipt is now read whole: an update restates every sibling it records, so
-  a plugin persists on its own terms and needs nothing in core's `pyproject.toml`.
-  Where a release publishes a wheel built from the same commit as the host, that
-  pin still wins over the plain name. A plugin the configured index cannot serve
-  is dropped from the retry and named in the summary — the existing guard against
-  one unresolvable plugin stranding the host, now covering siblings too.
-
-- **Installing a plugin from Settings → Plugins no longer downgrades Precursor.**
-  The command was `uv tool install --with <plugin> precursor-ai` — a bare host
-  name. Because uv rewrites the receipt from the arguments it is given, that did
-  not mean "leave the rest alone": it **dropped the extras**, uninstalling the
-  menu-bar tray, and **discarded the pinned wheel URL**, silently re-resolving a
-  nightly install down to the latest release on the index. Installing a second
-  plugin also removed the first.
-
-  Both the command the server runs and the one the panel displays are now built
-  from the receipt, naming the host exactly as installed (extras and wheel URL)
-  plus every plugin already beside it. Uninstalling is expressible for the same
-  reason, so a `uv tool` install no longer refuses removal outright — it is
-  refused only for a distribution that arrived as a dependency rather than being
-  installed alongside the tool.
-
-- **`{{step.N.output}}` no longer silently truncates a workflow step's output at
-  2000 characters.** The placeholder resolved from the run trace, which inherited
-  `result_summary` — a column deliberately capped for the *agent list*, where an
-  unbounded body would be unreadable. That display cap leaked into what is
-  actually a **data** channel: a collector step emitting a JSON array of records
-  reached the next step cut mid-record, and because what survived still parsed,
-  the run reported success while quietly dropping the rest. Nothing failed, the
-  trace looked healthy, and the only symptom was records that were never
-  processed.
-
-  A step's output is now rebuilt from the durable event archive whenever that
-  display cap bit, so the placeholder carries the whole answer the way the docs
-  imply. The trace keeps a ceiling of its own (8000 characters) — but a value
-  that reaches it is now **marked in the text**
-  (`… [truncated: 41230 characters, capped at 8000]`), so a receiving step can
-  tell its input is incomplete instead of treating a severed array as the whole
-  one. The docs say plainly that the placeholder is for values of that size and
-  that **artifacts + `context_mode`** are the uncapped channel for a substantial
-  payload. ([#304](https://github.com/lrivallain/precursor/issues/304))
-
-- **A workflow step whose model stream dropped mid-turn was recorded as
-  `completed`, so its failure policy never engaged.** A dropped stream ends the
-  turn without a completion or any usage event, so the agent just fell quiet —
-  which the coordinator read as a job well done. The step was traced `completed`
-  with an empty output and zero tokens, and the run advanced on nothing, with
-  `on_error: fail` never stopping it and `max_retries` never retrying it. That
-  put the textbook transient fault out of reach of the very machinery meant to
-  absorb it, and left the trace reading green throughout.
-
-  A turn that ends with **no output and no recorded spend** is now failed instead
-  and put through the step's own `on_error` policy, so a dropped stream can stop
-  the run or — far more usefully — be retried. Both halves of that test are
-  required and each covers the other's false positive: a step that legitimately
-  answers nothing still burns tokens getting there, so a silent-but-paid turn
-  still completes as before. Gate steps get the same treatment, where it matters
-  more still: the verdict grammar is deliberately fail-*open*, so a silent gate
-  used to be read as `PASS` and wave its deliverable through.
-
-- **A workflow step that produces no output no longer hands the next step the
-  *previous run's* output.** When a step wrote nothing this run — a turn that
-  ended without speaking — the hand-off widened from "this step's run" to "this
-  agent, ever" and forwarded whatever it had said last, from an earlier run,
-  with nothing marking it stale. The same widening applied to its result
-  summary.
-
-  For a read-only pipeline that was confusing. For one that acts on the world it
-  was a correctness and safety bug: a mail-triage run was observed issuing
-  Microsoft Graph decline and move calls using message and event ids from a
-  previous run, for an item that did not exist in the run at all. Every call
-  happened to `404` because those ids were already consumed — luck, not a
-  safeguard.
-
-  The hand-off body and the step summary are now **strictly scoped to the
-  current run**, and a step whose predecessor produced nothing is told so
-  explicitly ("produced no output in this run") instead of being handed older
-  data or left in silence it might fill in. Keeping the artifact board
-  cumulative across runs — the *Clear each step's artifacts* option — remains
-  available and no longer drags the hand-off body along with it.
-
-- **Signing in to one WorkIQ server now counts for every server sharing that
-  credential.** The Agent 365 endpoints authenticate with a single Entra token,
-  but only the server you clicked was re-pointed at the fresh one — its siblings
-  stayed parked in `needs_auth`, each showing an amber **Sign in** for a
-  credential they already had. Clicking through them ran a full
-  clear-and-regrant per server, so six built-ins meant six browser sign-ins for
-  the two credentials Precursor actually holds.
-
-  A completed sign-in now adopts the whole credential: every server on it is
-  re-pointed at the new token, reconnected, and broadcast as resolved so other
-  windows drop their banner too. **Settings → MCP** stops inviting the mistake as
-  well — the sign-in button belongs to the *credential*, so the servers sharing
-  one read `signs in with WorkIQ Teams` instead of offering a redundant prompt.
-
-- **A custom MCP server could shadow the built-in `drawio`.** The list of names
-  reserved for built-in servers was maintained by hand and had drifted from the
-  catalogue, so adding your own server called `drawio` was accepted instead of
-  rejected. The list is now derived from the built-in catalogue, which also
-  closes the drift for every server added from here on.
-
-- **A note filed from the MCP server now appears in the UI, and the tool says
-  which topic it landed in.** Asking the assistant to append a note wrote it to
-  the database and then showed you nothing: the browser kept rendering the topic
-  as it was before, and the only confirmation was a tool result naming an
-  internal `topic_id` — a number the app never displays — so there was no way to
-  tell a silent failure from a note filed under the wrong topic.
-
-  Two causes, both fixed. The built-in `precursor` server runs as a **stdio
-  subprocess**, sharing the app's database but not its in-memory event bus, so
-  the `message.changed` event announcing the write was published onto that
-  child's own empty bus and reached no window. Children are now handed a
-  loopback relay URL and a per-run token, and forward their events to the app
-  process (`POST /api/events/publish`), which republishes them onto the real bus
-  — so the write shows up live, in every window, including the one whose chat
-  turn triggered the tool. The endpoint accepts only data-refresh event types
-  and only with the token, so the worst it can ever do is make a window refetch
-  data it already has.
-
-  `append_note` and `post_message` now also return the destination as `topic`:
-  its **title**, its slug **path**, and the in-app **URL** — pasteable straight
-  into the browser — so "filed under `customers/sanofi/avm-alz`" replaces "filed
-  under topic 42" and a mis-targeted note is obvious at a glance.
-
-- **A remote MCP server that drops mid-turn no longer burns the rest of the
-  turn.** When a hosted endpoint went away under a live session — a rolling
-  deploy, a gateway blip, or the server forgetting the session id it issued —
-  the MCP SDK reported it as the bare phrase `Session terminated`, which is
-  emitted only on an **HTTP 404** from the remote. Because sessions are kept
-  warm and reused, the dropped one stayed poisoned: every subsequent call failed
-  identically until something happened to retire the worker.
-
-  A dead session is now classified as a **transport** failure rather than a bad
-  call — a remote 404, any 5xx, or a socket teardown recycles the session and
-  **retries the call once**, which rides out a blip. A second failure stops
-  there rather than hammering a downed endpoint.
-
-  The wording mattered as much as the retry. Told only "session terminated", the
-  model read it as its own fault and re-planned the call with smaller arguments,
-  then advised re-authenticating — while the credential was valid the whole
-  time, so a fresh token could not have helped. The tool error now names the
-  server and the real status, states that neither the arguments nor the sign-in
-  are at fault, and asks for the outage to be reported rather than an answer
-  guessed.
-
-- **A catalogue entry's install command is now shown where you're looking.**
-  When the in-app installer is off, the entry's button was labelled "Show
-  command" but only wrote the package name into the free-form box further down
-  the panel — so the visible result was a text input quietly gaining a word,
-  while the command itself stayed small, muted and elsewhere. The button is now
-  "Install command", reveals the exact command for this environment on the card
-  itself, and copies it to the clipboard in the same click.
-
-- **The in-app installer's consent could be granted but never withdrawn.** The
-  "Let Precursor install packages for me" checkbox lived inside the install box
-  and was rendered *only while the permission was off*, so ticking it made it
-  disappear — leaving no way to turn it back off short of editing the database.
-  It now sits at the top of **Settings → Plugins** and stays visible, reflecting
-  and toggling the setting in both directions. A permission you can't revoke
-  isn't really a permission.
-- **Edits to a Live meeting summary are no longer lost on reload.** The recap
-  was persisted only when it was *generated* or *posted to a topic*, so the one
-  thing the tab invites you to do — tune the draft by hand — was the one thing
-  it didn't keep: reopen the session, or reload with no topic attached, and your
-  wording was replaced by the last text the server had seen. The Summary tab now
-  **autosaves like the Notes tab** (debounced while you type, with a "Saving… /
-  Saved" marker), and also flushes when the session ends or you navigate away, so
-  an unposted recap survives.
-- **`PRECURSOR_EXTRAS=` now installs the lean core** instead of silently
-  reinstating the default extras. `install.sh` read it with `${…:-default}`,
-  which cannot tell "unset" from "deliberately empty", so the one way to ask for
-  a Precursor without the board and the tray was the one thing it ignored — and
-  had it not, the requirement would have been the invalid `precursor-ai[]`.
-- **`precursor.log` is written again once Precursor runs as a login item.** The
-  file only ever existed because `precursor service start` redirected the child's
-  stdout into it — so the moment a launchd agent or a systemd unit took over the
-  process (which is what `precursor service install` sets up, and what
-  service+tray mode *is*), the service manager captured stdio somewhere of its
-  own and the log froze at the last supervisor-started run. Nothing said so:
-  `service status`, `precursor service logs` and the tray's **Open log file**
-  went on naming a file that had stopped being written days earlier, while the
-  real output piled up unrotated in `launchd.app.err.log` (15 MB in a week on the
-  reported install). The app now configures its **own rotating file handler**, so
-  `precursor.log` is the same file in every mode — terminal, supervised child,
-  launchd, systemd — and is capped by `PRECURSOR_LOG_FILE_MAX_BYTES` /
-  `PRECURSOR_LOG_FILE_BACKUPS` rather than growing forever. Where a service
-  manager already captures stderr, the console handler is dropped so no line is
-  written twice; a supervised child's raw pipe moves to `precursor.out.log`,
-  which now holds only what logging can't catch (an import error, a pre-config
-  traceback) and is trimmed at each start.
-- **The menu-bar icon logs its own failures.** The tray process never configured
-  logging at all, so every `logger.error` in it reached only `logging.lastResort`
-  — which drops INFO entirely and writes the rest, unformatted, to a stderr its
-  login item throws away. It now writes `tray.log` beside the instance log. Its
-  own file, not the app's: "the icon failed" and "the server failed" are
-  different questions, and two processes rotating one file race.
-- **`precursor service start --foreground` no longer swallows its own startup
-  messages.** It is what the login item runs, and it logged before anything had
-  configured logging — including the INFO line explaining that it was exiting
-  cleanly because another instance was already serving, which is precisely the
-  message you go looking for when a login item appears to do nothing.
-- **`precursor service install` no longer uninstalls the login item it was
-  asked to re-install.** `launchctl bootout` signals the job and returns; it
-  does not wait for the process to die. Precursor's shutdown is a graceful
-  uvicorn one and takes several seconds, so bootstrapping the same label
-  immediately afterwards landed while launchd still had the old job and failed
-  with the opaque `Bootstrap failed: 5: Input/output error`. The old job was
-  already booted out by then, so re-running `install` over a *running* login
-  item left nothing registered at all — reproducible on every attempt, on both
-  the app and the tray unit. Unloading now polls `launchctl print` until launchd
-  has actually let go of the label (measured at ~5s for the app) before loading
-  the new job. `stop_unit` and `uninstall` wait too: "stopped" has to mean the
-  port is free, or a stop-then-start hands the new process one the old still
-  owns.
-- **An optional plugin your package index can't serve no longer blocks the whole
-  self-update.** `precursor service update` reinstalls the tool with the extras
-  it was installed with, so a single unresolvable one — `precursor-kanban`, on a
-  restricted mirror that hasn't ingested it — made `uv` fail the resolution and
-  left the host stranded on its old build. Before the plugin moved to its own
-  repository the wheel travelled with the release and the index was never asked,
-  so nothing showed until it did.
-
-  The update now retries once without the extras that only pull a Precursor
-  plugin (recognised from the distribution metadata, so it doesn't hardcode a
-  list), and reports what it gave up: *"Installed 2026.9.0. Skipped kanban — not
-  installable from your index: …"*. A failure that survives dropping them is
-  raised as before, unchanged — degrading must not turn a real breakage into a
-  fake success. Extras that pull libraries the host itself uses (`tray`,
-  `postgres`) are never dropped.
-
-- **A failed update says why.** The error led with the command — an install line
-  carrying a full wheel URL — so the tray notification truncated it and left
-  "updating failed" as the only signal, with `uv`'s actual explanation cut off.
-  The reason now comes first, flattened out of `uv`'s box-drawing tree into one
-  sentence, with the command last and URLs shortened to their filename.
-
-- **`PRECURSOR_UPDATE_EXTRAS` can now drop an extra**, with a `-name` entry
-  (`PRECURSOR_UPDATE_EXTRAS=-kanban`). The setting is unioned with `uv`'s install
-  receipt so an update can't silently uninstall what you have, which also meant
-  an extra recorded there could never be given up — reinstalling the tool by hand
-  was the only way off it.
-
-- **A WorkIQ token is now renewed when the keep-alive says so, not 30 seconds
-  before it dies.** Two thresholds decided "renew this" and they disagreed. The
-  keep-alive opened a session once a token was within five minutes of expiring;
-  the MCP SDK gates its only refresh branch on its own freshness check, which
-  called the same token valid until one minute out. In between, the keep-alive
-  spent an MCP session per tick doing nothing, read back the unchanged token and
-  logged `keep-alive: token renewed` — four wasted sessions a cycle and a trace
-  that asserted a renewal that never happened. Renewal only really occurred with
-  about 30 seconds of headroom: one delayed tick from the expired credential and
-  browser prompt this machinery exists to prevent.
-
-  The deliberate-renewal path now states its intent, so the refresh it asks for
-  is the refresh it gets. That is confined to it on purpose — a token marked
-  spent whose refresh then fails transiently is sent with no auth header at all,
-  and the 401 escalates to a full sign-in, so chat turns and the warm pool keep
-  the SDK's cautious default.
-
-  How far ahead of expiry that happens is no longer a setting
-  (`PRECURSOR_WORKIQ_KEEPALIVE_REFRESH_MARGIN_SECONDS` is retired; a stale value
-  in your environment is ignored). It is derived from the token's own lifetime —
-  a quarter of it, never less than five minutes — because the only question that
-  matters is how many attempts fit before the token dies. Real tokens get some
-  17-22 minutes of runway and a dozen-plus retries instead of one.
-  `GET /api/mcp/auth/diagnostics` reports the resulting `renewal_lead_seconds`
-  per credential, and a refresh that renews nothing is now recorded as the
-  anomaly it is rather than as a success.
-
-- **A built-in plugin now updates with the host.** `precursor-kanban` pinned a
-  static `version = "0.1.0"`, so every build produced a byte-identical wheel
-  name and the nightly manifest advertised an unchanging URL. uv saw the
-  requirement already satisfied, skipped the download, and left a *current* host
-  paired with a plugin frozen at whatever build landed first — an upgrade that
-  visibly did nothing, which is the exact pairing `RELEASING.md` promises never
-  happens.
-
-  Built-in plugins now inherit the host's CalVer from the same git tags, so a
-  plugin wheel carries the commit it was built from. `root = "../.."` is the
-  only line tying one to this repository, so extracting a plugin to its own
-  repository and release cadence stays a one-line change.
-
-  Two consequences of the same bug are fixed with it: the release workflow ran a
-  bare `uv build`, so tagged releases never built the plugin at all and
-  `precursor-ai[kanban]` was unresolvable from PyPI; and a static version made
-  the plugin unpublishable anyway, since PyPI refuses to re-upload one. Releases
-  now build and publish every workspace package, and verify each wheel against
-  the tag.
-
-  Publishing needs a matching PyPI trusted publisher per distribution — see
-  `RELEASING.md`.
-
-- **A compaction test no longer fails on the residue of the suite that ran
-  before it.** `test_compact_reports_a_size_delta` asserted that `VACUUM` never
-  grows the file — but against the *shared* scratch database every test writes
-  to, so the assertion was evaluated on whatever a thousand preceding tests
-  happened to leave behind. `VACUUM` is under no obligation to shrink a file
-  whose free-page layout is already compact, so it tripped in roughly half of
-  full-suite runs while passing every time the file was run alone.
-
-  The behaviour is worth guarding — a `VACUUM` in WAL mode once *grew* the
-  database, because the WAL was checkpointed on only one side of the rebuild —
-  so the assertion is not relaxed, it is moved somewhere it means something.
-  Compaction is now measured on a database the test owns: a WAL-mode temporary
-  file filled with ~8 MB and then mostly, deliberately not entirely, emptied.
-  Keeping rows alive is what makes the check bite, since VACUUM rewrites the
-  surviving database through the WAL — restore the old bug and this fixture goes
-  from 8.3 MB to 11.6 MB, where a fully emptied one would have shrunk anyway and
-  said nothing. Owning the churn also makes the assertion strict: compaction has
-  to actually reclaim, and the WAL has to be empty afterwards. The endpoint keeps
-  its own test for the shape of what it returns.
-
-### Changed
-
-- **The kanban board no longer needs a configured GitHub repository.** It was
-  never really used: the repo is only ever read for its *owner* —
-  `list_repo_projects` discards the name — so it was one way of spelling "list
-  this account's boards", equivalent to adding that account as a source. Worse,
-  `GET /projects/{id}/board` and the card-move endpoint demanded a repo and then
-  **discarded it**, because project and item ids are global GitHub node ids.
-  A perfectly workable setup — a token plus an explicitly added project — was
-  blocked on configuration it would never consult.
-
-  A repository is now an optional default that contributes its owner's boards.
-  What the board actually requires is a token with the `project` scope, and the
-  **issue associations** switch, which remains the master control for the GitHub
-  surface.
-
-- **Kanban has no Settings page.** Which boards you track is managed on the
-  board: **+** adds one, right-click removes it. A second surface in Settings was
-  the same list, one navigation further away.
-
-  Two things only that page could reach are now in the picker itself, so nothing
-  you configure can be invisible *and* unremovable: a collapsible **Hidden (N)**
-  group (right-click → *Show on board*), and a **Not resolving** group listing
-  sources that currently produce no board — renamed, revoked, made private, or
-  simply empty — which previously vanished without trace.
-
-  `GET /api/github/projects` returns `{projects, unresolved}` accordingly, and
-  hidden boards are returned flagged rather than dropped.
-
-- **A plugin's section is always visible once enabled.** Sections could gate
-  themselves on app state and hide until it was satisfied — the kanban board
-  disappeared entirely without a configured GitHub repository. That optimised
-  for the wrong thing: an installed, enabled plugin that is nowhere in the
-  sidebar is indistinguishable from a broken one, which is why Settings →
-  Plugins needed a warning strip ("**Kanban** is hidden: No GitHub repository is
-  configured") to explain the absence.
-
-  Enabled now simply means visible. Kanban appears with or without a repository
-  and explains the setup step in the board itself, where the user actually
-  lands, instead of the developer-facing guard error the API returns. The
-  warning strip in Settings → Plugins is gone with the mechanism it described.
-
-  **Breaking for plugin authors** (`HOST_API_VERSION` 1 → 2): `SectionPlugin`
-  drops `unavailable`, and `@precursor/host` no longer exports
-  `sectionUnavailableReason` or the `SectionEnabledContext` type. A section that
-  needs setup should say so from `Main`. The backend's `PLUGIN_API_VERSION` is
-  unchanged.
-
-### Added
-
 - **The kanban board manages its own projects.** Tracking a board used to mean a
   trip to Settings → Plugins → Kanban, and *untracking* one meant knowing that
   the picker's rows and the settings list are not the same thing. Both now happen
@@ -2481,7 +1430,6 @@ are the per-version history; releasing does not rewrite this file.
   For plugin authors, `@precursor/host` now also exports `ContextMenu` and
   `useConfirm`, so a section's list rows behave like core's rather than growing a
   near-identical menu of their own.
-
 - **Agents mode can be turned on from Precursor.** It was the only capability
   that could not be: everything else — a model provider, an MCP server, a
   plugin, backup, retention — is a switch in Settings, while Agents mode was a
@@ -2510,216 +1458,6 @@ are the per-version history; releasing does not rewrite this file.
   The `agents` extra is retired but still declared (and empty), so installs that
   still name it — including any rebuilt from uv's install receipt — keep
   resolving.
-
-### Changed
-
-- **Settings → Agents no longer renders controls that cannot work.** Default
-  model, approval policy, custom system message, watchdog, permission grants and
-  blueprints were drawn whether or not a runtime existed — and several of them
-  whether or not Agents mode was even switched on — so the panel read as
-  "configured and ready" while the feature was inert, with the one honest signal
-  buried among a dozen live-looking controls. They now require both: the feature
-  on, and a runtime behind it.
-
-  Switched off, the panel is just the toggle and timeline retention. In
-  particular it no longer warns that the runtime "didn't start in this process"
-  when the runtime was stopped *because* you turned Agents mode off — an alarm
-  for a state the user chose.
-
-  Nothing is deleted: the stored values are untouched and reappear exactly as
-  they were.
-
-  **Timeline retention** follows a narrower rule than "always visible". Its sweep
-  is gated on `scheduler_enabled`, not on Agents mode, so it keeps pruning
-  archived events after the feature is switched off — hiding the levers while
-  that runs would leave no way to stop a background job quietly erasing history
-  you may want to keep. So they stay reachable when events exist, and say so;
-  with nothing on disk there is nothing to protect and the section goes away with
-  the rest.
-
-- **Settings → Workflows says that workflows need Agents mode.** Every workflow
-  step runs an agent, so with Agents off these defaults configure a pipeline that
-  cannot run — and the panel gave no hint of it. They stay editable (they are
-  plain preferences, worth setting ahead of time, and they survive the toggle);
-  they just no longer imply a workflow could start right now. Same wording the
-  Workflows section already uses for its own empty state.
-
-### Fixed
-
-- **Every WorkIQ silent refresh was aimed at the wrong server, so none of them
-  ever worked.** The symptom was a browser sign-in roughly every 80 minutes —
-  the access-token lifetime — plus background tabs opening unbidden and turns
-  stalling on a re-authenticate banner, against credentials that held a
-  perfectly good refresh token throughout.
-
-  The MCP SDK runs its refresh at the *top* of `async_auth_flow` but only
-  discovers the authorization server later, in the branch that handles a 401. A
-  freshly built provider — which every background renewal is — therefore reached
-  `_refresh_token()` with no metadata, and the SDK fell back to deriving the
-  token URL from the MCP endpoint. The grant was POSTed to
-  `https://workiq.svc.cloud.microsoft/token` (400 `"Invalid request, no valid
-  route."`) and `https://agent365.svc.cloud.microsoft/token` (404) — the
-  *resource* hosts, which have no token endpoint. The SDK read those as Entra
-  refusing the refresh, cleared the stored tokens and escalated to a full
-  browser grant.
-
-  Restoring each token's real expiry (previous release) made this visible rather
-  than causing it: before, `is_token_valid()` always returned `True`, so the
-  broken refresh branch was skipped entirely and the failure hid behind the
-  401 path. Once expiry was honoured, every renewal entered a branch that could
-  only fail — and discarded a renewable credential on the way out.
-
-  Precursor now resolves the authorization-server metadata before the flow runs,
-  so the refresh reaches
-  `https://login.microsoftonline.com/organizations/oauth2/v2.0/token`. Only the
-  URL changes: the metadata seeded is deliberately limited to the authorization
-  server, because seeding the protected-resource document too would add an
-  RFC 8707 `resource` field to the request body. Discovery is resolved once per
-  endpoint per process, and a discovery outage degrades to exactly the previous
-  behaviour rather than making things worse.
-
-- **Installing failed outright when something else already held port 8000**, and
-  said almost nothing useful about it: `error: The Precursor login item did not
-  come up on port 8000`. That is the *first* thing a new user runs, and 8000 is
-  a popular port — the login item was registered against a port it could never
-  bind, so launchd/systemd dutifully retried a doomed start forever while the
-  installer reported only the symptom.
-
-  `precursor service install` now settles the port **before** registering the
-  unit: a busy default moves to the next free port and is written to `.env` in
-  the data directory, so the login item — which launchd and systemd start with
-  no arguments — reads the port that actually works, and keeps reading it across
-  reboots instead of drifting. Both facts are printed. A port you chose yourself
-  (`PRECURSOR_PORT`, or the new `precursor service install --port`) is never
-  moved silently; the install stops and says the port is taken.
-
-  The two start paths change accordingly. The login item — unattended, and the
-  one thing `KeepAlive`/`Restart` will retry forever — no longer exits non-zero
-  when its port is taken at login: it bumps, logs where it went, and publishes
-  the real URL in `runtime.json`, which is what `service status` and the tray
-  read anyway. `precursor service start` does the same for a merely *defaulted*
-  port, while a port you pinned still fails loudly there, and the "did not come
-  up" error now names the port and says who is holding it.
-
-- **The tray kept offering an update the app had already installed**, because it
-  was comparing the published build against *its own* version. `__version__` is
-  resolved once, at import, so a long-lived icon measures against the release it
-  was **started** with, forever — no matter what the app is running. The result
-  was a menu entry saying *"Update to dev245"* on a machine that had been
-  running dev245 for over an hour, where the CLI (a fresh process) correctly
-  reported nothing to do.
-
-  The tray now compares its own version against the one the running instance
-  recorded when it launched — a fresh process, so a disagreement means the icon
-  is the stale one. It says so, offering **"Restart the icon (running an older
-  build)"** in place of the update, and that entry bounces the tray's login item
-  and drops the cached check. Detection rides the existing 3-second supervisor
-  poll: no extra network call, no new state.
-
-  This also covers updates that never go through `precursor service update` — a
-  manual `uv tool install --force`, for instance — which restart nothing and
-  previously left the icon lying until it was killed by hand.
-
-- **Running the test suite killed the developer's own Precursor.** Every other
-  external the tests touch is redirected — the database, the data dir, the skills
-  dir — but login items are not addressed by an env var: launchd reads
-  `~/Library/LaunchAgents` and systemd `~/.config/systemd/user`, both global to
-  the user account. `supervisor.stop()` and `restart()` ask `managed_unit()`
-  whether a *controllable* login item owns the instance, and it answered from the
-  developer's real plist, so a supervisor test with a perfectly isolated data dir
-  still ran `launchctl bootout` against the machine's actual running app.
-
-  Booted out is worse than killed: `KeepAlive` can only restart a job that is
-  still loaded, so the app stayed down until someone bootstrapped it by hand —
-  with the tray left running against a server that no longer existed. `conftest`
-  now redirects the single path chokepoint every platform goes through, and a
-  test fails if that isolation is ever dropped.
-
-- **Agents mode reported its runtime as missing on installs that had a perfectly
-  good Copilot CLI.** `github-copilot-sdk` 1.0.4 replaced its platform-specific
-  wheels — which *bundled* the ~90 MB native CLI — with a small pure-Python wheel
-  that downloads the binary on first use. The private helper Precursor called to
-  locate that bundled binary went with it, and because the whole lookup sat
-  inside a bare `except Exception`, the failure was silent: **Settings → Agents**
-  simply said *"Copilot CLI runtime binary not found for this platform"* on a
-  machine where the SDK was installed, working, and a system-wide `copilot` was
-  already on `PATH`.
-
-  Resolution is now layered and no longer hinges on any single SDK internal:
-  `COPILOT_CLI_PATH`, then the SDK's download cache, then a `copilot` executable
-  on `PATH`, then the old bundled location for pre-1.0.4 SDK lines. Each step
-  that reaches into the SDK is guarded independently, so the env var and `PATH`
-  keep working even if those internals move again. The probe stays **read-only**
-  — it reports what already exists and never triggers the SDK's download, because
-  it runs on every Settings render and pulling ~90 MB as a side effect of drawing
-  a toggle would be indefensible.
-
-  Whatever the probe resolves is now handed to the SDK when the runtime starts.
-  Left to itself the SDK ignores `PATH` and downloads instead, so a machine whose
-  only CLI is a Homebrew install would have passed the probe and then pulled the
-  binary anyway — and could have ended up driving a different one than Settings
-  reported. `github-copilot-sdk` is also capped at `<2` now, for the same reason
-  `mcp` is: Precursor reaches into its private CLI-resolution helpers, and an
-  uncapped floor is what let a *patch* release break this in the first place.
-
-- **Updating left the menu-bar icon running the previous release.**
-  `precursor service update` restarts the app so the new code is serving, but
-  the tray is a separate long-lived process: replacing the wheel changes the
-  code on disk while the running icon keeps executing what it imported at
-  startup. That is not cosmetic — the tray's menu is what drives the
-  supervisor, so a stale icon kept offering the *previous* version's behaviour
-  indefinitely — including, right after the release that fixed the restart
-  race, the icon's own Restart entry still having the racing version of it.
-  Both `service update`
-  and the tray's own "Update and restart" now bounce the tray unit; the tray
-  restarts itself last, so the service manager brings a fresh icon straight
-  back. A tray started by hand is left alone, and a failure to restart it is
-  reported as a note rather than failing an otherwise-successful update.
-
-- **Updating a login-item instance left it dead with the port still taken.**
-  Once registered, a launchd agent (or systemd unit) *is* the supervisor:
-  `KeepAlive` and `Restart=` exist precisely to undo a kill. `precursor service
-  restart` signalled the process anyway, so the manager immediately started a
-  replacement while the supervisor started its own, and the two raced for the
-  port. One won; the loser retried on a 30-second throttle forever. The
-  symptom, from the tray's "Update and restart": the old instance is not
-  replaced, the new one cannot bind, and the log fills with `Port 9000 is in
-  use`.
-
-  `start`, `stop` and `restart` now delegate to the service manager when a
-  controllable unit owns the instance — `launchctl bootstrap` / `bootout` /
-  `kickstart -k`, or the systemd equivalents. `kickstart -k` matters
-  specifically: it kills and restarts in one operation, leaving no window for
-  anything else to claim the port, which a stop-then-start cannot promise. A
-  Windows Startup entry is only a shortcut executed at login, so it is not
-  treated as a manager and the direct path still applies. An explicit
-  `--port`/`--host` override also keeps the direct path, since the unit carries
-  its own configuration.
-
-- **A failed start could delete a healthy instance's state file.** `runtime.json`
-  was cleared unconditionally on shutdown, so a process that lost the race for
-  the port erased the record belonging to the instance that won it — leaving
-  `precursor service status` reporting "not running" while the app was plainly
-  serving. It is now cleared only by the process that owns it.
-
-- **`precursor service update` silently uninstalled extras.** The reinstall was
-  built from `PRECURSOR_UPDATE_EXTRAS`, a setting defaulting to `kanban` that
-  the user had to remember to mirror by hand. So an install made with
-  `precursor-ai[tray,agents]` came back as `precursor-ai[kanban]` on the next
-  update, removing the menu-bar icon and Agents mode without saying anything.
-  The extras are now read from uv's own install receipt — what is actually
-  installed, rather than a copy that drifts — with the setting kept as the way
-  to *add* an extra the current install doesn't have yet.
-
-- **Restarting a login item that launchd had unloaded failed outright.** A plist
-  on disk is not the same as a job launchd knows about, and the two diverge
-  whenever the instance was stopped or its executable was replaced underneath
-  it. `launchctl kickstart` needs a loaded job, so `service restart` reported
-  *"Could not find service … in domain for user"* instead of starting it. Both
-  start and restart now fall back to bootstrapping the job.
-
-### Added
-
 - **Precursor can now run as a background app instead of a terminal process.**
   Keeping it available all day meant keeping a terminal open, remembering which
   directory to be in, and repeating a multi-command ritual after every reboot —
@@ -2771,15 +1509,12 @@ are the per-version history; releasing does not rewrite this file.
   Development is untouched: a source checkout keeps its defaults, so every
   worktree still runs `precursor --dev` on an auto-bumped port against its own
   database, and cannot collide with the installed instance.
-
 - **`PRECURSOR_GITHUB_CLI_USER` pins which `gh` account supplies the token.**
   `gh auth token` follows the CLI's *active* account, so with several logins the
   credentials Precursor resolved depended on whoever last ran `gh auth switch`
   in an unrelated shell — fine interactively, and unworkable for an instance
   started at login. Naming the login passes `--user`, making the resolution
   deterministic. A token saved in **Settings → GitHub** still wins, as before.
-
-
 - **An agent can now be told which MCP servers it may see.** Agents attached
   *every* enabled server, and only workflow steps could narrow that — so a
   focused conversational agent got the browser, the CRM and the shell whatever
@@ -2796,7 +1531,6 @@ are the per-version history; releasing does not rewrite this file.
   installed but switched off), so a scoped agent survives a move between
   machines. A workflow step's own scope still wins for the duration of that step,
   so narrowing a shared agent can't silently disarm a pipeline.
-
 - **A plugin whose interface is missing now says so.** A plugin's frontend is a
   build product inside its package, so a source checkout that hasn't built it
   gets the backend without the UI: the section is advertised, the SPA has nothing
@@ -2804,7 +1538,6 @@ are the per-version history; releasing does not rewrite this file.
   plugin installed, enabled and healthy. That state is now detected and
   explained, and `make sync`, `make dev` and `make backend` build in-repo plugin
   frontends so it stops arising during development at all.
-
 - **Plugins can bring their own settings page, and the Kanban board can track
   projects that aren't yours.** A plugin declares
   `registry.add_settings_page(...)` and registers a React panel; it appears in
@@ -2828,7 +1561,6 @@ are the per-version history; releasing does not rewrite this file.
   supply the header's "New …" action (`onNew`) and reach its own settings page
   (`SectionHost.openSettings`), so core keeps owning where the button sits while
   the section decides what it means.
-
 - **Plugins are now a real extension system, and the Kanban board is the first
   one.** A plugin is one Python package that can bring three things at once — a
   whole **UI section**, its own **MCP tools**, and **API routes** — and
@@ -2884,7 +1616,6 @@ are the per-version history; releasing does not rewrite this file.
   silently served `index.html`; and `discover()` re-ran each plugin's `register`
   per app instance, duplicating its routers and its `/api/plugins` descriptors.
   Discovery now happens while the app is being built, once per process.
-
 - **Settings → Usage stats gained a storage cleanup cockpit.** It lists every
   retention sweep with what it would remove **right now** under your current
   settings — a dry run, nothing is deleted to produce the figures — and lets you
@@ -2895,7 +1626,6 @@ are the per-version history; releasing does not rewrite this file.
   previously look like it had done nothing. New endpoints back it:
   `GET /api/stats/cleanup`, `POST /api/stats/cleanup/{key}` and
   `POST /api/stats/compact`. See [Storage & retention](https://lrivallain.github.io/precursor/features/storage).
-
 - **Agent timelines are now bounded.** The archived event trace behind the
   Agents timeline (`agent_events`) had no retention at all and became the
   largest object in a busy install. Two independent levers now govern it —
@@ -2909,13 +1639,11 @@ are the per-version history; releasing does not rewrite this file.
   its result, artifacts, state and posted messages either way, and a **running**
   agent is never pruned — its live timeline is rebuilt from those rows after a
   restart.
-
 - **The agent dashboard gained a name filter.** A search box in the fleet header
   narrows the board to agents whose title matches what you type, stacking on top
   of the KPI tile filters (so you can search *within* "Needs you"). The
   "filtered to…" chip names both the active lane and the search term, and clears
   them together.
-
 - **A topic's collection is now part of its URL, and every topic has a
   permalink.** The readable address gained the collection slug —
   `/topics/client-a/csu/capacity-review` — so a bookmark or a shared link lands
@@ -2928,7 +1656,6 @@ are the per-version history; releasing does not rewrite this file.
   Permalink**. Links minted before collections joined the URL still resolve —
   the trailing slug is unique on its own. Topics over MCP report the same
   collection-prefixed `path`, and a new `public_id` field.
-
 - **A WorkIQ sign-in prompt can now be explained after the fact.** Every decision
   taken about a WorkIQ / Agent 365 credential — the keep-alive's verdict, the
   Entra `AADSTS…` code that refused a silent refresh, each leg of a re-auth,
@@ -2943,7 +1670,6 @@ are the per-version history; releasing does not rewrite this file.
   log level, because a lapse is rare, only reproducible in the wild, and useless
   to diagnose after the fact — the trace has to already be running when it
   happens. It is silent outside an auth episode.
-
 - **`GET /api/mcp/auth/diagnostics` — the whole episode in one request.**
   Terminals scroll and a packaged app has none, so the same records are kept in
   memory and served alongside the state that explains them: settings in force,
@@ -2958,7 +1684,6 @@ are the per-version history; releasing does not rewrite this file.
   changes. Token values never leave the process; secrets and account names are
   reduced to `<present:N chars>`, and Agent 365's ~37-entry scope list is
   summarized to a count plus whether `offline_access` is in it.
-
 - **Topics returned over MCP now carry a resolved `path`.** `get_topic`,
   `list_topics` and the topic hits from `search` include the topic's ancestor
   slugs joined root-first, prefixed by its collection slug
@@ -2970,7 +1695,6 @@ are the per-version history; releasing does not rewrite this file.
   `(id, slug, parent_id)` index load, so a 200-topic response is still one extra
   query, not 200 chain walks, and a cyclic parent link terminates instead of
   hanging.
-
 - **`append_note` — file text into a topic without paying for a turn.** The
   built-in `precursor` MCP server gains an `append_note(topic_id, text)` tool
   under a new **Append notes** capability toggle. It persists the text verbatim
@@ -2980,7 +1704,6 @@ are the per-version history; releasing does not rewrite this file.
   MCP was to POST to the app's own HTTP API through the generic `fetch` server —
   a round trip that made a workflow step hand-encode JSON, and in practice cost
   a multi-minute retry loop before the note landed.
-
 - **A file the assistant touches in a workspace is one click away.** When a turn
   calls `drawio` or `workspace-fs` to read or write a file, the tool call in the
   transcript now carries an **Open** chip naming it — clicking it switches to the
@@ -3102,7 +1825,6 @@ are the per-version history; releasing does not rewrite this file.
   failed" for a later retry, never counts as a pipeline attempt, and is never
   mistaken for a stalled step by the watchdog. Refused while the run is still in
   flight, since a live run owns its steps' agents.
-
 - **Pick which MCP servers a workflow step may use.** A step's *Tools* toggle
   was all-or-nothing: on meant the entire enabled catalogue. Tool schemas are
   re-sent on every turn, so on a modest install that is a six-figure token bill
@@ -3120,7 +1842,6 @@ are the per-version history; releasing does not rewrite this file.
   selection rebuilds that step's session, and unknown names are carried through
   export/import so a workflow still imports onto a machine with a different
   server set.
-
 - **Workflows remember things between runs, and steps can read them.** A pipeline
   now has its own **state**: named values scoped to the workflow, shared by every
   step and kept **across runs**. Everything else a step could see described a
@@ -3139,7 +1860,6 @@ are the per-version history; releasing does not rewrite this file.
   the workflow page lists what's saved, expands a value, and lets you seed a
   starting cursor by hand or reset one that's gone bad
   (`GET|PUT /api/workflows/{id}/state`, `DELETE .../state[/{key}]`).
-
 - **Step instructions support placeholders.** `{{run.input}}` and
   `{{step.N.output}}` were documented on the model but never actually
   implemented — a step written with them was handed the raw template. They now
@@ -3151,7 +1871,6 @@ are the per-version history; releasing does not rewrite this file.
   the whole upstream transcript. A worked example ships at
   `examples/workflows/stateful-digest.yaml` — import it from **Workflows →
   Import**.
-
 - **Agents can remember things between runs.** A new **State** store gives every
   agent a private key/value scratchpad that *survives re-runs* — the missing
   third surface next to long-term **memory** (global, and injected into every
@@ -3167,7 +1886,6 @@ are the per-version history; releasing does not rewrite this file.
   (`GET|PUT /api/agents/{id}/state`, `DELETE /api/agents/{id}/state[/{key}]`).
   Serving the tools to *external* MCP hosts is a separate opt-in under
   **Settings → MCP servers → Precursor capabilities → Agent state**.
-
 - **See what a workflow step actually did.** Every attempt in the run trace now
   carries an **Activity** section rendering the same timeline the Agents cockpit
   does — tool calls with their arguments and output, reasoning, assistant
@@ -3177,7 +1895,6 @@ are the per-version history; releasing does not rewrite this file.
   nothing to diagnose from. In a finished attempt a tool call that never
   terminated is reported as *interrupted* — or *never approved* when it stopped
   at a permission gate — instead of spinning as though it were still running.
-
 - **Retry a single failed step.** The step whose failure stopped a run wears a
   **Retry this step** button on its own card: it re-drives that step as a fresh
   attempt on the **same run** and carries on from there, instead of forcing a
@@ -3185,20 +1902,17 @@ are the per-version history; releasing does not rewrite this file.
   (and pays for them twice). The attempt is appended to the run trace with a
   bumped attempt badge, like a gate loop-back, and the step's automatic retry
   budget resets so the manual retry doesn't inherit a spent counter.
-
 - **Answer a blocked step when resuming it.** A run parks when a step's agent
   raises a question it can't resolve alone; resuming re-drove it blind, straight
   back into the same question. The Resume control now turns amber and opens a box
   showing what was asked, and the answer is injected into the step's kickoff.
   Both `POST /resume` and the new `POST /retry` take an optional `{"input": …}`.
-
 - **A workflow-wide tool-approval policy.** Settings → Workflows gains **Tool
   approvals** (Manual / Balanced / Autonomous), applied to whichever step's agent
   is about to run rather than written onto the shared agent row. This is what
   makes an *unattended* pipeline actually unattended: a step that stops at a
   permission gate parks the whole run until a human answers, which a scheduled or
   webhook-fired workflow has nobody to do.
-
 - **A tool-permission gate no longer parks the whole run.** Waiting on a tool
   decision was treated as a *block*: the workflow paused, the step's trace was
   closed, and a manual **Resume** was required — so an agent making five tool
@@ -3209,7 +1923,6 @@ are the per-version history; releasing does not rewrite this file.
   (`blocked`) still parks the run, as before. The step timeout still applies, so
   a gate nobody ever answers is caught by the watchdog instead of parking the
   pipeline forever.
-
 - **Approve a step's permission request from the workflow board.** A parked
   tool-permission gate now renders its approve/deny card on the board itself.
   This was previously impossible to answer at all for an **inline** step, whose
@@ -3221,7 +1934,6 @@ are the per-version history; releasing does not rewrite this file.
   on "Blocked" and the same request raised again on every reload. A decision the
   runtime can no longer match is now reported as a conflict instead of silently
   doing nothing.
-
 - **Import and export agents and workflows as YAML.** A workflow exports to a
   single, readable file — its steps, its wiring, and every agent those steps use
   — so a pipeline can be committed next to the project it automates or handed to
@@ -3240,7 +1952,6 @@ are the per-version history; releasing does not rewrite this file.
   name; a bare name match defaults to the non-destructive choice instead, which
   also makes scripted imports safe. New `/api/transfer` router, and
   `export_id` columns on `agent_sessions` and `workflows`.
-
 - **Create a reusable agent from the step editor.** An Agent step now chooses
   between **Existing agent** (pick one from the Agents section) and **New agent**
   (name it and give it an objective right here) — so building a pipeline no
@@ -3251,658 +1962,11 @@ are the per-version history; releasing does not rewrite this file.
   `WorkflowStepInput.reusable`, which decides whether a step-authored prompt
   mints a real agent or the step's private vessel — omitting it keeps the vessel,
   so existing payloads are unchanged.
-
-### Changed
-
-- **An installed Precursor now stores its data in a per-user directory.**
-  `PRECURSOR_DATABASE_URL` and `PRECURSOR_DATA_DIR` defaulted to paths relative
-  to the working directory (`./precursor.db`, `./.precursor`), which is exactly
-  right for a checkout — it is what makes each clone and worktree an isolated
-  sandbox — but wrong for an installed wheel, which a launcher starts with its
-  working directory set to `/`. That silently produced a fresh, empty database
-  wherever it happened to launch from.
-
-  The defaults now depend on how Precursor was installed: a source checkout
-  keeps the relative paths, while a wheel resolves to
-  `~/Library/Application Support/Precursor` (macOS),
-  `$XDG_DATA_HOME/precursor` (Linux) or `%APPDATA%\Precursor` (Windows). Setting
-  either variable explicitly overrides both, so existing configurations are
-  unaffected.
-
-### Fixed
-
-- **`mcp` was uncapped, so a fresh install resolved a wheel the app cannot
-  import.** `mcp` 2.0 renamed the client entry points Precursor imports
-  (`streamablehttp_client` → `streamable_http_client`) and dropped the old
-  names, and the `>=1.28` floor accepted it — so `uvx precursor-ai` on a machine
-  resolving today's index got an instance that died on startup with an
-  `ImportError`. Capped to `>=1.28,<2`.
-
-  Worth noting the shape of this: `uv.lock` pins exact versions for dev and CI,
-  which is why the suite stayed green, but **end users of the published wheel
-  resolve fresh** and the lockfile never reaches them. Coarse floors are fine
-  for compatible releases; an API-breaking major needs a real cap.
-
-- **The supervisor read settings from the caller's directory, not the
-  instance's.** `pydantic-settings` resolves `.env` relative to the process
-  working directory, but the CLI and the tray can be invoked from anywhere while
-  the instance always runs in its own working directory. Running
-  `precursor service start` from `~` therefore missed the `.env` beside the
-  data, fell back to the default port, and passed the child an explicit
-  `--port` that overrode the `.env` it would otherwise have read — silently
-  moving an instance configured for `:9000` onto `:8000`. Settings are now
-  resolved as the child will see them, and the foreground path adopts the
-  working directory before reading them.
-
-- **Installing the login item while an instance was already running caused a
-  crash loop.** launchd's `RunAtLoad` (and systemd's `--now`) start the instance
-  as part of registering it, which raced the start `service install` did itself;
-  the loser hit `--strict-port` and exited non-zero, which `KeepAlive` reads as
-  a crash and retries every 30 seconds forever. The foreground path now yields
-  to a healthy existing instance and exits *successfully*, and `service install`
-  waits for the unit to come up instead of racing it.
-
-- **Archived agent events could grow without bound.** The event normaliser
-  capped captured tool I/O only when the value was already a string; anything
-  rendered through `jsonify` — notably a hook's `input`, which re-embeds the
-  entire tool result the completion event *already* stored — went to the
-  database uncapped and pretty-printed. An event's free-text body wasn't capped
-  at all, so every session start archived the full system prompt, hundreds of
-  times over. On one production database these two paths held **45 MB of a
-  126 MB file**. All captured values are now capped uniformly and marked when
-  trimmed, with a much tighter limit for system prompts (boilerplate) than for
-  conversational text (which the timeline renders in full). A matching
-  **Oversized agent events** cleanup target re-applies the caps to rows already
-  written, since retention can't reach them — an oversized payload isn't
-  necessarily old, and counts as a single row against a per-session ceiling
-  however many KB it holds. It preserves every timeline node, tool name and
-  status, and is idempotent.
-
-- **An agent no longer forgets what it is halfway through a conversation.** Its
-  instructions (`task_prompt`) are delivered once, as the first message of the
-  SDK conversation, so they survive only as long as that conversation does. The
-  runtime deliberately tears the session down and rebuilds it on an expiring
-  OAuth bearer, a changed MCP catalogue or a recovered sign-in — and that rebuild
-  is meant to be invisible, resuming the same conversation via
-  `copilot_session_id`. Except the handle was read off the session object
-  (`getattr(sdk_session, "id"…)`), and `CopilotSession` exposes no such
-  attribute: it resolved to `None` every time, so no run ever stored one. The
-  rebuild therefore passed no `session_id` and opened an *empty* conversation,
-  silently discarding the task prompt and the entire history. Symptom: an agent
-  answers its first turn perfectly, then replies to the next message as though it
-  had never been briefed — the telltale being a `session.start` event appearing
-  mid-thread, right before a user message. It bit conversational agents hardest,
-  because a WorkIQ credential refreshing between turns is enough to trigger it.
-  The handle is now captured from the `SessionStartData` event, which is the only
-  place the SDK publishes it, and never overwritten once set.
-
-
-  startup but not their expiry, and its `is_token_valid()` treats an unknown
-  expiry as valid — so a credential read back from the database always looked
-  fresh, the silent-refresh branch that check guards was never entered, and the
-  401 that eventually followed escalated straight to a full browser grant, which
-  never attempts a refresh either. The refresh token was dead weight, and every
-  access-token expiry became an interactive sign-in. The trace added above is
-  what caught it: over 401 recorded events, **58 escalations to a full
-  authorization and zero refresh attempts**, against credentials that held a
-  refresh token throughout. Precursor already records when each token was issued,
-  so it now restores the real expiry (less a minute of skew) as the credential
-  loads, and the SDK's own refresh path works as designed. A legacy token with no
-  recorded issue time is still assumed valid rather than forced through a sign-in
-  that may not be needed.
-
-- **Startup migrations no longer silence the app's own logs.** `init_db` runs
-  `alembic upgrade head` on every boot, and Alembic's `env.py` applied
-  `alembic.ini`'s logging with `fileConfig`'s default
-  `disable_existing_loggers=True` — which switched off every `precursor.*` logger
-  created at import time, replaced the unified handler and formatter, and pulled
-  the root level down to `WARN`. From the first migration onwards the backend was
-  substantially quieter than configured, which is why raising `--log-level` often
-  changed so little. Alembic's own logging config is now applied only when it's
-  driven from its CLI, and never disables existing loggers.
-
-- **A failed automatic re-auth no longer costs you the credential.** The
-  hands-free passes clear the stored token before running, so the SDK is forced
-  through a fresh grant instead of short-circuiting on one it still considers
-  valid — but if the pass then failed, that credential was simply gone. Since the
-  verdict that triggers a pass can come from a transient 401, a refresh token
-  that would have worked on the next try was being thrown away, turning a blip
-  into a mandatory interactive sign-in. The old credential is now restored
-  whenever a hands-free pass doesn't complete, at a cost of at most one doomed
-  refresh later. An explicit **Sign in** still clears outright.
-
-### Removed
-
-- **The GitHub Models provider, and the retirement machinery built around it.**
-  When GitHub shut the service down the provider was kept behind a generic
-  `retired` flag so anyone still pointed at it got an explanation rather than a
-  raw `410 Gone`. The provider saw little use, and keeping a whole mechanism
-  alive to describe something that no longer exists costs more than it returns.
-  Gone: `GitHubModelsProvider`, its `ProviderSpec` entry, the `retired` field on
-  the spec/schema/TS types, the picker filtering and the 502 in the catalog
-  route, and the *(retired)* labelling in Settings.
-
-  A migration repoints any install still set to `github_models` at **GitHub
-  Copilot**, which authenticates with the same GitHub token — without it, an
-  unknown provider id resolves to no spec and falls back to the **mock**
-  provider, which would answer with convincing fake replies instead of failing.
-
-### Changed
-
-- **The reference section was audited against the code.** Every documented
-  `PRECURSOR_*` variable was diffed against `config.Settings`, every cited file
-  path and table name checked for existence, every route and SSE event name
-  compared with the live OpenAPI schema, and the plugin contract read back
-  against `plugins/registry.py`. The env surface, the twelve SSE events, the ten
-  built-in MCP servers and the dependency list all matched exactly. Four things
-  did not, and are fixed:
-
-  - the API surface listed a **`schedules`** area as though it were a top-level
-    router, when recurrence is a sub-resource of the thing being scheduled
-    (`/api/topics/{id}/schedule`, `/api/agents/{id}/schedule`);
-  - the **`drawio`** router was undocumented;
-  - **`GET /raw/{slug}/{path}`** — read-only, unauthenticated, and the one route
-    outside `/api/*` — was missing from a page that states the API lives under
-    `/api/*`;
-  - the architecture reference's database highlights omitted **`AgentState`** and
-    **`WorkflowState`**, the two durable stores that survive a re-run, even
-    though both have their own feature pages.
-
-  The configuration reference's opening also claimed a Settings-backed value has
-  *no* environment twin, full stop; there are two justified exceptions, which the
-  page already documented at its foot, so the claim now points at them.
-
-- **The agents guide is five pages instead of one long scroll.** It was the
-  longest page in the docs — enabling, the dashboard, fleet orchestration,
-  artifacts, durable state, autonomous missions, approvals and scheduling in a
-  single column. It now follows the same shape as the workflows guide: an
-  **overview** (what agents are, enabling, the dashboard) plus **Running an
-  agent**, **Orchestrating a fleet**, **Artifacts & state** and **Autonomous
-  missions**. The `/features/agents-mode` URL is unchanged, and the eight
-  in-page anchors other pages deep-link to were repointed at the section that
-  now owns each one.
-
-- **Workflows are no longer flagged as work in progress.** The overview carried a
-  warning that the surface was "still evolving — expect the UI and controls to
-  keep changing", which undersold a feature that now has gates, loop-back, human
-  approval checkpoints, pipeline state, per-step tool allowlists, run replay and
-  a stall watchdog. The notice is gone; the *Experimental* marker on autonomous
-  agent missions and the plugin system's "not yet tested" warning are unaffected.
-
-
-- **The quick start covers every section, not just topics.** It walked you from
-  install to a first topic-scoped conversation and stopped, so the five sections
-  that need a first step of their own — and in three cases a prerequisite — were
-  left to the feature guides. It now adds *Start with the other sections* with a
-  sub-section each for **Agents**, **Live sessions**, **Workflows**, **Kanban**
-  and **Files**, leading with the prerequisite that actually blocks you (the
-  `agents` extra, Azure Speech credentials, a global repo plus `read:project`).
-
-  Writing it turned up two docs bugs, now fixed: workflows were described as
-  independently "opt-in and off by default" when they're gated on the **Agents**
-  toggle with no switch of their own, and a "local" workspace was described as
-  pointing at files already on disk when it in fact **creates an empty folder**.
-
-- **The docs are a third shorter, and no longer describe a topics-only app.** The
-  guides had accreted detail that churns faster than anyone can maintain it — UI
-  chrome ("cards lift on hover", "a warm gradient wash"), implementation internals
-  (`IssueContextCache`, table names, `services/*.py` paths), and design rationale
-  that belonged in a changelog rather than a guide. `features/mcp.md` spent ~180
-  lines on WorkIQ OAuth internals — loopback port numbers, `prompt=none` iframes,
-  orphaned-flow preemption — none of which a reader can act on; it is now one
-  section that says sign-in renews itself and points at the config flags. Every
-  page keeps what it is, why you'd use it, how to do the thing, and the gotcha
-  that bites.
-
-  The narrative was also stale: the introduction opened "Precursor is an AI
-  assistant that keeps each thread of work in its own **topic**" and relegated
-  meetings, agents and workflows to what it "layers around that core" — framing
-  from when topics were the only feature. Precursor is now described as several
-  surfaces sharing one set of tools, personas and memory.
-
-
-- **The agents feature page is `agents-mode.md`.** On macOS and Windows the
-  filesystem is case-insensitive, so `website/features/agents.md` *is*
-  `AGENTS.md` — the filename coding agents treat as an instruction file. Every
-  agent opening this repo was loading a 550-line product page as if it were
-  repo instructions. The page moved to `/features/agents-mode`, and every
-  internal link, the sidebar and the landing grid moved with it. There is
-  deliberately no stub left behind at the old path, since that would recreate
-  the collision.
-- **Documentation screenshots are reproducible, and six pages now have one.**
-  Workflows — the largest feature in the app — had no screenshot at all, and
-  neither did the scheduler, skills, command runner or import/export pages.
-  Retaking a shot previously meant pointing a browser at your own instance,
-  which is exactly how a real account or a real repository ends up in the docs.
-  Three scripts now do it from a clean room: `scripts/seed_demo.py` builds a
-  throwaway database of invented fixtures (and refuses to run unless the
-  database URL says `demo`), `scripts/demo_server.sh` serves it with `gh`
-  stripped from `PATH` so the persona can only resolve to "Guest / Not
-  connected", and `scripts/capture_screenshots.js` drives each scene and writes
-  the light and dark variants at `deviceScaleFactor: 2`. Added shots for the
-  workflow board, a workflow run trace (with a gate's loop-back and its
-  `attempt 2`), the recurrence editor, Settings → Skills, Settings → System's
-  command-runner jail, and the workflows gallery.
-
-- **The workflows guide is four short pages instead of one 786-line wall.** The
-  page had accreted a feature at a time until it was by far the longest in the
-  docs — 30 headings covering authoring, execution, cost, failure handling and
-  the REST surface in one scroll, with no screenshot to break it up. It is now an
-  **overview** (what a workflow is, how it differs from agent `depends-on`, the
-  four step kinds, the autonomy rule) plus **Building a pipeline**, **Configuring
-  a step**, **Running a pipeline** and a **Reference**. The `/features/workflows`
-  URL is unchanged; deep links from the agents and MCP pages were repointed at
-  the section that now owns each anchor. Also fixes a markdown bug that had
-  silently merged the "Manual" and "Schedule" trigger bullets into one line.
-- **Workflows are listed where the other sections are.** Workflows mode was
-  missing from every "what's in the app" list except the landing feature grid —
-  the sections table in the feature guides, the introduction, the quick-start's
-  home-card list, the README highlights, and the API reference's router table all
-  described a six-section app. Added to each.
-- **Assistant roles are documented.** A role had a Settings tab, a `/role`
-  command, a per-collection default and a per-workflow override, but no
-  documentation at all — and two pages linked to a `/features/roles` page that
-  never existed (one of them a dead link, the other pointing at Topics). They now
-  have a section on **Skills, roles & memory**, which the sidebar and both links
-  now name.
-- **The API and configuration references cover the whole surface.** The API
-  reference's router table described 13 of 31 routers — `workflows`,
-  `workspaces`, `live`, `reminders`, `roles`, `search`, `stats`, `commands`,
-  `attachments`, `projects`, `llm` and `refine` were absent — and listed 5 of the
-  12 SSE events. The configuration reference was missing 12 `PRECURSOR_*`
-  variables (`CORS_ORIGINS`, `DATA_DIR`, the four scheduler/reminder cadences,
-  `MCP_IDLE_TTL_SECONDS`, `GITHUB_MCP_TOOLSETS` and four WorkIQ keep-alive
-  knobs), and still closed with a "runtime settings layer over env defaults" note
-  that contradicted the no-env-twin rule stated at the top of the same page. A
-  cross-check against `config.Settings` now shows no drift in either direction.
-
-- **Settings you can change in the app no longer have a hidden env twin.**
-  `config.Settings` sets `env_prefix="PRECURSOR_"`, so every field on it silently
-  became a `PRECURSOR_*` variable — including 24 that already had a control in the
-  Settings panel. None were documented, so the only way to find one was to read
-  `config.py`, and two of them (`PRECURSOR_CMD_RUNNER_JAIL`,
-  `PRECURSOR_CMD_RUNNER_NETWORK`) were an undocumented second way to switch off
-  the command-runner sandbox. The factory default for each now lives as a constant
-  beside its `resolve_*` helper, leaving the DB row — and the panel that writes it
-  — as the single way to set the value. `.env` keeps only what must be known
-  before the database exists: bind address, database URL, data directory, ticker
-  cadences. A test pins the split so it can't creep back. Affected:
-  `LLM_MAX_INPUT_TOKENS`, `LLM_MAX_TOOL_RESULT_TOKENS`,
-  `SCHEDULED_RUN_TIMEOUT_SECONDS`, `TOOL_RESULT_RETENTION_DAYS`,
-  `LIVE_TRANSCRIPT_RETENTION_DAYS`, the eight `CMD_RUNNER_*`, the four `AGENTS_*`
-  defaults, the four `WORKFLOWS_DEFAULT_*`, and the three `BACKUP_*`.
-  `PRECURSOR_WORKIQ_TENANT_ID` and `PRECURSOR_PLAYWRIGHT_BROWSER` are kept
-  deliberately: both describe the machine or tenant rather than a preference, and
-  both are documented.
-- **Installing the `agents` extra is now the opt-in.** Agents mode took two steps
-  — install a ~150 MB extra, then find a toggle in **Settings → Agents** — so the
-  people who had just paid for the payload still saw nothing until they went
-  looking. It now follows the capability probe: on once the Copilot CLI runtime
-  resolves, off (with the existing "install this" explanation) when it doesn't.
-  The toggle stays as the one control on top of that — it is the kill switch and
-  the spend control, and still reconciles the runtime live without a restart.
-  There is deliberately no env-level default to go with it: the probe already
-  answers "can this run?" and the toggle answers "should it?", so a third input
-  would only have contradicted the premise that installing the extra *is* the
-  opt-in. The probe is still checked at every use, so a stored `true` on a
-  machine without the SDK stays inert.
-- **An agent is addressed by its own `public_id`, not by a session handle.**
-  `AgentSession.copilot_session_id` doubled as the agent's URL identity and as
-  the Copilot SDK handle for whatever was running; the handle now belongs to the
-  run, so the agent gained a stable `public_id` in its place. Existing UUIDs are
-  carried across by the migration, so `/agents/{uuid}` deep links, `/agent
-  <uuid>` nudges and transfer lookups keep resolving.
-- **A running workflow now wears the holographic frame on the gallery.** The
-  Workflows landing signalled a live run only with a small status dot and a
-  Pause button, so a card mid-flight read the same as an idle one at a glance —
-  yet everywhere else in Precursor an in-flight turn is the rotating iridescent
-  ring: the composer while a reply streams, and the step cards on the workflow
-  board. Cards whose workflow is `running` now use that same frame, so the one
-  thing worth spotting on the page is the one thing that moves.
-
-- **"Inline prompt" is no longer offered on an Agent step.** It produced exactly
-  what the **Inline** step type produces — the same hidden vessel, the same
-  runtime, differing only in the badge on the board — so the same intent had two
-  spellings and the step type disagreed with the toggle beneath it. One-off work
-  is now the **Inline** kind, full stop. A **Gate** keeps all three sources,
-  since there is no inline gate kind for its one-off check to be. A blank step
-  starts as **Inline**, which is where it effectively started before.
-
-### Fixed
-
-- **A new topic lands in the collection you're looking at, and the form says
-  which.** The create form never sent the active collection, so every new
-  top-level topic silently fell back to the default one — leaving you to move it
-  by hand each time, or to wonder why it hadn't appeared in the tree at all. It
-  now carries a **Collection** field, preselected to the collection you're
-  viewing, so the destination is visible and changeable *before* the topic
-  exists rather than being an invisible consequence of the sidebar. Picking a
-  parent scopes that field to the parent's collection instead, since a subtree
-  lives in exactly one. Two other paths were worse and left the membership
-  *null*, which no collection filter matches, so the topic was invisible in the
-  sidebar until you found it through search: promoting a chat to a topic, and
-  the MCP `create_schedule` tool. Both now resolve a collection
-  (`?collection_id=` and a `collection` argument respectively, defaulting to the
-  protected default), and a migration re-homes any topic already stranded that
-  way. `GET /api/topics` and `GET /api/topics/archived` gained the
-  `?collection_id=` filter the tree endpoint already had.
-
-- **A subtree can no longer end up split across two collections.** Saving topic
-  settings sends the parent and the collection together, so a re-parent could be
-  overruled by the collection dropdown's stale value and drop the topic into the
-  wrong collection. The two are now reconciled by *what changed*: re-parenting
-  adopts the new parent's collection, and moving a sub-topic to another
-  collection promotes it to a top-level topic (taking its own children) rather
-  than leaving a branch straddling both.
-
-
-  `body` parameter was string-only, so a model reaching for the object the target
-  endpoint documents — the natural move — hit a validation error whose shape it
-  couldn't see, and retried its way through progressively stranger encodings. It
-  now accepts an object or array and serialises it, setting
-  `Content-Type: application/json` unless the caller supplies one, so a raw
-  string still behaves exactly as before.
-- **A workflow step is no longer told about state tools it doesn't have.** The
-  "this workflow's saved state" block — which instructs the agent to call
-  `workflow_state_get` — was attached whenever a step had MCP on at all, ignoring
-  the step's own server allowlist. A step scoped to, say, `workiq` was handed an
-  index it had no tool to read, and spent a turn explaining it couldn't comply.
-  The block now follows the same predicate the attach path uses.
-- **The workflows guide no longer documents a feature that never shipped.** Its
-  overview compared workflows to agent `depends-on` links "agents can already
-  declare" — but the per-agent dependency table (`agent_deps`) was dropped in the
-  same commit that introduced Workflows, so no such link has ever existed for
-  users. The section is now *What the workflow owns*, stating plainly that agents
-  can't trigger each other and that all chaining lives on the workflow.
-- **A failed turn no longer reads as a success.** Stream errors are persisted as
-  system messages, and *every* system message rendered as a green check-marked
-  acknowledgement — so "The model provider rejected the request" looked exactly
-  like "Run now accepted". Error notices now render red with a warning icon (and
-  an `alert` role), while acknowledgements keep the green treatment.
-- **Workspace chat now honours the context-budget settings.** `POST
-  /api/workspaces/{slug}/chat` trimmed its prompt using the env-level token
-  limits while topic and chat turns resolved them from the database, so changing
-  **max input / tool-result tokens** in Settings silently had no effect on
-  workspace conversations — the one surface most likely to hit the ceiling, since
-  it reads files.
-- **The test suite no longer spawns the real Copilot CLI.** `make check` took
-  ~9 minutes on machines that had ever run `make dev`, and ~75s on machines that
-  hadn't — the same code, six times slower for exactly the people running the
-  app. App startup starts the agents runtime when the optional
-  `github-copilot-sdk` is importable *and* the persisted `agents_enabled` flag is
-  on; exercising Agents mode means turning that flag on, and it persists in the
-  session-wide scratch database, so those tests — and every later app startup
-  while it stayed on — spawned and tore down the bundled native CLI. At ~12.8s
-  each the suite sat **87% idle** (70s of CPU for 539s of wall clock), which read
-  as "the tests are slow" rather than as a process spawn. Tests now report the
-  agents runtime as unavailable by construction, so timings no longer depend on
-  which extras a developer happens to have installed.
-- **A workflow board shows its own run.** The step strip was rendered from the
-  shared agent row, which mirrors that agent's *current* run — so two pipelines
-  driving one agent both displayed whichever finished last, right down to the
-  answer and the question waiting on you. Each board now resolves its step
-  through the run that step actually launched.
-- **The agent transcript reads one run at a time.** Concurrent drivers produced
-  a single interleaved timeline — two prompts and two answers with nothing
-  saying which belonged to which. Every event now carries its run and the
-  transcript **defaults to the latest one**, following along when the agent
-  starts again. The **Runs** rail doubles as a filter (**All runs** restores the
-  full history) and a chip above the timeline says which run you are reading.
-  Agent-wide notices (the MCP authorisation banner) carry no run and so appear
-  only in the unfiltered view.
-- **A run records what actually started it.** Every entry point outside a
-  workflow opened its run as `manual`, so the Runs rail credited a human for
-  schedules, webhook fires, fleet releases and retries alike.
-- **A gate agent reads its own verdict.** The event archive spans every run of
-  an agent — that is what makes it the transcript you scroll — so "the newest
-  assistant message" meant "whichever concurrent run spoke last". A gate shared
-  by two workflows could hand one pipeline the other's `PASS` and wave a failing
-  deliverable through. Verdict and hand-off reads are now scoped to the run that
-  produced them; the agent-wide read remains for the transcript itself.
-- **A crash no longer leaks a concurrency slot.** Boot recovery flagged only the
-  agent rows it found mid-turn, leaving the runs the fleet governor counts stuck
-  at `running` forever. After `agents_max_concurrent` hard stops, nothing could
-  start again.
-- **Signing in to an MCP server rebuilds the right sessions.** The rebuild swept
-  the live-session registry as though it were keyed by agent when it is keyed by
-  run, so it skipped the sessions that needed rebuilding and could disconnect an
-  unrelated agent's live run mid-turn.
-- **Replaying a step of an edited workflow finishes.** If the step had been moved
-  or removed from the definition since the original run, the replay opened no
-  execution to attach to and its trace row could never be closed — leaving the
-  step pinned "in flight" on the board. The replay now always opens a run,
-  falling back to the agent's current settings when the step is gone.
-- **The concurrency governor counts executions, not agents.** A slot exists to
-  bound how many Copilot SDK sessions run at once, and there is now one session
-  per run — so two workflows driving the same agent burned two sessions while
-  charging `agents_max_concurrent` for one. The fleet count, and the
-  `running_now` gauge in the Agents header, now read the runs.
-- **Fleet token totals and the inbox's "budget" badge read every run.** Both
-  summed the agent's own counters, which mirror its *current* run — so lifetime
-  spend collapsed to the latest turn of each agent, and an agent parked by the
-  budget governor after several runs was mislabelled as having raised a
-  question.
-- **The stall watchdog watches runs, not agents.** It selected sessions whose
-  status was `running` and read their last activity — both of which now mirror
-  only the agent's *current* run. A turn wedged by a hung tool therefore became
-  invisible the moment another execution took over, and stayed pinned in
-  `running` forever: never surfaced for a Resume, and permanently holding one of
-  the `agents_max_concurrent` slots. It now sweeps the run rows, interrupts the
-  run itself, and drops only *that* run's live session — previously it tore down
-  every session the agent owned, killing a healthy concurrent workflow's
-  in-flight turn as collateral.
-- **Raising a token budget no longer un-parks an agent that is still over it.**
-  The check compared the new ceiling against the agent's own counters, which
-  mirror its current run, so a raise above the latest turn's spend flipped a
-  budget-blocked agent to idle even when its lifetime total was still past the
-  limit — and the governor simply re-parked it on the next metered round. It now
-  weighs cumulative spend across every run, matching the governor.
-- **An agent's token budget is no longer reset by starting it again.** The
-  governor read the agent's cumulative counters, which are now a mirror of its
-  *current* run — so every new run would have handed the agent a fresh
-  allowance, and two concurrent runs would each have seen only their own spend.
-  It now sums across every run of the agent, which is what "cumulative
-  governance on the definition" was always supposed to mean.
-- **Editing a workflow step over the API no longer deletes its inline agent.**
-  `PATCH /api/workflows/{id}` with a step that names its private vessel via
-  `agent_id` but leaves `task` out — a partial edit, say to narrow the step's
-  server allowlist — attached the step to that vessel and then swept the vessel
-  up as an orphan in the same request. The call returned `200` with `agent_id`
-  still in the body, so nothing signalled the loss: the step was left pointing
-  at a deleted agent, and the prompt was gone. Referencing a vessel now *claims*
-  it, which makes the endpoint idempotent for partial step edits; the prompt is
-  simply left as it was. The builder was never affected — it resends the prompt
-  on every save — but scripts, direct REST calls and agents driving a pipeline
-  were, and a single edit could wipe every inline prompt in a workflow. The
-  sweep also detaches any step still referencing a vessel before deleting it,
-  rather than trusting `ON DELETE SET NULL`: SQLite runs with foreign keys off,
-  so that dangling id survived — and SQLite may later hand the same id to an
-  unrelated agent.
-
-- **WorkIQ sign-ins now ask for a refresh token, so they can be renewed
-  unattended.** The OAuth flow never requested `offline_access`, so Entra
-  returned an access token with **no refresh token** — a terminal credential. The
-  background keep-alive would try to renew it, fail, and the only way back was a
-  human at a browser, which is exactly what a scheduled workflow or a
-  backgrounded agent doesn't have; overnight runs came back having quietly
-  answered without their tools. Because the MCP SDK overwrites the requested
-  scope during discovery, `offline_access` is merged into the finished
-  authorization URL — the last point before the browser — alongside whatever
-  scope discovery resolved. Both built-in profiles are covered. Tokens stored
-  *before* this can't gain a refresh token retroactively, so instead of
-  attempting a renewal that cannot succeed, Precursor now spots the missing
-  refresh token and raises the ordinary sign-in banner straight away: you
-  re-authenticate **once** and come back with a renewable credential. Depending
-  on how the WorkIQ preview client is registered, that sign-in may show a one-off
-  consent screen for the new `offline_access` permission. (The Agent 365 pair
-  requests `<resource>/.default`, which replays already-consented permissions, so
-  it was getting a refresh token by accident and is unaffected.)
-
-- **An agent that lost an MCP sign-in now picks it back up.** When a server was
-  enabled but couldn't be authenticated, the session was built without it — and
-  the reuse check tracks the set of *enabled* servers (deliberately, to avoid
-  looping against a server that can't authenticate), so signing back in changed
-  nothing it looked at. The tool-less session was reused indefinitely and the
-  only cure was restarting Precursor. The live session now also records a digest
-  of the stored credential for each server it had to skip, and rebuilds when that
-  digest changes. It stays loop-free by construction: a rebuild that still can't
-  attach records the same digest and doesn't fire again until fresh tokens are
-  actually persisted, and the credential is never held in memory in the clear.
-
-- **A workflow step whose named server never attached no longer reports
-  success.** A step that allowlisted a server it couldn't sign in to ran anyway:
-  the agent answered from its own knowledge, rested idle, and the coordinator
-  read idle as done and marked the step **completed** — the worst outcome, since
-  the run looked fine. Naming a server in a step's allowlist is a hard
-  requirement, so the turn is now parked **Blocked** naming the server(s), which
-  pauses the run for a sign-in and a **Resume**. Scoped to explicit allowlists on
-  purpose: an agent running the whole enabled catalogue asked for whatever was
-  available, not for that server in particular, and is left alone.
-
-- **The test suite no longer calls a real model.** Three live-meeting tests
-  (`ask`, `summary`, `summary/from-transcript`) never stubbed a provider — they
-  relied on `get_llm_provider` falling back to the offline mock, which only
-  happens when no GitHub token resolves. Signed in to `gh`, they issued live
-  GitHub Models requests and failed against an entitlement the token doesn't
-  have, so `make check` passed or failed depending on the developer's login
-  state rather than on the code. Tests now run with no LLM credentials by
-  construction.
-
-- **Importing a workflow now warns about servers it can't attach.** A step's
-  server allowlist travels verbatim, which is what lets a workflow move between
-  machines — but on an install missing one of those servers the step just
-  quietly ran with fewer tools than its author gave it, and the symptom only
-  showed up much later as odd behaviour. The import preview now names them
-  before you commit, separating "not installed here" from "installed but
-  switched off in Settings → MCP", which is the one you can fix without leaving
-  the app. The step editor makes the same distinction in colour: red for a name
-  this machine doesn't know, amber for one that's a switch away from working.
-
-- **The step editor's server picker now explains itself when it's empty.** With
-  no MCP servers enabled, the **Servers** row offered nothing but **All** and
-  gave no hint why, which read as a broken control rather than a setup step. It
-  now says so and points at Settings → MCP, and it tells "still loading" apart
-  from "nothing enabled" so the message doesn't flash on open. A server named by
-  a step but switched off locally also reports that, instead of claiming it
-  isn't installed.
-
-- **An agent with tools off no longer rebuilds its session on every dispatch.**
-  The reuse check compared the session's stored MCP fingerprint against the
-  *enabled catalogue*, but a tools-off agent stores an "off" sentinel — so the
-  two could never match and the Copilot session was discarded and rebuilt each
-  time the agent ran, throwing away its warm state for nothing.
-
-- **A workflow step no longer runs twice.** The completion seam enqueued a
-  workflow advance whenever a step's agent *was* resting rather than when it
-  *reached* rest, so every event a finished agent still emits — pending-message,
-  MCP-status and tool-list updates — fired another one. Those ran concurrently
-  and unlocked, each reading the run's cursor still on the step that had just
-  finished, so each one entered the next step: several trace rows milliseconds
-  apart (one "Running" that never finished, sitting above the "Done" row for the
-  same step), and, worse, several *real* launches of the step's agent — which
-  genuinely redid the work and genuinely spent the tokens. Advances are now
-  triggered by the transition into rest, serialised per workflow, and each one
-  claims the step's open trace before acting, so a duplicate is a no-op.
-
-  This also **inflated reported run costs**: each closed trace adds its spend to
-  the run total, and the duplicate rows carried identical deltas, so affected
-  runs over-reported by roughly 40%. A migration supersedes the duplicated rows
-  and rebuilds every run's totals from what is left — **existing runs will show
-  lower (correct) token counts** after upgrading, and phantom "Running" rows
-  disappear from their traces. Attempts abandoned this way are labelled
-  `Superseded`. The repair takes more than closeness in time to act: a candidate
-  must *also* be orphaned or an exact spend twin of the attempt that survived,
-  because a legitimate `on_error=retry` whose first attempt fails within seconds
-  starts inside the same window, and superseding that would delete real spend —
-  the very under-reporting this repair exists to fix. Genuine repeat attempts
-  (gate loop-backs, `on_error=retry`, manual retries, permission resumes) are
-  untouched.
-
-- **A failed turn dispatch tells its workflow.** `_fail_turn` marks the agent
-  `failed` outside the event seam, so the run only found out if some later event
-  happened to arrive — otherwise it sat in `running` until the watchdog (if one
-  was configured at all) noticed. It now advances the run itself.
-
-- **Answering a permission request no longer wedges the agent.** `needs_approval`
-  is a *sticky* status — the idle handler skips it so a trailing idle can't mask
-  a genuinely parked agent — so an agent left sitting in it never reaches
-  `_on_idle`: its turn finished, the workflow was never told, and the step showed
-  "Running" until the watchdog killed it. The reset to `running` now lives in
-  `AgentManager.resolve_permission`, where every caller gets it, rather than only
-  in the agents router (which is why approving from the workflow board silently
-  stalled the run).
-
-- **Re-driving a parked agent no longer queues behind the thing that parked it.**
-  A turn stopped at a permission gate stays *open*, so sending the next prompt
-  into that session just queued it behind a decision nobody was going to make —
-  the "retry" burned its whole watchdog window without running anything and died
-  with the same stall it was meant to fix. Starting a task now rejects any
-  unanswered permission request and aborts the old turn first, so the new prompt
-  lands on an idle session.
-
-- **Live narration reached the workflow board.** `WorkflowAgentSummary` declared
-  `active_narration` but the router returned ORM rows straight to FastAPI, so the
-  field — which only exists in the runtime's in-memory view — was always null.
-
-- **"Open Settings" from the Agents-off screen now lands on Agents.** The button
-  told you to turn the feature on and then dropped you on Appearance, leaving you
-  to find the right category yourself. It opens Settings directly on **Agents**,
-  where the toggle it just pointed at is. The Workflows section's gated state got
-  the same treatment: it used to name the setting in prose ("Enable it in
-  Settings → Agents") without offering a way to get there, and now carries the
-  same button.
-
-- **Switching a step's kind or agent source no longer strands its agent.**
-  Converting an inline step to an agent-backed one kept the reference to its
-  private vessel, which the save then swept as an orphan — leaving a step reading
-  "Missing agent". The reference is now dropped whenever the *source* changes,
-  and kept when it doesn't, so an unchanged inline step still updates its vessel
-  in place and keeps its run history.
-
-- **Step colours now reset when a new run starts.** The strip derived each step's
-  state from its *agent's* live status, which survives between runs — so a step
-  that finished last time rests at `idle` and lit up green the instant a fresh
-  run began, before it had done anything. Step state now comes from the **run
-  trace** (what happened to that step *in this run*); a step with no trace yet
-  reads `pending`. Scrolling the run picker replays how the strip looked for that
-  run, while a live run never paints from a different one. The agent-status
-  fallback (used by the gallery, which doesn't load traces) additionally refuses
-  to mark anything past the running cursor as done.
-
-- **An approval note now reaches the steps after it.** Approval checkpoints are
-  transparent to the data flow (they publish no content, so the *material* still
-  comes from the last real producer) — but that also silently dropped the
-  reviewer's note, so approving with "translate it into French before sending"
-  had no effect on the sending step. Notes are now read back off the run's
-  approval traces and injected into every later step as a reviewer directive,
-  alongside the content rather than instead of it. Approving with no note injects
-  nothing.
-
-- **The agents board uses the app's own tooltips.** Its hover hints were native
-  browser `title` attributes, so they appeared after a long OS delay in a system
-  bubble that ignored the theme — visibly different from every other hint in the
-  app. The KPI tiles, the Auto badge, the narration line, the inbox rows and the
-  new workflow chip all use the shared tooltip now.
-
-- **Removed the unreachable agents sidebar list.** The agents section has been a
-  card board since the dashboard landed, and the sidebar is force-collapsed (and
-  un-expandable) in that mode — so the old `AgentList` sidebar rows could not be
-  reached by any route, while still being maintained alongside every agent
-  change. Deleted, along with the `agentSlot` plumbing that fed it.
-
-- **No more double border on the in-progress step.** The active step drew a
-  border *and* a 2px ring underneath the animated holographic frame; the frame
-  now owns the edge alone. An approval step also no longer mislabels itself
-  "Missing agent" — it legitimately has no agent, and reads "Human approval".
-
-### Added
-
 - **Workflows can be archived.** Archive hides a workflow from the gallery while
   keeping its definition and run history; the shared **Archive** panel gains a
   Workflows tab to restore or permanently delete it, alongside topics, chats,
   agents and live sessions. The backing endpoints existed but had no UI at all.
   Backed by a new `GET /api/workflows/archived`.
-
 - **An agent shows which workflows use it.** Every agent **card on the agents
   board** carries a workflow chip with the number of pipelines using it. Clicking
   it jumps straight to the workflow when there's only one, and names them on the
@@ -3912,29 +1976,24 @@ are the per-version history; releasing does not rewrite this file.
   don't count, and private inline vessels never appear. Backed by
   `GET /api/agents/{id}/workflows` and a `workflow_count` on the agent payload
   (one grouped query, not one request per card).
-
 - **Workflow schedules match topic and agent schedules.** The workflow recurrence
   editor now uses the same control as scheduled topics and agents: an arbitrary
   "every *N* minutes / hours / days" interval, or a **time of day on chosen
   weekdays**, in your local timezone. It previously offered four fixed presets
   (hourly / 6h / daily / weekly) with no weekday selection.
-
 - **A real icon picker for workflows.** Browse a categorised set, search it by
   keyword, or paste **any** emoji (including from the OS picker) — and **No icon**
   is a first-class choice rather than a fallback gear. Clearing one also required
   a backend fix: the update handler tested `if payload.icon is not None`, so a
   null could never remove an icon once set.
-
 - **Settings → Workflows.** A section for the defaults a new workflow and its
   steps start from: whether a step may use **tools**, **skills** and **memory**,
   and the **stall watchdog** a new workflow carries. All still overridable per
   workflow/step. A default of *on* leaves a step's override unset (inherit its
   agent); a default of *off* is written explicitly, because "inherit" would
   quietly turn it back on.
-
 - **Workflows on the home page.** The launcher grid now offers Workflows
   alongside Topics, Chats, Live, Agents and Files.
-
 - **Any prompt written inside a step stays private to it — including a gate's.**
   A step's agent is a hidden vessel whenever its prompt was authored in the step,
   so a one-off quality check ("is *this* joke safe for kids?") no longer leaves a
@@ -3942,7 +2001,6 @@ are the per-version history; releasing does not rewrite this file.
   **Existing agent** (reuse one from the Agents section) vs **Inline prompt**
   (write it here), offered for both Agent and Gate steps; the old "New agent"
   silently created a reusable agent instead. Referenced agents are never touched.
-
 - **Inline steps — one-off work that isn't an agent.** A step can now be
   **Inline**: its instructions live with the step instead of in a reusable agent,
   so a pipeline stops leaving a trail of single-purpose agents in your Agents
@@ -3955,7 +2013,6 @@ are the per-version history; releasing does not rewrite this file.
   **needs-attention** by design, so an inline step blocked on a tool approval
   can't wedge a workflow invisibly. Backed by `WorkflowStep.kind = "inline"` and
   `AgentSession.inline` (migration `b6e1f70a3c48`).
-
 - **Steps are authored on the workflow board, not in a dialog.** Hit **Edit
   steps** and the horizontal strip you already know becomes editable — same
   layout, now authorable. **Drag a card** anywhere to reorder, **click a card** for that step's own
@@ -3972,7 +2029,6 @@ are the per-version history; releasing does not rewrite this file.
   would strand the coordinator. Backed by a new `WorkflowStepEditModal` that owns
   the draft model (`draftsFromWorkflow` / `draftsToPayload`), leaving
   `WorkflowBuilder` a third of its former size.
-
 - **Workflow notifications.** A background pipeline can now reach you: a run
   raises a notification when it **finishes**, **fails**, or — most importantly —
   **parks on a human approval**, which is shown even when the app is focused
@@ -3980,32 +2036,26 @@ are the per-version history; releasing does not rewrite this file.
   silent and each transition notifies once. The `workflow.changed` SSE event now
   carries the run status and workflow name (the event bus whitelists payload
   keys and had been dropping `workflow_id` entirely).
-
 - **Per-step context sourcing.** A step no longer has to inherit everything: pick
   **Previous step** (the default hand-off plus the artifact board), **Pick steps**
   to name exactly which earlier steps feed it, or **None** to run on its own
   objective alone. The run brief, reviewer directives and step instructions are
   always delivered — this governs the *material*, not the intent. Backed by
   `WorkflowStep.context_mode` / `context_sources`.
-
 - **Per-step capability toggles (tools, skills, memory).** Agents gain
   `use_mcp` / `use_skills` / `use_memory`, and each workflow step can override
   them tri-state (auto / on / off). Tool schemas are a large fixed context cost
   paid every turn, so a step that only rewrites a paragraph needn't carry the
   whole MCP catalogue; a pure transform step is usually better off not consulting
   long-term memory. Flipping one rebuilds the agent's session on its next run.
-
 - **A workflow-wide Assistant role.** Pick a role on the workflow and every
   step's agent adopts it for the run — applied at launch rather than stamped onto
   the shared agent rows, so the same agent can be formal in one pipeline and
   blunt in another. Backed by `Workflow.role_id` (migration `a9d4e7f21c60`).
-
 - **Editing a step's agent without leaving the workflow.** The step modal now
   edits the agent's objective in place and toggles its capabilities, instead of
   bouncing out to the Agents cockpit to change one line. Saving primes the change
   for the step's next run; it never launches a turn.
-
-
 - **Human approval checkpoints, with a reject policy.** A step can now be an
   **approval**: the run *parks* on it — no agent runs, nothing is spent — until a
   human decides. Where a gate is an agent judging the work, this is you judging
@@ -4022,14 +2072,12 @@ are the per-version history; releasing does not rewrite this file.
   `awaiting_approval` workflow/run status, and
   `POST /api/workflows/{id}/approve` \| `/reject`. See
   [features/workflows](website/features/workflows.md).
-
 - **Per-step instructions — one agent, a different job in each workflow.** A step
   can carry its own mandate, layered on the referenced agent's standing objective
   and taking precedence where they differ, so a single `Summariser` row can be
   the terse-bullets stage in one pipeline and the exec-brief stage in another
   without cloning it. Instructions land at the end of the kickoff preamble where
   they carry the most weight; on an approval step they're what the reviewer sees.
-
 - **Per-step failure policy + stall watchdog.** A failed step no longer always
   kills the run: each step chooses **stop run** (the default), **retry** up to
   *N* times (with the failure reason injected so the retry isn't a blind repeat,
@@ -4041,12 +2089,10 @@ are the per-version history; releasing does not rewrite this file.
   Backed by `WorkflowStep.on_error`/`max_retries`/`retry_count`,
   `Workflow.step_timeout_seconds` (migration `e7c2f4a9b8d1`) and a scheduler
   sweep.
-
 - **Cost roll-up per step and per run.** Every step attempt records the token
   spend of its turn and the run accumulates the total, shown in the run header
   and on each trace row — so a gate that looped four times reveals what each pass
   cost. Turns "did it work?" into "was it worth it?".
-
 - **Per-run brief — point one reusable workflow at a different subject each
   run.** Starting a workflow now takes an optional free-text **brief** ("analyse
   `/data/q3-sales.csv`, EMEA only"), so the definition stays generic
@@ -4062,7 +2108,6 @@ are the per-version history; releasing does not rewrite this file.
   `{ "input": … }` body and a webhook's posted payload becomes the run's brief;
   scheduled runs stay brief-free by design. See
   [features/workflows](website/features/workflows.md).
-
 - **Workflow run history + inspectable per-step trace.** Every workflow
   execution is now persisted as a `WorkflowRun` with an append-only
   `WorkflowRunStep` trace — one row per step **attempt**, capturing what the step
@@ -4087,7 +2132,6 @@ are the per-version history; releasing does not rewrite this file.
   **unread** in the Agents section — that badge is reserved for genuinely
   autonomous runs (started manually or by schedule), so the coordinator driving a
   step doesn't spam agent badges.
-
 - **Workflow steps read the whole run's artifacts (shared blackboard).** Beyond
   the immediate hand-off (the previous step's full answer + artifacts), a step
   now also inherits the **artifacts published by every earlier step** in the
@@ -4098,7 +2142,6 @@ are the per-version history; releasing does not rewrite this file.
   `collect_prior_artifacts` / `_earlier_content_agent_ids` in
   `services/agents/workflow.py`. See
   [features/workflows](website/features/workflows.md).
-
 - **Workflow gates with conditional loop-back — simple prompt chaining with a
   quality gate.** A workflow step can now be a **gate**: it votes `PASS`/`FAIL`
   on the work so far and, on failure, re-drives an earlier step (its **on-fail
@@ -4336,9 +2379,717 @@ are the per-version history; releasing does not rewrite this file.
   time) next to the author, with an *(edited)* hint when the comment was updated
   after posting. The GitHub `IssueComment` schema and its TypeScript mirror now
   carry `created_at` alongside `updated_at`.
+- **A Markdown formatting toolbar and keyboard shortcuts on the Markdown
+  composers.** The editors that render their value as Markdown — live-session
+  **notes** and **summary**, and the GitHub **issue / comment drafts**
+  (`/gh-update`, `/gh-create`, and the comment box) — now carry a small
+  formatting toolbar (bold, italic, strikethrough, inline code, link, heading,
+  quote, and bulleted / numbered lists) that rewrites the current selection in
+  place. The same actions are bound to shortcuts — <kbd>⌘/Ctrl</kbd> + <kbd>B</kbd>
+  (bold), <kbd>I</kbd> (italic), <kbd>K</kbd> (link), <kbd>E</kbd> (code), and
+  <kbd>⌘/Ctrl</kbd> + <kbd>⇧</kbd> + <kbd>X</kbd> (strikethrough). Toggles are
+  reversible (re-apply to unwrap), an empty selection parks the caret between the
+  markers, and <kbd>⌘/Ctrl</kbd> + <kbd>K</kbd> stays local to the field instead
+  of bubbling to the global command palette. The plain-text fields (system
+  prompts, memories, roles) are untouched.
+
+
+  one collection, unread activity in the others was invisible. The switcher now
+  carries a dot when another collection has unread messages, and each row in its
+  dropdown shows that collection's own unread count.
+- **The GPT-5.5/5.6, Codex, Grok and MAI models now actually work.** Copilot
+  serves its catalogue across two API surfaces, and a model offered by one is
+  rejected by the other — Precursor only ever spoke `/chat/completions`, so
+  **eight of the models it listed** (`gpt-5.3-codex`, `gpt-5.4-mini`, `gpt-5.5`,
+  `gpt-5.6-luna`, `gpt-5.6-sol`, `gpt-5.6-terra`, `grok-4.5` and
+  `mai-code-1-flash-picker`) answered a raw `400` the moment you sent a message.
+  Precursor now speaks the **Responses API** as well and routes each model to the
+  surface that serves it, reading the `supported_endpoints` the catalogue already
+  publishes. Streaming, tool calls, images and reasoning effort behave the same on
+  both. Models the catalogue says we can drive with *neither* endpoint are no
+  longer offered at all, since listing a model that cannot be called only
+  guarantees a failure once it is picked.
+- **Type-to-filter in the model pickers**: the composer and agent model menus
+  now open with a search box focused, narrowing the list as you type. Matching a
+  vendor heading (`anthropic`, `microsoft`, …) keeps that whole group, so the
+  catalogue can be sliced by publisher as well as by model name, and <kbd>Enter</kbd>
+  picks the first match. Menus with only a handful of options — reasoning effort,
+  context size — stay plain lists.
+- **MCP: console tracing for the WorkIQ sign-in legs.** The hands-free re-auth
+  hides two sequential attempts inside one request — the invisible `prompt=none`
+  iframe, then the backend self-opening the OS browser — so when the manual
+  banner finally appears there was no way to tell which leg gave up, or why.
+  Each step of an auth episode now logs to the browser console under
+  `[workiq-auth]` with elapsed timings: when a notice opens, when the
+  authorization URL arrives over SSE (published for the silent leg only, so its
+  absence is itself diagnostic), how the hidden frame navigated — including
+  whether it was refused before any document loaded, the signature of
+  `X-Frame-Options` blocking the silent pass outright — and which outcome
+  produced the banner. `window.precursorWorkiqAuthTrace()` returns the whole
+  episode for pasting into a bug report; `login_hint`, `state` and `nonce` are
+  never logged. Silence it with
+  `localStorage['precursor.debug.workiqAuth'] = '0'`.
+- **Collections**: split topics into separate workspaces of work. A switcher at
+  the top of the Topics panel filters the sidebar tree (and the Pinned section)
+  to one collection at a time; search, the command palette, and the archive stay
+  unfiltered, and opening a topic from another collection switches to it. Move
+  topics via the sidebar context menu, topic settings, or the new
+  **`/collection <name>`** command — sub-topics always follow their parent.
+  Each collection carries a name, description, colour accent, and an optional
+  **GitHub repo** override, giving repo resolution a three-step chain:
+  `topic.github_repo` → `collection.github_repo` → the global setting. Manage
+  them in **Settings → Collections**; deleting one re-homes its topics to a
+  destination you choose rather than deleting anything. Existing topics are
+  backfilled into a protected **General** collection. The MCP `list_topics` /
+  `get_topic` tools now report a topic's collection, and `list_topics` accepts a
+  `collection` filter. See [collections](https://lrivallain.github.io/precursor/features/collections).
+- **Search with `/`**: pressing <kbd>/</kbd> anywhere outside a text field now
+  opens the command palette straight into search — the same launcher as
+  <kbd>⌘K</kbd> / <kbd>Ctrl-K</kbd>, one key away. The shortcut stands down
+  whenever you're typing (inputs, textareas, and rich contenteditable editors),
+  so the composer's `/` slash-command picker is untouched, and it won't stack the
+  palette on top of an open dialog.
+- **Sidebar contextual menus**: right-click topic, chat, Live, and agent rows for
+  the actions each surface supports. Topics and chats expose rename,
+  read/unread, pin/unpin, reminder, notes, and archive; agents expose rename,
+  read/unread, and archive; Live sessions expose rename and archive.
+- **MCP: Microsoft Agent 365 servers (`workiq-teams`, `workiq-user`)**: two new
+  built-in, OAuth-protected streamable-HTTP servers covering **Teams** (chats,
+  channels, messages, members, presence) and the **directory** (profiles,
+  managers, direct reports). They reuse the existing WorkIQ browser sign-in
+  stack — silent-first re-auth, keep-alive refresh, inline auth banner — and
+  **share a single sign-in**: they authenticate as the same Entra client against
+  the same resource, so one token serves both (the WorkIQ preview keeps its own,
+  separate one). Their endpoint URL
+  embeds a Microsoft **tenant GUID**, resolved from **Settings → MCP →
+  Microsoft 365 tenant**, then `PRECURSOR_WORKIQ_TENANT_ID`, then — as a
+  convenience — the `tid` claim of a token from an existing WorkIQ sign-in, so
+  in practice there is usually nothing to configure. See
+  [MCP → Agent 365](https://lrivallain.github.io/precursor/features/mcp.html#agent-365-workiq-teams-and-workiq-user).
+- **Installable app (PWA)**: Precursor now ships a web app manifest, PNG icons
+  (incl. a maskable variant), and a minimal service worker, so Chromium browsers
+  offer to **install it as a standalone app** (own window, dock/taskbar icon).
+  The service worker registers only in the built SPA (a one-process
+  `precursor` run), does **no offline caching**, and passes all traffic through
+  to the network — it exists purely to meet the browser's installability bar.
+  It stays a convenience wrapper around your local instance: works while the
+  process is running, on the same machine over `localhost`. See
+  [Installation → Install as a browser app](https://lrivallain.github.io/precursor/guide/installation.html).
+- **MCP: cross-entity search + chats/agents/live accessors**: the built-in
+  `precursor` MCP server's `search` tool now spans the same surfaces as the ⌘K
+  palette — topics, chats, agents, and live (meeting) sessions — and each hit
+  carries an `accessor` hint pointing to the tool that returns its full content.
+  Three new opt-in `mcp_expose` sections back this: **`chats`** (`list_chats`,
+  `get_chat`, `list_chat_messages`), **`agents`** (`list_agents`, `get_agent`),
+  and **`live`** (`list_live_sessions`, `get_live_session` — notes, summary,
+  transcript, and insights). Chat/agent/live search hits only surface when their
+  section is exposed, so snippets never leak content the host hasn't opted into.
+- **Playwright MCP server (authenticated scraping)**: a new built-in `playwright`
+  tool server wraps Microsoft's official `@playwright/mcp` (launched via `npx`,
+  like `workiq`) so agents, topics, and chats can drive a real browser —
+  navigate, read the rendered DOM/text, and screenshot. It runs **headed** and
+  defaults to **Microsoft Edge** (`--browser msedge`) so it can ride the
+  corporate Edge SSO/WAM broker for authenticated Entra scraping, reusing
+  `@playwright/mcp`'s **shared, machine-wide persistent profile** so a sign-in
+  already onboarded there (including via other Playwright-MCP tools) carries over
+  and reaches **authenticated** pages that `fetch` (raw HTTP, no browser/session)
+  can't. `PRECURSOR_PLAYWRIGHT_BROWSER` (default `msedge`) picks the channel and
+  `PRECURSOR_PLAYWRIGHT_PROFILE_DIR` pins an isolated profile. Toggle it in
+  **Settings → MCP**; a host-dependency preflight requires Node.js (`npx`) on
+  PATH.
+- **Attach text & code files**: the message composer now accepts plain-text and
+  source files (`.txt`, `.md`, `.csv`, `.json`, `.yaml`, `.toml`, `.xml`, `.py`,
+  `.ts`, `.js`, `.go`, `.rs`, `.sql`, `.sh`, and many more) in addition to images
+  and PDF/DOCX/PPTX. Their UTF-8 text is extracted and folded into the turn as
+  context. Because browsers report inconsistent MIME types for source files,
+  acceptance falls back to the file extension and the stored type is normalized
+  to a `text/*` MIME.
+- **Edit transcript phrases inline**: in a Live session, **double-click any
+  phrase** in the transcript to correct misheard words in place — press
+  <kbd>Enter</kbd> (or blur) to save, <kbd>Esc</kbd> to cancel. The correction
+  persists to the session and feeds the insights and summary. Backed by a new
+  `PATCH /api/live/{id}/segments/{segment_id}` endpoint.
+- **Live transcript auto-cleanup**: a Live session's raw transcript is now
+  automatically deleted a configurable number of days after the session ends
+  (**7 by default**; `0` keeps it forever), bounding database growth. Only the
+  transcript is removed — the session and its insights, notes and summary are
+  preserved — and only *ended* sessions are eligible, so an active or paused
+  recording is never touched. Configure it under **Settings → Live**
+  (`live_transcript_retention_days`); the sweep runs on startup and daily via a
+  background ticker.
+- **Past meetings in the Live agenda picker**: the meeting lists used to *start*
+  a Live session (Start screen) and to *attach* one (Context tab) now include the
+  **last 7 days** of calendar meetings, not just today, so you can record or
+  summarize from a meeting that already happened. Entries are split by a
+  color-coded **Past** (amber) vs **Current & upcoming** (emerald) marker; the
+  list auto-scrolls to that boundary so today's meetings are front-and-centre,
+  and the past group is capped to the **10 most recent** meetings. Past meetings
+  still spin up a session linked to the meeting (handy with **From Teams
+  transcript**).
+- **Summarize a Live session from the Teams transcript ("no local record")**:
+  when a Teams meeting is linked to a Live session and the **WorkIQ MCP** server
+  is enabled, the **Summary** tab gains a **Generate from Teams transcript**
+  button. It scrapes the meeting's published transcript through WorkIQ (Microsoft
+  Graph:
+  `/me/onlineMeetings` → `/transcripts` → VTT `/content`) and generates
+  Precursor's own structured recap — so you don't need to capture the meeting
+  audio locally. Best-effort and fail-closed: it requires you to be the meeting
+  organizer, the delegated `OnlineMeetingTranscript.Read.All` permission, and a
+  transcript that Teams has already published (a few minutes after the meeting
+  ends). The **Summary** tab is always available; its actions light up based on
+  the data at hand — generate from the local recording and/or from the Teams
+  transcript. New endpoint `POST /api/live/{id}/summary/from-transcript`; the
+  linked meeting now also carries its Teams join URL.
+- **Hands-free WorkIQ re-auth**: when a WorkIQ preview session's refresh token
+  ages out, Precursor now attempts the silent `prompt=none` authorization in an
+  invisible iframe before showing anything. If the browser still holds a live
+  Entra SSO session the session is renewed with **zero clicks** and the
+  `McpAuthBanner` never appears; the manual **Sign in** banner only surfaces when
+  a silent pass genuinely needs interaction (or iframe framing / third-party
+  cookies block it). Gated by the new `workiq_auto_reauth_enabled` setting
+  (default on); turn it off to always require the manual click.
+- **In-app documentation**: the documentation site (the VitePress project in
+  `website/`) is now served by the app itself at `/docs/`, reachable from a
+  **Documentation** entry in the command palette and the About dialog (the About
+  link opens the local `/docs/` in dev and the public site in a production
+  build). In production it's pre-built with base `/docs/` (`make docs`), bundled
+  into the wheel, and served statically with VitePress clean-URL resolution; in
+  `precursor --dev` a live VitePress dev server runs on a hidden port that the
+  SPA's Vite proxies `/docs` to, so editing any `website/**` markdown
+  hot-reloads in the browser. GitHub Pages hosting is unchanged — it builds the
+  same source with the default base `/` in its own workflow (`DOCS_BASE`
+  selects the base). FastAPI's interactive API docs moved to `/api/docs`,
+  `/api/redoc`, and `/api/openapi.json` so the root `/docs` path is free for the
+  product docs.
+- **Reorderable sidebar sections**: drag any section (Topics, Chats, Live,
+  Agents, Files, Kanban) in the sidebar to rearrange it. Works in both the
+  vertical icon rail and the horizontal tab switcher, with an insertion line
+  showing exactly where the section will land (drop on either side of a
+  neighbour, including the ends). The order is persisted in the browser
+  (`precursor:sidebar:sectionOrder`) and shared between the two navigation
+  styles; newly-shipped sections append to the end without disturbing an
+  existing arrangement.
 
 ### Changed
 
+- **Agents stop archiving streaming fragments.** Every token of an agent's reply
+  and thinking was written to `agent_events` as its own row and commit, with its
+  text dropped on the way. Those fragments now only feed the live view; the
+  archive keeps the complete messages, thinking and tool events. That frees
+  `agent_event_max_per_session` for real history, and the live narration on
+  agent cards reads the streamed text again.
+- **Git workspaces merge, and conflicts are resolved in the editor.**
+  - **Starting a merge:** when Pull (or Push) finds that the branch and the
+    remote have both moved on, the bar offers **Merge remote changes**. It
+    records a merge commit and is refused while anything is uncommitted.
+  - **Conflicts:** a **Merge in progress** bar stays up, and the Changes tab
+    lists the conflicted files first.
+    - A text conflict opens in the editor, tinted, with **Accept current /
+      incoming / both** above each block. Save, then **Mark resolved**, which is
+      refused while a conflict marker remains.
+    - A binary conflict, or one side deleting the file, offers **Keep yours** or
+      **Keep theirs**, after a confirmation.
+  - **Finishing:** **Complete merge** once none are left, or **Abort merge**
+    after a confirmation.
+  - **Consistent behaviour:** the merge always runs as `git merge` and ignores
+    the user's git settings (rebasing pulls, `merge.ff`, conflict style,
+    editor).
+  - **API:** new `POST /api/workspaces/{id}/git/merge`, `GET /git/conflict`,
+    `POST /git/resolve`, `/git/merge/complete` and `/git/merge/abort`.
+  - **Stricter names:** branch names and paths with surrounding whitespace or
+    control characters are refused instead of trimmed. A new branch can't be
+    named like another kind of ref (`refs/…`, `origin/…`, `HEAD`…).
+- **Git workspaces switch and create branches.** The branch name in the git bar
+  opens a picker.
+  - **What it lists:** local branches (unpublished ones marked) and the
+    branches only the remote has. Picking a remote one creates a local branch
+    that tracks it, even in a single-branch clone.
+  - **Creating:** a new branch starts from the current commit and stays local
+    until published.
+  - **Nothing is lost:** switching is refused while anything is uncommitted
+    (the files are named), during a merge, or on a detached HEAD. Nothing is
+    ever forced or stashed.
+  - **The open file:** unsaved edits ask first. After the switch the file is
+    reloaded, or closed if the branch doesn't have it.
+  - **Robustness:** remote branch names git wouldn't accept are never listed,
+    and a new branch never tracks the one it started from, even with
+    `branch.autoSetupMerge=always`.
+  - **API:** new `GET`/`POST /api/workspaces/{id}/git/branches` and
+    `POST /git/switch`.
+- **Git workspaces have a History tab.**
+  - **Browsing:** the branch's commits, newest first, with **Load more**. A
+    commit opens to its message and changed files, and each file's diff
+    against the commit before it.
+  - **Merges and the first commit:** a merge is compared with its first parent
+    and says so. The first commit shows its files as added.
+  - **One file's history:** **File history** beside an open file's name lists
+    the commits that changed it, across renames, and opens that file's diff
+    directly.
+  - **Phones:** the commit message and opened commits now survive a look at a
+    file or diff.
+  - **API:** new `GET /api/workspaces/{id}/git/log` and
+    `/git/commits/{sha}`. The status gains `head`, and `file-versions`
+    compares against an empty original when given `head` without `base`.
+- **Git workspaces review changes in a Changes tab, with a real diff.** The
+  Files section's left pane gains a **Changes** tab beside **Files**, replacing
+  the Review & Push dialog.
+  - **What it shows:** every changed file, ticked to be committed, with a
+    commit message box and **Commit** or **Commit & Push**. The pane you last
+    used is remembered.
+  - **The diff:** a file opens in Monaco's diff editor, comparing the last
+    commit with the working copy, side by side or inline (always inline on a
+    phone). Binary and very large files say so.
+  - **Change bars:** the editor's margin marks lines added, modified or removed
+    since the last commit, refreshed on open and on save.
+  - **Discard asks plainly:** a new file's confirmation says that discarding
+    deletes it, with a **Delete file** button. A rename's says it restores the
+    old name.
+  - **Phones:** the git bar wraps instead of pushing Pull and Push off-screen.
+  - **API:** new `GET /api/workspaces/{id}/git/file-versions`.
+- **Git workspaces know where they stand against the remote.**
+  - **Refresh:** opening a git workspace, and Refresh, fetch from the remote,
+    so "↓ N behind" is real (fetching changes no file). If the remote can't be
+    reached, an icon says so.
+  - **Commit and Push are separate:** the review can commit locally, and
+    **Push N** sends commits later.
+  - **New branches:** a branch that isn't on the remote shows **not published**,
+    and **Publish** pushes it and sets its upstream. A branch that only tracks a
+    local one counts as unpublished too.
+  - **Branch switches outside Precursor:** Pull and Push follow the checked-out
+    branch, even when it was switched in a terminal or VS Code, and the
+    workspace remembers it.
+  - **Fixes:**
+    - A pushed branch other than the cloned one stays tracked.
+    - File names with spaces, non-ASCII characters and renames are reported
+      correctly.
+    - Change badges show in a workspace limited to a subfolder.
+    - Discard now also resets staged changes, and removes a file the last commit
+      doesn't have. It used to do nothing to such a file.
+  - **Hardening:** request paths are checked before git sees them. Pathspec
+    magic such as `:/` is literal, git never waits on a prompt, and a clone URL
+    can't pass options to git.
+  - **API:** new `POST /api/workspaces/{id}/git/fetch`, `/git/commit` and
+    `/git/push`. The status gains `upstream`, `detached`, `merging`, and per-file
+    `orig_path`, `conflicted` and `browse_path`.
+  - **Definition schemas:** `docs/schemas/` drops the titles Pydantic generated
+    from field names. The Files editor's hovers show only descriptions.
+- **The Files section edits with Monaco, the VS Code editor core.** It replaces
+  the plain text box:
+  - syntax highlighting, find and replace, multiple cursors and folding;
+  - <kbd>Cmd/Ctrl</kbd>+<kbd>S</kbd> saves;
+  - YAML and JSON are checked as you type;
+  - switching to a preview and back keeps undo history.
+
+  The editor follows the app's theme and works on phones. It downloads the first
+  time a file is edited, so the rest of the app is unchanged in size. New
+  frontend dependencies: `monaco-editor` and `monaco-yaml`.
+- **An agent's page now separates its result from its activity.** Refining a
+  deliverable over several follow-ups used to stack every draft at the foot of
+  the page, oldest last, so the current one was the hardest to find. The body
+  also showed twice: once in the answer bubble, and again as a deliverable.
+  - **Result tab.** Once an agent publishes an artifact, its page offers
+    **Result** and **Activity** tabs. Result opens on the newest version, with
+    the earlier ones on a rail (newest first). Each version shows the prompt that
+    produced it and the agent's summary of what changed. Artifact permalinks open
+    the Result tab on their version. The page shows Activity while a turn runs,
+    needs you or stopped short, and Result once the agent comes to rest on a new
+    version. Approvals, questions and **Resume** show on both tabs.
+  - **No duplicate result.** The frontend now parses multi-line `ARTIFACT:` …
+    `END_ARTIFACT` blocks, as the backend already did. The answer bubble shows
+    only the prose around the block, plus a compact card (*v2 · superseded by
+    v3*) that opens the version in the Result tab.
+  - **Finished turns fold.** A turn with an answer folds its steps into one
+    line (*Worked for 3m 13s · 19 tool calls · 7 updates*) that opens on click.
+    The turn in flight and any turn awaiting approval stay open. **Show → Fold
+    finished turns** turns this off. The goal loop's nudge between autonomous
+    steps shows as a *Continued autonomously* marker, not as your message.
+    Progress-only messages no longer leave an empty bubble above their milestone,
+    and suggested replies appear on the newest answer only.
+- **Topics, chats and the workspace assistant now behave the same when you
+  delete, clear or stop** (#343). The #335 refactor had kept three differences
+  on purpose:
+
+  - **Deleting a message** shows the same undo toast everywhere: *"Your message
+    removed · undo in 5s"*, with a countdown that tracks the real grace timer.
+    Chats used to show a static *"Message deleted"* strip.
+  - **Clearing a transcript always leaves it empty.** A topic's `/clear` now drops
+    the client-side stream buffer too, like a chat's, so a finished turn whose
+    post-stream reload had failed can no longer reappear. Clearing while a reply
+    is streaming — **Settings → Clear chat**, or the workspace assistant's
+    **Clear** — stops the reply first, instead of letting its tool results and
+    answer land afterwards without their prompt. The confirmation reads the same
+    on every surface.
+  - **Stop settles a running tool call as _stopped_.** The workspace assistant's
+    tool bubble no longer spins "running…" forever, and in topics and chats the
+    interrupted call no longer vanishes on the post-stop reload: it is saved as a
+    stopped tool result, so it survives a reload and the next turn's model
+    context sees the call was cut short. `POST …/messages/stopped` accepts
+    `tool_call_ids` next to `content` (either may be omitted, not both) and now
+    returns the list of rows it created.
+- **Precursor now runs on MCP 2 (`mcp>=2.2,<3`); MCP 1 is no longer supported.**
+  The 2026.9.1 release never shipped: its fresh-install smoke gate resolved
+  `mcp 2.2.0`, which dependabot's `<3` bound allowed, and the app died on import
+  (`cannot import name 'streamablehttp_client'`). The lockfile had kept every
+  other check on MCP 1, so nothing else noticed. This is the whole migration,
+  not just the import rename:
+
+  - The client opens streamable-HTTP sessions through `streamable_http_client`
+    over an `httpx2` client, with MCP 1's 30 s / 300 s timeouts kept. `httpx2`
+    is now a direct dependency because MCP 2's transports and OAuth providers
+    take it instead of `httpx`.
+  - The built-in servers (`precursor`, `fetch`, `workspace-fs`, `drawio`,
+    `cmd-runner`) are `MCPServer`s, and the in-app `/mcp` endpoint takes its
+    path and Host allowlist on `streamable_http_app()`.
+  - Tool results are read by MCP 2's snake_case field names. Under MCP 2 the
+    old `isError` / `structuredContent` spellings read as missing *without an
+    error*. That would have made failed tool calls look successful, hosted
+    WorkIQ reads look empty, and workspace file links disappear.
+  - MCP 2 no longer raises on an HTTP error. It fails the call with the server's
+    JSON-RPC error, or a generic message when there is none, and drops the
+    status. Precursor re-attaches the status, so a 404 (a remote that forgot the
+    session, such as MCP 2's own `Session not found`) or a 5xx still recycles the
+    session and retries once, and a 4xx still doesn't.
+  - **WorkIQ and Agent 365 sign-in.** MCP 2's OAuth client rejected Entra's
+    multi-tenant metadata ("issuer mismatch"), which would have blocked every
+    sign-in, and it forced `prompt=consent` onto each one. Precursor now accepts
+    Entra's templated issuer for its multi-tenant authorities only, and drops
+    the forced consent.
+  - **Plugins** that ship an MCP server run in Precursor's environment, so they
+    must use MCP 2's `MCPServer` too. See the plugin reference. The `kanban`
+    extra now requires `precursor-kanban>=2026.9.1`, its first MCP 2 release
+    (lrivallain/precursor-kanban#8).
+  - CI gains a **fresh wheel install** job. It builds the wheel and installs it
+    with the `kanban` extra, unlocked, outside the checkout. It then runs the
+    release smoke gate plus a new `scripts/smoke_mcp.py`, which drives the stdio
+    servers, the HTTP endpoint and every installed plugin's MCP server through
+    Precursor's own client. This is the coverage the lockfile alone could never
+    give.
+- **The assistant-role picker now lives in every composer toolbar, not in the
+  app header.** The header selector was an odd one out: a bordered pill floating
+  far from the text you were writing, duplicating a control that already existed
+  on the two creation surfaces.
+
+  Every prompt surface — a topic, a chat, a workspace assistant, a new agent
+  task, and a follow-up turn on a running agent — now carries the role picker in
+  its own composer toolbar, beside the model and context pills and rendered by
+  the same control. The follow-up composer gains one for the first time. On an
+  existing conversation the meaning is unchanged: picking a role **saves it to
+  that conversation**, exactly as the header did. `/role <name>` still works
+  everywhere, and a bare `/role` now opens the picker next to your cursor
+  instead of one in the header.
+
+  [Live sessions](https://lrivallain.github.io/precursor/features/live-sessions)
+  have no composer, so their picker sits in the capture toolbar next to the
+  meeting language, matching its neighbours.
+- **`/role` now works in agent sessions too.** The pill was there but the
+  command was not: agent slash commands are validated against a backend registry
+  that had no `role` entry, so typing it was rejected and the command palette
+  never offered it. The registry gains a handler, the palette gains the surface,
+  and a bare `/role` opens the follow-up composer's picker like it does
+  everywhere else.
+- **Installation is one prescriptive path instead of a menu of three.** The guide
+  used to open with "Option A / Option B / Option C" and expect a newcomer to
+  weigh a background install against `uvx` against a source checkout before they
+  had run the app once — with plugin extras, the retired `agents` extra and the
+  Copilot CLI resolution order interleaved into the same page. For an opinionated
+  tool that is the wrong shape: the first page should say what to do, not offer a
+  decision.
+
+  It now reads *install uv → run one command → open the URL*, with everything
+  else demoted to an **Other ways to install** section that names the reason each
+  alternative exists (try it out, no login item, Windows, stable channel,
+  contributing). The Copilot CLI resolution order moved to
+  [agents mode](https://precursor.vuptime.io/features/agents-mode#pointing-at-a-specific-cli),
+  where it belongs, and the dev-stack launch options moved to the contribution
+  guide. The quick start now starts from a *running* app rather than re-teaching
+  how to launch one, and the README leads with the install rather than the stack.
+- **The kanban board now ships from
+  [its own repository](https://github.com/lrivallain/precursor-kanban).** It was
+  the last in-repo plugin, and being in-repo was doing it no favours: it built
+  with the host's Vite config, borrowed the host's TypeScript `paths` for
+  `@precursor/host`, and — because Tailwind scans from the git root — had its
+  utilities land in the host's stylesheet, so a *real* install would have
+  rendered the board unstyled. Out of tree it builds and injects its own.
+
+  Nothing changes for users: `precursor-ai[kanban]` still installs it, now
+  resolved from PyPI (`precursor-kanban>=2026.9`) instead of a workspace member,
+  and the board keeps its own release cadence rather than inheriting the host's
+  CalVer. `precursor.plugin_api` and the `py.typed` marker are what make that
+  work.
+
+  For this repository it means no `plugins/` tree, no `uv` workspace, no
+  `make plugins-build`, and a release that builds one distribution again.
+  `tests/test_plugins.py` covers the plugin seam with a stub, so the suite no
+  longer needs a plugin installed to test the host side of it.
+- **One stale credential no longer stalls unrelated work.** The MCP sign-in gate
+  ran *before* the model: if any enabled server was parked in `needs_auth`, the
+  turn waited on that sign-in for up to five minutes before generating a single
+  token. With three Entra credentials in play, an expired WorkIQ token held up
+  questions that had nothing to do with WorkIQ.
+
+  The turn now starts immediately and the sign-in is requested at the moment a
+  tool actually needs it — naming the tool, which the old blanket prompt could
+  not. The call then retries while it waits for that sign-in. This is not the
+  tools being hidden: a blocked server still contributes its catalogue to what
+  the model is offered, because dropping it is what makes a model answer from
+  memory instead of calling the tool. A sign-in that never arrives yields an
+  explicit tool error rather than a confident guess. Unattended runs (the
+  scheduler) raise the banner but fail fast, since nobody is there to complete
+  a browser flow.
+- **The kanban board no longer needs a configured GitHub repository.** It was
+  never really used: the repo is only ever read for its *owner* —
+  `list_repo_projects` discards the name — so it was one way of spelling "list
+  this account's boards", equivalent to adding that account as a source. Worse,
+  `GET /projects/{id}/board` and the card-move endpoint demanded a repo and then
+  **discarded it**, because project and item ids are global GitHub node ids.
+  A perfectly workable setup — a token plus an explicitly added project — was
+  blocked on configuration it would never consult.
+
+  A repository is now an optional default that contributes its owner's boards.
+  What the board actually requires is a token with the `project` scope, and the
+  **issue associations** switch, which remains the master control for the GitHub
+  surface.
+- **Kanban has no Settings page.** Which boards you track is managed on the
+  board: **+** adds one, right-click removes it. A second surface in Settings was
+  the same list, one navigation further away.
+
+  Two things only that page could reach are now in the picker itself, so nothing
+  you configure can be invisible *and* unremovable: a collapsible **Hidden (N)**
+  group (right-click → *Show on board*), and a **Not resolving** group listing
+  sources that currently produce no board — renamed, revoked, made private, or
+  simply empty — which previously vanished without trace.
+
+  `GET /api/github/projects` returns `{projects, unresolved}` accordingly, and
+  hidden boards are returned flagged rather than dropped.
+- **A plugin's section is always visible once enabled.** Sections could gate
+  themselves on app state and hide until it was satisfied — the kanban board
+  disappeared entirely without a configured GitHub repository. That optimised
+  for the wrong thing: an installed, enabled plugin that is nowhere in the
+  sidebar is indistinguishable from a broken one, which is why Settings →
+  Plugins needed a warning strip ("**Kanban** is hidden: No GitHub repository is
+  configured") to explain the absence.
+
+  Enabled now simply means visible. Kanban appears with or without a repository
+  and explains the setup step in the board itself, where the user actually
+  lands, instead of the developer-facing guard error the API returns. The
+  warning strip in Settings → Plugins is gone with the mechanism it described.
+
+  **Breaking for plugin authors** (`HOST_API_VERSION` 1 → 2): `SectionPlugin`
+  drops `unavailable`, and `@precursor/host` no longer exports
+  `sectionUnavailableReason` or the `SectionEnabledContext` type. A section that
+  needs setup should say so from `Main`. The backend's `PLUGIN_API_VERSION` is
+  unchanged.
+- **Settings → Agents no longer renders controls that cannot work.** Default
+  model, approval policy, custom system message, watchdog, permission grants and
+  blueprints were drawn whether or not a runtime existed — and several of them
+  whether or not Agents mode was even switched on — so the panel read as
+  "configured and ready" while the feature was inert, with the one honest signal
+  buried among a dozen live-looking controls. They now require both: the feature
+  on, and a runtime behind it.
+
+  Switched off, the panel is just the toggle and timeline retention. In
+  particular it no longer warns that the runtime "didn't start in this process"
+  when the runtime was stopped *because* you turned Agents mode off — an alarm
+  for a state the user chose.
+
+  Nothing is deleted: the stored values are untouched and reappear exactly as
+  they were.
+
+  **Timeline retention** follows a narrower rule than "always visible". Its sweep
+  is gated on `scheduler_enabled`, not on Agents mode, so it keeps pruning
+  archived events after the feature is switched off — hiding the levers while
+  that runs would leave no way to stop a background job quietly erasing history
+  you may want to keep. So they stay reachable when events exist, and say so;
+  with nothing on disk there is nothing to protect and the section goes away with
+  the rest.
+- **Settings → Workflows says that workflows need Agents mode.** Every workflow
+  step runs an agent, so with Agents off these defaults configure a pipeline that
+  cannot run — and the panel gave no hint of it. They stay editable (they are
+  plain preferences, worth setting ahead of time, and they survive the toggle);
+  they just no longer imply a workflow could start right now. Same wording the
+  Workflows section already uses for its own empty state.
+- **An installed Precursor now stores its data in a per-user directory.**
+  `PRECURSOR_DATABASE_URL` and `PRECURSOR_DATA_DIR` defaulted to paths relative
+  to the working directory (`./precursor.db`, `./.precursor`), which is exactly
+  right for a checkout — it is what makes each clone and worktree an isolated
+  sandbox — but wrong for an installed wheel, which a launcher starts with its
+  working directory set to `/`. That silently produced a fresh, empty database
+  wherever it happened to launch from.
+
+  The defaults now depend on how Precursor was installed: a source checkout
+  keeps the relative paths, while a wheel resolves to
+  `~/Library/Application Support/Precursor` (macOS),
+  `$XDG_DATA_HOME/precursor` (Linux) or `%APPDATA%\Precursor` (Windows). Setting
+  either variable explicitly overrides both, so existing configurations are
+  unaffected.
+- **The reference section was audited against the code.** Every documented
+  `PRECURSOR_*` variable was diffed against `config.Settings`, every cited file
+  path and table name checked for existence, every route and SSE event name
+  compared with the live OpenAPI schema, and the plugin contract read back
+  against `plugins/registry.py`. The env surface, the twelve SSE events, the ten
+  built-in MCP servers and the dependency list all matched exactly. Four things
+  did not, and are fixed:
+
+  - the API surface listed a **`schedules`** area as though it were a top-level
+    router, when recurrence is a sub-resource of the thing being scheduled
+    (`/api/topics/{id}/schedule`, `/api/agents/{id}/schedule`);
+  - the **`drawio`** router was undocumented;
+  - **`GET /raw/{slug}/{path}`** — read-only, unauthenticated, and the one route
+    outside `/api/*` — was missing from a page that states the API lives under
+    `/api/*`;
+  - the architecture reference's database highlights omitted **`AgentState`** and
+    **`WorkflowState`**, the two durable stores that survive a re-run, even
+    though both have their own feature pages.
+
+  The configuration reference's opening also claimed a Settings-backed value has
+  *no* environment twin, full stop; there are two justified exceptions, which the
+  page already documented at its foot, so the claim now points at them.
+- **The agents guide is five pages instead of one long scroll.** It was the
+  longest page in the docs — enabling, the dashboard, fleet orchestration,
+  artifacts, durable state, autonomous missions, approvals and scheduling in a
+  single column. It now follows the same shape as the workflows guide: an
+  **overview** (what agents are, enabling, the dashboard) plus **Running an
+  agent**, **Orchestrating a fleet**, **Artifacts & state** and **Autonomous
+  missions**. The `/features/agents-mode` URL is unchanged, and the eight
+  in-page anchors other pages deep-link to were repointed at the section that
+  now owns each one.
+- **Workflows are no longer flagged as work in progress.** The overview carried a
+  warning that the surface was "still evolving — expect the UI and controls to
+  keep changing", which undersold a feature that now has gates, loop-back, human
+  approval checkpoints, pipeline state, per-step tool allowlists, run replay and
+  a stall watchdog. The notice is gone; the *Experimental* marker on autonomous
+  agent missions and the plugin system's "not yet tested" warning are unaffected.
+- **The quick start covers every section, not just topics.** It walked you from
+  install to a first topic-scoped conversation and stopped, so the five sections
+  that need a first step of their own — and in three cases a prerequisite — were
+  left to the feature guides. It now adds *Start with the other sections* with a
+  sub-section each for **Agents**, **Live sessions**, **Workflows**, **Kanban**
+  and **Files**, leading with the prerequisite that actually blocks you (the
+  `agents` extra, Azure Speech credentials, a global repo plus `read:project`).
+
+  Writing it turned up two docs bugs, now fixed: workflows were described as
+  independently "opt-in and off by default" when they're gated on the **Agents**
+  toggle with no switch of their own, and a "local" workspace was described as
+  pointing at files already on disk when it in fact **creates an empty folder**.
+- **The docs are a third shorter, and no longer describe a topics-only app.** The
+  guides had accreted detail that churns faster than anyone can maintain it — UI
+  chrome ("cards lift on hover", "a warm gradient wash"), implementation internals
+  (`IssueContextCache`, table names, `services/*.py` paths), and design rationale
+  that belonged in a changelog rather than a guide. `features/mcp.md` spent ~180
+  lines on WorkIQ OAuth internals — loopback port numbers, `prompt=none` iframes,
+  orphaned-flow preemption — none of which a reader can act on; it is now one
+  section that says sign-in renews itself and points at the config flags. Every
+  page keeps what it is, why you'd use it, how to do the thing, and the gotcha
+  that bites.
+
+  The narrative was also stale: the introduction opened "Precursor is an AI
+  assistant that keeps each thread of work in its own **topic**" and relegated
+  meetings, agents and workflows to what it "layers around that core" — framing
+  from when topics were the only feature. Precursor is now described as several
+  surfaces sharing one set of tools, personas and memory.
+- **The agents feature page is `agents-mode.md`.** On macOS and Windows the
+  filesystem is case-insensitive, so `website/features/agents.md` *is*
+  `AGENTS.md` — the filename coding agents treat as an instruction file. Every
+  agent opening this repo was loading a 550-line product page as if it were
+  repo instructions. The page moved to `/features/agents-mode`, and every
+  internal link, the sidebar and the landing grid moved with it. There is
+  deliberately no stub left behind at the old path, since that would recreate
+  the collision.
+- **Documentation screenshots are reproducible, and six pages now have one.**
+  Workflows — the largest feature in the app — had no screenshot at all, and
+  neither did the scheduler, skills, command runner or import/export pages.
+  Retaking a shot previously meant pointing a browser at your own instance,
+  which is exactly how a real account or a real repository ends up in the docs.
+  Three scripts now do it from a clean room: `scripts/seed_demo.py` builds a
+  throwaway database of invented fixtures (and refuses to run unless the
+  database URL says `demo`), `scripts/demo_server.sh` serves it with `gh`
+  stripped from `PATH` so the persona can only resolve to "Guest / Not
+  connected", and `scripts/capture_screenshots.js` drives each scene and writes
+  the light and dark variants at `deviceScaleFactor: 2`. Added shots for the
+  workflow board, a workflow run trace (with a gate's loop-back and its
+  `attempt 2`), the recurrence editor, Settings → Skills, Settings → System's
+  command-runner jail, and the workflows gallery.
+- **The workflows guide is four short pages instead of one 786-line wall.** The
+  page had accreted a feature at a time until it was by far the longest in the
+  docs — 30 headings covering authoring, execution, cost, failure handling and
+  the REST surface in one scroll, with no screenshot to break it up. It is now an
+  **overview** (what a workflow is, how it differs from agent `depends-on`, the
+  four step kinds, the autonomy rule) plus **Building a pipeline**, **Configuring
+  a step**, **Running a pipeline** and a **Reference**. The `/features/workflows`
+  URL is unchanged; deep links from the agents and MCP pages were repointed at
+  the section that now owns each anchor. Also fixes a markdown bug that had
+  silently merged the "Manual" and "Schedule" trigger bullets into one line.
+- **Workflows are listed where the other sections are.** Workflows mode was
+  missing from every "what's in the app" list except the landing feature grid —
+  the sections table in the feature guides, the introduction, the quick-start's
+  home-card list, the README highlights, and the API reference's router table all
+  described a six-section app. Added to each.
+- **Assistant roles are documented.** A role had a Settings tab, a `/role`
+  command, a per-collection default and a per-workflow override, but no
+  documentation at all — and two pages linked to a `/features/roles` page that
+  never existed (one of them a dead link, the other pointing at Topics). They now
+  have a section on **Skills, roles & memory**, which the sidebar and both links
+  now name.
+- **The API and configuration references cover the whole surface.** The API
+  reference's router table described 13 of 31 routers — `workflows`,
+  `workspaces`, `live`, `reminders`, `roles`, `search`, `stats`, `commands`,
+  `attachments`, `projects`, `llm` and `refine` were absent — and listed 5 of the
+  12 SSE events. The configuration reference was missing 12 `PRECURSOR_*`
+  variables (`CORS_ORIGINS`, `DATA_DIR`, the four scheduler/reminder cadences,
+  `MCP_IDLE_TTL_SECONDS`, `GITHUB_MCP_TOOLSETS` and four WorkIQ keep-alive
+  knobs), and still closed with a "runtime settings layer over env defaults" note
+  that contradicted the no-env-twin rule stated at the top of the same page. A
+  cross-check against `config.Settings` now shows no drift in either direction.
+- **Settings you can change in the app no longer have a hidden env twin.**
+  `config.Settings` sets `env_prefix="PRECURSOR_"`, so every field on it silently
+  became a `PRECURSOR_*` variable — including 24 that already had a control in the
+  Settings panel. None were documented, so the only way to find one was to read
+  `config.py`, and two of them (`PRECURSOR_CMD_RUNNER_JAIL`,
+  `PRECURSOR_CMD_RUNNER_NETWORK`) were an undocumented second way to switch off
+  the command-runner sandbox. The factory default for each now lives as a constant
+  beside its `resolve_*` helper, leaving the DB row — and the panel that writes it
+  — as the single way to set the value. `.env` keeps only what must be known
+  before the database exists: bind address, database URL, data directory, ticker
+  cadences. A test pins the split so it can't creep back. Affected:
+  `LLM_MAX_INPUT_TOKENS`, `LLM_MAX_TOOL_RESULT_TOKENS`,
+  `SCHEDULED_RUN_TIMEOUT_SECONDS`, `TOOL_RESULT_RETENTION_DAYS`,
+  `LIVE_TRANSCRIPT_RETENTION_DAYS`, the eight `CMD_RUNNER_*`, the four `AGENTS_*`
+  defaults, the four `WORKFLOWS_DEFAULT_*`, and the three `BACKUP_*`.
+  `PRECURSOR_WORKIQ_TENANT_ID` and `PRECURSOR_PLAYWRIGHT_BROWSER` are kept
+  deliberately: both describe the machine or tenant rather than a preference, and
+  both are documented.
+- **Installing the `agents` extra is now the opt-in.** Agents mode took two steps
+  — install a ~150 MB extra, then find a toggle in **Settings → Agents** — so the
+  people who had just paid for the payload still saw nothing until they went
+  looking. It now follows the capability probe: on once the Copilot CLI runtime
+  resolves, off (with the existing "install this" explanation) when it doesn't.
+  The toggle stays as the one control on top of that — it is the kill switch and
+  the spend control, and still reconciles the runtime live without a restart.
+  There is deliberately no env-level default to go with it: the probe already
+  answers "can this run?" and the toggle answers "should it?", so a third input
+  would only have contradicted the premise that installing the extra *is* the
+  opt-in. The probe is still checked at every use, so a stored `true` on a
+  machine without the SDK stays inert.
+- **An agent is addressed by its own `public_id`, not by a session handle.**
+  `AgentSession.copilot_session_id` doubled as the agent's URL identity and as
+  the Copilot SDK handle for whatever was running; the handle now belongs to the
+  run, so the agent gained a stable `public_id` in its place. Existing UUIDs are
+  carried across by the migration, so `/agents/{uuid}` deep links, `/agent
+  <uuid>` nudges and transfer lookups keep resolving.
+- **A running workflow now wears the holographic frame on the gallery.** The
+  Workflows landing signalled a live run only with a small status dot and a
+  Pause button, so a card mid-flight read the same as an idle one at a glance —
+  yet everywhere else in Precursor an in-flight turn is the rotating iridescent
+  ring: the composer while a reply streams, and the step cards on the workflow
+  board. Cards whose workflow is `running` now use that same frame, so the one
+  thing worth spotting on the page is the one thing that moves.
+- **"Inline prompt" is no longer offered on an Agent step.** It produced exactly
+  what the **Inline** step type produces — the same hidden vessel, the same
+  runtime, differing only in the badge on the board — so the same intent had two
+  spellings and the step type disagreed with the toggle beneath it. One-off work
+  is now the **Inline** kind, full stop. A **Gate** keeps all three sources,
+  since there is no inline gate kind for its one-off check to be. A blank step
+  starts as **Inline**, which is where it effectively started before.
 - **An approval step's run detail reads like any other step's.** Opening one used
   to show a red error — "no agent runs for it" — and nothing else, hiding the
   brief, the input and the decision that *were* recorded. It now shows the same
@@ -4372,79 +3123,7 @@ are the per-version history; releasing does not rewrite this file.
 - The workflow settings dialog no longer carries a note pointing at *Edit steps*,
   and the **Expand sidebar** control is hidden on the Workflows page as it
   already is on Agents.
-
-### Fixed
-
-- **A workflow step no longer stalls asking for clarification.** A task step
-  whose objective was slightly under-specified (e.g. *"note this joke 0–10"*)
-  could emit `NEED_INPUT` / present a menu of options instead of acting — which
-  parked the step **Blocked** and paused the whole run, since a workflow runs
-  unattended with no human to answer. Every non-gate step's kickoff now carries a
-  strict autonomy directive: complete the objective directly on the given input,
-  never ask for clarification or emit `NEED_INPUT`, and if a detail is
-  underspecified pick the most reasonable interpretation and produce the
-  deliverable anyway. Backed by `_TASK_PREAMBLE` in
-  `services/agents/workflow.py`. See
-  [features/workflows](website/features/workflows.md).
-
-- **A completed step now shows its deliverable, not the terse completion
-  reason.** When an autonomous step wrote its output as prose and then ended with
-  `OBJECTIVE_COMPLETE: <reason>` (a *meta* description like "Told the user a
-  joke"), the step displayed — and auto-captured as its **"Result" artifact** —
-  the reason instead of the actual deliverable (the joke), even though the
-  downstream hand-off correctly received the real prose. The completion branch
-  now prefers the message's prose body for the displayed `result_summary` and the
-  Result artifact, falling back to the reason only when the final turn was
-  directives-only (a bare `OBJECTIVE_COMPLETE` with no body). See
-  [features/workflows](website/features/workflows.md).
-
-- **Control directives no longer leak into a step's displayed result.** A gate
-  stored its raw `OBJECTIVE_COMPLETE: PASS: …` verdict as the step result *and*
-  auto-captured it as a shared **"Result" artifact**, so directive syntax showed
-  up as a deliverable and polluted the blackboard. A gate is now normalised to a
-  plain `Passed — <reason>` / `Rejected — <reason>` verdict and emits **no
-  artifact** (a gate judges, it doesn't produce). More generally, control tokens
-  (`OBJECTIVE_COMPLETE`, `ARTIFACT`, `PROGRESS`, `NEED_INPUT`, …) are now scrubbed
-  from every step's *displayed* `result_summary`; the raw turn is still retained
-  internally for directive parsing, content forwarding, and gate verdicts. See
-  [features/workflows](website/features/workflows.md).
-
-
-  lifecycle-directive parser matched `NEED_INPUT:` / `OBJECTIVE_COMPLETE:` /
-  `PROGRESS:` **anywhere** in an assistant message, so an agent explaining "I emit
-  **NEED_INPUT:** to the dashboard when blocked" tripped the marker mid-prose,
-  captured the trailing `**` and surfaced a garbled phantom question (`** to your
-  dashboard when blocked.`) that halted the run/workflow. Directives are now only
-  recognised at the **start of a line**, and the closing `**` of a bolded
-  `**LABEL:**` is eaten so it never leaks into the captured value. Mirrored in the
-  backend parser (`parse_agent_directives` in `services/agents/manager.py`) and the
-  frontend (`lib/directives.ts`).
-- **A parked agent no longer hides the entire agent list.** The `waiting`
-  lifecycle state (parked agents) was added to the DB and frontend but omitted
-  from the `AgentSessionRead.status` literal, so one waiting agent raised a
-  Pydantic `literal_error` for the whole `GET /api/agents` response — the list
-  500'd and the UI fell back to the empty-state start wizard, making every agent
-  look gone. `waiting` is now part of the `AgentStatus` schema literal (already
-  present in the TS `AgentStatus` type). See `schemas/agent.py`.
-- **The agent insights sidebar now refreshes live.** The per-agent orchestration
-  panel (shared artifacts + triggers) fetched once when the agent was selected and
-  never again, so mid-mission `ARTIFACT:` outputs and the completion result only
-  appeared after a manual reload. It now subscribes to the `agent.changed` bus —
-  mirroring the in-chat deliverables — so the right bar updates the moment new
-  content is published.
-- **Autonomous agents no longer randomly hit "Permission denied" on every tool
-  call.** When an agent's detail page was open as the agent started, the timeline
-  poll (`GET /api/agents/{id}/events`) and `start_task` could each call
-  `_ensure_live` before either cached the session, firing **two** `session.create`
-  requests for the same `copilot_session_id`. The duplicate create left the CLI's
-  permission responder mis-wired, so every tool call — including built-in `rg`/shell
-  — was denied non-interactively with *"Permission denied and could not request
-  permission from user"*, even under the `autonomous` policy, and the run parked
-  itself with a spurious `NEED_INPUT`. `_ensure_live` now serialises its
-  check-then-create under a per-agent lock, so concurrent callers reuse the single
-  session. No API or schema change.
-
-### Changed For autonomous agents, the control-directive markers (`NEED_INPUT:`,
+- For autonomous agents, the control-directive markers (`NEED_INPUT:`,
   `PROGRESS:`, `ARTIFACT:`, `OBJECTIVE_COMPLETE:`) are **stripped from the rendered
   message body** — they were previously persisted verbatim and left the one line a
   human must act on buried in prose. The raised question is re-surfaced as its own
@@ -4494,7 +3173,6 @@ are the per-version history; releasing does not rewrite this file.
   management — rename (double-click the title), **archive**, stop, and delete —
   now lives in the open agent's header, so no capability is lost with the list
   gone.
-
 - **The GitHub Models provider is retired and no longer offered.** GitHub has
   retired the service; `https://models.github.ai/catalog/models` now answers
   `410 Gone`, so selecting the provider only ever produced a raw HTTP error
@@ -4506,7 +3184,6 @@ are the per-version history; releasing does not rewrite this file.
   the upstream `410`. Existing configurations are **not** silently rewritten —
   the provider stays selectable-but-flagged so the switch to **GitHub Copilot**,
   which authenticates with the same GitHub token, is a deliberate choice.
-
 - **Copilot's intermittent model refusals are ridden out instead of surfaced.**
   Only part of Copilot's fleet serves every model, so an identical request
   alternates between `200` and `400 model_not_available_for_integrator` at
@@ -4519,14 +3196,12 @@ are the per-version history; releasing does not rewrite this file.
   still surfaces immediately. If it does keep failing, the message now says the
   rejection is intermittent and worth retrying rather than claiming the model is
   permanently out of reach.
-
 - **`GET /api/reminders/{container}/{id}` returns `200` with a `null` body when
   no reminder is set**, instead of `404`. The conversation panel reads this
   endpoint on every topic/chat open, so the far more common "no reminder" case
   was logging a red `404 (Not Found)` in the browser console on nearly every
   navigation — even though the client already handled it. Unknown container
   kinds are still a genuine `404`.
-
 - **Lockfiles are now resolved by CI, not by contributors**: many managed
   devices route uv and npm through a corporate package mirror, and re-resolving
   there doesn't merely relabel URLs — npm integrity comes back as `sha1` instead
@@ -4543,7 +3218,6 @@ are the per-version history; releasing does not rewrite this file.
   than a silent re-resolution. `make sync` now uses `npm ci`, and the Makefile
   exports `UV_FROZEN=1` — every `uv run` re-locks otherwise, so `make dev`,
   `make check`, and `make test` were each rewriting `uv.lock`.
-
 - **MCP: one sign-in prompt instead of one per credential**: the WorkIQ preview
   and the Agent 365 servers are different Entra clients against different
   resources, so they hold separate tokens on separate expiry clocks — which used
@@ -4559,7 +3233,6 @@ are the per-version history; releasing does not rewrite this file.
   independently needed. Previously the second credential never even attempted the
   silent pass and always fell through to a manual click. See
   [MCP → One prompt, not one per credential](https://lrivallain.github.io/precursor/features/mcp.html#one-prompt-not-one-per-credential).
-
 - **MCP: a busy loopback port no longer blocks a WorkIQ sign-in**: each
   OAuth-protected server still *prefers* its fixed callback port (`12798`,
   `12799`, `12800`), but when that port is taken — another Precursor window
@@ -4569,7 +3242,6 @@ are the per-version history; releasing does not rewrite this file.
   several windows can sign in concurrently. Set
   `workiq_loopback_port_fallback=false` to restore the previous strict
   behaviour.
-
 - **MCP: sign-in prompts are collapsed per credential on the backend too**: when
   a turn pauses because MCP servers need authenticating, the blocked list is now
   reduced to **one name per credential** before anything is announced, so two
@@ -4579,7 +3251,6 @@ are the per-version history; releasing does not rewrite this file.
   credential is no longer hardcoded per call site: a new **OAuth server
   registry** is the one place that knows which built-ins sign in, what to call
   them, and which of them are backed by the same token.
-
 - **MCP: keep-alive backs off for credentials you aren't using**: the ticker
   still refreshes a token shortly before it expires so an active session never
   breaks mid-turn, but a WorkIQ server enabled long ago and never called is now
@@ -4590,227 +3261,12 @@ are the per-version history; releasing does not rewrite this file.
   Set `workiq_keepalive_idle_after_seconds=0` to keep every signed-in credential
   warm indefinitely, as before. See
   [MCP → Quiet when you're not using it](https://lrivallain.github.io/precursor/features/mcp.html#quiet-when-you-re-not-using-it).
-
-### Added
-
-- **A Markdown formatting toolbar and keyboard shortcuts on the Markdown
-  composers.** The editors that render their value as Markdown — live-session
-  **notes** and **summary**, and the GitHub **issue / comment drafts**
-  (`/gh-update`, `/gh-create`, and the comment box) — now carry a small
-  formatting toolbar (bold, italic, strikethrough, inline code, link, heading,
-  quote, and bulleted / numbered lists) that rewrites the current selection in
-  place. The same actions are bound to shortcuts — <kbd>⌘/Ctrl</kbd> + <kbd>B</kbd>
-  (bold), <kbd>I</kbd> (italic), <kbd>K</kbd> (link), <kbd>E</kbd> (code), and
-  <kbd>⌘/Ctrl</kbd> + <kbd>⇧</kbd> + <kbd>X</kbd> (strikethrough). Toggles are
-  reversible (re-apply to unwrap), an empty selection parks the caret between the
-  markers, and <kbd>⌘/Ctrl</kbd> + <kbd>K</kbd> stays local to the field instead
-  of bubbling to the global command palette. The plain-text fields (system
-  prompts, memories, roles) are untouched.
-
-
-  one collection, unread activity in the others was invisible. The switcher now
-  carries a dot when another collection has unread messages, and each row in its
-  dropdown shows that collection's own unread count.
-
-- **The GPT-5.5/5.6, Codex, Grok and MAI models now actually work.** Copilot
-  serves its catalogue across two API surfaces, and a model offered by one is
-  rejected by the other — Precursor only ever spoke `/chat/completions`, so
-  **eight of the models it listed** (`gpt-5.3-codex`, `gpt-5.4-mini`, `gpt-5.5`,
-  `gpt-5.6-luna`, `gpt-5.6-sol`, `gpt-5.6-terra`, `grok-4.5` and
-  `mai-code-1-flash-picker`) answered a raw `400` the moment you sent a message.
-  Precursor now speaks the **Responses API** as well and routes each model to the
-  surface that serves it, reading the `supported_endpoints` the catalogue already
-  publishes. Streaming, tool calls, images and reasoning effort behave the same on
-  both. Models the catalogue says we can drive with *neither* endpoint are no
-  longer offered at all, since listing a model that cannot be called only
-  guarantees a failure once it is picked.
-
-- **Type-to-filter in the model pickers**: the composer and agent model menus
-  now open with a search box focused, narrowing the list as you type. Matching a
-  vendor heading (`anthropic`, `microsoft`, …) keeps that whole group, so the
-  catalogue can be sliced by publisher as well as by model name, and <kbd>Enter</kbd>
-  picks the first match. Menus with only a handful of options — reasoning effort,
-  context size — stay plain lists.
-
-- **MCP: console tracing for the WorkIQ sign-in legs.** The hands-free re-auth
-  hides two sequential attempts inside one request — the invisible `prompt=none`
-  iframe, then the backend self-opening the OS browser — so when the manual
-  banner finally appears there was no way to tell which leg gave up, or why.
-  Each step of an auth episode now logs to the browser console under
-  `[workiq-auth]` with elapsed timings: when a notice opens, when the
-  authorization URL arrives over SSE (published for the silent leg only, so its
-  absence is itself diagnostic), how the hidden frame navigated — including
-  whether it was refused before any document loaded, the signature of
-  `X-Frame-Options` blocking the silent pass outright — and which outcome
-  produced the banner. `window.precursorWorkiqAuthTrace()` returns the whole
-  episode for pasting into a bug report; `login_hint`, `state` and `nonce` are
-  never logged. Silence it with
-  `localStorage['precursor.debug.workiqAuth'] = '0'`.
-
-- **Collections**: split topics into separate workspaces of work. A switcher at
-  the top of the Topics panel filters the sidebar tree (and the Pinned section)
-  to one collection at a time; search, the command palette, and the archive stay
-  unfiltered, and opening a topic from another collection switches to it. Move
-  topics via the sidebar context menu, topic settings, or the new
-  **`/collection <name>`** command — sub-topics always follow their parent.
-  Each collection carries a name, description, colour accent, and an optional
-  **GitHub repo** override, giving repo resolution a three-step chain:
-  `topic.github_repo` → `collection.github_repo` → the global setting. Manage
-  them in **Settings → Collections**; deleting one re-homes its topics to a
-  destination you choose rather than deleting anything. Existing topics are
-  backfilled into a protected **General** collection. The MCP `list_topics` /
-  `get_topic` tools now report a topic's collection, and `list_topics` accepts a
-  `collection` filter. See [collections](https://lrivallain.github.io/precursor/features/collections).
-
-- **Search with `/`**: pressing <kbd>/</kbd> anywhere outside a text field now
-  opens the command palette straight into search — the same launcher as
-  <kbd>⌘K</kbd> / <kbd>Ctrl-K</kbd>, one key away. The shortcut stands down
-  whenever you're typing (inputs, textareas, and rich contenteditable editors),
-  so the composer's `/` slash-command picker is untouched, and it won't stack the
-  palette on top of an open dialog.
-
-- **Sidebar contextual menus**: right-click topic, chat, Live, and agent rows for
-  the actions each surface supports. Topics and chats expose rename,
-  read/unread, pin/unpin, reminder, notes, and archive; agents expose rename,
-  read/unread, and archive; Live sessions expose rename and archive.
-
-- **MCP: Microsoft Agent 365 servers (`workiq-teams`, `workiq-user`)**: two new
-  built-in, OAuth-protected streamable-HTTP servers covering **Teams** (chats,
-  channels, messages, members, presence) and the **directory** (profiles,
-  managers, direct reports). They reuse the existing WorkIQ browser sign-in
-  stack — silent-first re-auth, keep-alive refresh, inline auth banner — and
-  **share a single sign-in**: they authenticate as the same Entra client against
-  the same resource, so one token serves both (the WorkIQ preview keeps its own,
-  separate one). Their endpoint URL
-  embeds a Microsoft **tenant GUID**, resolved from **Settings → MCP →
-  Microsoft 365 tenant**, then `PRECURSOR_WORKIQ_TENANT_ID`, then — as a
-  convenience — the `tid` claim of a token from an existing WorkIQ sign-in, so
-  in practice there is usually nothing to configure. See
-  [MCP → Agent 365](https://lrivallain.github.io/precursor/features/mcp.html#agent-365-workiq-teams-and-workiq-user).
-
-- **Installable app (PWA)**: Precursor now ships a web app manifest, PNG icons
-  (incl. a maskable variant), and a minimal service worker, so Chromium browsers
-  offer to **install it as a standalone app** (own window, dock/taskbar icon).
-  The service worker registers only in the built SPA (a one-process
-  `precursor` run), does **no offline caching**, and passes all traffic through
-  to the network — it exists purely to meet the browser's installability bar.
-  It stays a convenience wrapper around your local instance: works while the
-  process is running, on the same machine over `localhost`. See
-  [Installation → Install as a browser app](https://lrivallain.github.io/precursor/guide/installation.html).
-
-- **MCP: cross-entity search + chats/agents/live accessors**: the built-in
-  `precursor` MCP server's `search` tool now spans the same surfaces as the ⌘K
-  palette — topics, chats, agents, and live (meeting) sessions — and each hit
-  carries an `accessor` hint pointing to the tool that returns its full content.
-  Three new opt-in `mcp_expose` sections back this: **`chats`** (`list_chats`,
-  `get_chat`, `list_chat_messages`), **`agents`** (`list_agents`, `get_agent`),
-  and **`live`** (`list_live_sessions`, `get_live_session` — notes, summary,
-  transcript, and insights). Chat/agent/live search hits only surface when their
-  section is exposed, so snippets never leak content the host hasn't opted into.
-
-- **Playwright MCP server (authenticated scraping)**: a new built-in `playwright`
-  tool server wraps Microsoft's official `@playwright/mcp` (launched via `npx`,
-  like `workiq`) so agents, topics, and chats can drive a real browser —
-  navigate, read the rendered DOM/text, and screenshot. It runs **headed** and
-  defaults to **Microsoft Edge** (`--browser msedge`) so it can ride the
-  corporate Edge SSO/WAM broker for authenticated Entra scraping, reusing
-  `@playwright/mcp`'s **shared, machine-wide persistent profile** so a sign-in
-  already onboarded there (including via other Playwright-MCP tools) carries over
-  and reaches **authenticated** pages that `fetch` (raw HTTP, no browser/session)
-  can't. `PRECURSOR_PLAYWRIGHT_BROWSER` (default `msedge`) picks the channel and
-  `PRECURSOR_PLAYWRIGHT_PROFILE_DIR` pins an isolated profile. Toggle it in
-  **Settings → MCP**; a host-dependency preflight requires Node.js (`npx`) on
-  PATH.
-
-- **Attach text & code files**: the message composer now accepts plain-text and
-  source files (`.txt`, `.md`, `.csv`, `.json`, `.yaml`, `.toml`, `.xml`, `.py`,
-  `.ts`, `.js`, `.go`, `.rs`, `.sql`, `.sh`, and many more) in addition to images
-  and PDF/DOCX/PPTX. Their UTF-8 text is extracted and folded into the turn as
-  context. Because browsers report inconsistent MIME types for source files,
-  acceptance falls back to the file extension and the stored type is normalized
-  to a `text/*` MIME.
-
-- **Edit transcript phrases inline**: in a Live session, **double-click any
-  phrase** in the transcript to correct misheard words in place — press
-  <kbd>Enter</kbd> (or blur) to save, <kbd>Esc</kbd> to cancel. The correction
-  persists to the session and feeds the insights and summary. Backed by a new
-  `PATCH /api/live/{id}/segments/{segment_id}` endpoint.
-
-- **Live transcript auto-cleanup**: a Live session's raw transcript is now
-  automatically deleted a configurable number of days after the session ends
-  (**7 by default**; `0` keeps it forever), bounding database growth. Only the
-  transcript is removed — the session and its insights, notes and summary are
-  preserved — and only *ended* sessions are eligible, so an active or paused
-  recording is never touched. Configure it under **Settings → Live**
-  (`live_transcript_retention_days`); the sweep runs on startup and daily via a
-  background ticker.
-
-- **Past meetings in the Live agenda picker**: the meeting lists used to *start*
-  a Live session (Start screen) and to *attach* one (Context tab) now include the
-  **last 7 days** of calendar meetings, not just today, so you can record or
-  summarize from a meeting that already happened. Entries are split by a
-  color-coded **Past** (amber) vs **Current & upcoming** (emerald) marker; the
-  list auto-scrolls to that boundary so today's meetings are front-and-centre,
-  and the past group is capped to the **10 most recent** meetings. Past meetings
-  still spin up a session linked to the meeting (handy with **From Teams
-  transcript**).
-
-- **Summarize a Live session from the Teams transcript ("no local record")**:
-  when a Teams meeting is linked to a Live session and the **WorkIQ MCP** server
-  is enabled, the **Summary** tab gains a **Generate from Teams transcript**
-  button. It scrapes the meeting's published transcript through WorkIQ (Microsoft
-  Graph:
-  `/me/onlineMeetings` → `/transcripts` → VTT `/content`) and generates
-  Precursor's own structured recap — so you don't need to capture the meeting
-  audio locally. Best-effort and fail-closed: it requires you to be the meeting
-  organizer, the delegated `OnlineMeetingTranscript.Read.All` permission, and a
-  transcript that Teams has already published (a few minutes after the meeting
-  ends). The **Summary** tab is always available; its actions light up based on
-  the data at hand — generate from the local recording and/or from the Teams
-  transcript. New endpoint `POST /api/live/{id}/summary/from-transcript`; the
-  linked meeting now also carries its Teams join URL.
-
-- **Hands-free WorkIQ re-auth**: when a WorkIQ preview session's refresh token
-  ages out, Precursor now attempts the silent `prompt=none` authorization in an
-  invisible iframe before showing anything. If the browser still holds a live
-  Entra SSO session the session is renewed with **zero clicks** and the
-  `McpAuthBanner` never appears; the manual **Sign in** banner only surfaces when
-  a silent pass genuinely needs interaction (or iframe framing / third-party
-  cookies block it). Gated by the new `workiq_auto_reauth_enabled` setting
-  (default on); turn it off to always require the manual click.
-
-- **In-app documentation**: the documentation site (the VitePress project in
-  `website/`) is now served by the app itself at `/docs/`, reachable from a
-  **Documentation** entry in the command palette and the About dialog (the About
-  link opens the local `/docs/` in dev and the public site in a production
-  build). In production it's pre-built with base `/docs/` (`make docs`), bundled
-  into the wheel, and served statically with VitePress clean-URL resolution; in
-  `precursor --dev` a live VitePress dev server runs on a hidden port that the
-  SPA's Vite proxies `/docs` to, so editing any `website/**` markdown
-  hot-reloads in the browser. GitHub Pages hosting is unchanged — it builds the
-  same source with the default base `/` in its own workflow (`DOCS_BASE`
-  selects the base). FastAPI's interactive API docs moved to `/api/docs`,
-  `/api/redoc`, and `/api/openapi.json` so the root `/docs` path is free for the
-  product docs.
-
-- **Reorderable sidebar sections**: drag any section (Topics, Chats, Live,
-  Agents, Files, Kanban) in the sidebar to rearrange it. Works in both the
-  vertical icon rail and the horizontal tab switcher, with an insertion line
-  showing exactly where the section will land (drop on either side of a
-  neighbour, including the ends). The order is persisted in the browser
-  (`precursor:sidebar:sectionOrder`) and shared between the two navigation
-  styles; newly-shipped sections append to the end without disturbing an
-  existing arrangement.
-
-### Changed
-
 - **Hands-free WorkIQ sign-ins close their window instantly**: the loopback
   success page now closes immediately for the silent and self-triggered
   (`auto`) re-auth passes instead of showing the manual flow's two-second
   "Closing this tab in…" countdown. Nobody is watching an automatic sign-in, so
   it no longer leaves a stray window sitting around after it succeeds; the
   manual, banner-driven sign-in keeps its brief confirmation beat.
-
 - **WorkIQ re-auth is now hands-free and self-triggering**: when the WorkIQ
   refresh token ages out, Precursor prefers automation over interrupting you. It
   runs the silent `prompt=none` pass in an invisible iframe first and, when that
@@ -4820,25 +3276,21 @@ are the per-version history; releasing does not rewrite this file.
   A new `auto=true` mode on `POST /api/mcp/servers/workiq/reauthenticate` drives
   this; the interactive fallback opens the OS browser instead of the iframe so it
   never races the loopback port.
-
 - **Cleaner API error messages**: failed API calls now surface just the server's
   human-readable `detail` text (e.g. *"The linked meeting has no Teams join
   link…"*) instead of the raw `400 Bad Request: {"detail":"…"}` envelope. The
   HTTP status is only shown as a fallback when the response carries no detail.
-
 - **Live record controls moved into the Transcript tab**: the **Record** button,
   capture-device picker, **+ mic** mix-in and meeting **language** now live pinned
   at the top of the **Transcript** tab (instead of the session toolbar), so they
   stay visible even when the transcript grows to fill the height. Session-level
   controls — topic, features, **End session**, archive and delete — remain in the
   toolbar above the tabs.
-
 - **Sidebar auto-scrolls to the active item**: opening a topic, chat, agent,
   live session, workspace, or Kanban project from a deep link, the ⌘K command
   palette, or a search now scrolls its sidebar list so the selected row is
   brought into view instead of being left off-screen. Rows already visible stay
   put.
-
 - **Live recording is clearer to start and harder to lose**: the **Record**
   button now shows a transient **Starting…** state while it connects to Azure
   (token, SDK, capture device) instead of looking unresponsive for the couple of
@@ -4847,7 +3299,6 @@ are the per-version history; releasing does not rewrite this file.
   search — now asks you to confirm (**Keep recording** / **Leave & stop
   recording**), and reloading or closing the tab triggers the browser's native
   leave prompt, so an accidental navigation no longer silently drops the capture.
-
 - **Vertical navigation rail on the home launcher**: when the sidebar uses the
   vertical icon rail (not the horizontal tabs), that rail now also shows on the
   home launcher, so switching sections is always one click away. Home and the
@@ -4855,8 +3306,1296 @@ are the per-version history; releasing does not rewrite this file.
   Search, then a separator, then the sections — consistent across the home rail,
   the expanded rail, and the collapsed sidebar.
 
+### Removed
+
+- **The GitHub Models provider, and the retirement machinery built around it.**
+  When GitHub shut the service down the provider was kept behind a generic
+  `retired` flag so anyone still pointed at it got an explanation rather than a
+  raw `410 Gone`. The provider saw little use, and keeping a whole mechanism
+  alive to describe something that no longer exists costs more than it returns.
+  Gone: `GitHubModelsProvider`, its `ProviderSpec` entry, the `retired` field on
+  the spec/schema/TS types, the picker filtering and the 502 in the catalog
+  route, and the *(retired)* labelling in Settings.
+
+  A migration repoints any install still set to `github_models` at **GitHub
+  Copilot**, which authenticates with the same GitHub token — without it, an
+  unknown provider id resolves to no spec and falls back to the **mock**
+  provider, which would answer with convincing fake replies instead of failing.
+
 ### Fixed
 
+- **Nightly installs no longer 404 after a quick run of pushes.** Two nightly
+  builds seconds apart could leave the new `nightly` release stuck as a draft.
+  Its files then answered 404, so installing, updating and adding a plugin all
+  failed on a nightly install while the build showed green. The workflow now
+  moves the tag instead of deleting it. It also checks the published files
+  download, and fails the build if they don't.
+- **An older build no longer breaks the database for newer ones.** Starting an
+  older Precursor on a database a newer build had migrated used to rewind its
+  schema version without changing the schema. The next newer build then tried
+  to re-apply those migrations and failed to start on every retry
+  (`duplicate column name`). Now the older build refuses to start, names the
+  unknown revision, and leaves the database untouched. Run a build at least as
+  new as the last one that used the database.
+- **A disabled or uninstalled plugin no longer warns on every prompt.** Its MCP
+  server's on/off switch outlived it, so each turn still asked for the server
+  and reported "MCP server 'kanban.board' unavailable: Unknown MCP server". A
+  turn now skips servers that aren't registered. The switch itself is kept, so
+  re-enabling or reinstalling the plugin brings the server back as you left it.
+  Disabling a plugin also closes its running MCP server at once instead of
+  after the idle timeout.
+- **Linux: a first install no longer fails to start.** The systemd units run in
+  the data directory, but nothing created it when port `8000` was free. systemd
+  then refused to start the app (`status=200/CHDIR`) and the installer reported
+  "did not come up on port 8000", pointing at a log that didn't exist. Writing
+  a login item now creates its working directory.
+- **Linux servers: no crash-looping tray.** The tray unit was registered
+  whenever the `tray` extra was installed, which it is by default. Over SSH onto
+  a headless box it crashed every 30 seconds for want of a display. The
+  installer now skips it when there is no `DISPLAY` or `WAYLAND_DISPLAY`, and
+  says so. With no desktop and lingering off, it also warns that Precursor stops
+  at logout and suggests `loginctl enable-linger`. See
+  [On a Linux server](website/guide/installation.md#on-a-linux-server).
+- **Windows: no console window left on screen.** The login items were
+  Startup-folder `.cmd` files that ran the console script, so a terminal window
+  stayed open for as long as Precursor ran, and closing it killed the app. They
+  are now per-user `Run` entries that run `pythonw`. Older `.cmd` files are
+  removed on install and uninstall. The tray now starts at install time rather
+  than at the next login, and only one runs per data directory.
+- **Windows: busy ports looked free.** The port probes set `SO_REUSEADDR`. On
+  Windows that option lets a bind succeed over a live listener, so
+  `service install` never moved off a busy `8000` and the instance then failed
+  to bind. The WorkIQ sign-in port check had the same bug. Ports in a Hyper-V or
+  WSL excluded range now count as busy too.
+- **Windows: stopping is graceful.** `service stop` used `taskkill` without
+  `/F`, which can't stop a windowless process. So every stop waited 20 seconds
+  and then killed the app hard. It now sends Ctrl+Break, which uvicorn treats
+  like SIGTERM.
+- **Windows: no console flashes.** The tray checked the instance with
+  `tasklist` every 3 seconds, and each call flashed a console window. The check
+  now uses the Win32 API. Detached instances get a hidden console, so the `git`,
+  `gh` and MCP processes they start stay hidden too.
+- **Windows: self-update works.** `uv tool install --force` can't replace files
+  a running Precursor holds open, and the command asking for the update is one
+  of them. On Windows the update now stops the app and the tray, then hands the
+  install to a helper run by the base interpreter. The helper installs the new
+  build, restarts both, and logs to `logs/update.log`. The returning tray says
+  how it went. In-app plugin installs, which hit the same limit, now show the
+  command to run while Precursor is stopped.
+- **Windows: `pythonw` no longer crashes on startup.** `pythonw` has no
+  stdout/stderr, so it died on its first log line. Its output now goes to
+  `logs/windows.<app|tray>.out.log`.
+- **Windows: text encodings.** Output from `uv`, `gh` and `npm` is decoded as
+  UTF-8 rather than the ANSI code page, which garbled `uv`'s error trees or
+  raised on them. `precursor --dev` now finds `npm.cmd`.
+- **Self-update with a relocated `UV_TOOL_DIR`.** A `uv tool` install was only
+  recognised by a `…/uv/tools/…` path, so one moved with `UV_TOOL_DIR` was
+  treated as a plain wheel install that couldn't update itself. uv's install
+  receipt is now the signal, on every platform.
+- **Workflow steps no longer lose their final answer.** Precursor handled each
+  Copilot SDK event in its own task, and a burst of events could be processed
+  out of order. At the end of a turn, *idle* was sometimes handled before the
+  final message. The step was then recorded with an empty or stale output, and
+  its `ARTIFACT` blocks were dropped. The next step saw its input as missing:
+  the Morning AI briefing's email step reported `MISSING_PERSISTENCE` and sent
+  nothing, and a meeting-triage *Collect* step handed on no invitations. SDK
+  events are now handled one at a time per agent, in the order the SDK emits
+  them.
+- **Agents recover when the Copilot CLI crashes.** All agents share a single
+  Copilot CLI process. When it died (seen as a V8 "JavaScript heap out of
+  memory" after about 35 hours), Precursor didn't notice. Every later agent run
+  and workflow step then failed at once with `[Errno 32] Broken pipe` until the
+  app was restarted. Precursor now restarts the CLI on the next agent request,
+  or within a minute through the watchdog.
+- **Finished agent runs no longer leak memory into the Copilot CLI.** A run's
+  live SDK session was never disconnected, and workflows open a new run for
+  every step. A 30-minute schedule left hundreds of idle sessions (and more
+  than 10,000 open handles) in the CLI, which is what exhausted its heap.
+  Sessions now disconnect after 15 minutes at rest. The next turn resumes them
+  from disk.
+- **Agent-timeline retention works on large archives again.** Once more than
+  ~32k archived agent events were due for pruning, the sweep measured them in a
+  single `IN (…)` query and SQLite rejected it with "too many SQL variables" —
+  at every startup, again on the retention ticker, and in the Storage cockpit
+  preview — so the table was never trimmed. The measurement is now chunked like
+  the delete already was. Log tracebacks also clamp any single line to 2,000
+  characters: the failing statement was written out in full, a ~2 MB line per
+  error, which rotated the whole log history away on each restart.
+- **Opening a Live session no longer lights the browser's recording
+  indicator.** Every session opened — ended ones included, or ones you never
+  record — briefly grabbed the microphone just to read the input devices' names,
+  so the tab's favicon turned into the browser's "recording" dot while nothing
+  was being captured. The device list is now read without opening the mic, so
+  the indicator shows only while a recording is actually running. Where the
+  browser still hides device names (microphone access never granted), opening
+  the input picker asks for access once to fill them in.
+- **The Home "New …" cards and fired reminders add exactly one history
+  entry.** Starting a chat, a live session or a topic from its Home card, while
+  that section still had something open, first added an entry for the old item,
+  so Back showed it instead of Home. With no topic open, the **New topic** card
+  overwrote the Home entry with the collection's start page, so Back skipped
+  Home entirely. Clicking a fired reminder from another section did the same
+  with whatever that section had open, or its start page. Each now adds a
+  single entry for the item it opens, and Back returns to where you were. If
+  you click a reminder while Live is recording and choose **Keep recording**,
+  nothing changes now. Before, the reminder's chat or topic was still selected
+  behind the scenes and opened the next time you visited that section.
+- **"Restart now" works under `precursor --dev`.** After a plugin install, the
+  in-app restart re-exec'd the process with its original arguments — but under
+  `--dev` that process is uvicorn's reload worker, a multiprocessing child, and
+  re-running its spawn handshake crashed with `OSError: [Errno 9] Bad file
+  descriptor`. The dev server now hands the worker a watched file, and a restart
+  rewrites it (same bytes) so the reloader starts a fresh worker. Where a
+  process can't restart itself at all, the panel says so and asks for a manual
+  restart instead of offering a button that fails.
+- **Installing a plugin can no longer break Precursor.** Outside a `uv tool`
+  install, the in-app installer ran a bare `uv pip install <plugin>`, which
+  resolves only the plugin and moves anything else to fit. From an index that
+  lagged PyPI, "installing the Kanban board" picked its oldest release, built for
+  MCP 1, and downgraded core's `mcp` — the app then failed on import. Precursor's
+  own requirements now go in as constraints, so a release that doesn't fit fails
+  to install instead. "Latest" also installs as a floor at the newest release
+  (`>=2026.9.2`) rather than a bare name, so a lagging index fails loudly instead
+  of quietly delivering an older release than the one shown. Commands shown for
+  running by hand are now shell-quoted — `pkg>=1.2` pasted bare is a redirect.
+- **Installing a plugin on a nightly build no longer fails with a 404.** A
+  nightly install pins the exact wheel it came from, and adding or removing a
+  plugin restates that pin so the host isn't downgraded. But the `nightly`
+  release is re-created on every push to main, which deletes the old wheel, so
+  once anything newer shipped every in-app install failed with
+  `Failed to download precursor-ai … 404 Not Found`. A pin to a superseded
+  nightly wheel, including a companion wheel from the same release, now points
+  at the one currently published. The manifest is read fresh before each
+  install, and the Settings panel says when Precursor itself moved to a newer
+  nightly as a result (`host_upgrade` in the install response).
+- **The workspace assistant no longer drops the text before a tool call.** A
+  reply that said something and then called a tool ("Let me read the file
+  first.") showed only the tool bubble: the text was read after it had already
+  been reset for the next round.
+- **Settings → System no longer says its values come from `.env`.** The panel
+  opened with "These values default to the server's environment / .env", but
+  every field on it has been database-only since the env twins were removed —
+  including `PRECURSOR_CMD_RUNNER_JAIL`, which the note was still pointing
+  readers at. It now says the values live in the database and apply without a
+  restart: the run timeout on the next scheduled run, retention on the next
+  sweep, and the command runner on its next command. The old claim that only the
+  run timeout was live was wrong too. The same "env default, overridden by the
+  database" description is gone from the architecture and stack docs, the
+  command-runner screenshot is retaken, and a test now fails if the panel's copy
+  points back at the environment (#252).
+- **Back, Forward and reload no longer rewrite browser history.** Three
+  routing bugs in the web app:
+  - **Deep links and reloads added history entries.** Opening or reloading a
+    `/live/<session>` or `/agents/<id>` link added two entries (`/live`, then
+    the session) on every load, so Back returned to the section's start page
+    first. After one reload on an agent, Back bounced between `/agents` and
+    the agent and never got further. The old numeric `/agents/<n>` form added
+    one entry, and a link to a live session that doesn't exist added `/live`.
+    None of these add anything now. Opening a live session from **⌘K** before
+    the Live list had loaded also stops adding an extra entry. Going Back onto
+    a live session that was archived or deleted meanwhile shows the Live start
+    page once and lets you keep going back. Before, it wiped your forward
+    history and kept you on `/live` however often you pressed Back.
+  - **Back to `/chats` kept the chat on screen.** It now shows the chats start
+    page, like `/live` and `/agents`. The stale chat used to cause a worse
+    problem: going Forward onto `/chats` from another section jumped back into
+    that chat and threw away every later history entry.
+  - **The search highlight leaked onto other pages.** Opening a **⌘K** search
+    hit wrote `?q=` onto the page you were leaving, so Back later returned to
+    it with a query it never had. Switching to Workflows, Files or a section's
+    start page kept the "Highlighting …" banner and carried `?q=` along. Now
+    each history entry keeps the query it was created with, and leaving the
+    highlighted conversation clears both the banner and `?q=`. Going Back or
+    Forward onto a highlighted topic or chat, from another one, shows the
+    highlight again. It used to strip the entry's `?q=` and lose it for good.
+- **Opening a ⌘K search hit adds exactly one history entry.** Opening a chat
+  hit from another section, while a different chat was still open in Chats,
+  first added an entry for that old chat, so Back showed it instead of the page
+  you searched from. Topic hits did the same with the previously open topic.
+  With no topic open yet, or from Home, a topic hit overwrote the page you were
+  leaving with the collection's start page. A hit now adds a single entry for
+  its target, and Back returns to where you opened the palette. A hit whose
+  item was deleted since the search now leaves you where you were.
+- **A failed MCP connect now names its cause.** When a remote server could not
+  be reached, for example an Agent 365 endpoint timing out, the server card and
+  the log showed only the SDK's wrapper text, `unhandled errors in a TaskGroup
+  (1 sub-exception)`. They now show the underlying error, such as
+  `ConnectTimeout`. The WorkIQ keep-alive's renewal trace does the same.
+- **Stopping the workspace assistant no longer throws away its reply.** Topics
+  and chats keep whatever streamed before you pressed Stop and mark it
+  `_(stopped)_`. The workspace assistant cancelled the request instead, which
+  skipped the step that adds the reply to the conversation, so the partial
+  answer vanished as soon as streaming ended. It now stays in the transcript
+  with the same marker and goes into the history of your next question.
+- **Token usage from one-shot features is recorded more reliably.** Several
+  features ask the model once with no tools. Each one used to resolve the model
+  and write its usage row on its own, and the copies had drifted apart:
+  - **Missing attribution.** In a flat chat, `/notes rephrase` and naming
+    (automatic or `/suggest-name`) recorded usage with no chat attached. Live
+    meeting analysis and translation didn't record the session's topic, although
+    the recap did. Their usage is now attributed to the chat or topic.
+  - **Dropped rows.** When a topic-brief refresh failed because the model
+    returned an empty brief, the tokens it spent were never recorded, so the
+    **Stats** totals missed them. Usage is now written in its own session, so it
+    is recorded even when the output is thrown away.
+  - **Held connections.** Most of these features kept a database connection
+    open for the whole model call. They now release it first, so several slow
+    providers at once can no longer use up the connection pool.
+
+  All eleven call sites now share one helper
+  (`services/llm/one_shot.complete_once`), and a provider failure that a
+  feature doesn't handle returns a `502 LLM call failed: …`, as the `/gh-*`
+  drafts and `/notes rephrase` already did.
+- **Usage stats now count workspace chat and scheduled turns.** Two turn paths
+  never wrote the usage ledger, so **Settings → Usage stats** undercounted
+  tokens: the workspace assistant (it dropped the provider's usage report on
+  every round), and every unattended topic turn — scheduled prompts and MCP
+  `post_message` calls. Both now record one ledger row per model round, like a
+  topic or chat turn does; workspace rows carry `source="workspace"` because
+  there is no conversation to attribute them to.
+- **The workspace assistant now shows an Open chip for files its tools touch.**
+  Its `tool_result` events never carried the `link` the topic and chat streams
+  send, so a file read or written from the workspace assistant had no chip to
+  jump to. It also applies the context budget when no MCP tools are enabled —
+  that path used to send the whole history uncapped.
+- **Scheduled and `post_message` answers no longer show a raw `suggest` block.**
+  The unattended turn stored the model's follow-up block verbatim in the
+  transcript instead of lifting it into suggestion chips, and saved no model or
+  duration on the answer. It now stores answers exactly as a streamed turn does.
+
+  Under the hood the topic, chat, scheduled and workspace turns now share one
+  preparation service (`services/conversation_turn.py`) and one set of
+  persistence helpers, so fixes to retries, attachments, prompt overrides or the
+  tool loop land everywhere at once
+  ([#332](https://github.com/lrivallain/precursor/issues/332)).
+- **A large meeting invite no longer buries the live-session summary.** The
+  Summary tab's *Suggested* attendees were an unbounded wrap of pills, so a
+  meeting with a hundred-plus invitees filled the pane and pushed the recap
+  editor out of view. The suggestions now sit in a compact strip about four rows
+  tall that scrolls on its own, with the *Suggested:* label pinned beside it.
+- **An installed Precursor failed to start on the migration step.** Startup
+  runs `alembic upgrade head`, and the config it built pointed at the
+  repository's `alembic.ini` — a file that configures the *CLI* (logging,
+  autogenerate hooks) and is deliberately not shipped in the wheel. The missing
+  path was not inert: the migration environment saw a config file name, tried
+  to apply its logging section and died with
+  `FileNotFoundError: …/site-packages/alembic.ini doesn't exist`, taking the
+  whole application startup with it. `uv tool install precursor-ai` / `uvx`
+  installs could not boot. The runtime now falls back to an in-memory config
+  (everything it needs — the script location and the database URL — was already
+  set programmatically), and the migration environment ignores a config file
+  that isn't there.
+- **Enabling plugin tools no longer makes the model reject the request.**
+  Plugin server IDs such as `kanban.board` introduced dots into the tool names
+  sent to the model. Core now generates stable, provider-safe aliases with
+  length limits and collision protection, while routing calls to the original
+  MCP server and tool. Existing unambiguous, provider-safe names stay unchanged;
+  plugin IDs and saved enable toggles do not change.
+- **Opening Agents or Workflows briefly claimed the feature was off.** Both
+  cockpits read `agents_enabled` straight from the settings store, which is
+  `null` until its first fetch resolves — so for the width of that request the
+  flag defaulted to `false` and the section rendered its "Agents mode is off" /
+  "Workflows need Agents mode" prompt, complete with an **Open Settings**
+  button, before the user's own agents appeared. A cold load of a perfectly
+  healthy install looked like the feature had been disabled.
+
+  The settings store now tracks whether the first fetch has **resolved** as
+  distinct from what it returned, and both sections hold a neutral loading
+  frame until it has — so a boot reads as "loading", never as "disabled". The
+  agents surface waits on the session list too, which removes a second flash
+  where the empty "Start an agent task" form appeared for a beat before the
+  fleet dashboard replaced it. A genuinely disabled feature still shows its
+  prompt, just once settings actually say so.
+- **A running agent flooded the browser with refetches.** Every SDK event an
+  agent emits publishes an `agent.changed` signal, and five listeners answered
+  each one with an immediate refetch: the roster, the run rail, the artifact
+  list, the orchestration panel and — the expensive one — the agent's *entire*
+  transcript. A turn signalling at token cadence therefore fanned into a few
+  hundred overlapping requests per second with no backpressure. The tab
+  flickered as each late response overwrote the last, memory climbed with
+  payloads nobody read, and the browser eventually rejected the pile-up outright
+  with `net::ERR_INSUFFICIENT_RESOURCES` — taking unrelated requests down with
+  it, so the agent view could no longer load at all.
+
+  Those listeners now share a burst-coalescing helper. The first signal still
+  refreshes immediately, so a live agent reads as real-time, but the rest of a
+  burst collapses into a **single trailing refresh** — and a listener never has
+  more than **one request in flight**, with the next window measured from the
+  previous response, so a slow endpoint backs itself off instead of queueing
+  another fetch the moment it answers. A burst always ends with one final
+  refresh, so the settled view is never stale.
+
+  The transcript itself is now read **incrementally**. `GET /api/agents/{id}/events`
+  used to return the agent's entire history on every read, so the cost of a
+  refresh grew with the run while being paid at token cadence — the single
+  biggest contributor to the traffic. It now answers with a page: the events
+  after an `?after=` cursor, the volatile approval cards separately (they aren't
+  archived and vanish once answered), and a `reset` flag for when the cursor no
+  longer addresses that transcript — cleared, pruned by retention, or taken
+  against a different run — so a stale cursor re-syncs instead of silently
+  skipping steps. A live timeline now transfers only the steps it hasn't seen.
+- **A fresh install couldn't chat until you picked a model.** The factory
+  default chat model was the hardcoded literal `claude-sonnet-4.5`, which GitHub
+  Copilot has since retired. Nothing validated it, so `resolve_llm_model` handed
+  the dead id straight to the provider and every turn failed — on a new install,
+  and on any existing one that had never opened **Settings → Model**.
+
+  No model id is pinned any more. The chat model is reconciled against the
+  catalogue the active provider advertises: an unset choice uses the first model
+  offered, a stored choice is honoured while it still exists, and one that has
+  been retired falls back to a working model with a logged warning instead of
+  failing every turn. If the catalogue can't be fetched, the stored value is
+  trusted unchanged — an unreachable network shouldn't override the user. The
+  catalogue is cached with a short TTL behind a lock, so this costs no
+  per-turn round-trip, and is invalidated when credentials or the provider
+  change. **Settings → Model** now shows the *effective* model rather than a raw
+  stored value.
+
+  Agents were already immune (they default to `auto`, which the SDK resolves at
+  runtime) — but `SettingsRead.agents_default_model` still declared the same
+  retired literal, contradicting `DEFAULT_AGENTS_MODEL`; it now says `auto`.
+- **A long collapsed prompt preview stretched the whole conversation pane.** The
+  truncated one-line preview on a scheduled topic's `Prompt` bubble sat in a
+  flex chain with no `min-width: 0`, so it could not shrink and forced the
+  transcript — and with it the main pane — wider than the viewport, cutting
+  message content off on the right. Only ever visible on a narrow screen, which
+  had no slack to absorb it.
+- **A workflow could no longer be switched off "at a time" back to an interval.**
+  `PUT /api/workflows/{id}/schedule` applied `run_at_minute` only when it was
+  non-null, so the payload the editor sends for interval mode — an explicit
+  `run_at_minute: null` — was ignored and the workflow stayed pinned to its old
+  time of day. The field is now honoured as the tri-state it is meant to be.
+- **An out-of-tree plugin now survives `precursor service update`.** A plugin
+  installed into a `uv tool` environment was uninstalled by every self-update.
+  uv rebuilds a tool environment from the requirements in its
+  `uv-receipt.toml`, and Precursor read only the *extras* of its own entry —
+  discarding every sibling distribution installed with `--with`. Since a plugin
+  that ships from its own repository has no extra in core's metadata to be named
+  by, `precursor-kanban` persisting at all was an accident of core declaring a
+  `kanban` extra; anything else vanished on the next update, with the plugin's
+  settings still in the database and no message explaining where it went.
+
+  The receipt is now read whole: an update restates every sibling it records, so
+  a plugin persists on its own terms and needs nothing in core's `pyproject.toml`.
+  Where a release publishes a wheel built from the same commit as the host, that
+  pin still wins over the plain name. A plugin the configured index cannot serve
+  is dropped from the retry and named in the summary — the existing guard against
+  one unresolvable plugin stranding the host, now covering siblings too.
+- **Installing a plugin from Settings → Plugins no longer downgrades Precursor.**
+  The command was `uv tool install --with <plugin> precursor-ai` — a bare host
+  name. Because uv rewrites the receipt from the arguments it is given, that did
+  not mean "leave the rest alone": it **dropped the extras**, uninstalling the
+  menu-bar tray, and **discarded the pinned wheel URL**, silently re-resolving a
+  nightly install down to the latest release on the index. Installing a second
+  plugin also removed the first.
+
+  Both the command the server runs and the one the panel displays are now built
+  from the receipt, naming the host exactly as installed (extras and wheel URL)
+  plus every plugin already beside it. Uninstalling is expressible for the same
+  reason, so a `uv tool` install no longer refuses removal outright — it is
+  refused only for a distribution that arrived as a dependency rather than being
+  installed alongside the tool.
+- **`{{step.N.output}}` no longer silently truncates a workflow step's output at
+  2000 characters.** The placeholder resolved from the run trace, which inherited
+  `result_summary` — a column deliberately capped for the *agent list*, where an
+  unbounded body would be unreadable. That display cap leaked into what is
+  actually a **data** channel: a collector step emitting a JSON array of records
+  reached the next step cut mid-record, and because what survived still parsed,
+  the run reported success while quietly dropping the rest. Nothing failed, the
+  trace looked healthy, and the only symptom was records that were never
+  processed.
+
+  A step's output is now rebuilt from the durable event archive whenever that
+  display cap bit, so the placeholder carries the whole answer the way the docs
+  imply. The trace keeps a ceiling of its own (8000 characters) — but a value
+  that reaches it is now **marked in the text**
+  (`… [truncated: 41230 characters, capped at 8000]`), so a receiving step can
+  tell its input is incomplete instead of treating a severed array as the whole
+  one. The docs say plainly that the placeholder is for values of that size and
+  that **artifacts + `context_mode`** are the uncapped channel for a substantial
+  payload. ([#304](https://github.com/lrivallain/precursor/issues/304))
+- **A workflow step whose model stream dropped mid-turn was recorded as
+  `completed`, so its failure policy never engaged.** A dropped stream ends the
+  turn without a completion or any usage event, so the agent just fell quiet —
+  which the coordinator read as a job well done. The step was traced `completed`
+  with an empty output and zero tokens, and the run advanced on nothing, with
+  `on_error: fail` never stopping it and `max_retries` never retrying it. That
+  put the textbook transient fault out of reach of the very machinery meant to
+  absorb it, and left the trace reading green throughout.
+
+  A turn that ends with **no output and no recorded spend** is now failed instead
+  and put through the step's own `on_error` policy, so a dropped stream can stop
+  the run or — far more usefully — be retried. Both halves of that test are
+  required and each covers the other's false positive: a step that legitimately
+  answers nothing still burns tokens getting there, so a silent-but-paid turn
+  still completes as before. Gate steps get the same treatment, where it matters
+  more still: the verdict grammar is deliberately fail-*open*, so a silent gate
+  used to be read as `PASS` and wave its deliverable through.
+- **A workflow step that produces no output no longer hands the next step the
+  *previous run's* output.** When a step wrote nothing this run — a turn that
+  ended without speaking — the hand-off widened from "this step's run" to "this
+  agent, ever" and forwarded whatever it had said last, from an earlier run,
+  with nothing marking it stale. The same widening applied to its result
+  summary.
+
+  For a read-only pipeline that was confusing. For one that acts on the world it
+  was a correctness and safety bug: a mail-triage run was observed issuing
+  Microsoft Graph decline and move calls using message and event ids from a
+  previous run, for an item that did not exist in the run at all. Every call
+  happened to `404` because those ids were already consumed — luck, not a
+  safeguard.
+
+  The hand-off body and the step summary are now **strictly scoped to the
+  current run**, and a step whose predecessor produced nothing is told so
+  explicitly ("produced no output in this run") instead of being handed older
+  data or left in silence it might fill in. Keeping the artifact board
+  cumulative across runs — the *Clear each step's artifacts* option — remains
+  available and no longer drags the hand-off body along with it.
+- **Signing in to one WorkIQ server now counts for every server sharing that
+  credential.** The Agent 365 endpoints authenticate with a single Entra token,
+  but only the server you clicked was re-pointed at the fresh one — its siblings
+  stayed parked in `needs_auth`, each showing an amber **Sign in** for a
+  credential they already had. Clicking through them ran a full
+  clear-and-regrant per server, so six built-ins meant six browser sign-ins for
+  the two credentials Precursor actually holds.
+
+  A completed sign-in now adopts the whole credential: every server on it is
+  re-pointed at the new token, reconnected, and broadcast as resolved so other
+  windows drop their banner too. **Settings → MCP** stops inviting the mistake as
+  well — the sign-in button belongs to the *credential*, so the servers sharing
+  one read `signs in with WorkIQ Teams` instead of offering a redundant prompt.
+- **A custom MCP server could shadow the built-in `drawio`.** The list of names
+  reserved for built-in servers was maintained by hand and had drifted from the
+  catalogue, so adding your own server called `drawio` was accepted instead of
+  rejected. The list is now derived from the built-in catalogue, which also
+  closes the drift for every server added from here on.
+- **A note filed from the MCP server now appears in the UI, and the tool says
+  which topic it landed in.** Asking the assistant to append a note wrote it to
+  the database and then showed you nothing: the browser kept rendering the topic
+  as it was before, and the only confirmation was a tool result naming an
+  internal `topic_id` — a number the app never displays — so there was no way to
+  tell a silent failure from a note filed under the wrong topic.
+
+  Two causes, both fixed. The built-in `precursor` server runs as a **stdio
+  subprocess**, sharing the app's database but not its in-memory event bus, so
+  the `message.changed` event announcing the write was published onto that
+  child's own empty bus and reached no window. Children are now handed a
+  loopback relay URL and a per-run token, and forward their events to the app
+  process (`POST /api/events/publish`), which republishes them onto the real bus
+  — so the write shows up live, in every window, including the one whose chat
+  turn triggered the tool. The endpoint accepts only data-refresh event types
+  and only with the token, so the worst it can ever do is make a window refetch
+  data it already has.
+
+  `append_note` and `post_message` now also return the destination as `topic`:
+  its **title**, its slug **path**, and the in-app **URL** — pasteable straight
+  into the browser — so "filed under `customers/sanofi/avm-alz`" replaces "filed
+  under topic 42" and a mis-targeted note is obvious at a glance.
+- **A remote MCP server that drops mid-turn no longer burns the rest of the
+  turn.** When a hosted endpoint went away under a live session — a rolling
+  deploy, a gateway blip, or the server forgetting the session id it issued —
+  the MCP SDK reported it as the bare phrase `Session terminated`, which is
+  emitted only on an **HTTP 404** from the remote. Because sessions are kept
+  warm and reused, the dropped one stayed poisoned: every subsequent call failed
+  identically until something happened to retire the worker.
+
+  A dead session is now classified as a **transport** failure rather than a bad
+  call — a remote 404, any 5xx, or a socket teardown recycles the session and
+  **retries the call once**, which rides out a blip. A second failure stops
+  there rather than hammering a downed endpoint.
+
+  The wording mattered as much as the retry. Told only "session terminated", the
+  model read it as its own fault and re-planned the call with smaller arguments,
+  then advised re-authenticating — while the credential was valid the whole
+  time, so a fresh token could not have helped. The tool error now names the
+  server and the real status, states that neither the arguments nor the sign-in
+  are at fault, and asks for the outage to be reported rather than an answer
+  guessed.
+- **A catalogue entry's install command is now shown where you're looking.**
+  When the in-app installer is off, the entry's button was labelled "Show
+  command" but only wrote the package name into the free-form box further down
+  the panel — so the visible result was a text input quietly gaining a word,
+  while the command itself stayed small, muted and elsewhere. The button is now
+  "Install command", reveals the exact command for this environment on the card
+  itself, and copies it to the clipboard in the same click.
+- **The in-app installer's consent could be granted but never withdrawn.** The
+  "Let Precursor install packages for me" checkbox lived inside the install box
+  and was rendered *only while the permission was off*, so ticking it made it
+  disappear — leaving no way to turn it back off short of editing the database.
+  It now sits at the top of **Settings → Plugins** and stays visible, reflecting
+  and toggling the setting in both directions. A permission you can't revoke
+  isn't really a permission.
+- **Edits to a Live meeting summary are no longer lost on reload.** The recap
+  was persisted only when it was *generated* or *posted to a topic*, so the one
+  thing the tab invites you to do — tune the draft by hand — was the one thing
+  it didn't keep: reopen the session, or reload with no topic attached, and your
+  wording was replaced by the last text the server had seen. The Summary tab now
+  **autosaves like the Notes tab** (debounced while you type, with a "Saving… /
+  Saved" marker), and also flushes when the session ends or you navigate away, so
+  an unposted recap survives.
+- **`PRECURSOR_EXTRAS=` now installs the lean core** instead of silently
+  reinstating the default extras. `install.sh` read it with `${…:-default}`,
+  which cannot tell "unset" from "deliberately empty", so the one way to ask for
+  a Precursor without the board and the tray was the one thing it ignored — and
+  had it not, the requirement would have been the invalid `precursor-ai[]`.
+- **`precursor.log` is written again once Precursor runs as a login item.** The
+  file only ever existed because `precursor service start` redirected the child's
+  stdout into it — so the moment a launchd agent or a systemd unit took over the
+  process (which is what `precursor service install` sets up, and what
+  service+tray mode *is*), the service manager captured stdio somewhere of its
+  own and the log froze at the last supervisor-started run. Nothing said so:
+  `service status`, `precursor service logs` and the tray's **Open log file**
+  went on naming a file that had stopped being written days earlier, while the
+  real output piled up unrotated in `launchd.app.err.log` (15 MB in a week on the
+  reported install). The app now configures its **own rotating file handler**, so
+  `precursor.log` is the same file in every mode — terminal, supervised child,
+  launchd, systemd — and is capped by `PRECURSOR_LOG_FILE_MAX_BYTES` /
+  `PRECURSOR_LOG_FILE_BACKUPS` rather than growing forever. Where a service
+  manager already captures stderr, the console handler is dropped so no line is
+  written twice; a supervised child's raw pipe moves to `precursor.out.log`,
+  which now holds only what logging can't catch (an import error, a pre-config
+  traceback) and is trimmed at each start.
+- **The menu-bar icon logs its own failures.** The tray process never configured
+  logging at all, so every `logger.error` in it reached only `logging.lastResort`
+  — which drops INFO entirely and writes the rest, unformatted, to a stderr its
+  login item throws away. It now writes `tray.log` beside the instance log. Its
+  own file, not the app's: "the icon failed" and "the server failed" are
+  different questions, and two processes rotating one file race.
+- **`precursor service start --foreground` no longer swallows its own startup
+  messages.** It is what the login item runs, and it logged before anything had
+  configured logging — including the INFO line explaining that it was exiting
+  cleanly because another instance was already serving, which is precisely the
+  message you go looking for when a login item appears to do nothing.
+- **`precursor service install` no longer uninstalls the login item it was
+  asked to re-install.** `launchctl bootout` signals the job and returns; it
+  does not wait for the process to die. Precursor's shutdown is a graceful
+  uvicorn one and takes several seconds, so bootstrapping the same label
+  immediately afterwards landed while launchd still had the old job and failed
+  with the opaque `Bootstrap failed: 5: Input/output error`. The old job was
+  already booted out by then, so re-running `install` over a *running* login
+  item left nothing registered at all — reproducible on every attempt, on both
+  the app and the tray unit. Unloading now polls `launchctl print` until launchd
+  has actually let go of the label (measured at ~5s for the app) before loading
+  the new job. `stop_unit` and `uninstall` wait too: "stopped" has to mean the
+  port is free, or a stop-then-start hands the new process one the old still
+  owns.
+- **An optional plugin your package index can't serve no longer blocks the whole
+  self-update.** `precursor service update` reinstalls the tool with the extras
+  it was installed with, so a single unresolvable one — `precursor-kanban`, on a
+  restricted mirror that hasn't ingested it — made `uv` fail the resolution and
+  left the host stranded on its old build. Before the plugin moved to its own
+  repository the wheel travelled with the release and the index was never asked,
+  so nothing showed until it did.
+
+  The update now retries once without the extras that only pull a Precursor
+  plugin (recognised from the distribution metadata, so it doesn't hardcode a
+  list), and reports what it gave up: *"Installed 2026.9.0. Skipped kanban — not
+  installable from your index: …"*. A failure that survives dropping them is
+  raised as before, unchanged — degrading must not turn a real breakage into a
+  fake success. Extras that pull libraries the host itself uses (`tray`,
+  `postgres`) are never dropped.
+- **A failed update says why.** The error led with the command — an install line
+  carrying a full wheel URL — so the tray notification truncated it and left
+  "updating failed" as the only signal, with `uv`'s actual explanation cut off.
+  The reason now comes first, flattened out of `uv`'s box-drawing tree into one
+  sentence, with the command last and URLs shortened to their filename.
+- **`PRECURSOR_UPDATE_EXTRAS` can now drop an extra**, with a `-name` entry
+  (`PRECURSOR_UPDATE_EXTRAS=-kanban`). The setting is unioned with `uv`'s install
+  receipt so an update can't silently uninstall what you have, which also meant
+  an extra recorded there could never be given up — reinstalling the tool by hand
+  was the only way off it.
+- **A WorkIQ token is now renewed when the keep-alive says so, not 30 seconds
+  before it dies.** Two thresholds decided "renew this" and they disagreed. The
+  keep-alive opened a session once a token was within five minutes of expiring;
+  the MCP SDK gates its only refresh branch on its own freshness check, which
+  called the same token valid until one minute out. In between, the keep-alive
+  spent an MCP session per tick doing nothing, read back the unchanged token and
+  logged `keep-alive: token renewed` — four wasted sessions a cycle and a trace
+  that asserted a renewal that never happened. Renewal only really occurred with
+  about 30 seconds of headroom: one delayed tick from the expired credential and
+  browser prompt this machinery exists to prevent.
+
+  The deliberate-renewal path now states its intent, so the refresh it asks for
+  is the refresh it gets. That is confined to it on purpose — a token marked
+  spent whose refresh then fails transiently is sent with no auth header at all,
+  and the 401 escalates to a full sign-in, so chat turns and the warm pool keep
+  the SDK's cautious default.
+
+  How far ahead of expiry that happens is no longer a setting
+  (`PRECURSOR_WORKIQ_KEEPALIVE_REFRESH_MARGIN_SECONDS` is retired; a stale value
+  in your environment is ignored). It is derived from the token's own lifetime —
+  a quarter of it, never less than five minutes — because the only question that
+  matters is how many attempts fit before the token dies. Real tokens get some
+  17-22 minutes of runway and a dozen-plus retries instead of one.
+  `GET /api/mcp/auth/diagnostics` reports the resulting `renewal_lead_seconds`
+  per credential, and a refresh that renews nothing is now recorded as the
+  anomaly it is rather than as a success.
+- **A built-in plugin now updates with the host.** `precursor-kanban` pinned a
+  static `version = "0.1.0"`, so every build produced a byte-identical wheel
+  name and the nightly manifest advertised an unchanging URL. uv saw the
+  requirement already satisfied, skipped the download, and left a *current* host
+  paired with a plugin frozen at whatever build landed first — an upgrade that
+  visibly did nothing, which is the exact pairing `RELEASING.md` promises never
+  happens.
+
+  Built-in plugins now inherit the host's CalVer from the same git tags, so a
+  plugin wheel carries the commit it was built from. `root = "../.."` is the
+  only line tying one to this repository, so extracting a plugin to its own
+  repository and release cadence stays a one-line change.
+
+  Two consequences of the same bug are fixed with it: the release workflow ran a
+  bare `uv build`, so tagged releases never built the plugin at all and
+  `precursor-ai[kanban]` was unresolvable from PyPI; and a static version made
+  the plugin unpublishable anyway, since PyPI refuses to re-upload one. Releases
+  now build and publish every workspace package, and verify each wheel against
+  the tag.
+
+  Publishing needs a matching PyPI trusted publisher per distribution — see
+  `RELEASING.md`.
+- **A compaction test no longer fails on the residue of the suite that ran
+  before it.** `test_compact_reports_a_size_delta` asserted that `VACUUM` never
+  grows the file — but against the *shared* scratch database every test writes
+  to, so the assertion was evaluated on whatever a thousand preceding tests
+  happened to leave behind. `VACUUM` is under no obligation to shrink a file
+  whose free-page layout is already compact, so it tripped in roughly half of
+  full-suite runs while passing every time the file was run alone.
+
+  The behaviour is worth guarding — a `VACUUM` in WAL mode once *grew* the
+  database, because the WAL was checkpointed on only one side of the rebuild —
+  so the assertion is not relaxed, it is moved somewhere it means something.
+  Compaction is now measured on a database the test owns: a WAL-mode temporary
+  file filled with ~8 MB and then mostly, deliberately not entirely, emptied.
+  Keeping rows alive is what makes the check bite, since VACUUM rewrites the
+  surviving database through the WAL — restore the old bug and this fixture goes
+  from 8.3 MB to 11.6 MB, where a fully emptied one would have shrunk anyway and
+  said nothing. Owning the churn also makes the assertion strict: compaction has
+  to actually reclaim, and the WAL has to be empty afterwards. The endpoint keeps
+  its own test for the shape of what it returns.
+- **Every WorkIQ silent refresh was aimed at the wrong server, so none of them
+  ever worked.** The symptom was a browser sign-in roughly every 80 minutes —
+  the access-token lifetime — plus background tabs opening unbidden and turns
+  stalling on a re-authenticate banner, against credentials that held a
+  perfectly good refresh token throughout.
+
+  The MCP SDK runs its refresh at the *top* of `async_auth_flow` but only
+  discovers the authorization server later, in the branch that handles a 401. A
+  freshly built provider — which every background renewal is — therefore reached
+  `_refresh_token()` with no metadata, and the SDK fell back to deriving the
+  token URL from the MCP endpoint. The grant was POSTed to
+  `https://workiq.svc.cloud.microsoft/token` (400 `"Invalid request, no valid
+  route."`) and `https://agent365.svc.cloud.microsoft/token` (404) — the
+  *resource* hosts, which have no token endpoint. The SDK read those as Entra
+  refusing the refresh, cleared the stored tokens and escalated to a full
+  browser grant.
+
+  Restoring each token's real expiry (previous release) made this visible rather
+  than causing it: before, `is_token_valid()` always returned `True`, so the
+  broken refresh branch was skipped entirely and the failure hid behind the
+  401 path. Once expiry was honoured, every renewal entered a branch that could
+  only fail — and discarded a renewable credential on the way out.
+
+  Precursor now resolves the authorization-server metadata before the flow runs,
+  so the refresh reaches
+  `https://login.microsoftonline.com/organizations/oauth2/v2.0/token`. Only the
+  URL changes: the metadata seeded is deliberately limited to the authorization
+  server, because seeding the protected-resource document too would add an
+  RFC 8707 `resource` field to the request body. Discovery is resolved once per
+  endpoint per process, and a discovery outage degrades to exactly the previous
+  behaviour rather than making things worse.
+- **Installing failed outright when something else already held port 8000**, and
+  said almost nothing useful about it: `error: The Precursor login item did not
+  come up on port 8000`. That is the *first* thing a new user runs, and 8000 is
+  a popular port — the login item was registered against a port it could never
+  bind, so launchd/systemd dutifully retried a doomed start forever while the
+  installer reported only the symptom.
+
+  `precursor service install` now settles the port **before** registering the
+  unit: a busy default moves to the next free port and is written to `.env` in
+  the data directory, so the login item — which launchd and systemd start with
+  no arguments — reads the port that actually works, and keeps reading it across
+  reboots instead of drifting. Both facts are printed. A port you chose yourself
+  (`PRECURSOR_PORT`, or the new `precursor service install --port`) is never
+  moved silently; the install stops and says the port is taken.
+
+  The two start paths change accordingly. The login item — unattended, and the
+  one thing `KeepAlive`/`Restart` will retry forever — no longer exits non-zero
+  when its port is taken at login: it bumps, logs where it went, and publishes
+  the real URL in `runtime.json`, which is what `service status` and the tray
+  read anyway. `precursor service start` does the same for a merely *defaulted*
+  port, while a port you pinned still fails loudly there, and the "did not come
+  up" error now names the port and says who is holding it.
+- **The tray kept offering an update the app had already installed**, because it
+  was comparing the published build against *its own* version. `__version__` is
+  resolved once, at import, so a long-lived icon measures against the release it
+  was **started** with, forever — no matter what the app is running. The result
+  was a menu entry saying *"Update to dev245"* on a machine that had been
+  running dev245 for over an hour, where the CLI (a fresh process) correctly
+  reported nothing to do.
+
+  The tray now compares its own version against the one the running instance
+  recorded when it launched — a fresh process, so a disagreement means the icon
+  is the stale one. It says so, offering **"Restart the icon (running an older
+  build)"** in place of the update, and that entry bounces the tray's login item
+  and drops the cached check. Detection rides the existing 3-second supervisor
+  poll: no extra network call, no new state.
+
+  This also covers updates that never go through `precursor service update` — a
+  manual `uv tool install --force`, for instance — which restart nothing and
+  previously left the icon lying until it was killed by hand.
+- **Running the test suite killed the developer's own Precursor.** Every other
+  external the tests touch is redirected — the database, the data dir, the skills
+  dir — but login items are not addressed by an env var: launchd reads
+  `~/Library/LaunchAgents` and systemd `~/.config/systemd/user`, both global to
+  the user account. `supervisor.stop()` and `restart()` ask `managed_unit()`
+  whether a *controllable* login item owns the instance, and it answered from the
+  developer's real plist, so a supervisor test with a perfectly isolated data dir
+  still ran `launchctl bootout` against the machine's actual running app.
+
+  Booted out is worse than killed: `KeepAlive` can only restart a job that is
+  still loaded, so the app stayed down until someone bootstrapped it by hand —
+  with the tray left running against a server that no longer existed. `conftest`
+  now redirects the single path chokepoint every platform goes through, and a
+  test fails if that isolation is ever dropped.
+- **Agents mode reported its runtime as missing on installs that had a perfectly
+  good Copilot CLI.** `github-copilot-sdk` 1.0.4 replaced its platform-specific
+  wheels — which *bundled* the ~90 MB native CLI — with a small pure-Python wheel
+  that downloads the binary on first use. The private helper Precursor called to
+  locate that bundled binary went with it, and because the whole lookup sat
+  inside a bare `except Exception`, the failure was silent: **Settings → Agents**
+  simply said *"Copilot CLI runtime binary not found for this platform"* on a
+  machine where the SDK was installed, working, and a system-wide `copilot` was
+  already on `PATH`.
+
+  Resolution is now layered and no longer hinges on any single SDK internal:
+  `COPILOT_CLI_PATH`, then the SDK's download cache, then a `copilot` executable
+  on `PATH`, then the old bundled location for pre-1.0.4 SDK lines. Each step
+  that reaches into the SDK is guarded independently, so the env var and `PATH`
+  keep working even if those internals move again. The probe stays **read-only**
+  — it reports what already exists and never triggers the SDK's download, because
+  it runs on every Settings render and pulling ~90 MB as a side effect of drawing
+  a toggle would be indefensible.
+
+  Whatever the probe resolves is now handed to the SDK when the runtime starts.
+  Left to itself the SDK ignores `PATH` and downloads instead, so a machine whose
+  only CLI is a Homebrew install would have passed the probe and then pulled the
+  binary anyway — and could have ended up driving a different one than Settings
+  reported. `github-copilot-sdk` is also capped at `<2` now, for the same reason
+  `mcp` is: Precursor reaches into its private CLI-resolution helpers, and an
+  uncapped floor is what let a *patch* release break this in the first place.
+- **Updating left the menu-bar icon running the previous release.**
+  `precursor service update` restarts the app so the new code is serving, but
+  the tray is a separate long-lived process: replacing the wheel changes the
+  code on disk while the running icon keeps executing what it imported at
+  startup. That is not cosmetic — the tray's menu is what drives the
+  supervisor, so a stale icon kept offering the *previous* version's behaviour
+  indefinitely — including, right after the release that fixed the restart
+  race, the icon's own Restart entry still having the racing version of it.
+  Both `service update`
+  and the tray's own "Update and restart" now bounce the tray unit; the tray
+  restarts itself last, so the service manager brings a fresh icon straight
+  back. A tray started by hand is left alone, and a failure to restart it is
+  reported as a note rather than failing an otherwise-successful update.
+- **Updating a login-item instance left it dead with the port still taken.**
+  Once registered, a launchd agent (or systemd unit) *is* the supervisor:
+  `KeepAlive` and `Restart=` exist precisely to undo a kill. `precursor service
+  restart` signalled the process anyway, so the manager immediately started a
+  replacement while the supervisor started its own, and the two raced for the
+  port. One won; the loser retried on a 30-second throttle forever. The
+  symptom, from the tray's "Update and restart": the old instance is not
+  replaced, the new one cannot bind, and the log fills with `Port 9000 is in
+  use`.
+
+  `start`, `stop` and `restart` now delegate to the service manager when a
+  controllable unit owns the instance — `launchctl bootstrap` / `bootout` /
+  `kickstart -k`, or the systemd equivalents. `kickstart -k` matters
+  specifically: it kills and restarts in one operation, leaving no window for
+  anything else to claim the port, which a stop-then-start cannot promise. A
+  Windows Startup entry is only a shortcut executed at login, so it is not
+  treated as a manager and the direct path still applies. An explicit
+  `--port`/`--host` override also keeps the direct path, since the unit carries
+  its own configuration.
+- **A failed start could delete a healthy instance's state file.** `runtime.json`
+  was cleared unconditionally on shutdown, so a process that lost the race for
+  the port erased the record belonging to the instance that won it — leaving
+  `precursor service status` reporting "not running" while the app was plainly
+  serving. It is now cleared only by the process that owns it.
+- **`precursor service update` silently uninstalled extras.** The reinstall was
+  built from `PRECURSOR_UPDATE_EXTRAS`, a setting defaulting to `kanban` that
+  the user had to remember to mirror by hand. So an install made with
+  `precursor-ai[tray,agents]` came back as `precursor-ai[kanban]` on the next
+  update, removing the menu-bar icon and Agents mode without saying anything.
+  The extras are now read from uv's own install receipt — what is actually
+  installed, rather than a copy that drifts — with the setting kept as the way
+  to *add* an extra the current install doesn't have yet.
+- **Restarting a login item that launchd had unloaded failed outright.** A plist
+  on disk is not the same as a job launchd knows about, and the two diverge
+  whenever the instance was stopped or its executable was replaced underneath
+  it. `launchctl kickstart` needs a loaded job, so `service restart` reported
+  *"Could not find service … in domain for user"* instead of starting it. Both
+  start and restart now fall back to bootstrapping the job.
+- **`mcp` was uncapped, so a fresh install resolved a wheel the app cannot
+  import.** `mcp` 2.0 renamed the client entry points Precursor imports
+  (`streamablehttp_client` → `streamable_http_client`) and dropped the old
+  names, and the `>=1.28` floor accepted it — so `uvx precursor-ai` on a machine
+  resolving today's index got an instance that died on startup with an
+  `ImportError`. Capped to `>=1.28,<2`.
+
+  Worth noting the shape of this: `uv.lock` pins exact versions for dev and CI,
+  which is why the suite stayed green, but **end users of the published wheel
+  resolve fresh** and the lockfile never reaches them. Coarse floors are fine
+  for compatible releases; an API-breaking major needs a real cap.
+- **The supervisor read settings from the caller's directory, not the
+  instance's.** `pydantic-settings` resolves `.env` relative to the process
+  working directory, but the CLI and the tray can be invoked from anywhere while
+  the instance always runs in its own working directory. Running
+  `precursor service start` from `~` therefore missed the `.env` beside the
+  data, fell back to the default port, and passed the child an explicit
+  `--port` that overrode the `.env` it would otherwise have read — silently
+  moving an instance configured for `:9000` onto `:8000`. Settings are now
+  resolved as the child will see them, and the foreground path adopts the
+  working directory before reading them.
+- **Installing the login item while an instance was already running caused a
+  crash loop.** launchd's `RunAtLoad` (and systemd's `--now`) start the instance
+  as part of registering it, which raced the start `service install` did itself;
+  the loser hit `--strict-port` and exited non-zero, which `KeepAlive` reads as
+  a crash and retries every 30 seconds forever. The foreground path now yields
+  to a healthy existing instance and exits *successfully*, and `service install`
+  waits for the unit to come up instead of racing it.
+- **Archived agent events could grow without bound.** The event normaliser
+  capped captured tool I/O only when the value was already a string; anything
+  rendered through `jsonify` — notably a hook's `input`, which re-embeds the
+  entire tool result the completion event *already* stored — went to the
+  database uncapped and pretty-printed. An event's free-text body wasn't capped
+  at all, so every session start archived the full system prompt, hundreds of
+  times over. On one production database these two paths held **45 MB of a
+  126 MB file**. All captured values are now capped uniformly and marked when
+  trimmed, with a much tighter limit for system prompts (boilerplate) than for
+  conversational text (which the timeline renders in full). A matching
+  **Oversized agent events** cleanup target re-applies the caps to rows already
+  written, since retention can't reach them — an oversized payload isn't
+  necessarily old, and counts as a single row against a per-session ceiling
+  however many KB it holds. It preserves every timeline node, tool name and
+  status, and is idempotent.
+- **An agent no longer forgets what it is halfway through a conversation.** Its
+  instructions (`task_prompt`) are delivered once, as the first message of the
+  SDK conversation, so they survive only as long as that conversation does. The
+  runtime deliberately tears the session down and rebuilds it on an expiring
+  OAuth bearer, a changed MCP catalogue or a recovered sign-in — and that rebuild
+  is meant to be invisible, resuming the same conversation via
+  `copilot_session_id`. Except the handle was read off the session object
+  (`getattr(sdk_session, "id"…)`), and `CopilotSession` exposes no such
+  attribute: it resolved to `None` every time, so no run ever stored one. The
+  rebuild therefore passed no `session_id` and opened an *empty* conversation,
+  silently discarding the task prompt and the entire history. Symptom: an agent
+  answers its first turn perfectly, then replies to the next message as though it
+  had never been briefed — the telltale being a `session.start` event appearing
+  mid-thread, right before a user message. It bit conversational agents hardest,
+  because a WorkIQ credential refreshing between turns is enough to trigger it.
+  The handle is now captured from the `SessionStartData` event, which is the only
+  place the SDK publishes it, and never overwritten once set.
+
+
+  startup but not their expiry, and its `is_token_valid()` treats an unknown
+  expiry as valid — so a credential read back from the database always looked
+  fresh, the silent-refresh branch that check guards was never entered, and the
+  401 that eventually followed escalated straight to a full browser grant, which
+  never attempts a refresh either. The refresh token was dead weight, and every
+  access-token expiry became an interactive sign-in. The trace added above is
+  what caught it: over 401 recorded events, **58 escalations to a full
+  authorization and zero refresh attempts**, against credentials that held a
+  refresh token throughout. Precursor already records when each token was issued,
+  so it now restores the real expiry (less a minute of skew) as the credential
+  loads, and the SDK's own refresh path works as designed. A legacy token with no
+  recorded issue time is still assumed valid rather than forced through a sign-in
+  that may not be needed.
+- **Startup migrations no longer silence the app's own logs.** `init_db` runs
+  `alembic upgrade head` on every boot, and Alembic's `env.py` applied
+  `alembic.ini`'s logging with `fileConfig`'s default
+  `disable_existing_loggers=True` — which switched off every `precursor.*` logger
+  created at import time, replaced the unified handler and formatter, and pulled
+  the root level down to `WARN`. From the first migration onwards the backend was
+  substantially quieter than configured, which is why raising `--log-level` often
+  changed so little. Alembic's own logging config is now applied only when it's
+  driven from its CLI, and never disables existing loggers.
+- **A failed automatic re-auth no longer costs you the credential.** The
+  hands-free passes clear the stored token before running, so the SDK is forced
+  through a fresh grant instead of short-circuiting on one it still considers
+  valid — but if the pass then failed, that credential was simply gone. Since the
+  verdict that triggers a pass can come from a transient 401, a refresh token
+  that would have worked on the next try was being thrown away, turning a blip
+  into a mandatory interactive sign-in. The old credential is now restored
+  whenever a hands-free pass doesn't complete, at a cost of at most one doomed
+  refresh later. An explicit **Sign in** still clears outright.
+- **A new topic lands in the collection you're looking at, and the form says
+  which.** The create form never sent the active collection, so every new
+  top-level topic silently fell back to the default one — leaving you to move it
+  by hand each time, or to wonder why it hadn't appeared in the tree at all. It
+  now carries a **Collection** field, preselected to the collection you're
+  viewing, so the destination is visible and changeable *before* the topic
+  exists rather than being an invisible consequence of the sidebar. Picking a
+  parent scopes that field to the parent's collection instead, since a subtree
+  lives in exactly one. Two other paths were worse and left the membership
+  *null*, which no collection filter matches, so the topic was invisible in the
+  sidebar until you found it through search: promoting a chat to a topic, and
+  the MCP `create_schedule` tool. Both now resolve a collection
+  (`?collection_id=` and a `collection` argument respectively, defaulting to the
+  protected default), and a migration re-homes any topic already stranded that
+  way. `GET /api/topics` and `GET /api/topics/archived` gained the
+  `?collection_id=` filter the tree endpoint already had.
+- **A subtree can no longer end up split across two collections.** Saving topic
+  settings sends the parent and the collection together, so a re-parent could be
+  overruled by the collection dropdown's stale value and drop the topic into the
+  wrong collection. The two are now reconciled by *what changed*: re-parenting
+  adopts the new parent's collection, and moving a sub-topic to another
+  collection promotes it to a top-level topic (taking its own children) rather
+  than leaving a branch straddling both.
+
+
+  `body` parameter was string-only, so a model reaching for the object the target
+  endpoint documents — the natural move — hit a validation error whose shape it
+  couldn't see, and retried its way through progressively stranger encodings. It
+  now accepts an object or array and serialises it, setting
+  `Content-Type: application/json` unless the caller supplies one, so a raw
+  string still behaves exactly as before.
+- **A workflow step is no longer told about state tools it doesn't have.** The
+  "this workflow's saved state" block — which instructs the agent to call
+  `workflow_state_get` — was attached whenever a step had MCP on at all, ignoring
+  the step's own server allowlist. A step scoped to, say, `workiq` was handed an
+  index it had no tool to read, and spent a turn explaining it couldn't comply.
+  The block now follows the same predicate the attach path uses.
+- **The workflows guide no longer documents a feature that never shipped.** Its
+  overview compared workflows to agent `depends-on` links "agents can already
+  declare" — but the per-agent dependency table (`agent_deps`) was dropped in the
+  same commit that introduced Workflows, so no such link has ever existed for
+  users. The section is now *What the workflow owns*, stating plainly that agents
+  can't trigger each other and that all chaining lives on the workflow.
+- **A failed turn no longer reads as a success.** Stream errors are persisted as
+  system messages, and *every* system message rendered as a green check-marked
+  acknowledgement — so "The model provider rejected the request" looked exactly
+  like "Run now accepted". Error notices now render red with a warning icon (and
+  an `alert` role), while acknowledgements keep the green treatment.
+- **Workspace chat now honours the context-budget settings.** `POST
+  /api/workspaces/{slug}/chat` trimmed its prompt using the env-level token
+  limits while topic and chat turns resolved them from the database, so changing
+  **max input / tool-result tokens** in Settings silently had no effect on
+  workspace conversations — the one surface most likely to hit the ceiling, since
+  it reads files.
+- **The test suite no longer spawns the real Copilot CLI.** `make check` took
+  ~9 minutes on machines that had ever run `make dev`, and ~75s on machines that
+  hadn't — the same code, six times slower for exactly the people running the
+  app. App startup starts the agents runtime when the optional
+  `github-copilot-sdk` is importable *and* the persisted `agents_enabled` flag is
+  on; exercising Agents mode means turning that flag on, and it persists in the
+  session-wide scratch database, so those tests — and every later app startup
+  while it stayed on — spawned and tore down the bundled native CLI. At ~12.8s
+  each the suite sat **87% idle** (70s of CPU for 539s of wall clock), which read
+  as "the tests are slow" rather than as a process spawn. Tests now report the
+  agents runtime as unavailable by construction, so timings no longer depend on
+  which extras a developer happens to have installed.
+- **A workflow board shows its own run.** The step strip was rendered from the
+  shared agent row, which mirrors that agent's *current* run — so two pipelines
+  driving one agent both displayed whichever finished last, right down to the
+  answer and the question waiting on you. Each board now resolves its step
+  through the run that step actually launched.
+- **The agent transcript reads one run at a time.** Concurrent drivers produced
+  a single interleaved timeline — two prompts and two answers with nothing
+  saying which belonged to which. Every event now carries its run and the
+  transcript **defaults to the latest one**, following along when the agent
+  starts again. The **Runs** rail doubles as a filter (**All runs** restores the
+  full history) and a chip above the timeline says which run you are reading.
+  Agent-wide notices (the MCP authorisation banner) carry no run and so appear
+  only in the unfiltered view.
+- **A run records what actually started it.** Every entry point outside a
+  workflow opened its run as `manual`, so the Runs rail credited a human for
+  schedules, webhook fires, fleet releases and retries alike.
+- **A gate agent reads its own verdict.** The event archive spans every run of
+  an agent — that is what makes it the transcript you scroll — so "the newest
+  assistant message" meant "whichever concurrent run spoke last". A gate shared
+  by two workflows could hand one pipeline the other's `PASS` and wave a failing
+  deliverable through. Verdict and hand-off reads are now scoped to the run that
+  produced them; the agent-wide read remains for the transcript itself.
+- **A crash no longer leaks a concurrency slot.** Boot recovery flagged only the
+  agent rows it found mid-turn, leaving the runs the fleet governor counts stuck
+  at `running` forever. After `agents_max_concurrent` hard stops, nothing could
+  start again.
+- **Signing in to an MCP server rebuilds the right sessions.** The rebuild swept
+  the live-session registry as though it were keyed by agent when it is keyed by
+  run, so it skipped the sessions that needed rebuilding and could disconnect an
+  unrelated agent's live run mid-turn.
+- **Replaying a step of an edited workflow finishes.** If the step had been moved
+  or removed from the definition since the original run, the replay opened no
+  execution to attach to and its trace row could never be closed — leaving the
+  step pinned "in flight" on the board. The replay now always opens a run,
+  falling back to the agent's current settings when the step is gone.
+- **The concurrency governor counts executions, not agents.** A slot exists to
+  bound how many Copilot SDK sessions run at once, and there is now one session
+  per run — so two workflows driving the same agent burned two sessions while
+  charging `agents_max_concurrent` for one. The fleet count, and the
+  `running_now` gauge in the Agents header, now read the runs.
+- **Fleet token totals and the inbox's "budget" badge read every run.** Both
+  summed the agent's own counters, which mirror its *current* run — so lifetime
+  spend collapsed to the latest turn of each agent, and an agent parked by the
+  budget governor after several runs was mislabelled as having raised a
+  question.
+- **The stall watchdog watches runs, not agents.** It selected sessions whose
+  status was `running` and read their last activity — both of which now mirror
+  only the agent's *current* run. A turn wedged by a hung tool therefore became
+  invisible the moment another execution took over, and stayed pinned in
+  `running` forever: never surfaced for a Resume, and permanently holding one of
+  the `agents_max_concurrent` slots. It now sweeps the run rows, interrupts the
+  run itself, and drops only *that* run's live session — previously it tore down
+  every session the agent owned, killing a healthy concurrent workflow's
+  in-flight turn as collateral.
+- **Raising a token budget no longer un-parks an agent that is still over it.**
+  The check compared the new ceiling against the agent's own counters, which
+  mirror its current run, so a raise above the latest turn's spend flipped a
+  budget-blocked agent to idle even when its lifetime total was still past the
+  limit — and the governor simply re-parked it on the next metered round. It now
+  weighs cumulative spend across every run, matching the governor.
+- **An agent's token budget is no longer reset by starting it again.** The
+  governor read the agent's cumulative counters, which are now a mirror of its
+  *current* run — so every new run would have handed the agent a fresh
+  allowance, and two concurrent runs would each have seen only their own spend.
+  It now sums across every run of the agent, which is what "cumulative
+  governance on the definition" was always supposed to mean.
+- **Editing a workflow step over the API no longer deletes its inline agent.**
+  `PATCH /api/workflows/{id}` with a step that names its private vessel via
+  `agent_id` but leaves `task` out — a partial edit, say to narrow the step's
+  server allowlist — attached the step to that vessel and then swept the vessel
+  up as an orphan in the same request. The call returned `200` with `agent_id`
+  still in the body, so nothing signalled the loss: the step was left pointing
+  at a deleted agent, and the prompt was gone. Referencing a vessel now *claims*
+  it, which makes the endpoint idempotent for partial step edits; the prompt is
+  simply left as it was. The builder was never affected — it resends the prompt
+  on every save — but scripts, direct REST calls and agents driving a pipeline
+  were, and a single edit could wipe every inline prompt in a workflow. The
+  sweep also detaches any step still referencing a vessel before deleting it,
+  rather than trusting `ON DELETE SET NULL`: SQLite runs with foreign keys off,
+  so that dangling id survived — and SQLite may later hand the same id to an
+  unrelated agent.
+- **WorkIQ sign-ins now ask for a refresh token, so they can be renewed
+  unattended.** The OAuth flow never requested `offline_access`, so Entra
+  returned an access token with **no refresh token** — a terminal credential. The
+  background keep-alive would try to renew it, fail, and the only way back was a
+  human at a browser, which is exactly what a scheduled workflow or a
+  backgrounded agent doesn't have; overnight runs came back having quietly
+  answered without their tools. Because the MCP SDK overwrites the requested
+  scope during discovery, `offline_access` is merged into the finished
+  authorization URL — the last point before the browser — alongside whatever
+  scope discovery resolved. Both built-in profiles are covered. Tokens stored
+  *before* this can't gain a refresh token retroactively, so instead of
+  attempting a renewal that cannot succeed, Precursor now spots the missing
+  refresh token and raises the ordinary sign-in banner straight away: you
+  re-authenticate **once** and come back with a renewable credential. Depending
+  on how the WorkIQ preview client is registered, that sign-in may show a one-off
+  consent screen for the new `offline_access` permission. (The Agent 365 pair
+  requests `<resource>/.default`, which replays already-consented permissions, so
+  it was getting a refresh token by accident and is unaffected.)
+- **An agent that lost an MCP sign-in now picks it back up.** When a server was
+  enabled but couldn't be authenticated, the session was built without it — and
+  the reuse check tracks the set of *enabled* servers (deliberately, to avoid
+  looping against a server that can't authenticate), so signing back in changed
+  nothing it looked at. The tool-less session was reused indefinitely and the
+  only cure was restarting Precursor. The live session now also records a digest
+  of the stored credential for each server it had to skip, and rebuilds when that
+  digest changes. It stays loop-free by construction: a rebuild that still can't
+  attach records the same digest and doesn't fire again until fresh tokens are
+  actually persisted, and the credential is never held in memory in the clear.
+- **A workflow step whose named server never attached no longer reports
+  success.** A step that allowlisted a server it couldn't sign in to ran anyway:
+  the agent answered from its own knowledge, rested idle, and the coordinator
+  read idle as done and marked the step **completed** — the worst outcome, since
+  the run looked fine. Naming a server in a step's allowlist is a hard
+  requirement, so the turn is now parked **Blocked** naming the server(s), which
+  pauses the run for a sign-in and a **Resume**. Scoped to explicit allowlists on
+  purpose: an agent running the whole enabled catalogue asked for whatever was
+  available, not for that server in particular, and is left alone.
+- **The test suite no longer calls a real model.** Three live-meeting tests
+  (`ask`, `summary`, `summary/from-transcript`) never stubbed a provider — they
+  relied on `get_llm_provider` falling back to the offline mock, which only
+  happens when no GitHub token resolves. Signed in to `gh`, they issued live
+  GitHub Models requests and failed against an entitlement the token doesn't
+  have, so `make check` passed or failed depending on the developer's login
+  state rather than on the code. Tests now run with no LLM credentials by
+  construction.
+- **Importing a workflow now warns about servers it can't attach.** A step's
+  server allowlist travels verbatim, which is what lets a workflow move between
+  machines — but on an install missing one of those servers the step just
+  quietly ran with fewer tools than its author gave it, and the symptom only
+  showed up much later as odd behaviour. The import preview now names them
+  before you commit, separating "not installed here" from "installed but
+  switched off in Settings → MCP", which is the one you can fix without leaving
+  the app. The step editor makes the same distinction in colour: red for a name
+  this machine doesn't know, amber for one that's a switch away from working.
+- **The step editor's server picker now explains itself when it's empty.** With
+  no MCP servers enabled, the **Servers** row offered nothing but **All** and
+  gave no hint why, which read as a broken control rather than a setup step. It
+  now says so and points at Settings → MCP, and it tells "still loading" apart
+  from "nothing enabled" so the message doesn't flash on open. A server named by
+  a step but switched off locally also reports that, instead of claiming it
+  isn't installed.
+- **An agent with tools off no longer rebuilds its session on every dispatch.**
+  The reuse check compared the session's stored MCP fingerprint against the
+  *enabled catalogue*, but a tools-off agent stores an "off" sentinel — so the
+  two could never match and the Copilot session was discarded and rebuilt each
+  time the agent ran, throwing away its warm state for nothing.
+- **A workflow step no longer runs twice.** The completion seam enqueued a
+  workflow advance whenever a step's agent *was* resting rather than when it
+  *reached* rest, so every event a finished agent still emits — pending-message,
+  MCP-status and tool-list updates — fired another one. Those ran concurrently
+  and unlocked, each reading the run's cursor still on the step that had just
+  finished, so each one entered the next step: several trace rows milliseconds
+  apart (one "Running" that never finished, sitting above the "Done" row for the
+  same step), and, worse, several *real* launches of the step's agent — which
+  genuinely redid the work and genuinely spent the tokens. Advances are now
+  triggered by the transition into rest, serialised per workflow, and each one
+  claims the step's open trace before acting, so a duplicate is a no-op.
+
+  This also **inflated reported run costs**: each closed trace adds its spend to
+  the run total, and the duplicate rows carried identical deltas, so affected
+  runs over-reported by roughly 40%. A migration supersedes the duplicated rows
+  and rebuilds every run's totals from what is left — **existing runs will show
+  lower (correct) token counts** after upgrading, and phantom "Running" rows
+  disappear from their traces. Attempts abandoned this way are labelled
+  `Superseded`. The repair takes more than closeness in time to act: a candidate
+  must *also* be orphaned or an exact spend twin of the attempt that survived,
+  because a legitimate `on_error=retry` whose first attempt fails within seconds
+  starts inside the same window, and superseding that would delete real spend —
+  the very under-reporting this repair exists to fix. Genuine repeat attempts
+  (gate loop-backs, `on_error=retry`, manual retries, permission resumes) are
+  untouched.
+- **A failed turn dispatch tells its workflow.** `_fail_turn` marks the agent
+  `failed` outside the event seam, so the run only found out if some later event
+  happened to arrive — otherwise it sat in `running` until the watchdog (if one
+  was configured at all) noticed. It now advances the run itself.
+- **Answering a permission request no longer wedges the agent.** `needs_approval`
+  is a *sticky* status — the idle handler skips it so a trailing idle can't mask
+  a genuinely parked agent — so an agent left sitting in it never reaches
+  `_on_idle`: its turn finished, the workflow was never told, and the step showed
+  "Running" until the watchdog killed it. The reset to `running` now lives in
+  `AgentManager.resolve_permission`, where every caller gets it, rather than only
+  in the agents router (which is why approving from the workflow board silently
+  stalled the run).
+- **Re-driving a parked agent no longer queues behind the thing that parked it.**
+  A turn stopped at a permission gate stays *open*, so sending the next prompt
+  into that session just queued it behind a decision nobody was going to make —
+  the "retry" burned its whole watchdog window without running anything and died
+  with the same stall it was meant to fix. Starting a task now rejects any
+  unanswered permission request and aborts the old turn first, so the new prompt
+  lands on an idle session.
+- **Live narration reached the workflow board.** `WorkflowAgentSummary` declared
+  `active_narration` but the router returned ORM rows straight to FastAPI, so the
+  field — which only exists in the runtime's in-memory view — was always null.
+- **"Open Settings" from the Agents-off screen now lands on Agents.** The button
+  told you to turn the feature on and then dropped you on Appearance, leaving you
+  to find the right category yourself. It opens Settings directly on **Agents**,
+  where the toggle it just pointed at is. The Workflows section's gated state got
+  the same treatment: it used to name the setting in prose ("Enable it in
+  Settings → Agents") without offering a way to get there, and now carries the
+  same button.
+- **Switching a step's kind or agent source no longer strands its agent.**
+  Converting an inline step to an agent-backed one kept the reference to its
+  private vessel, which the save then swept as an orphan — leaving a step reading
+  "Missing agent". The reference is now dropped whenever the *source* changes,
+  and kept when it doesn't, so an unchanged inline step still updates its vessel
+  in place and keeps its run history.
+- **Step colours now reset when a new run starts.** The strip derived each step's
+  state from its *agent's* live status, which survives between runs — so a step
+  that finished last time rests at `idle` and lit up green the instant a fresh
+  run began, before it had done anything. Step state now comes from the **run
+  trace** (what happened to that step *in this run*); a step with no trace yet
+  reads `pending`. Scrolling the run picker replays how the strip looked for that
+  run, while a live run never paints from a different one. The agent-status
+  fallback (used by the gallery, which doesn't load traces) additionally refuses
+  to mark anything past the running cursor as done.
+- **An approval note now reaches the steps after it.** Approval checkpoints are
+  transparent to the data flow (they publish no content, so the *material* still
+  comes from the last real producer) — but that also silently dropped the
+  reviewer's note, so approving with "translate it into French before sending"
+  had no effect on the sending step. Notes are now read back off the run's
+  approval traces and injected into every later step as a reviewer directive,
+  alongside the content rather than instead of it. Approving with no note injects
+  nothing.
+- **The agents board uses the app's own tooltips.** Its hover hints were native
+  browser `title` attributes, so they appeared after a long OS delay in a system
+  bubble that ignored the theme — visibly different from every other hint in the
+  app. The KPI tiles, the Auto badge, the narration line, the inbox rows and the
+  new workflow chip all use the shared tooltip now.
+- **Removed the unreachable agents sidebar list.** The agents section has been a
+  card board since the dashboard landed, and the sidebar is force-collapsed (and
+  un-expandable) in that mode — so the old `AgentList` sidebar rows could not be
+  reached by any route, while still being maintained alongside every agent
+  change. Deleted, along with the `agentSlot` plumbing that fed it.
+- **No more double border on the in-progress step.** The active step drew a
+  border *and* a 2px ring underneath the animated holographic frame; the frame
+  now owns the edge alone. An approval step also no longer mislabels itself
+  "Missing agent" — it legitimately has no agent, and reads "Human approval".
+- **A workflow step no longer stalls asking for clarification.** A task step
+  whose objective was slightly under-specified (e.g. *"note this joke 0–10"*)
+  could emit `NEED_INPUT` / present a menu of options instead of acting — which
+  parked the step **Blocked** and paused the whole run, since a workflow runs
+  unattended with no human to answer. Every non-gate step's kickoff now carries a
+  strict autonomy directive: complete the objective directly on the given input,
+  never ask for clarification or emit `NEED_INPUT`, and if a detail is
+  underspecified pick the most reasonable interpretation and produce the
+  deliverable anyway. Backed by `_TASK_PREAMBLE` in
+  `services/agents/workflow.py`. See
+  [features/workflows](website/features/workflows.md).
+- **A completed step now shows its deliverable, not the terse completion
+  reason.** When an autonomous step wrote its output as prose and then ended with
+  `OBJECTIVE_COMPLETE: <reason>` (a *meta* description like "Told the user a
+  joke"), the step displayed — and auto-captured as its **"Result" artifact** —
+  the reason instead of the actual deliverable (the joke), even though the
+  downstream hand-off correctly received the real prose. The completion branch
+  now prefers the message's prose body for the displayed `result_summary` and the
+  Result artifact, falling back to the reason only when the final turn was
+  directives-only (a bare `OBJECTIVE_COMPLETE` with no body). See
+  [features/workflows](website/features/workflows.md).
+- **Control directives no longer leak into a step's displayed result.** A gate
+  stored its raw `OBJECTIVE_COMPLETE: PASS: …` verdict as the step result *and*
+  auto-captured it as a shared **"Result" artifact**, so directive syntax showed
+  up as a deliverable and polluted the blackboard. A gate is now normalised to a
+  plain `Passed — <reason>` / `Rejected — <reason>` verdict and emits **no
+  artifact** (a gate judges, it doesn't produce). More generally, control tokens
+  (`OBJECTIVE_COMPLETE`, `ARTIFACT`, `PROGRESS`, `NEED_INPUT`, …) are now scrubbed
+  from every step's *displayed* `result_summary`; the raw turn is still retained
+  internally for directive parsing, content forwarding, and gate verdicts. See
+  [features/workflows](website/features/workflows.md).
+
+
+  lifecycle-directive parser matched `NEED_INPUT:` / `OBJECTIVE_COMPLETE:` /
+  `PROGRESS:` **anywhere** in an assistant message, so an agent explaining "I emit
+  **NEED_INPUT:** to the dashboard when blocked" tripped the marker mid-prose,
+  captured the trailing `**` and surfaced a garbled phantom question (`** to your
+  dashboard when blocked.`) that halted the run/workflow. Directives are now only
+  recognised at the **start of a line**, and the closing `**` of a bolded
+  `**LABEL:**` is eaten so it never leaks into the captured value. Mirrored in the
+  backend parser (`parse_agent_directives` in `services/agents/manager.py`) and the
+  frontend (`lib/directives.ts`).
+- **A parked agent no longer hides the entire agent list.** The `waiting`
+  lifecycle state (parked agents) was added to the DB and frontend but omitted
+  from the `AgentSessionRead.status` literal, so one waiting agent raised a
+  Pydantic `literal_error` for the whole `GET /api/agents` response — the list
+  500'd and the UI fell back to the empty-state start wizard, making every agent
+  look gone. `waiting` is now part of the `AgentStatus` schema literal (already
+  present in the TS `AgentStatus` type). See `schemas/agent.py`.
+- **The agent insights sidebar now refreshes live.** The per-agent orchestration
+  panel (shared artifacts + triggers) fetched once when the agent was selected and
+  never again, so mid-mission `ARTIFACT:` outputs and the completion result only
+  appeared after a manual reload. It now subscribes to the `agent.changed` bus —
+  mirroring the in-chat deliverables — so the right bar updates the moment new
+  content is published.
+- **Autonomous agents no longer randomly hit "Permission denied" on every tool
+  call.** When an agent's detail page was open as the agent started, the timeline
+  poll (`GET /api/agents/{id}/events`) and `start_task` could each call
+  `_ensure_live` before either cached the session, firing **two** `session.create`
+  requests for the same `copilot_session_id`. The duplicate create left the CLI's
+  permission responder mis-wired, so every tool call — including built-in `rg`/shell
+  — was denied non-interactively with *"Permission denied and could not request
+  permission from user"*, even under the `autonomous` policy, and the run parked
+  itself with a spurious `NEED_INPUT`. `_ensure_live` now serialises its
+  check-then-create under a per-agent lock, so concurrent callers reuse the single
+  session. No API or schema change.
 - **Orphaned `running` agents now recover on boot, and a degraded runtime is
   visible.** A dev auto-reload (or any process death) mid-turn used to leave an
   agent pinned in `running` with no live worker behind it, because the boot-time
@@ -4880,7 +4619,6 @@ are the per-version history; releasing does not rewrite this file.
   untouched, and never masking a transient runtime outage); and any turn-dispatch
   error is now surfaced as a **`failed`** status with the error text instead of a
   silent hang.
-
 - **A stale WorkIQ / Agent 365 sign-in no longer strands you behind a 409.**
   When a manual sign-in was orphaned — its popup closed, tab reloaded, or the OS
   browser walked away (the standalone-PWA/OS-browser flow has no popup to watch
@@ -4908,7 +4646,6 @@ are the per-version history; releasing does not rewrite this file.
   the app-wide topic pickers (Live session linking and agent topic association)
   now span every collection, each root topic in them carries its collection's
   accent dot and name so same-named branches are easy to tell apart.
-
 - **The composer model picker served a frozen catalog**: the shared model store
   fetched `/api/llm/models` exactly once per app lifetime and nothing ever
   invalidated it, so a list captured on first launch stayed pinned forever.
@@ -4922,7 +4659,6 @@ are the per-version history; releasing does not rewrite this file.
   **Apply & refresh models** (previously the button only refreshed the settings
   panel's private copy, despite its label), and saving a new GitHub token forces
   a refresh because a different account can mean a different catalog.
-
 - **A long-running instance served a stale Copilot model catalogue**: the
   `gh auth token` result was cached for the whole process lifetime, and GitHub
   scopes entitlements — including which models the picker may offer — to the
@@ -4932,7 +4668,6 @@ are the per-version history; releasing does not rewrite this file.
   exactly this reason, and the only cure was restarting Precursor. The CLI token
   is now re-read when it is older than five minutes, and saving a GitHub token in
   Settings drops the cached one immediately.
-
 - **WorkIQ sign-in in the installed PWA**: clicking **Sign in** (the banner or
   Settings) from Precursor running as an installed standalone PWA did nothing —
   standalone display mode heavily restricts `window.open`, so the script-opened
@@ -4940,7 +4675,6 @@ are the per-version history; releasing does not rewrite this file.
   auto-closed. The manual sign-in now detects standalone PWA mode and drives the
   OAuth flow through the **OS default browser** instead (the same surface the
   hands-free re-auth already uses), clearing the banner over SSE on success.
-
 - **Noisy WorkIQ sign-in timeouts**: an interactive WorkIQ sign-in the user never
   completed (walked away or closed the tab without the popup's proactive cancel
   firing) used to dump a misleading `ERROR ... OAuth flow error` traceback from
@@ -4956,7 +4690,6 @@ are the per-version history; releasing does not rewrite this file.
   that already included it while the same turn also lived in the live buffer.
   Merging the persisted window with the streaming buffer now dedupes by message
   id, so the first turn renders once.
-
 - **Stale WorkIQ sign-in banner across other windows**: when a WorkIQ sign-in
   was renewed in one window (its popup, the OS-browser tab the hands-free flow
   self-opens, or a silent pass), every *other* open window kept showing the
@@ -4964,7 +4697,6 @@ are the per-version history; releasing does not rewrite this file.
   told them the credentials were fresh. The reauthenticate flow now broadcasts a
   cross-window `mcp.auth_resolved` event on success, so those windows drop the
   banner (and any "Signing in…" state) immediately, without a reload.
-
 - **Spurious WorkIQ sign-in prompt when preview mode is off**: an agent turn
   whose `workiq` tool call errored would surface a "WorkIQ needs you to sign in"
   banner even with preview mode disabled — where WorkIQ runs as local stdio with
@@ -4972,19 +4704,16 @@ are the per-version history; releasing does not rewrite this file.
   preview mode before signing in"). The failed-tool auth check now short-circuits
   unless preview mode is on, so routine stdio tool errors no longer nag for an
   impossible sign-in.
-
 - **Live session opened on the wrong tab**: because the split-panel layout
   (including the active tab) is persisted globally, a freshly created Live
   session would open on whatever tab was last active — typically **Summary**
   from a previous session — instead of the transcript. New sessions now land on
   the first tab so you start at the top of the panel.
-
 - **Microphone indicator stuck on after a Live recording**: stopping a recording
   released the captured audio tracks only from inside the Speech SDK's
   stop/close callbacks, which may never fire when the socket is already gone —
   leaving the browser/OS capture indicator lit until a page reload. Teardown now
   stops the tracks synchronously, so the indicator clears the instant you stop.
-
 - **Double-started Live recording duplicating the transcript**: starting a Live
   recording twice at nearly the same instant (e.g. a quick double-click on
   **Record**, or a second view racing to start during a transition) could spin
@@ -4994,7 +4723,6 @@ are the per-version history; releasing does not rewrite this file.
   transcription runs at a time: a second start is refused (with a clear message)
   until the active one is stopped. This complements the existing per-view
   double-click latch by also covering distinct transcriber instances.
-
 - **WorkIQ sign-in stuck on "Signing in…" when another Precursor window is
   open**: the OAuth callback uses a *fixed* loopback port
   (`127.0.0.1:12798`, matching the registered `redirect_uri`), so only one
@@ -5023,7 +4751,6 @@ are the per-version history; releasing does not rewrite this file.
   `WorkIQInteractionRequiredError` as Entra's `interaction_required` — kept out
   of the logs by the existing suppression filter — while a genuine *interactive*
   (user-driven) sign-in that times out still surfaces loudly.
-
 - **WorkIQ sign-in aborted by stray loopback probes**: the OAuth callback
   server resolved on the *first* inbound connection regardless of content, so a
   favicon fetch, browser/OS connectivity probe, or pre-connect that carried no
@@ -5031,7 +4758,6 @@ are the per-version history; releasing does not rewrite this file.
   in OAuth callback` (often right after a silent `prompt=none` pass timed out).
   The loopback now answers such non-OAuth requests with `204 No Content` and
   keeps listening for the genuine redirect (or the outer timeout).
-
 - **WorkIQ OAuth callback never returned the auth code**: the loopback
   callback's `asyncio.start_server` block was mis-indented inside the
   per-connection handler, so `_callback_handler` fell off the end and returned
@@ -5039,7 +4765,6 @@ are the per-version history; releasing does not rewrite this file.
   crashed with `TypeError: cannot unpack non-iterable NoneType object`,
   breaking every interactive and silent WorkIQ sign-in. The server now binds
   and awaits the redirect in the handler body as intended.
-
 - **WorkIQ sign-in 502 hid the real error behind anyio's task-group wrapper**:
   a failed interactive re-auth reached the SPA as
   `WorkIQ sign-in failed: unhandled errors in a TaskGroup (1 sub-exception)` —
@@ -5048,7 +4773,6 @@ are the per-version history; releasing does not rewrite this file.
   code) was buried in a `BaseExceptionGroup`. The `/api/mcp/servers/workiq/reauthenticate`
   endpoint now unwraps the group (and the `__cause__`/`__context__` chain) to its
   leaf exception(s), so the 502 detail names the real reason.
-
 - **In-app docs (`/docs/`) were silently unavailable in `precursor --dev`**:
   the live VitePress docs server only starts when `website/node_modules` is
   present, and a fresh checkout that ran `precursor --dev` without `make sync`
@@ -5058,29 +4782,23 @@ are the per-version history; releasing does not rewrite this file.
   (mirroring the frontend auto-build), so `/docs/` works out of the box; it
   still degrades to disabling live docs (never failing the stack) when npm is
   unavailable.
-
 - **About dialog had two links to the same site**: the **Documentation** and
   **Website** rows in the About modal both pointed at
   `precursor.vuptime.io`. The redundant **Website** row is gone — a single
   **Documentation** link (local `/docs/` in dev, the public site in a
   production build) now covers it.
-
 - **In-app version showed a stale dev build after the `precursor-ai` rename**:
   version resolution still queried the old `precursor` distribution name, which
   raised `PackageNotFoundError` and silently fell back to the build-time
   `_version.py` — so the **About** modal could report a stale version (e.g.
   `0.0.1.dev…`) instead of the installed/tagged one. It now resolves the
   `precursor-ai` distribution.
-
 - **Deprecated `uuid@9` warning on frontend install**: the Azure Speech SDK
   (`microsoft-cognitiveservices-speech-sdk`) pins `uuid@^9.0.0`, which npm flags
   as no-longer-supported. A frontend `overrides` entry now forces `uuid@^14`
   (the version already resolved for the rest of the tree via mermaid), so the
   install is deprecation-free and dedupes to a single `uuid`. The SDK only uses
   `uuid.v4()`, which is unchanged across these majors.
-
-### Fixed
-
 - **MCP: Agent 365 servers never attached to agent sessions**: `workiq-teams`
   and `workiq-user` were rejected by name when an agent turn resolved its bearer
   token, so despite being signed in they were dropped from the agent's tool

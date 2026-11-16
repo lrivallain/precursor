@@ -54,7 +54,7 @@ uv run precursor  # serves API + SPA on :8000
 ### Working on the background app
 
 `precursor service …` and `precursor tray` (see
-[docs/architecture.md](docs/architecture.md#supervised-background-instance)) also
+[Background app](https://precursor.vuptime.io/features/background-app)) also
 work from a checkout, and deliberately keep a checkout's paths: the supervised
 instance anchors at the repo root, so it uses the same `./precursor.db` and
 `.precursor/` as `uv run precursor`. Running `precursor service start` in a
@@ -247,7 +247,8 @@ including manual retries. Website deployment stays independent; see
 ## Plugins
 
 Anything that isn't "topics, chat, GitHub" belongs in a plugin rather than in
-core — see [docs/plugins.md](docs/plugins.md) for the contract.
+core — see the [plugin reference](https://precursor.vuptime.io/reference/plugins)
+for the contract.
 
 Plugins live **outside this repository**. A plugin is an ordinary Python
 distribution that registers a `precursor.plugins` entry point, ships its own
@@ -265,9 +266,9 @@ and the typed `precursor.plugin_api` surface — is what this repository owns an
 tests. `tests/test_plugins.py` covers it with a stub plugin, so the suite never
 depends on a particular distribution being installed.
 
-Ship a plugin to users as an optional extra on `precursor-ai` and add its test
-directory to `testpaths`. Adding or removing a workspace member changes
-`uv.lock`, which CI regenerates — see below.
+An official plugin can also be offered as an optional extra on `precursor-ai`
+(as `kanban` is). Changing extras changes `uv.lock`, which CI regenerates — see
+below.
 
 ## Lockfiles
 
@@ -355,8 +356,8 @@ changes, server defaults, and any data migrations by hand.
 ## Versioning & releases
 
 Precursor uses **CalVer** (`YYYY.M.MICRO`). The version is derived from git
-tags by hatch-vcs — **never edit a version literal**; there isn't one. Cutting a
-release is a tag push; see [RELEASING.md](RELEASING.md). Keep the `[Unreleased]`
+tags by hatch-vcs — **never edit a version literal**; there isn't one. Green changes on
+`main` are released automatically every night; see [RELEASING.md](RELEASING.md). Keep the `[Unreleased]`
 section of [CHANGELOG.md](CHANGELOG.md) up to date in your PR when the change is
 user-facing.
 
@@ -381,7 +382,7 @@ user-facing.
 
 ## Adding a plugin
 
-See [docs/plugins.md](docs/plugins.md). Plugins live in their own packages and
+See the [plugin reference](https://precursor.vuptime.io/reference/plugins). Plugins live in their own packages and
 register via `[project.entry-points."precursor.plugins"]`.
 
 ### Listing one in the catalogue

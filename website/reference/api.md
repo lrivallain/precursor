@@ -4,88 +4,135 @@ title: API reference
 
 # API reference
 
-::: info Coming soon
-A full, generated API reference is on the roadmap. This page will document the
-`/api/*` surface — endpoints, request/response schemas, and the SSE event stream —
-generated from FastAPI's OpenAPI schema so it stays in lockstep with the code.
-:::
-
-Until then, the fastest way to explore the API is the **interactive OpenAPI docs**
-that FastAPI serves for a running instance.
+The JSON API lives under `/api/*`. The **OpenAPI schema is the authoritative
+reference** for every route, parameter and payload; this page covers what the
+schema doesn't say: conventions, behaviour, status codes and the event streams.
 
 ## Interactive docs (live instance)
 
-With Precursor running locally, open:
+| | |
+| --- | --- |
+| Swagger UI | [`/api/docs`](http://127.0.0.1:8000/api/docs) |
+| ReDoc | [`/api/redoc`](http://127.0.0.1:8000/api/redoc) |
+| OpenAPI JSON | [`/api/openapi.json`](http://127.0.0.1:8000/api/openapi.json) |
 
-- **Swagger UI** — [`/api/docs`](http://127.0.0.1:8000/api/docs)
-- **ReDoc** — [`/api/redoc`](http://127.0.0.1:8000/api/redoc)
-- **OpenAPI schema (JSON)** — [`/api/openapi.json`](http://127.0.0.1:8000/api/openapi.json)
-
-(Adjust the port to match your `--port`.)
-
-::: tip
-FastAPI's interactive docs live under `/api/*` so the root `/docs` path can
-serve this documentation site **in-app** — see
-[Serving the docs in-app](#serving-the-docs-in-app) below.
-:::
+Adjust the port to your `--port`. The same schema generates the frontend's
+`src/lib/generated/apiTypes.ts` (`make api-types`).
 
 ## Serving the docs in-app
 
-This documentation site (the VitePress project in `website/`) is also served by
-the app itself at **[`/docs/`](http://127.0.0.1:8000/docs/)**, so you can read it
-without leaving Precursor (there's a **Documentation** entry in the command
-palette and the About dialog).
+FastAPI's docs sit under `/api/*` so that `/docs/` can serve this site in the
+app (command palette → **Documentation**, About dialog).
 
-- **Production / one-port `precursor`** — the site is pre-built with base
-  `/docs/` (`make docs`) and bundled into the wheel; the backend serves it
-  statically at `/docs/*`, resolving VitePress clean URLs.
-- **`precursor --dev`** — a live VitePress dev server runs on a hidden port and
-  the SPA's Vite proxies `/docs` to it, so editing any `website/**` markdown
-  **hot-reloads** in the browser.
-- **GitHub Pages** is unaffected: it builds the same source with the default
-  base `/` in its own workflow.
+| Mode | How `/docs/` is served |
+| --- | --- |
+| Wheel / `precursor` | pre-built with base `/docs/` (`make docs`), bundled in the wheel, served statically with VitePress clean URLs |
+| `precursor --dev` | a live VitePress dev server on a hidden port, proxied by Vite; edits to `website/**` hot-reload |
+| GitHub Pages | same source, base `/`, built by `pages.yml` |
 
-## Surface at a glance
+## Conventions
 
-### Discussion permalinks
+- **No authentication.** Single-user app; keep it on loopback
+  ([security model](/reference/architecture#security-deployment-model)).
+- **Secrets are write-only**: reads return `*_present` booleans. Exception: the
+  OpenAI-compatible endpoint's own key (`openai_proxy_key`).
+- **Identifiers**: numeric `id`s are internal; topics, chats, messages and
+  agents also carry an immutable UUID `public_id` used in links.
+- **Status codes**: `404` unknown or wrong-container resource, `409` state
+  conflict (a reply is generating, stale `revision` / `state_token`, archived
+  plan, uncommitted git changes…), `422` validation, `502` the model or an
+  upstream service failed. A `400` is a malformed path or name.
+- **Roles** are addressed by name everywhere (`role` on topics, chats,
+  workspaces, live sessions, agents, workflows; `default_role` on collections);
+  an unknown name is `404`.
 
-Chat reads now include an immutable `public_id`, resolved by
-`GET /api/chats/by-public-id/{public_id}` (including archived chats; `404` when
-missing). Persisted message reads include an immutable `public_id`, distinct
-from their internal numeric `id`; edits preserve it and new rows never reuse
-deleted messages' UUIDs. Existing rows are backfilled by Alembic.
+## Routers
 
-The SPA accepts `/topics/id/{public_id}#message={message_public_id}` and
-`/chats/id/{public_id}#message={message_public_id}`. Existing `/t/{public_id}`
-and readable routes remain valid. Message lookup is scoped to the selected
-discussion and uses the existing cursor-paginated transcript API.
+| Area | Prefix | What it covers |
+| --- | --- | --- |
+| `topics` | `/api/topics` | CRUD, tree, read state, `by-slug/{slug}`, `by-public-id/{uuid}`; `?collection_id=` filters; `POST /{id}/archive?side_chats_too=true`. [Side chats](/features/chats#side-chats): `GET`/`POST /{id}/chats` (`{message_id?, quote?}`; `message_id` must be an assistant reply of that topic). |
+| `topic-summary` | `/api/topics/{id}/topic-summary` | the [status brief](/features/topic-summary): `GET`/`PUT`/`DELETE`, `/visibility`, `/generate`, `/resolve`, `/items` ([details](#topic-summary)) |
+| `collections` | `/api/collections` | [collections](/features/collections); `DELETE ?reassign_to=` re-homes topics |
+| `chat` | `/api/{topics\|chats}/{id}/messages` | streaming and transcript operations ([details](#conversations)) |
+| `chats` | `/api/chats` | quick and side chats ([details](#chats)) |
+| `step-plans` | `/api/step-plans`, `/api/steps` | [Step by step](/features/step-by-step) ([details](#step-plans)) |
+| `commands` | `/api/topics/{id}/commands` | composer [slash commands](/features/skills-memory) |
+| `attachments` | `/api/attachments`, `/api/{topics\|chats}/{id}/…` | [attachments](/features/attachments) on a topic or chat |
+| `settings` | `/api/settings` | runtime settings, provider and GitHub config ([model settings](#model-settings)); `POST /openai-proxy/key` rotates the relay key |
+| `llm` | `/api/llm` | provider catalogue; `GET /models?provider=` lists a provider's models with `context_window`, `max_output_tokens`, `supported_reasoning_efforts`, `vision`, `catalog_provider` |
+| `openai` | `/api/openai/v1` | [OpenAI-compatible endpoint](/features/openai-endpoint): `GET /models`, `GET /models/{id}`, `POST /chat/completions`. Needs `Authorization: Bearer <openai_proxy_key>`; `404` when off, `503` when the provider can't be relayed. |
+| `me` | `/api/me` | GitHub identity (plus `proxy_user` from `X-Forwarded-User`, display only); `GET /copilot` for AI-credit usage; `null` without a token |
+| `github` | `/api/github`, `/api/topics/{id}/issue` | issue/label/comment operations for topic linking |
+| `github/projects` | `/api/github/projects` | [Kanban](/features/kanban) columns and cards; only with the `precursor-kanban` [plugin](/features/plugins) |
+| `mcp` | `/api/mcp` | server registry, toggles, OAuth. User servers take `auth` (`none` \| `azure_cli`), `auth_tenant`, `auth_resource`; `POST /servers/detect-auth` `{url}` probes protected-resource metadata; `GET /auth/diagnostics` is the [sign-in trace](/features/mcp#when-a-sign-in-prompt-needs-explaining) (no token values) |
+| `skills` / `memories` | `/api/skills`, `/api/memories` | skill enablement, long-term memory |
+| `roles` | `/api/roles/{name}` | [roles](/features/skills-memory), case-insensitive. `PATCH` edits the prompt only (renaming → `400`; `default` can't be renamed or deleted). Delete clears the role everywhere, including definition files and run snapshots; an unsafe file edit → `409`. Not transactional across files and DB: retry after an I/O failure. |
+| `…/schedule` | `/api/{topics\|agents}/{id}/schedule` | recurrence and **Run now**. `rules: [{interval_seconds, days_of_week, run_at_minute, timezone}]` replaces the [set](/features/scheduler#several-cadences-on-one-item); legacy flat fields patch the first rule. `next_run_at` is the earliest across rules. Topic schedules take `approval_timeout_minutes`. |
+| `reminders` | `/api/reminders` | one-shot [reminders](/features/scheduler) |
+| `agents` | `/api/agents` | [details](#agents) |
+| `workflows` | `/api/workflows` | definitions, steps, `/run` `/pause` `/resume` `/cancel` `/retry`, traces, replay, approvals, state, schedules, public `POST /hooks/{token}`; see the [workflows API](/features/workflows/reference#api-surface) |
+| `workspaces` | `/api/workspaces` | [details](#workspaces) |
+| `live` | `/api/live` | [details](#live-sessions) |
+| `stt` | `/api/stt` | short-lived Azure Speech tokens |
+| `search` | `/api/search` | literal substring lookup; the ⌘K fallback when [IQ](/features/iq) is off |
+| `iq` | `/api/iq` | [details](#precursor-iq) |
+| `refine` | `/api/refine` | one-shot rephrasing for notes and composer |
+| `stats` | `/api/stats` | usage rollups and footprint; [storage cleanup](/features/storage): `GET /cleanup` (dry run), `POST /cleanup/{key}`, `POST /compact` (`VACUUM`) |
+| `transfer` | `/api/transfer` | [YAML export/import](/features/transfer): `GET /workflows/{id}`, `GET /agents/{id}`, `POST /preview`, `POST /import` (`replace` / `create` / `link` per agent) |
+| `definitions` | `/api/definitions` | **WIP** [definition files](/features/definitions) ([details](#definitions)) |
+| `plugins` | `/api/plugins` | [details](#plugins) |
+| `drawio` | `/api/drawio` | [draw.io editor](/features/workspaces#editing-diagrams): `GET /status`, `POST /install`; the editor itself is served at `/drawio/*` |
 
-Archived `AgentEvent` objects expose a stable `link_id` for
-`/agents/{public_id}#event={link_id}` links. This is separate from `event_id`,
-the SDK's prompt-only rewind identifier. New links are persisted in the event
-payload; historical events derive deterministic links from their archive
-identity. Transient streaming frames and pending approval cards have no
-message permalink. These links do not change authentication or access.
+**Health and version**: `GET /api/health` (liveness + version), `GET /api/version`,
+`GET /api/version/check` (newer build on the active channel and install kind;
+cached, `?force=true` re-asks GitHub; read-only, applying is
+[`precursor service update`](/features/background-app#updating-in-place)).
 
-Chat/topic SSE `user_message`, `tool_calls` and `done` payloads also carry
-`public_id`, allowing the copy-link icon to appear as soon as the message is
-persisted, without waiting for a transcript refresh. `tool_calls.public_id`
-identifies the assistant message alongside its existing numeric `assistant_id`.
+Outside `/api/*`: the SPA (`/`), the docs (`/docs/`), MCP over HTTP (`/mcp`),
+draw.io assets (`/drawio/*`) and raw workspace files:
 
-Step-by-Step drafting turns retain the `user` role for the conversation protocol;
-their existing `kind` field distinguishes `step_user_request` from `step_automation`.
-Older prompts can have `kind: null`, so their origin cannot always be established.
-Both kinds remain ordinary timeline and rewind anchors.
+::: warning Raw workspace files
+`GET /raw/{slug}/{path}` serves a [workspace](/features/workspaces) file from
+its working tree so HTML and relative links render. It is **read-only and
+unauthenticated by design**: another reason to stay on loopback.
+:::
 
-The Precursor MCP `list_messages` and `list_chat_messages` tools include each
-row's `public_id` and a `permalink` for user/assistant messages (`null` for
-UI notices and tool results). The link is instance-relative and ready for
-Markdown citations. MCP chat metadata also includes `public_id`.
+## Conversations
 
-### Conversation model selection
+Under `/api/topics/{id}/messages` and `/api/chats/{id}/messages`.
 
-Chat/topic create, read and update schemas include nullable `llm_selection`.
-For example, `PATCH /api/chats/{id}` or `PATCH /api/topics/{id}` accepts:
+| Route | Behaviour |
+| --- | --- |
+| `POST …/stream` | streams a turn ([SSE events](#streamed-turn-events)). Optional `model` override within the conversation's provider; `workspace_context: {workspace_id, path?}` tells the model which file is open (not stored); `retry_message_id` replays a user turn, deleting everything after it (`400` wrong container, `404` unknown). |
+| `POST …/stopped` | records a stopped turn: `content` (text so far), `tool_call_ids` (unreturned calls of the last round), optional `reasoning`; at least one of the first two (`422`). Returns created rows, oldest first; tool rows carry `"stopped": true`. |
+| `POST …/compact` | `{instructions?}` → a [compaction](/features/context-compression) `system` message (`kind: "compaction"`), `201`; deleting it undoes it; `409` while generating or nothing to compact |
+| `GET …/context` | estimate of the next turn: `tokens`, `by_role`, `saved_by_hygiene`, compaction fields, `system_tokens`, `system_tools_tokens`, `mcp_tools_tokens` |
+| `PATCH …/{message_id}` | `{content}` edits an assistant reply. First edit keeps `original_content`; `edited_at` set; saving the original text restores it. Non-assistant or empty → `422`. |
+| `GET …/turns` | [timeline](/features/rewind) index, one entry per prompt (`message_id`, `last_message_id`, 200-char `prompt`, `reply`, `has_compaction`, `agent_session_id`) |
+| `POST …/rewind` | `{from_message_id, through_message_id?}` deletes that turn and later rows up to `through`, attachments included; returns `{deleted}`; `422` if not a user prompt, `409` while generating |
+
+Messages carry `kind` (`null` for ordinary rows; `step_user_request` /
+`step_automation` for Step-by-Step drafting turns, `compaction`, `step_plan`,
+…) and `public_id`. The SPA resolves
+`/topics/id/{uuid}#message={message_uuid}` and `/chats/id/{uuid}#message=…`;
+`/t/{uuid}` and readable routes still work.
+
+**Approvals** ([feature](/features/approvals)): `/api/{topics|chats}/{id}/approvals`
+(`GET` open rows, `POST /{approval_id}` to answer, `POST /resume` to stream the
+rest of a parked turn) and `/api/approval-rules` (standing `allow` / `ask`).
+Conversations carry `approval_policy` (`manual` \| `balanced` \| `plan` \|
+`autonomous` \| `null` = inherit) and `pending_approvals`. Chats also return
+`inherited_approval_policy` / `inherited_approval_plan_id` for model-delegated
+plan discussions. Rule order: discussion → source conversation → global.
+
+**Artifacts** ([workspace links](/features/workspaces#discussing-a-workspace)):
+`GET /api/{topics|chats}/{id}/artifacts` (`workspace_slug`, `workspace_name`,
+`path`, `source`: `assistant` \| `manual` \| `opened`, `exists`), `POST`
+`{workspace_id, path, source?}` (idempotent), `DELETE …/artifacts/{artifact_id}`.
+A successful workspace write tool call links its file automatically.
+
+**Conversation model** (`llm_selection`, nullable, on chat/topic create, read
+and `PATCH`):
 
 ```json
 {
@@ -99,92 +146,71 @@ For example, `PATCH /api/chats/{id}` or `PATCH /api/topics/{id}` accepts:
 }
 ```
 
-Choose exactly one nonempty `model` or `category` (`efficiency`, `balanced`,
-`intelligence`); the category must have presets in that provider's scope.
-Unknown providers, unsupported effort values, extra fields and budgets outside
-1,000-5,000,000 return `422`. Sending `llm_selection: null` clears the complete
-override; omitting it from a PATCH leaves it unchanged. Credentials remain in
-`llm_providers`, never in conversation payloads.
+Exactly one of `model` or `category` (`efficiency` \| `balanced` \|
+`intelligence`, with presets in that provider's scope). Unknown provider, bad
+effort, extra fields or a budget outside 1,000–5,000,000 → `422`. `null` clears
+it; omitting it leaves it. Side chats copy it; promotion keeps it. An
+unconfigured explicit provider fails before streaming (`422` on
+`GET /api/llm/models`, never a Mock catalogue; upstream failure `502`).
 
-Streaming and retry requests retain their optional `model` override, applied
-within the conversation's effective provider. The saved selection also controls
-compaction, summaries, naming and scheduled/MCP topic turns. Side-chat creation
-copies it and promotion preserves it.
+### Chats
 
-`GET /api/llm/models?provider=azure_foundry` lists that provider's models.
-An unknown or unconfigured explicit provider returns `422`, never a Mock
-catalogue; upstream catalogue failures return `502`. Explicit conversation
-provider configuration errors return a meaningful HTTP error before streaming;
-inference errors use the existing stream error events. No SSE event shape changes.
+- `POST /api/chats`: `autoname: true` lets the server replace the placeholder
+  title; optional `role`.
+- `POST /{id}/promote?collection_id=&parent_id=`: becomes a topic. A side chat
+  becomes a child of its parent topic. The quoted reply is kept as
+  `seed_content`.
+- Side-chat fields on reads: `parent_topic_id`, `parent_topic_title`,
+  `parent_message_id`, `seed_content` (all `null` otherwise).
+- `POST /{id}/discard`: deletes an untouched side chat (`204`), else `409`.
+- `POST /{id}/topic-note/draft` `{instructions?}` → `{text, topic_id, topic_title}`
+  (nothing saved); `POST /{id}/topic-note` `{text}` files it into the topic
+  (`201`). `409` without a linked topic.
+- `POST /{id}/messages/suggest-name`; `GET /by-public-id/{uuid}` (archived
+  included).
 
-The JSON API lives under `/api/*`. Routers are grouped by domain:
+### Topic summary
 
-| Area | What it covers |
+Reads include an opaque `revision`: send it in `PUT`, as
+`DELETE ?revision=`, and in `/resolve` (required). Stale → `409`.
+`POST /resolve` `{revision, accepted: [i], reviewed?: [i]}`: without
+`reviewed` it decides the whole proposal; with it, only those hunks
+(`reviewed: [i], accepted: [i]` accepts one, `accepted: []` rejects it). Hunks
+carry `base_start` / `base_end` offsets into the current content and are
+renumbered after each decision. `POST /items` appends a `todo` or `important`
+line. Changes emit `topic-summary.changed`. Not to be confused with
+`POST /api/topics/{id}/summary` (the linked GitHub issue).
+
+## Step plans
+
+`/api/step-plans`: `GET` (`?topic_id=` / `?chat_id=`), `GET /archived`,
+`POST` (`topic_id` or `chat_id`, `message_id` or `source_text`, `propose`; a
+failed proposal → `502` but the plan is kept), `GET`/`PATCH`/`DELETE /{id}`.
+Actions: `/amend`, `/propose`, `/suggest-missing`, `/start`, `/launch`,
+`/steps`, `/review`, `/auto/start`, `/auto/pause`, `/assess`,
+`/consolidation/chat`, `/consolidate/generate`, `/final/from-message`,
+`PUT /final`, `GET /final/versions`, `POST /final/revert`, `/complete`,
+`/send-to-source` (alias `/send-to-topic`), `/archive`, `/unarchive`.
+
+Steps, under `/api/steps/{id}`: `PATCH`/`DELETE`, `/move`, `/accept`,
+`/status`, `PUT /artifact`, `/versions`, `/artifact/revert`,
+`/artifact/generate`, `/artifact/from-message`, `/assess`, `/suggest-substeps`,
+`/chat`. Generation returns `{step, outcome}` with `outcome` = `published` \|
+`discussion` \| `awaiting_approval`.
+
+| Behaviour | Detail |
 | --- | --- |
-| `topics` | CRUD for topics, the topic tree, read/unread state, and per-topic messages. Reads carry the topic's immutable `public_id`; `GET /by-slug/{slug}` and `GET /by-public-id/{public_id}` back the `/topics/…` and `/t/{uuid}` routes. `GET /api/topics` and `GET /api/topics/archived` accept `?collection_id=`, and `GET /api/topics/tree` already did. `GET /{id}/chats` lists the topic's non-archived [side chats](/features/chats#side-chats), newest first: `id`, `slug`, `title`, `parent_message_id`, `from_reply`, `unread_count`, `message_count`, `last_message_at`, `created_at` and `reminder` (`{remind_at, status}` or `null`). `POST /{id}/chats` `{message_id?, quote?}` starts one and returns the chat with `201`. `message_id` must be an assistant reply of that topic: `404` otherwise, or `422` if it isn't an assistant reply. `quote` copies an excerpt of that reply instead of all of it, and needs `message_id` (`422` otherwise). `POST /{id}/archive` takes `?side_chats_too=true` to archive the topic's open side chats with it; `POST /{id}/unarchive` restores the ones archived with it. |
-| `topic-summary` | The topic's editable [status brief](/features/topic-summary), as a sub-resource: `GET`/`PUT`/`DELETE /api/topics/{id}/topic-summary` (read — `null` when the topic has none — save an edit, drop it), `POST …/visibility`, `POST …/generate` (refresh from the conversation, notes and attached filenames), `POST …/resolve` (`{revision, accepted: [indices], reviewed?: [indices]}`) and `POST …/items` (append a `todo` or `important` line). Each hunk carries `base_start`/`base_end` line offsets into the *current* content, so a client can render it merged in place rather than as a detached list. Resolve without `reviewed` decides the whole proposal; with it, only those changes are decided and the rest remain pending. Use `reviewed: [i], accepted: [i]` to accept one change, or `reviewed: [i], accepted: []` to reject it. Use the returned revision and re-numbered hunks for the next decision. Reads include an opaque `revision`: send it in the `PUT` body or as a `DELETE ?revision=…` precondition; it is required for resolve. Stale writes return `409`; invalid indices or accepted indices outside `reviewed` return `422`. Committed changes emit `topic-summary.changed` with `topic_id` on `/api/events`. Distinct from `POST /api/topics/{id}/summary`, which summarises the *linked GitHub issue*. |
-| `collections` | CRUD for [collections](/features/collections); deleting one re-homes its topics via `?reassign_to=`. |
-| `chat` | Streamed chat (`.../messages/stream`) over Server-Sent Events, for topics (`/api/topics/{id}/messages/…`) and chats (`/api/chats/{id}/messages/…`). `POST …/messages/compact` `{instructions?}` summarises the conversation into a [compaction marker](/features/context-compression): a `system` message with `kind: "compaction"`, returned with `201`. The model's history starts from the latest marker, and deleting the marker undoes it. It answers `409` while a reply is generating or when there's nothing to compact. `GET …/messages/context` estimates the history the next turn sends: `tokens`, `by_role`, `saved_by_hygiene`, `messages`, `compacted`, `compaction_id` and `compacted_messages`, plus the estimated `system_tokens`, `system_tools_tokens` (the built-in `precursor` tools) and `mcp_tools_tokens` (every other enabled server's tools) that the stats panel's context breakdown adds to the history. Messages carry `kind` (`null` for ordinary rows). `PATCH …/messages/{message_id}` `{content}` edits an assistant reply in place and returns the message. The first edit keeps the model's answer in `original_content` and every edit sets `edited_at`. Both are `null` on untouched messages. Saving text equal to `original_content` restores the reply and clears both. Later turns send the edited `content` to the model. Prompts, system rows and empty content answer `422`, and a message from another conversation `404`. `GET …/messages/turns` returns the [timeline](/features/rewind) index, oldest first, one entry per user prompt: `message_id`, `last_message_id` (the last row before the next prompt), `created_at`, a 200-character `prompt` excerpt, the first assistant text as `reply`, `has_compaction` and `agent_session_id`. `POST …/messages/rewind` `{from_message_id, through_message_id?}` deletes the turn that `from_message_id` opens (it must be a user prompt, otherwise `422`) and every later row up to `through_message_id`, attachments included. It returns `{deleted}`, `404` for a message from another conversation, and `409` while a reply is generating. |
-| `chats` | Quick throwaway chats, including read/unread state. `POST /{id}/promote` turns one into a topic and takes `?collection_id=` for where it lands and `?parent_id=` to nest it under a topic (the topic then lands in the parent's collection; `404` if the parent is missing). A side chat becomes a child of its parent topic instead, in that topic's collection, and `collection_id` is ignored. The promoted topic keeps the chat's quoted reply as `seed_content`, which topic reads carry (`null` otherwise). `POST /{id}/messages/suggest-name` re-derives the title from the transcript; `POST /api/chats` takes `autoname: true` to mark the supplied title a placeholder the server may replace, and an optional `role` (a role name) to assign an assistant [role](/features/skills-memory) at creation (omit or `null` for the default role). Chat reads carry the [side chat](/features/chats#side-chats) link: `parent_topic_id`, `parent_topic_title`, `parent_message_id` and `seed_content`, the copy of the reply it started from. All are `null` for an ordinary chat. `POST /{id}/discard` deletes a side chat left untouched (no messages, still on its placeholder title, no reminder, notes, description or pin) with `204`, and answers `409` for any other chat. `POST /{id}/topic-note/draft` `{instructions?}` has the model sum up a side chat for its topic and returns `{text, topic_id, topic_title}` without saving anything. `POST /{id}/topic-note` `{text}` files the text into the topic as a user message headed by a link to the chat, and returns that message with `201`. Both answer `409` for a chat with no linked topic, and the draft also answers `409` while a reply is generating or when the chat has no messages yet. |
-| `step-plans` | [Step by step](/features/step-by-step) plans under `/api/step-plans`. `GET` lists non-archived plans, optionally filtered by `topic_id` or `chat_id`; `GET /archived` lists archived plans. `POST` creates from `topic_id` or `chat_id`, `message_id` or `source_text`, plus `propose`; a failed proposal answers `502` but keeps the plan and its prompt snapshot. `GET`/`PATCH`/`DELETE /{id}` read, edit or delete; `PATCH` can link or unlink a source. `POST /{id}/archive` and `/unarchive` preserve or restore the plan; a live run cannot be archived. Other actions include `/amend`, `/propose`, `/suggest-missing`, `/start`, `/launch`, `/steps`, `/review`, `/auto/start`, `/auto/pause`, `/assess`, `/consolidation/chat`, `/consolidate/generate`, `/final/from-message`, `PUT /{id}/final`, `GET /{id}/final/versions`, `POST /{id}/final/revert`, `/complete` and `/send-to-source` (`/send-to-topic` is an alias). Reads include `archived_at`, `state_token`, revisions, run activity, final-version/posted markers and assessment freshness. Assessments include `observations` for model-reported non-blocking issues, separately from `gaps`. Steps live under `/api/steps/{id}`: `PATCH`/`DELETE`, `/move`, `/accept`, `/status`, `PUT …/artifact`, `/versions`, `/artifact/revert`, `/artifact/generate`, `/artifact/from-message`, `/assess`, `/suggest-substeps` and `/chat`. Generation returns `{ step, outcome }`: `published`, `discussion` or `awaiting_approval`. Rule violations answer `409`; a garbled model reply `502`. Step and consolidation chats are excluded from `/api/chats`. |
-| `commands` | The `/slash` [commands](/features/skills-memory) a topic composer can run. |
-| `attachments` | Upload / fetch [attachments](/features/attachments) on a topic or chat. |
-| `settings` | Runtime settings and provider/GitHub configuration (secrets never echoed — bar the [OpenAI-compatible endpoint](/features/openai-endpoint)'s key, returned in clear as `openai_proxy_key` so it can be pasted into more clients). `POST /api/settings/openai-proxy/key` replaces that key. |
-| `llm` | The provider catalogue and the models the active provider offers. Each model carries its `context_window`, `max_output_tokens`, `supported_reasoning_efforts` and `vision` when the provider advertises them; each provider says whether the OpenAI-compatible endpoint can relay to it (`openai_proxy`). |
-| `openai` | The [OpenAI-compatible endpoint](/features/openai-endpoint) under `/api/openai/v1`: `GET /models`, `GET /models/{id}` and `POST /chat/completions` (streamed or not), in OpenAI's wire format and error shape. Off by default, and every request needs `Authorization: Bearer <openai_proxy_key>`; answers `404` when switched off and `503` when the active provider can't be relayed to. |
-| `me` | The connected GitHub identity for the sidebar persona (with the display-only `X-Forwarded-User` header as `proxy_user`), plus `GET /api/me/copilot` for Copilot AI-credit usage (both degrade to `null` when no token is configured). |
-| `github` | Issue/label/comment operations behind topic linking. |
-| `github/projects` | GitHub Projects v2 columns and cards behind the [Kanban board](/features/kanban). Contributed by the `precursor-kanban` [plugin](/features/plugins) — absent when it isn't installed. |
-| `mcp` | Tool-server registry, enable/disable, and OAuth (re)authentication. User servers (`POST/PATCH/DELETE /api/mcp/servers/user`) take `auth` (`none` or `azure_cli`) with `auth_tenant` and `auth_resource`; `POST /api/mcp/servers/detect-auth` `{url}` probes a server without credentials and returns `{auth_required, auth, tenant, resource, message}` from its OAuth protected-resource metadata. `GET /api/mcp/auth/diagnostics` returns the [WorkIQ sign-in trace](/features/mcp#when-a-sign-in-prompt-needs-explaining) — settings in force, a per-credential fact sheet (token/refresh-token presence, expiry, renewal lead, idle time, state) and the recent auth-episode records. Token values never leave the process. |
-| `skills` / `memories` | Skill enablement and long-term memory. |
-| `roles` | Assistant [roles](/features/skills-memory) (persona presets), addressed by **name**: `GET/PATCH/DELETE /api/roles/{name}` (case-insensitive). `PATCH` edits the prompt only; a different `name` answers `400`, as does deleting or renaming `default`. Deleting clears the role from every conversation, agent, workflow and collection that used it, including authoritative agent/workflow files and current workflow run snapshots, without changing other settings, pinned steps or permission reviews. An uncheckable agent/workflow definition, or an ambiguous, concurrently edited or unwritable affected file, answers `409` and retains the role. File and database writes are not one transaction; after an I/O failure some references may already be cleared, and the request can be retried. A role from a file carries its `path`. Everything else that takes a role (`role` on topics, chats, workspaces, live sessions, agents and workflows; `default_role` on collections) takes this name; an unknown one answers `404`. |
-| `…/schedule` | Recurrence and **Run now**, as a sub-resource of the thing being scheduled (`/api/topics/{id}/schedule`, `/api/agents/{id}/schedule`) rather than a top-level router. A schedule may carry [several recurrence rules](/features/scheduler#several-cadences-on-one-item): payloads accept a `rules` array of `{interval_seconds, days_of_week, run_at_minute, timezone}` objects and reads return one. The legacy flat fields still work and mirror the **first** rule — sending `rules` replaces the whole set, while sending only the flat fields patches the primary rule and leaves the extras alone. `next_run_at` is the earliest fire time across the set. |
-| `reminders` | One-shot [reminders](/features/scheduler) that resurface a topic or chat. |
-| `agents` | Agent sessions, timelines, and read/unread state, plus [orchestration](/features/agents-mode/orchestration): `GET /metrics` (fleet rollup) and `GET /inbox` (everything waiting on you), `blueprints` CRUD + `/instantiate`, per-agent `/start` (launch a parked agent), `/runs` and `/runs/{runId}` (the agent's [execution history](/features/agents-mode/orchestration#an-agent-is-a-definition-each-start-is-a-run) — trigger, status, capability snapshot, per-run token spend), `/events` (the transcript; every event carries the `agentRunId` it belongs to, and `?agentRunId=` narrows the reply to one run — a run belonging to another agent is a `404`. The reply is a page: `events` plus a `cursor`, the volatile `pending` approval cards, the volatile `thinking` (`{text, active}` — the round's thinking as it streams, `active` while nothing of the answer or a tool call has followed; `null` once its complete reasoning event is archived), and a `reset` flag. Streaming frames (message, thinking and tool-argument deltas, byte counters) feed only that live view and are never archived. Because the archive only grows between rewinds, a live view sends the previous `cursor` back as `?after=`, with the page's `epoch` as `?epoch=`, and gets only the steps since — omit them for the whole transcript. `reset` means the cursor no longer addresses this transcript (cleared, rewound, or another run), so `events` is a replacement rather than a delta. User prompts carry their SDK `event_id`, and `rewindable_run_ids` lists the runs whose prompts can be rewound: the current run and earlier runs of the same Copilot session, none while a workflow step drives it), `GET /rewind/preview?event_id=` (checks a rewind like `POST /rewind` and changes nothing; returns `{event_id, file_tracking, files_available, unavailable_reason, file_count, files: [{path, change_type, lines_added, lines_removed}]}`), `POST /rewind` `{event_id, mode?}` ([rewind](/features/rewind#in-agent-sessions) the current session: drops that prompt and everything after it from the Copilot session and the transcript, irreversibly. `mode` is `conversation` (default) or `conversation-and-files`, which first [restores the files](/features/rewind#restoring-files) the dropped turns changed. Returns `{events_removed, sdk_events_removed, outcome, restored_files, skipped_files: [{path, reason}]}`. `409` while a turn is in flight, for a workflow-driven run, when the session can't return to that turn, or for files mode on a session that didn't track file changes. `400` for a prompt outside the current session. `502` when the Copilot session fails the cut: the conversation is left as it was, and the message says whether files were put back), `/artifacts` (list/create plus `GET /artifacts/{id}` and `GET /artifacts/{id}/raw` for a single artifact and its kind-typed raw body — a `link` artifact redirects to its URL; the list accepts `?runId=` to scope to one run), `/state` (the [durable cross-run scratchpad](/features/agents-mode/artifacts-state#durable-state-the-private-scratchpad): `GET` to list, `PUT` to upsert by key, `DELETE /state/{key}` or `DELETE /state` to reset), and `/triggers`, and the public `POST /hooks/{token}` webhook. Three routes are deliberately reachable while Agents mode is off, since they are how it gets turned on: `GET /runtime` (capability probe, why it's unavailable, and any provisioning job in flight), `POST /runtime/cli` (download the native Copilot CLI — returns immediately; poll `GET /runtime` for progress) and `POST /runtime/restart` (hand off to the supervisor; `409` when the instance isn't supervised). |
-| `workflows` | [Workflow](/features/workflows) definitions, steps, lifecycle (`/run`, `/pause`, `/resume`, `/cancel`, `/retry`), run traces, per-step replay, approval and tool-permission decisions, pipeline state, schedules, and the public `POST /hooks/{token}` webhook. See the [workflows API reference](/features/workflows/reference#api-surface). |
-| `workspaces` | [Workspace](/features/workspaces) clones, the sandboxed file tree, file reads/writes, and `GET /{id}/discussions?path=` (the chats and topics attaching files from the workspace). `DELETE /{id}/folder?path=` removes a folder with its contents (`400` for the workspace's own folder or a path outside it, `409` for the folder holding the definition files). The list leads with the one holding the definition files (`hosts_definitions: true`), which can't be deleted while it holds any. Git: `GET /{id}/git/status` reports the checked-out `branch`, `detached`, `upstream` (on origin; null while unpublished), `ahead`/`behind`, `merging`, and per file its `code`, `orig_path` (renames), `conflicted` and `browse_path` (relative to the workspace's subdir). `POST /{id}/git/fetch` updates ahead/behind without touching files; `/git/pull` fast-forwards; `/git/commit` `{message, paths?}` commits locally; `/git/push` pushes, publishing the branch the first time; `/git/commit-push` does both; `/git/discard?path=` restores a file from HEAD (deleting one HEAD doesn't have); `GET /git/diff?path=`; `GET /git/file-versions?path=&original_path=&base=&head=` returns `{original, modified, binary, too_large}` for the diff editor — the file at `base` (a rename's `original_path`) and in the working copy, or at `head` (null where it doesn't exist; over 2 MB only the flag). `base` defaults to `HEAD` for the working copy; with `head` and no `base` (a root commit) the original is empty. Revisions are commit ids or `HEAD`, nothing else (no `^`, `~`, branch names). Branches: `GET /git/branches` → `{current, local: [{name, upstream}], remote, remote_error}` (the remote's branches come from `git ls-remote`; names git wouldn't accept as branch names are left out); `POST /git/switch` `{name}` checks out a local branch, or one only the remote has (tracking it); `POST /git/branches` `{name}` (201) creates a branch from HEAD without an upstream and checks it out. Both return 409 when something could be lost or the state forbids it (uncommitted changes — the files are named — a merge in progress, a detached HEAD, a name already taken here or on the remote), 404 for an unknown branch, 400 for an invalid name; the workspace's `branch` follows. Merging: `POST /git/merge` merges the remote's branch into the checked-out one with a merge commit (`ok: false` with `status.merging` when it stopped on conflicts; 409 on uncommitted changes, a detached HEAD or a merge already running). `GET /git/conflict?path=` returns `{kind, base, ours, theirs, has_base, has_ours, has_theirs, binary, too_large}` for a conflicted file (index stages 1–3; a side may be missing). `POST /git/resolve` `{path, side?}` marks it resolved: as saved (409 while conflict markers remain) or keeping `ours`/`theirs` (a side that deleted the file deletes it). `POST /git/merge/complete` commits the merge (409 while a file is conflicted); `POST /git/merge/abort` undoes it. Names are refused, not trimmed, with surrounding whitespace or control characters; a new branch can't be named like another kind of ref (`refs/…`, `heads/…`, `origin/…`, `HEAD`…). History: `GET /git/log?limit=&skip=&path=` pages the checked-out branch (`limit` 1–100, default 50; `skip` ≥ 0) as `{commits: [{sha, short_sha, author, date, subject, parents}], has_more}`, following one file across renames with `path`. `GET /git/commits/{sha}` adds `body`, `parent` (the first parent, resolved on the server; null for a root commit) and `files` `[{status, path, orig_path}]` compared with that parent (404 for an unknown commit). Status also carries `head`, the checked-out commit. Pull and push use the branch checked out (409 on a detached HEAD). Paths are relative to the repository root and rejected (400) if they leave it or touch `.git`. |
-| `live` | [Live sessions](/features/live-sessions) — transcript segments, insights, notes, summary, and attendees. `POST /{id}/summary` takes an optional `{template, language}` body: a [summary template](/features/live-sessions#generating-the-summary) id and a language code (`fr`, or `""` for the session's language); each omitted one falls back to the last used, and both are remembered for the next recap (echoed back as `template` / `language`). An unknown template is a `400`, an unsupported language a `422`. `GET /summary-templates` lists the templates (`id`, `name`, `description`, `source: builtin \| file`, `path`, `overrides_builtin`), the `problems` of template files left out, the `languages`, the `last_template` / `last_language`, and the definitions `folder` and `workspace`. `PUT /summary-templates/selection` `{template, language}` remembers the picker's choice (`204`). `POST /summary-templates/files` `{template, duplicate?}` returns the definition file to edit a template in — `{id, path, created, folder, workspace, workspace_path}` — saving a built-in there first (same id, so it replaces it), or with `duplicate` saving a copy under a new id. `POST /{id}/speakers/me` `{label, me?}` marks (or, with `me: false`, unmarks) a raw speaker label as the user (`me_labels` on the session). `POST /{id}/suggest` `{question, speaker_label?}` streams a [suggested answer](/features/live-sessions#suggested-answers) as SSE (`token` frames, then `done` with the saved `message_id`, or `none` when nothing needs answering, or `error`); it needs the `answers` feature (`409` otherwise) and saves a `live_question` + `live_suggestion` message pair to the session chat, metered as `/live-suggest`. `GET /{id}/transcripts` lists the linked Teams meeting's transcription sessions (id + `created_at`/`ended_at`, oldest first, fail-closed with a `detail`), and `POST /{id}/summary/from-transcript` takes an optional `transcript_ids` body to summarize the chosen session(s) — several are stitched in chronological order; omitted, the most recent is used. It accepts `template` and `language` too. |
-| `stt` | Short-lived Azure Speech token minting for live sessions. |
-| `search` | The literal (substring) cross-entity lookup. The ⌘K palette falls back to it when [Precursor IQ](/features/iq) is disabled. |
-| `iq` | [Precursor IQ](/features/iq). `GET /api/iq/retrieve?q=&limit=&sections=` returns ranked `hits` (each with a citation `id`, `section`, `entity_id`, `ref`, topic `path`, `url`, `field`, `snippet`, `excerpt`, `score`) plus a grounding `markdown` block with `[^n]` citations, the `lexical_backend` (`fts5` / `tsvector` / `like`), whether `semantic` vectors took part, and the `pending` change-queue depth. `sections` restricts results to entity kinds (`topics,chats,agents,live,memory`); an unknown one is a `422`. `POST /api/iq/ask` `{question, sections?}` returns a cited `answer`, the `model`, the `citations` it used and all `sources` (no model call when nothing matches; `502` when the provider fails). `GET /api/iq/status` returns index counts and embedding state, `POST /api/iq/embeddings/test` `{provider?, model?}` embeds one short text with the given (or saved) provider and model and returns `ok`, `dimensions`, `latency_ms` or a `detail` explaining the failure, and `POST /api/iq/reindex` queues everything again and rebuilds in the background. All but `status` answer `404` when `PRECURSOR_IQ_ENABLED=false`. |
-| `refine` | One-shot text rephrasing for the notes panel and composer. |
-| `stats` | Token-usage rollups and the system footprint for **Settings → Usage stats**, plus the [storage cleanup](/features/storage) cockpit: `GET /api/stats/cleanup` previews what each retention sweep would free (a dry run — nothing is deleted), `POST /api/stats/cleanup/{key}` runs one on demand, and `POST /api/stats/compact` `VACUUM`s the database so freed pages return to the filesystem. |
-| `transfer` | [YAML export/import](/features/transfer) of agents and workflows: `GET /workflows/{id}` and `GET /agents/{id}` download a definition; `POST /preview` reports name conflicts without writing; `POST /import` applies them with a per-agent `replace` / `create` / `link` resolution. |
-| `definitions` | **Work in progress** — agents and workflows declared in [definition files](/features/definitions) (opt-in files mode), and live [summary templates](/features/live-sessions#your-own-templates). `GET /check` reports on the definitions folder: per-file and cross-file errors (invalid files, duplicate ids, dangling agent paths), warnings for role and MCP server names this instance doesn't have, and which database agents and workflows are linked to a file (`linked` is null for a summary template, which has no row). `POST /export` writes a file for every agent and workflow that has none yet (`?overwrite=true` regenerates existing ones, except in files mode); it needs Agents mode on. `GET /file-issues?workspace_id=&path=` returns the check's findings for one file opened in the Files section, each placed in the text with `line`, `column`, `end_line`, `end_column` (1-based, end exclusive, UTF-16 columns as in Monaco; null when unknown). `GET /schema/{kind}` (`agent`, `workflow` or `summary`) serves the JSON Schema published in `docs/schemas/`, which the Files editor validates and completes against. In files mode (`PRECURSOR_DEFINITIONS_SOURCE=files`), agent and workflow payloads carry `definition` — `{state: file \| invalid \| none, path, message}` — and agent and workflow runs carry `definition_path` / `definition_hash`. `definition.review` lists permission changes a file makes beyond what was accepted; `POST /accept` `{kind, id, content_hash}` accepts them. The [migration](/features/definitions#getting-there-from-today-s-data): `GET /status` says cheaply how many agents and workflows the database still declares (the homes' invitation), `GET /migration` previews it, `POST /migrate` `{acknowledge}` writes, verifies and switches to files mode (`ok: false` with `mismatches` when verification fails — nothing switched), `POST /revert` copies the files back into the database and switches back, `GET /migration/items/{kind}/{id}` returns the file as it would be written next to the one on disk, and `POST /finalize` `{confirm: true}` cleans the declarations out of the database — irreversible; `stage` in the preview is then `finalized`. |
-| `plugins` | Descriptors for frontend extensions contributed by plugins, and the [plugin catalogue](/plugins): `GET /api/plugins/catalog` returns the bundled directory of installable plugins, each annotated with whether this instance already has it. Reading it executes nothing and is ungated; installing from it goes through the same three-gate `POST /api/plugins/install` as any other package. `POST /api/plugins/install` takes `{package, version?}`: `package` is a name, a GitHub repository link (installed from a release's wheel) or any requirement, and `version` picks a release for the first two — omitted, a name gets a floor at its newest PyPI release and a repository its newest release. `GET /api/plugins/versions?package=` lists every release of a name or repository, each with the requirement that installs it; `GET /api/plugins/updates` reports each installed plugin's newest release from its own source (PyPI or GitHub); `POST /api/plugins/installed/{id}/upgrade` `{version?}` moves one plugin, and only it, to a release (both lookups are cached; `?refresh=true` skips the cache). `GET /api/plugins/installed` includes each plugin's `source`. Install, upgrade and uninstall (`DELETE /api/plugins/installed/{id}`) answer with `restart_required` and `host_upgrade` — the nightly Precursor itself moved to when the build it was installed from is no longer published, otherwise `null`. |
-| `drawio` | Status and on-demand install of the self-hosted [draw.io editor](/features/workspaces#editing-diagrams) (`GET /api/drawio/status`, `POST /api/drawio/install`). |
+| Errors | rule violations `409`; garbled model reply `502` |
+| Assess | one tool-capable model review, then deterministic checks; a failed or oversized review → `502`, draft kept. Reads include `gaps` and non-blocking `observations`. |
+| Auto pause | recorded immediately; in-flight work may finish; nothing later starts; filed output isn't retracted |
+| Amend | `{request, steps: [{title, instruction}], expected_state_token, topic_id \| chat_id, output_instructions?}`; atomic; stale token, wrong source or live run → `409`. Marks the final stale, keeps earlier final versions. `/launch` starts a user-approved plan. |
+| Final | saving or restoring a **different** final moves a completed plan back to `consolidating` (`active` if cleared) |
+| Archive | refused for a live run; every write on an archived plan → `409`; archive/unarchive invalidate `state_token`s |
+| Step chats | excluded from `/api/chats` |
 
-Health and version:
-
-- `GET /api/health` — liveness + version.
-- `GET /api/version` — the CalVer version (derived from git tags at build time).
-- `GET /api/version/check` — whether a newer build is published on the active
-  channel, plus how this instance was installed. Read-only on purpose: applying
-  an update replaces the process serving the request, so it belongs to
-  [`precursor service update`](/features/background-app#updating-in-place).
-  Cached; pass `?force=true` to re-ask GitHub.
-
-::: warning One route lives outside `/api/*`
-`GET /raw/{slug}/{path}` serves a [workspace](/features/workspaces) file straight
-from its working tree, so HTML renders and relative links inside a file resolve
-naturally. It is **read-only and unauthenticated by design**, like the rest of
-this single-user app — one more reason to keep Precursor bound to loopback.
-:::
-
-### Step-plan source traces and amendments
-
-`POST /api/step-plans/{id}/auto/pause` records the pause immediately. Work already in
-flight may finish, including consolidation or assessment, but no later step or automatic
-filing starts until the plan is resumed. It does not retract an output already filed.
-
-`POST /api/steps/{id}/assess` and `POST /api/step-plans/{id}/assess` use one
-tool-capable model review and apply the app's deterministic checks afterward. A failed
-review, invalid findings or review input that cannot fit the model's context returns
-`502`; the draft is kept and no tool-less fallback is substituted.
-
-Creating a plan with `topic_id` or `chat_id` also records a system message with
-`kind: "step_plan"` in that conversation.
-Its `content` string contains a `StepPlanTraceData` JSON object:
+Creating a plan with a source records a `system` message with
+`kind: "step_plan"` whose `content` is a `StepPlanTraceData` JSON string,
+committed with the plan and never updated:
 
 ```json
 {
@@ -197,193 +223,194 @@ Its `content` string contains a `StepPlanTraceData` JSON object:
 }
 ```
 
-`source` is `submitted` for explicit `source_text`, or `topic_message` / `chat_message`
-when the ask was resolved from `message_id` or the conversation's latest non-empty user ask. `prompt`
-is the full effective source after command-prefix/outer-whitespace normalization.
-The plan and trace are committed together before proposal generation. Later plan
-edits do not update this message. Historical traces and notes for conversations linked
-after creation remain Markdown links without an original-prompt snapshot.
+`source` is `submitted` (explicit `source_text`) or `topic_message` /
+`chat_message`. The MCP `get_step_plan` result includes
+`final_output.filed_in_current_source`.
 
-`GET /api/step-plans?topic_id={id}` or `?chat_id={id}` lists plans for a source.
-Plan reads include `source_topic_id` / `source_chat_id`, ordered `amendments`, and
-an opaque `state_token`. To append work without replacing the original ask or approved
-steps, send `POST /api/step-plans/{id}/amend` with:
+## Agents
 
-```json
-{
-  "request": "Add a conclusion.",
-  "steps": [{"title": "Conclusion", "instruction": "Write one short conclusion."}],
-  "expected_state_token": "the state_token from the latest plan read",
-  "topic_id": 42
-}
-```
+An agent's URL-safe identity is its **`public_id`** (`/agents/{uuid}`,
+`/agent <uuid>`, [transfer](/features/transfer)), independent of Copilot SDK
+session handles, which belong to a
+[run](/features/agents-mode/orchestration#an-agent-is-a-definition-each-start-is-a-run).
+`AgentSessionRead` embeds a nullable `current_run`.
 
-For a chat, supply `chat_id` instead of `topic_id`. A linked plan requires its
-matching source; an unlinked plan has neither. Each step needs a non-empty title
-and instruction. Omit `output_instructions` to retain the current instructions,
-send a string to replace them, or send `null` to clear them. The mutation is atomic;
-an outdated token, wrong source, live run or other conflicting state answers `409`.
-It records a revision receipt, preserves earlier final versions, marks the old
-final stale, and reads the source's current autonomy. `POST /{id}/launch` starts a
-user-approved plan; the MCP `amend_step_plan` tool also starts the run when the
-current policy allows it.
+| Route | Behaviour |
+| --- | --- |
+| `GET /metrics`, `GET /inbox` | fleet rollup; everything waiting on you |
+| `blueprints` | CRUD + `/instantiate` |
+| `/{id}/start` | launch a parked agent |
+| `/{id}/runs`, `/runs/{runId}` | execution history: trigger, status, capability snapshot, tokens |
+| `/{id}/events` | transcript page: `events`, `cursor`, `epoch`, volatile `pending` approvals and `thinking` (`{text, active}`), `reset`, `rewindable_run_ids`. Send `?after=<cursor>&epoch=` for deltas; `reset` means replace. `?agentRunId=` narrows to one run. Every event carries `agentRunId`; archived ones a stable `link_id`. Streaming frames are never archived. |
+| `GET /{id}/rewind/preview?event_id=` | dry run of a rewind: file tracking, files that would change |
+| `POST /{id}/rewind` | `{event_id, mode?}`, `mode` = `conversation` (default) \| `conversation-and-files` ([restores files](/features/rewind#restoring-files)). Irreversible. `409` mid-turn, for a workflow-driven run or untracked files; `400` outside the current session; `502` if the SDK cut fails (conversation unchanged). |
+| `/{id}/artifacts` | list (`?runId=`), create, `GET /{aid}`, `GET /{aid}/raw` (a `link` redirects) |
+| `/{id}/state` | [scratchpad](/features/agents-mode/artifacts-state#durable-state-the-private-scratchpad): `GET`, `PUT` by key, `DELETE /state/{key}`, `DELETE /state` |
+| `/{id}/triggers`, `POST /hooks/{token}` | triggers and the public webhook |
+| `GET /runtime`, `POST /runtime/cli`, `POST /runtime/restart` | reachable with Agents mode **off**: capability probe, Copilot CLI download (poll `/runtime`), supervisor restart (`409` if unsupervised) |
 
-Saving a different final with `PUT /{id}/final`, or restoring a different version with
-`POST /{id}/final/revert`, moves a completed plan back to `consolidating` (`active` if
-the final is cleared). An unchanged save or restore leaves it done. Approved steps and
-the recorded version previously posted to the source are not changed.
+## Workspaces
 
-`POST /{id}/send-to-source` files an output into either source conversation.
-`POST /{id}/send-to-topic` remains a compatible alias. A forced provisional output
-is labelled and does not complete the plan or resume its source conversation.
-The MCP `get_step_plan` result includes `final_output.filed_in_current_source`, which checks the
-current version's recorded message and linked source. `false` means no matching recorded copy is
-present, not that no separate copy exists.
-`POST /{id}/archive` refuses a live run; an archived plan remains readable but every
-write on it (steps, artifacts, runs, amendments, filing) answers `409` until
-`POST /{id}/unarchive`. Archiving and restoring invalidate previously read amendment
-state tokens.
+`/api/workspaces`: clones, sandboxed file tree, reads/writes,
+`GET /{id}/discussions?path=` (chats/topics linking its files, `has_file`
+first), `DELETE /{id}/folder?path=` (`400` root/outside, `409` for the
+definitions folder). The workspace holding definition files is listed first
+(`hosts_definitions: true`) and can't be deleted while it holds any.
 
-## Addressing an agent
+Git, under `/{id}/git/`:
 
-An agent's URL-safe identity is its **`public_id`** — the UUID behind
-`/agents/{uuid}` deep links, `/agent <uuid>` nudges and
-[transfer](/features/transfer) lookups. It is stable for the life of the agent
-and independent of any Copilot SDK session handle, which now belongs to an
-individual [run](/features/agents-mode/orchestration#an-agent-is-a-definition-each-start-is-a-run)
-rather than the agent. `AgentSessionRead` also embeds a nullable `current_run`,
-so one fetch tells you both what the agent *is* and what it's doing right now.
+| Route | Behaviour |
+| --- | --- |
+| `GET status` | `branch`, `head`, `detached`, `upstream`, `ahead`/`behind`, `merging`, files with `code`, `orig_path`, `conflicted`, `browse_path` |
+| `POST fetch` / `pull` / `push` / `commit` / `commit-push` | fetch updates counts only; pull fast-forwards; `commit` `{message, paths?}`; push publishes a new branch. `409` on a detached HEAD. |
+| `POST discard?path=` | restore a file from HEAD |
+| `GET diff?path=`, `GET file-versions?path=&original_path=&base=&head=` | diff editor sides `{original, modified, binary, too_large}` (over 2 MB: flag only). Revisions are commit ids or `HEAD` only. |
+| `GET branches`, `POST switch` `{name}`, `POST branches` `{name}` (`201`) | `409` when work could be lost (named files), mid-merge, detached, or name taken; `404` unknown; `400` invalid name |
+| `POST merge`, `GET conflict?path=`, `POST resolve` `{path, side?}`, `POST merge/complete`, `POST merge/abort` | merge the remote branch; `ok: false` + `status.merging` on conflicts; `resolve` keeps the saved file (`409` with markers) or `ours`/`theirs` |
+| `GET log?limit=&skip=&path=`, `GET commits/{sha}` | paged history (`limit` 1–100, default 50), follows renames with `path`; commit detail with `body`, `parent`, `files` |
+
+Paths are repo-relative; leaving the repo or touching `.git` → `400`. Names
+with surrounding whitespace, control characters or ref-like prefixes
+(`refs/…`, `heads/…`, `origin/…`, `HEAD`) are refused.
+
+## Live sessions
+
+`/api/live`: [live sessions](/features/live-sessions), segments, insights,
+notes, summary, attendees.
+
+- `POST /{id}/summary` `{template?, language?}`: unknown template `400`,
+  unsupported language `422`; both remembered.
+- `GET /summary-templates`: templates (`source: builtin | file`), `problems`,
+  `languages`, last choices, definitions `folder`/`workspace`.
+  `PUT /summary-templates/selection` (`204`); `POST /summary-templates/files`
+  `{template, duplicate?}` returns the file to edit.
+- `POST /{id}/speakers/me` `{label, me?}` marks a speaker as you.
+- `POST /{id}/suggest` `{question, speaker_label?}` streams a
+  [suggested answer](/features/live-sessions#suggested-answers) (`token`, then
+  `done` / `none` / `error`); needs the `answers` feature (`409`).
+- `GET /{id}/transcripts`, `POST /{id}/summary/from-transcript`
+  `{transcript_ids?, template?, language?}` for the linked Teams meeting.
+
+## Precursor IQ
+
+All but `status` answer `404` when `PRECURSOR_IQ_ENABLED=false`.
+
+| Route | Returns |
+| --- | --- |
+| `GET /api/iq/retrieve?q=&limit=&sections=` | ranked `hits` (citation `id`, `section`, `ref`, `url`, `snippet`, `score`, …), a grounding `markdown` block, `lexical_backend` (`fts5` \| `tsvector` \| `like`), `semantic`, `pending`. Unknown section → `422`. |
+| `POST /api/iq/ask` `{question, sections?}` | cited `answer`, `model`, `citations`, `sources`; no model call when nothing matches; `502` on provider failure |
+| `GET /api/iq/status` | index counts, embedding state |
+| `POST /api/iq/embeddings/test` `{provider?, model?}` | `ok`, `dimensions`, `latency_ms` or `detail` |
+| `POST /api/iq/reindex` | requeue everything, rebuild in background |
+
+## Definitions
+
+**Work in progress** ([feature](/features/definitions)).
+
+| Route | Behaviour |
+| --- | --- |
+| `GET /check` | per-file and cross-file errors, warnings (unknown roles/MCP servers), `linked` rows |
+| `POST /export` | write files for agents/workflows that have none (`?overwrite=true`; not in files mode); needs Agents mode |
+| `GET /file-issues?workspace_id=&path=` | findings placed in the text (1-based, end-exclusive, UTF-16 columns) |
+| `GET /schema/{kind}` | JSON Schema for `agent` \| `workflow` \| `summary` (from `docs/schemas/`) |
+| `POST /accept` `{kind, id, content_hash}` | accept permission changes listed in `definition.review` |
+| `GET /status`, `GET /migration`, `POST /migrate` `{acknowledge}`, `POST /revert`, `GET /migration/items/{kind}/{id}`, `POST /finalize` `{confirm: true}` | the [migration](/features/definitions#getting-there-from-today-s-data); `migrate` returns `ok: false` + `mismatches` without switching on failure; `finalize` is irreversible |
+
+In files mode (`PRECURSOR_DEFINITIONS_SOURCE=files`), agent and workflow
+payloads carry `definition: {state: file | invalid | none, path, message}`, and
+runs carry `definition_path` / `definition_hash`.
+
+## Plugins
+
+| Route | Behaviour |
+| --- | --- |
+| `GET /api/plugins` | frontend extension descriptors |
+| `GET /installed`, `PUT /installed/{id}` | installed plugins with `source`; enable/disable |
+| `GET`/`PUT /installed/{id}/settings` | the plugin's opaque settings document |
+| `GET /catalog` | the bundled [catalogue](/plugins), annotated with what's installed; ungated |
+| `GET /versions?package=`, `GET /updates` | releases of a name or GitHub repo; newest per installed plugin (cached, `?refresh=true`) |
+| `POST /install` `{package, version?}` | name, GitHub repo link or any requirement; latest = a floor at the newest release |
+| `POST /installed/{id}/upgrade` `{version?}`, `DELETE /installed/{id}` | moves or removes only that plugin |
+| `POST /restart` | `202` |
+
+Install, upgrade, uninstall and restart are behind
+[three gates](/reference/plugins#why-installing-is-opt-in). Install, upgrade and
+uninstall answer with `restart_required` and `host_upgrade` (the nightly
+Precursor moved to when its own build is no longer published, else `null`).
+
+## Model settings
+
+`GET`/`PUT /api/settings`:
+
+- `model_fallbacks` (default `{"categories": []}`): ordered
+  `{id, label, presets}` categories; each preset has `provider` (or `agents`),
+  `model`, `reasoning_effort`, `context_tokens`, `context_tier`, with
+  [defaults](/reference/configuration#llm-provider). Replaced as a whole;
+  omit to keep. Invalid scope, id, effort/tier, duplicate preset, blank/`auto`
+  model or out-of-range budget → `422`.
+- `llm_model_category` / `agents_model_category` (`null` \| `efficiency` \|
+  `balanced` \| `intelligence`): selecting one keeps the manual defaults;
+  setting `llm_model` / `agents_default_model` clears it unless the category is
+  sent too. Unknown or empty category → `422`. `llm_category_preset` is a
+  read-only preview of the first candidate.
+- Fallbacks never rewrite settings, agent definitions or workflow pins. The
+  model actually used is reported in `done.model`, on the message and in usage;
+  SDK sessions archive `model_selected` and `model_fallback` timeline events.
+
+## Streamed turn events
+
+Each `…/messages/stream` response is its own SSE stream:
+
+| Event | Payload |
+| --- | --- |
+| `user_message` | the persisted prompt, with `public_id` |
+| `reasoning` | `{content}`, a chunk of the model's [thinking](/features/topics#watching-the-model-think), ahead of that round's deltas |
+| `delta` | answer text |
+| `tool_calls` | the round's calls; `assistant_id` and `public_id` of the assistant row |
+| `tool_result` | call id, name, arguments, result, error flag, and `link` `{slug, path}` when it touched a workspace file (stored on the tool message too) |
+| `usage` | per metered round: `message_id`, prompt/completion/total and cache tokens |
+| `mcp_auth_required` | a tool call needs an interactive sign-in (`server`, `message`, `tool`) |
+| `system` | a notice, e.g. an MCP server was unavailable |
+| `approval_required` | ends a turn that needs [approval](/features/approvals), instead of `done` |
+| `done` | final message, `public_id`, `model` actually used |
+| `suggestions` | follow-up suggestions for the answer (`message_id`, `items`) |
+| `error` | the turn failed; an `Error: …` system message is also persisted |
+
+Reasoning is stored per round on the assistant message (`reasoning`, `null`
+when none) and never replayed to the model.
 
 ## Real-time events
 
-`GET /api/events` is a Server-Sent Events stream the SPA subscribes to for
-cross-window sync. Requests carry an `X-Client-Id` header so the originating
-client's own events are filtered back out.
+`GET /api/events` is the SSE stream for cross-window sync. Requests send
+`X-Client-Id`; a client's own events are filtered out.
 
 | Event | Fires when |
 | --- | --- |
-| `topic.changed` | A topic's metadata or state is mutated. |
-| `chat.changed` | A chat's own metadata is mutated — most often [auto-naming](/features/chats#chats-name-themselves) replacing its placeholder title. Broadcast without client-id filtering in that case, since the window that started the chat is the one that needs the new title. |
-| `message.changed` | A message is added or edited in a topic or chat. |
-| `stream.started` | A chat turn begins. |
-| `stream.ended` | A chat turn completes. |
-| `read.changed` | A conversation is marked read (distinct from `message.changed`). |
-| `reminder.changed` | A [reminder](/features/scheduler) is created, fires, or is cleared. |
-| `agent.changed` | An [agent](/features/agents-mode) session's state or event stream moves. |
-| `meeting.changed` | A [live session](/features/live-sessions) is created, renamed, ended, or deleted. |
-| `workflow.changed` | A [workflow](/features/workflows) step advances, its status flips, or its definition is edited. Carries the run status and workflow name so a client can raise a notification without re-fetching. |
-| `step-plan.changed` | A [step plan](/features/step-by-step) or one of its steps changed. Carries `step_plan_id`. |
-| `mcp.auth_required` | An [MCP server](/features/mcp) needs an interactive sign-in. |
-| `mcp.auth_url` | The OAuth authorization URL to open for that sign-in. |
-| `mcp.auth_resolved` | An MCP server sign-in completed. |
-| `mcp.server_state` | A server finished [warming up](/features/mcp#startup-and-the-first-prompt) — carries its resolved `state` and advertised tool count. |
+| `topic.changed` | topic metadata or state changed |
+| `chat.changed` | chat metadata changed (e.g. [auto-naming](/features/chats#chats-name-themselves); then sent to every client, including the originator) |
+| `message.changed` | a message was added or edited |
+| `stream.started` / `stream.ended` | a turn began / completed |
+| `read.changed` | a conversation was marked read |
+| `reminder.changed` | a [reminder](/features/scheduler) was created, fired or cleared |
+| `agent.changed` | an [agent](/features/agents-mode)'s state or events moved |
+| `meeting.changed` | a [live session](/features/live-sessions) was created, renamed, ended or deleted |
+| `workflow.changed` | a [workflow](/features/workflows) step or status changed, or its definition was edited; carries run status and workflow name |
+| `step-plan.changed` | a [step plan](/features/step-by-step) or step changed; carries `step_plan_id` |
+| `topic-summary.changed` | a [status brief](/features/topic-summary) changed; carries `topic_id` |
+| `approval.changed` / `approval.parked` | a tool approval was created, answered or parked |
+| `mcp.auth_required` / `mcp.auth_url` / `mcp.auth_resolved` | an [MCP server](/features/mcp) needs, opens or completed an interactive sign-in |
+| `mcp.server_state` | a server finished [warming up](/features/mcp#startup-and-the-first-prompt); carries `state` and tool count |
 
-`agent.changed` and `read.changed` carry an `agent_run_id` alongside
-`agent_session_id`, so a listener can tell *which* execution of a shared agent
-moved.
+`agent.changed` and `read.changed` carry `agent_run_id` beside
+`agent_session_id`.
 
 ### Events raised in a subprocess
 
-The bus is per-process, but several built-in [MCP servers](/features/mcp) —
-`precursor` included — run as stdio subprocesses that share the database and not
-the bus. A write made there (`append_note`, `post_message`, a reminder) would be
-committed and then announced to nobody.
-
-`POST /api/events/publish` is how those children get back on the bus. The app
-exports a loopback URL and a per-run token into the environment it hands each
-child; the child presents the token in `X-Precursor-Event-Token` and the app
-republishes the event to every window. Relayed events are broadcast with an
-empty `client_id`, because the window that needs to re-render is precisely the
-one whose chat turn called the tool.
-
-Only the data-refresh types are accepted (`topic.changed`, `message.changed`,
-`reminder.changed`, `read.changed`, `agent.changed`, `meeting.changed`,
-`workflow.changed`); anything that makes a window act on the payload — such as
-`mcp.auth_url`, which steers a popup — is refused with a `400`, and a missing or
-wrong token is a `403`. The worst a relayed event can do is make a window
-refetch data it already has.
-
-Streamed chat responses are their own SSE stream, delivering text deltas and
-tool-call events for a single turn. A turn that dies (a provider rejection, the
-tool-round cap) emits an `error` event *and* persists an `Error: …` system
-message, so the failure is still there after a reload.
-
-A `reasoning` event (`{content}`) carries a chunk of the model's
-[thinking](/features/topics#watching-the-model-think); it arrives ahead of the
-`delta` events of the same round. The thinking of each round is stored on the
-assistant message it produced — the `tool_calls` round or the final answer — and
-returned as `reasoning` (`null` when the model surfaced none).
-
-`GET /api/settings` and `PUT /api/settings` expose the optional
-`model_fallbacks` object (default `{"categories": []}`): an ordered list of
-`{id, label, presets}` categories. Each preset has a `provider` (a provider id,
-or `agents` for Copilot SDK entries) plus `model`, `reasoning_effort`, `context_tokens`, and
-`context_tier`; omitted configuration fields receive their documented
-[defaults](/reference/configuration#llm-provider). An unknown provider scope, category id,
-effort/tier, duplicate effective preset, blank/`auto` model or out-of-range budget
-answers `422`. This map is replaced as a whole on update; an empty list clears it,
-and omitting it preserves it. A category fallback never writes the replacement
-into settings, agent definitions or workflow model pins. Chat `done.model`,
-persisted assistant-message models and usage report the model actually used.
-SDK rejection recovery is archived as a `model_fallback` agent timeline event.
-
-Settings also expose `llm_model_category` / `agents_model_category`
-(`null` or `efficiency|balanced|intelligence`). A partial update of only one of
-these fields selects a category without changing stored manual model, effort or
-context defaults. Selecting an unconfigured or unknown category returns `422`.
-Sending `llm_model` / `agents_default_model` clears the corresponding category
-unless the payload explicitly supplies that category too. `llm_category_preset`
-is a read-only first-candidate catalogue preview; request-time resolution and
-recovery still use the complete ordered category. Explicit per-turn/feature
-model overrides and agent/workflow pins bypass the default category.
-SDK category selection is archived as `model_selected`; subsequent rejection
-recovery remains `model_fallback`.
-
-`GET /api/llm/models` also returns `catalog_provider` on each model: the **actual**
-catalogue source, which may be `mock` when the requested provider's configuration
-is unusable. This prevents preset-health indicators from treating the offline
-mock as proof that a model is listed by the selected provider. The existing
-catalogue endpoints are used for read-only preset checks; no inference call or
-settings write is made. A failed/empty/non-discoverable catalogue leaves ids
-unverified rather than declaring them absent.
-
-A `tool_result` event carries the call id, name, arguments, result text and
-error flag — plus `link` (`{slug, path}`) when the tool read or wrote a
-[workspace](/features/workspaces) file, which the UI turns into an **Open** chip.
-The same object is stored on the tool message's `tool_calls` metadata, so the
-chip survives a reload without re-reading the result body.
-
-Tool approvals ([feature](/features/approvals)) live under `/api/topics/{id}/approvals` and `/api/chats/{id}/approvals` (`GET` the open rows, `POST …/{approval_id}` to answer, `POST …/resume` to stream the rest of a parked turn), plus `/api/approval-rules` for standing `allow` / `ask` rules. Topics and chats carry `approval_policy` (`manual`, `balanced`, `plan`, `autonomous`, or `null` to inherit) and `pending_approvals`. Chat reads also return `inherited_approval_policy` and `inherited_approval_plan_id`: for a model-delegated plan discussion these describe the plan's default; otherwise both are `null`. Its own policy, if set, overrides that default. The discussion's rules precede the source conversation's rules, then global rules. A turn that needs approval ends with an `approval_required` event instead of `done`; changes publish `approval.changed` and `approval.parked` on `/api/events`. Topic schedules take `approval_timeout_minutes`.
-
-**Artifacts.** A chat or topic can carry links to [workspace](/features/workspaces#discussing-a-workspace)
-files: `GET /api/{topics|chats}/{id}/artifacts` lists them (`workspace_slug`,
-`workspace_name`, `path`, `source` — `assistant`, `manual` or `opened` — and
-`exists`, false once the file is renamed or deleted), `POST` attaches one
-(`{workspace_id, path, source?}`, idempotent) and
-`DELETE .../artifacts/{artifact_id}` detaches it. A successful workspace *write*
-tool call in a turn records the link itself. `GET /api/workspaces/{id}/discussions?path=`
-lists the non-archived chats and topics attaching files from that workspace,
-those with `path` first (`has_file`). Both stream endpoints accept
-`workspace_context: {workspace_id, path?}` so the model knows which file is open;
-it is not stored. The old `POST /api/workspaces/{id}/chat/stream` and the
-`role` on workspaces are gone — a workspace discussion is an ordinary chat.
-
-`POST .../messages/stream` accepts `retry_message_id` to **replay** such a turn:
-instead of persisting a new user message it reuses that one — attachments and
-all — and deletes every message recorded after it. The id must name a user turn
-of the same container (`400` otherwise, `404` when unknown).
-
-Stopping a turn disconnects the stream, so the backend never persists its final
-answer or the results of tools still running. The client records them with
-`POST .../messages/stopped`: `content` is the text received so far and
-`tool_call_ids` names the calls of the latest tool round that never returned —
-either may be omitted, not both (`422`). An optional `reasoning` is stored with
-`content` as that reply's thinking. Each such call gets a tool row whose
-metadata carries `"stopped": true`, skipping ids the round didn't issue or that
-already have a result, so the round still replays on the next turn. The response
-is the list of rows created, oldest first.
-
-::: tip Contributions welcome
-Want to help build the generated reference? See the
-[contribution guide](/contributing/).
-:::
+Stdio MCP servers (including `precursor`) share the database but not the
+in-process bus. They publish through `POST /api/events/publish`, with the
+per-run token the app put in their environment, in `X-Precursor-Event-Token`
+(wrong or missing → `403`). Relayed events go to every window (empty
+`client_id`). Only data-refresh types are accepted (`topic.changed`,
+`message.changed`, `reminder.changed`, `read.changed`, `agent.changed`,
+`meeting.changed`, `workflow.changed`); anything else, such as `mcp.auth_url`,
+is a `400`.

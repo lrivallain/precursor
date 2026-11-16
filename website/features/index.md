@@ -4,96 +4,58 @@ title: Feature guides
 
 # Feature guides
 
-Precursor is a work follow-up assistant built from several distinct **surfaces** —
-long-lived topics, throwaway chats, recorded meetings, autonomous agents and the
-pipelines that chain them — sharing one set of tools, personas and memory. This
-section is a tour of everything it can do.
+One page per feature. Start with the sections, then the capabilities they share.
 
-## The sections
-
-Precursor's sidebar is organized into color-coded sections, each a different mode
-of working:
+## Sections
 
 | Section | What it's for |
 | --- | --- |
-| 🧵 [**Topics**](/features/topics) | Long-lived, tree-organized threads, each optionally linked to a GitHub issue used as live context. |
-| 💬 [**Chats**](/features/chats) | Quick, throwaway conversations for fast answers. |
-| 🎙️ [**Live sessions**](/features/live-sessions) | Record & transcribe a meeting with live insights, Q&A, and a summary written from the template and in the language you pick. |
-| 🤖 [**Agents**](/features/agents-mode) | Autonomous Copilot SDK agents for long-running tasks, monitored from a control-tower dashboard (opt-in). |
-| 🔗 [**Workflows**](/features/workflows) | Chain those agents into a reusable pipeline the coordinator runs unattended, with gates and approval checkpoints (opt-in). |
-| 🗂️ [**Workspaces & files**](/features/workspaces) | Git clones / local dirs the assistant can browse and edit, with a chat or topic you can open beside any file. Shown as **Files** in the sidebar. |
-| ✨ [**IQ**](/features/iq) | Ask a question about everything in Precursor and get a cited answer whose sources open the real items. |
-| 📋 [**Kanban**](/features/kanban) | A board over the GitHub issues linked to your topics. Ships as a [plugin](/features/plugins) — routes, tools and UI in one package. |
+| 🧵 [**Topics**](/features/topics) | Long-lived, nested threads, optionally linked to a GitHub issue used as live context. |
+| 💬 [**Chats**](/features/chats) | Quick, throwaway conversations. |
+| 🎙️ [**Live sessions**](/features/live-sessions) | Meeting transcription with live insights, Q&A and a templated summary. |
+| 🤖 [**Agents**](/features/agents-mode) | Autonomous Copilot SDK agents, monitored from a dashboard (opt-in). |
+| 🔗 [**Workflows**](/features/workflows) | Agents chained into a pipeline with gates and approvals, run on demand, on a schedule or by webhook (opt-in). |
+| 🗂️ [**Files**](/features/workspaces) | Git clones and folders the assistant can browse and edit. |
+| ✨ [**IQ**](/features/iq) | Questions over everything in Precursor, answered with cited sources. |
+| 📋 [**Kanban**](/features/kanban) | A GitHub Projects board (plugin). |
 
-**Rearrange them to taste.** Drag any section in the sidebar — whether you use
-the vertical icon rail or the horizontal tab switcher — to reorder it. The
-arrangement is remembered across reloads and shared between both navigation
-styles. When you pick the vertical rail, it also stays on the **home launcher**
-so you're never more than a click from any section; **Home** and the ⌘K search
-launcher sit together at the top of the rail, above the sections.
+Navigation: drag sections in the sidebar to reorder them (remembered across
+reloads and both navigation styles). Agents and Workflows open on an
+**Overview** dashboard. The browser tab title names the open item and section.
 
-**One sidebar shell.** Every section uses the same resizable, collapsible list
-panel; in rail navigation the section icons and account controls stay in place
-when the panel is collapsed. Agents and Workflows each offer a searchable list
-plus an **Overview** entry for their card dashboard. Clicking either section in
-the rail or tabs opens that overview; selecting a list row opens the item.
+## Working in conversations
 
-**The browser tab names what's open.** The tab title follows the open item and
-its section, most specific first — `Search latency regression · Topics ·
-Precursor`, `README.md · Design notes · Files · Precursor` — and falls back to
-the section (or `Home`) when nothing is open. Every history entry keeps its own
-title, so the list behind a long-press on Back or Forward reads as real page
-names. Unread counts and the 🔔 for a waiting agent still lead the title.
+| Feature | What it does |
+| --- | --- |
+| [Topic summary](/features/topic-summary) | Editable status brief (status, actions, key facts) above a topic. |
+| [Collections](/features/collections) | Separate groups of topics, each with its own repository and default role. |
+| [Step by step](/features/step-by-step) | Split a long ask into a tree of steps, approve each, combine the result. |
+| [Attachments](/features/attachments) | Images as vision input; PDF, DOCX, PPTX and text files extracted. |
+| [Context compression](/features/context-compression) | Automatic trimming of old tool results and images; `/compact` summarises. |
+| [Timeline & rewind](/features/rewind) | Jump between turns; rewind or edit-and-resend with undo. |
+| [Skills, roles & memory](/features/skills-memory) | `/slash` prompt presets (`SKILL.md`), personas, long-term memory. |
+| [Tool approvals](/features/approvals) | Which tool calls run on their own and which wait for you. |
 
-## Cross-cutting capabilities
+## Automation and tools
 
-These work across the sections above:
+| Feature | What it does |
+| --- | --- |
+| [Scheduler & reminders](/features/scheduler) | Run topics, agents and workflows on a cadence, `/guard` them with cheap probes, set reminders. |
+| [MCP (both ways)](/features/mcp) | Built-in and custom tool servers; Precursor also serves its data over MCP. |
+| [Command runner](/features/command-runner) | Run bash / python / node in a Docker jail or locally. |
+| [OpenAI-compatible endpoint](/features/openai-endpoint) | Use Precursor's configured models from VS Code or any OpenAI client. |
+| [Import & export](/features/transfer) | Share agents and workflows as YAML. |
+| [Definition files](/features/definitions) *(WIP)* | Agents, workflows, roles and summary templates as YAML files in git. |
 
-- [**Topic summary**](/features/topic-summary) — an editable status brief above
-  a topic's transcript: status, open actions and key information, refreshed on
-  request and merged change by change when you have edited it.
-- [**Skills, roles & memory**](/features/skills-memory) — reusable `/slash`
-  prompt presets (stored as `SKILL.md` files), named assistant personas,
-  and long-term memory injected into every conversation.
-- [**Scheduler & reminders**](/features/scheduler) — put a topic or agent on a
-  cadence, gate runs behind cheap MCP probes with `/guard`, or set one-shot
-  reminders.
-- [**MCP (both ways)**](/features/mcp) — Precursor is an MCP server *and* an MCP
-  client, with built-in tool servers and support for your own.
-- [**Precursor IQ**](/features/iq): ranked, cited retrieval over your own
-  content. Ask questions in the **IQ** section or in ⌘K (Tab), jump to the
-  sources behind each answer, and serve `retrieve` / `ask` to MCP hosts,
-  WorkIQ-style.
-- [**OpenAI-compatible endpoint**](/features/openai-endpoint) — let VS Code or
-  any OpenAI client use the active provider's models through Precursor.
-- [**Command runner**](/features/command-runner) — execute bash / python / node
-  inside a throwaway Docker jail or your local machine.
-- [**Attachments**](/features/attachments) — images as vision input; PDF / DOCX /
-  PPTX and text/code files text-extracted; content-addressed on disk, deduped.
-- [**Context compression**](/features/context-compression): inline images
-  and older tool results are trimmed automatically, and `/compact` summarises a
-  long conversation so it can keep going.
-- [**Timeline & rewind**](/features/rewind) — jump between a conversation's
-  turns from a timeline rail, and rewind to an earlier turn (or edit and resend
-  its prompt) with a preview and an undo.
-- [**Import & export**](/features/transfer) — share an agent or a workflow as a
-  plain YAML file, and choose what happens to anything that already exists on
-  import.
-- [**Storage & retention**](/features/storage) — per-feature sweeps that bound
-  database growth, plus an on-demand cleanup cockpit and database compaction.
-- [**Phone & tablet layout**](/features/mobile) — below 768px the sidebar
-  becomes an overlay drawer and the content takes the whole screen, with
-  touch-reachable actions and safe-area padding.
-- [**Background app**](/features/background-app) — install with one command, run
-  it at login, drive it from a menu-bar icon, and update in place.
-- [**Plugins**](/features/plugins) — install a package and it brings a whole
-  section, MCP tools, settings and API routes. Browse the
-  [catalogue](/plugins) for the ones we know about.
+## App and operations
 
-## What's under the hood
+| Feature | What it does |
+| --- | --- |
+| [Background app](/features/background-app) | Login item, menu-bar icon, in-place updates. |
+| [Storage & retention](/features/storage) | Retention sweeps, cleanup cockpit, database compaction. |
+| [Plugins](/features/plugins) | Packages that add sections, tools, settings and routes; see the [catalogue](/plugins/). |
+| [Phone & tablet layout](/features/mobile) | Drawer sidebar and touch layout below 768 px. |
+| [Keyboard shortcuts](/features/keyboard-shortcuts) | Press `?` in the app for the list. |
+| [Accessibility](/features/accessibility) | Theme and reading fonts, including dyslexia-friendly ones. |
 
-The whole thing runs as a **single uvicorn process** in production (FastAPI +
-the pre-built React SPA), backed by async SQLAlchemy and Alembic migrations.
-
-For the full picture see the [architecture reference](/reference/architecture)
-and [technical stack](/reference/stack).
+Internals: [architecture](/reference/architecture) and [stack](/reference/stack).

@@ -2,35 +2,32 @@
 
 > Opinionated approach to work follow-up, built as an AI assistant.
 
-Precursor is a small AI assistant, built with an opinionated approach to tracking
-work-in-progress conversations alongside the issues they belong to. Every chat is
-scoped to a
-**topic** that can be linked to (or create) a GitHub issue; the assistant uses
-the issue body, comments, and labels as live context so newer updates outweigh
-older ones.
+Precursor is a local-first, single-user app that keeps your work in one place
+and puts AI to work on it: long-lived **topics** (optionally linked to GitHub
+issues), quick **chats**, **live meeting** transcription and insights,
+**autonomous agents** and **workflows** that run in the background, file
+**workspaces**, and **MCP** tools in both directions. It runs as one Python
+process on your machine, with the model provider of your choice.
+
+📖 **Documentation: <https://precursor.vuptime.io/>**
 
 ## Quick start
 
-**One prerequisite, one command.** [uv](https://docs.astral.sh/uv/) brings its
-own Python, so it's the only thing to install first
-([instructions](https://docs.astral.sh/uv/getting-started/installation/)):
+[uv](https://docs.astral.sh/uv/getting-started/installation/) is the only
+prerequisite (it brings its own Python):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/lrivallain/precursor/main/scripts/install.sh | sh
 ```
 
-On Windows, in PowerShell:
-
 ```powershell
+# Windows (PowerShell)
 irm https://raw.githubusercontent.com/lrivallain/precursor/main/scripts/install.ps1 | iex
 ```
 
-That installs Precursor, registers it to **start when you log in**, and starts it
-now. No clone, no Node.js, no build step, no database to create — the published
-package already carries the interface, and the schema is created on first start.
-Open the URL it prints (<http://localhost:8000> by default) and you're in.
-
-From then on it's managed rather than launched:
+This installs Precursor, starts it at login, and starts it now. Open the URL it
+prints (<http://localhost:8000> by default). No clone, Node.js or database setup
+needed. To just try it: `uvx precursor-ai`.
 
 ```bash
 precursor service status    # is it up, and on which port
@@ -38,170 +35,62 @@ precursor service update    # newest build + restart
 precursor tray              # menu-bar control
 ```
 
-See [Installation](https://precursor.vuptime.io/guide/installation) for the other
-ways to install (try it with `uvx`, no login item, stable channel), what differs
-on Windows, and
-[Background app](https://precursor.vuptime.io/features/background-app) for the
-whole service surface.
+**Models.** If you are signed in with the GitHub CLI (`gh auth login`) and have
+Copilot access, GitHub Copilot works with no setup; otherwise add a token or
+another provider in **Settings**. Without any provider, a mock model keeps the app usable offline.
+See [Installation](https://precursor.vuptime.io/guide/installation) and
+[Configuration](https://precursor.vuptime.io/guide/configuration).
 
-**GitHub credentials (optional).** Precursor resolves a GitHub token in this
-order: (1) a token saved in **Settings → GitHub**, then (2) your **GitHub CLI**
-session (`gh auth token`) if you're signed in via `gh auth login`. So if you
-already use `gh`, you don't need to set anything. If several accounts are signed
-in, set `PRECURSOR_GITHUB_CLI_USER=<login>` so the token doesn't depend on
-whoever last ran `gh auth switch`. A token needs the `models:read` fine-grained
-permission (or Copilot access) for real model responses. With **no** token at
-all, Precursor falls back to the `MockProvider` so the chat flow stays usable
-offline.
+## What's inside
 
-## Highlights
+| Area | What you get |
+| --- | --- |
+| **Conversations** | Tree-organized [topics](https://precursor.vuptime.io/features/topics) with editable summaries and GitHub issue context, quick [chats](https://precursor.vuptime.io/features/chats), [step-by-step](https://precursor.vuptime.io/features/step-by-step) plans, attachments, context compression, timeline & rewind |
+| **Meetings** | [Live sessions](https://precursor.vuptime.io/features/live-sessions): Azure Speech transcription with speaker labels, live insights, suggested answers, notes and a templated summary |
+| **Automation** | [Agents](https://precursor.vuptime.io/features/agents-mode) (Copilot SDK) followed from a control tower, multi-agent [workflows](https://precursor.vuptime.io/features/workflows) with gates, approvals and triggers, a [scheduler](https://precursor.vuptime.io/features/scheduler) and reminders |
+| **Files & tools** | [Workspaces](https://precursor.vuptime.io/features/workspaces) (git clones or folders, sandboxed), [MCP](https://precursor.vuptime.io/features/mcp) server and client with tools loaded on demand, [tool approvals](https://precursor.vuptime.io/features/approvals), a jailed command runner, skills, roles and memory |
+| **Models** | GitHub Copilot, Azure AI Foundry (incl. Claude with prompt caching), OpenAI, Mistral, Hugging Face, Ollama; per-conversation choice; an opt-in [OpenAI-compatible endpoint](https://precursor.vuptime.io/features/openai-endpoint) |
+| **Find & organize** | [Precursor IQ](https://precursor.vuptime.io/features/iq) cited answers over your own data, collections, a [Kanban](https://precursor.vuptime.io/features/kanban) board (plugin), import/export |
+| **Platform** | [Background app](https://precursor.vuptime.io/features/background-app) with tray and self-update, phone layout, keyboard shortcuts, [plugins](https://precursor.vuptime.io/features/plugins) |
 
-- Collapsible, searchable, **tree-organized** topic sidebar
-- Each topic optionally linked to a GitHub issue; issue labels tag the chat
-- Multi-turn chat with **SSE streaming** and markdown rendering
-- Powered by **GitHub Copilot** (OpenAI-compatible) with a mock provider for
-  offline development
-- **Providers side by side**: configure GitHub Copilot and Azure AI Foundry
-  together, then choose provider/model presets per chat or topic, independently
-  of the global default. Provider pickers show saved configuration status.
-- **MCP both ways**: Precursor exposes its conversations as an MCP server *and*
-  attaches external MCP tool servers per topic
-- **OpenAI-compatible endpoint** (opt-in): point VS Code or any OpenAI client at
-  Precursor to use the active provider's models, behind a generated API key
-- **Agents mode** (opt-in): hand long-running tasks to an autonomous Copilot
-  SDK agent attached to a topic/chat, followed in a workflow-style tab. Nothing
-  to install — the native runtime it drives is one click in **Settings → Agents**
-- **Workflows** (opt-in): chain agents into a reusable, named pipeline that a
-  coordinator runs unattended — with quality gates, human approval checkpoints,
-  and schedule/webhook triggers
-- **Step by step**: split a long ask (a customer email, a brief) into a tree of
-  steps, work and validate each in its own chat, then consolidate one answer
-  back into the topic
-- Single uvicorn process in production — FastAPI serves the API and mounts the
-  built React SPA
-- **Runs in the background**: one-command install, a login item, a menu-bar icon
-  showing whether it's up, and `precursor service update` to pull the newest
-  build and restart
-- **Plugin-ready**: backend entry points + a frontend extension registry,
-  designed for things like a future drawio preview/generator
+Stack: Python 3.12+, FastAPI, SQLAlchemy 2 (async) + Alembic, SQLite or
+PostgreSQL; React 19 + TypeScript + Tailwind, built and served by the backend.
 
-## Stack
+## Security model
 
-| Layer    | Tech                                                                  |
-| -------- | --------------------------------------------------------------------- |
-| Tooling  | [uv](https://docs.astral.sh/uv/) for env, run, build & release        |
-| Backend  | Python 3.12+, FastAPI, SQLAlchemy 2 (async), Alembic, sse-starlette   |
-| LLM      | `openai` SDK pointed at `https://api.githubcopilot.com`               |
-| MCP      | `mcp` Python SDK (client + server scaffolding)                        |
-| Frontend | Vite + React 19 + TypeScript, Tailwind CSS 3, Lucide React            |
-| DB       | SQLite for dev (`aiosqlite`), PostgreSQL for prod (`asyncpg`, extra)  |
+> [!IMPORTANT]
+> Precursor is **single-user and has no authentication**. It binds to
+> `127.0.0.1` by default; do not expose it to a network without an
+> authenticating reverse proxy in front.
 
-## Working on Precursor
+- Anyone who can reach the port has full access to your data and stored tokens.
+- Keep the command runner's Docker jail on; disabling it grants local disk access.
+- Secrets live in the local database and are never echoed by the API (except the
+  opt-in OpenAI endpoint's own key, shown so you can copy it).
 
-A source checkout is the **contributor** path — it additionally needs Node.js for
-the frontend toolchain:
+Report vulnerabilities as described in [SECURITY.md](https://github.com/lrivallain/precursor/blob/main/SECURITY.md).
+
+## Contributing
 
 ```bash
 git clone https://github.com/lrivallain/precursor.git && cd precursor
-make sync                     # uv sync + npm --prefix frontend install
+make sync                     # Python deps (uv) + frontend deps (needs Node.js)
 cp .env.example .env
-uv run precursor --dev        # uvicorn --reload + Vite HMR (Ctrl-C stops both)
+uv run precursor --dev        # backend reload + Vite HMR
+make check                    # the full quality gate
 ```
 
-After a `git pull`, the next start rebuilds a stale frontend and runs the Alembic
-migrations on its own. See [CONTRIBUTING.md](CONTRIBUTING.md) for the quality
-gates and the rest of the dev stack.
+Read [CONTRIBUTING.md](https://github.com/lrivallain/precursor/blob/main/CONTRIBUTING.md) and [ARCHITECTURE.md](https://github.com/lrivallain/precursor/blob/main/ARCHITECTURE.md)
+(where code goes, building blocks to reuse, quality limits) before opening a PR.
 
-## Project layout
+## Releases
 
-```
-precursor/
-├── precursor/backend/
-│   ├── main.py             # FastAPI app + SPA mount + lifespan
-│   ├── config.py           # pydantic-settings
-│   ├── db.py               # async SQLAlchemy engine + session
-│   ├── models/             # Topic, Message, AppSetting
-│   ├── schemas/            # Pydantic request/response models
-│   ├── routers/            # topics, chat (SSE), settings, github, mcp
-│   ├── services/
-│   │   ├── llm/            # provider protocol + GH Models + mock
-│   │   ├── github_client.py
-│   │   └── mcp/            # server + client manager
-│   ├── plugins/            # entry-point loader + registry
-│   └── alembic/            # migrations
-├── frontend/
-│   ├── src/components/     # Sidebar, ChatPanel, SettingsPanel, MessageBubble
-│   ├── src/lib/            # api, sse, plugins, theme, types
-│   └── vite.config.ts      # built to frontend/dist → bundled into the wheel
-├── pyproject.toml          # uv project: deps, build (hatch-vcs CalVer), tooling
-├── uv.lock                 # uv-managed lockfile (committed)
-├── Makefile                # uv-based dev/build shortcuts
-└── alembic.ini
-```
-
-## Design principles
-
-- **Streaming-first** chat with tool-call visualization
-- **Single process** in production — no Node.js runtime required
-- **Each topic is an independent conversation context**, hydrated from its
-  linked GitHub issue (newer comments preferred over older)
-- **Extensible by design**: see [docs/plugins.md](docs/plugins.md) for the
-  plugin contract — third parties can mount routers, contribute frontend
-  panels, and register MCP tools without forking the core
-
-## Security & deployment model
-
-> [!IMPORTANT]
-> Precursor is designed as a **single-user, local-first** app and ships with
-> **no authentication**. Run it bound to `127.0.0.1` (the default) and do not
-> expose it to a network or the public internet without putting your own
-> authenticating reverse proxy in front of it.
-
-Specific things to keep local:
-
-- The API and SPA have **no auth** — anyone who can reach the port has full
-  access to your topics, settings, and stored tokens.
-- The optional **command-runner** MCP tool can execute shell/Python/Node. Keep
-  the Docker "jail" enabled; disabling it grants full local-disk access.
-- The built-in **MCP-over-HTTP** transport is off by default and only binds to
-  loopback — leave it that way unless you front it with auth.
-- Secrets (the GitHub token, LLM provider keys) live in the local DB (set via
-  Settings) and are never echoed by the API. Don't commit `.env`. The one
-  exception is the opt-in OpenAI-compatible endpoint's own key, shown in
-  Settings so you can paste it into clients.
-
-See [SECURITY.md](SECURITY.md) for vulnerability reporting.
-
-## Versioning & releases
-
-Precursor uses **CalVer** (`YYYY.M.MICRO`, e.g. `2026.6.0`). The version is a
-single source of truth derived from git tags by hatch-vcs at build time — there
-is no literal to edit. The running version is exposed at `GET /api/version` and
-shown in the Settings panel.
-
-Every night at **01:17 UTC**, GitHub Actions releases unreleased, CI-green
-changes from `main` under a new immutable `v<version>` tag, with artifacts on
-GitHub and PyPI. No changes means no release; manual releases remain available.
-The rolling `nightly` prerelease follows `main` only after CI succeeds on the
-exact commit; website deployment remains independent. See
-[RELEASING.md](RELEASING.md), [release notes](https://github.com/lrivallain/precursor/releases),
-and [CHANGELOG.md](CHANGELOG.md).
-
-## Documentation
-
-📖 **[Website & full documentation](https://precursor.vuptime.io/)** —
-feature guides, installation, configuration, architecture, and contribution
-docs, published from [`website/`](website/) on every push.
-
-In-repo references:
-
-- [Architecture](docs/architecture.md)
-- [Plugin system](docs/plugins.md)
-- [Definition files](docs/definitions.md) — agents & workflows (work in progress) and live summary templates
-- [Contributing](CONTRIBUTING.md)
-- [Releasing](RELEASING.md)
-- [Changelog](CHANGELOG.md)
+CalVer (`YYYY.M.MICRO`) from git tags. Green changes on `main` ship nightly to
+[GitHub Releases](https://github.com/lrivallain/precursor/releases) and
+[PyPI](https://pypi.org/project/precursor-ai/) (`precursor-ai`); a rolling
+`nightly` prerelease follows `main`. See [RELEASING.md](https://github.com/lrivallain/precursor/blob/main/RELEASING.md) and
+[CHANGELOG.md](https://github.com/lrivallain/precursor/blob/main/CHANGELOG.md).
 
 ## License
 
-[MIT](LICENSE)
+[MIT](https://github.com/lrivallain/precursor/blob/main/LICENSE)

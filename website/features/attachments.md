@@ -4,92 +4,51 @@ title: Attachments
 
 # Attachments
 
-Attach files to any message and Precursor makes them part of the turn — images
-become **vision** content-parts, and documents are **text-extracted**. Bytes are
-stored efficiently on disk, not in the database.
+Attach files to a message: images go to the model as **vision** input, documents as
+**extracted text**. Drop a file on the composer or use the paperclip (also on *Start a new
+chat*, where the first attachment creates the chat).
 
-## What you can attach
-
-| Type | How it's used |
+| Type | Sent as |
 | --- | --- |
-| **Images** (PNG, JPEG, …) | Passed to the model as **vision** content-parts. |
-| **PDF** | **Text-extracted** and included as context. |
-| **DOCX / PPTX** | **Text-extracted** and included as context. |
-| **Text & code files** (`.txt`, `.md`, `.csv`, `.json`, `.yaml`, `.py`, `.ts`, `.sql`, …) | Read as **UTF-8 text** and included as context. |
+| Images (PNG, JPEG, …) | Vision content |
+| PDF, DOCX, PPTX | Extracted text |
+| Text & code (`.txt`, `.md`, `.csv`, `.json`, `.yaml`, `.toml`, `.xml`, `.html`, shell, most languages; any `text/*`) | UTF-8 text |
 
-Drop a file into the composer, or use the attach button. That includes the
-*Start a new chat* screen, where the first attachment creates the chat. The extracted text (or
-image) is included alongside your prompt for that turn.
+Scanned (image-only) PDFs have no text layer and there is no OCR: the model only learns that
+the file has no extractable text.
 
-Text and code files cover the common plain-text and source formats — Markdown,
-CSV/TSV, JSON/YAML/TOML, XML/HTML, shell scripts, and most programming languages.
-Any `text/*` file is accepted even if its extension isn't in the list.
+## Preview
 
-## Preview without leaving the app
-
-Click an attachment thumbnail or file chip in a message, the composer, or the
-notes editor to open an **in-app preview** instead of a new browser tab.
+Click an attachment in a message, the composer or the notes editor to preview it in the app.
 
 <Screenshot src="/screenshots/attachment-preview.png" alt="An image attachment open in the in-app viewer with zoom controls" caption="Inspect attachments without leaving your conversation." />
 
-Images start fitted to the window. Use **Zoom in / Zoom out** (25% to 400%),
-then scroll to inspect details; **Fit** restores the initial view. Text and code
-files display as plain text with the same zoom controls and a **Reset** button.
-You can also use **+ / -**, **0** to reset, or **Ctrl/Cmd + wheel** over the
-preview. Text previews show at most 200,000 characters, with a notice when
-truncated; this does not change the model's attachment budget.
-
-PDFs use your browser's embedded PDF viewer and its zoom controls. DOCX, PPTX,
-and other formats the browser cannot preview show a clear fallback. A small
-**Open in new tab** link stays in the preview's top bar so you can open or
-download the original file at any time. Close with **Escape**, the close
-button, or a click outside the viewer.
+- Images and text: zoom 25–400% (**+ / -**, **0** to reset, **Ctrl/Cmd + wheel**), **Fit** /
+  **Reset**. Text previews show up to 200,000 characters.
+- PDFs use the browser's viewer. DOCX, PPTX and others show a fallback.
+- **Open in new tab** opens or downloads the original. Close with **Esc** or a click outside.
 
 ## How much of a document the model sees
 
-Each attached document contributes up to **200,000 characters** of extracted
-text (about 50k tokens), enough for a full research paper. Change this in
+Each document contributes up to **200,000 characters** (~50k tokens). Change it in
 **Settings → Model → Prompt budgeting → Max characters per attached document**
-(`llm_max_attachment_chars`, from 1,000 to 2,000,000). A longer document is cut,
-and the model gets an explicit note, e.g. *"showing the first 200,000 of
-412,381 characters"*, so it can tell you what it's missing.
+(`llm_max_attachment_chars`, 1,000–2,000,000). Longer documents are cut and the model is told
+(*"showing the first 200,000 of 412,381 characters"*).
 
-Attachments stay in the conversation: every later turn sends them again, within
-the overall **Max input tokens per request** budget, which drops the oldest
-turns first. Pick a smaller cap for small-context models.
+Attachments are resent on every later turn, within **Max input tokens per request** (oldest
+turns dropped first). Lower it for small-context models.
 
-Scanned (image-only) PDFs have no text layer, and OCR isn't enabled, so the
-model only learns that the file has no extractable text.
+## Storage
 
-## How they're stored
-
-Attachment **bytes are not stored in the database**. Each `Attachment` row keeps
-only **metadata** plus a `sha256` pointer; the content lives on disk as a
-**content-addressed** file under `settings.blobs_dir`
-(`.precursor/blobs/<aa>/<bb>/<sha256>`). This keeps the database small and makes
-uploads cheap:
-
-- **Deduplication** — identical uploads share the same blob automatically.
-- **Garbage collection** — a startup sweep (`gc_orphan_blobs`) reclaims any blob
-  no longer referenced by a row.
-- **Extracted-text cache** — a document's text is extracted once and saved next
-  to its blob (`<sha256>.text-v1.txt`), so later turns don't parse a large PDF
-  again. The same sweep removes it together with its blob.
-
-See the [architecture reference](/reference/architecture#database) for details.
+Bytes live on disk, not in the database: content-addressed under `settings.blobs_dir`
+(`.precursor/blobs/<aa>/<bb>/<sha256>`). Identical uploads share a blob, extracted text is
+cached next to it (`<sha256>.text-v1.txt`), and a startup sweep (`gc_orphan_blobs`) removes
+unreferenced blobs. See the [architecture reference](/reference/architecture#database).
 
 ## Tool-result retention
 
-Large **tool** results (from [MCP](/features/mcp) calls) can also grow the
-database over time. An optional **Settings → System → Storage / retention** knob
-(`tool_result_retention_days`, default `0` = keep forever) bounds that growth:
-past the configured age, a tool message's content is replaced **in place** with a
-short placeholder, while the row and its `tool_calls` metadata are preserved so
-conversation history still pairs each tool-call turn with its results. The same
-window removes the model's [thinking](/features/topics#watching-the-model-think)
-from older replies. The sweep is idempotent and runs best-effort on startup and
-periodically.
-
-This is one of several sweeps that bound database growth — see
-[Storage & retention](/features/storage) for the rest, and for the cockpit that
-runs any of them on demand.
+**Settings → System → Storage / retention → `tool_result_retention_days`** (default `0` = keep
+forever) replaces old [MCP](/features/mcp) tool results with a short placeholder, keeping the
+row and its `tool_calls` metadata. It also removes the model's
+[thinking](/features/topics#watching-the-model-think) from older replies. See
+[Storage & retention](/features/storage) for the other sweeps and the cleanup cockpit.

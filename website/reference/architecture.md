@@ -4,10 +4,11 @@ title: Architecture
 
 # Architecture
 
-Precursor is a single-process Python service that serves a JSON API and the built
-React SPA from the same uvicorn worker. There is **no Node.js runtime in
-production**. A small in-process scheduler and an in-process event bus run
-alongside the request handlers.
+One uvicorn worker serves the JSON API and the built React SPA. There is **no
+Node.js runtime in production**. An in-process scheduler and event bus run
+beside the request handlers. Where new code goes, and the building blocks to
+reuse, is in
+[`ARCHITECTURE.md`](https://github.com/lrivallain/precursor/blob/main/ARCHITECTURE.md).
 
 ```mermaid
 flowchart LR
@@ -18,7 +19,7 @@ flowchart LR
     subgraph Process ["uvicorn worker"]
       FAPI[FastAPI app]
       DB[(SQLite / Postgres)]
-      LLM["LLM provider<br/>Copilot · GH Models · mock"]
+      LLM["LLM provider<br/>Copilot · Azure · OpenAI-compatible · mock"]
       SCHED["Scheduler<br/>recurring topics + agents"]
       BUS["Event bus<br/>SSE pub/sub"]
       MCPS["MCP server 'precursor'<br/>stdio + HTTP /mcp"]
@@ -47,479 +48,287 @@ flowchart LR
 
 ## Process model
 
-A single `uvicorn` worker hosts everything (`precursor/backend/main.py`):
+Everything starts in `precursor/backend/main.py` (app factory + lifespan):
 
-- **FastAPI app** — the JSON API under `/api/*`, the built SPA at `/`, the
-  bundled documentation site at `/docs/`, and the MCP server's streamable-HTTP
-  endpoint at `/mcp` (gated, loopback-only). FastAPI's own interactive API docs
-  move under `/api/*` (`/api/docs`, `/api/redoc`, `/api/openapi.json`) so `/docs`
-  is free for the product docs — see [Serving the docs in-app](/reference/api#serving-the-docs-in-app).
-- **Scheduler** (`services/scheduler.py`) — an async ticker + bounded worker pool
-  that runs due scheduled topics and agents; started/stopped in the app lifespan.
-- **Event bus** (`services/events.py`) — in-process pub/sub so multiple browser
-  windows stay in sync over a single SSE stream (`/api/events`).
-- **MCP session manager** — the `precursor` MCP server's HTTP transport, also
-  started in the lifespan.
+| Component | Where | Role |
+| --- | --- | --- |
+| FastAPI app | `main.py`, `routers/` | `/api/*`, the SPA at `/`, the docs at `/docs/`, MCP streamable HTTP at `/mcp` (gated, loopback-only). OpenAPI docs live at `/api/docs`, `/api/redoc`, `/api/openapi.json` ([why](/reference/api#serving-the-docs-in-app)). |
+| Scheduler | `services/scheduler.py` | async ticker + bounded worker pool for scheduled topics and agents |
+| Event bus | `services/events.py` | in-process pub/sub, fanned out to every window over `/api/events` |
+| MCP session manager | `services/mcp/` | the `precursor` server's HTTP transport |
 
-Version is CalVer, derived from git tags by hatch-vcs at build time and exposed at
-`GET /api/version` (and `/api/health`). `GET /api/version/check` reports whether a
-newer build exists on the active channel — read-only, since applying an update
-replaces the process serving the request.
+The version (CalVer from git tags) is at `GET /api/version` and `/api/health`;
+`GET /api/version/check` reports a newer build on the active channel (read-only).
 
-### Running it as a background app
+### Background app
 
-Everything above is the app itself. `precursor service` wraps that worker in a
-supervisor so it can run without a terminal — see
-[Background app](/features/background-app) for the user-facing side.
+`precursor service` supervises the same worker without a terminal
+([user guide](/features/background-app)).
 
 | Module | Role |
 | --- | --- |
-| `backend/supervisor.py` | spawns and stops the worker; records `pid`/`port`/`url`/`version` in `runtime.json` under the data dir, and derives `status` from it plus a liveness probe |
-| `backend/autostart.py` | writes the login items — launchd agent, systemd *user* unit, or a Windows `Run` entry (via `pythonw`, no console); one unit for the app, one for the tray |
-| `backend/winproc.py` | Windows process plumbing: hidden-console detached spawns, Ctrl+Break graceful stop, Win32 liveness probe, single-instance tray |
-| `backend/windows_updater.py` | finishes a Windows self-update from the base interpreter, after the app and tray have released the tool environment |
-| `backend/tray.py` | `pystray` menu-bar control behind the `tray` extra; holds no state, every action mirrors a `service` command |
+| `backend/supervisor.py` | spawns/stops the worker; writes `pid`/`port`/`url`/`version` to `runtime.json` in the data dir; `status` = that file + a liveness probe |
+| `backend/autostart.py` | login items: launchd agent, systemd *user* unit, or Windows `Run` entry (via `pythonw`); one for the app, one for the tray |
+| `backend/winproc.py` | Windows: hidden-console detached spawn, Ctrl+Break stop, Win32 liveness, single-instance tray |
+| `backend/windows_updater.py` | finishes a Windows self-update from the base interpreter once app and tray released the tool env |
+| `backend/tray.py` | `pystray` menu-bar control (`tray` extra); stateless, each action mirrors a `service` command |
 | `services/updates.py` | detects `source` vs `uv-tool` installs and updates each in place |
 
-Two details carry most of the correctness. `working_dir()` decides where the
-instance runs — the repo root for a checkout (whose default database URL is
-*relative*, so anywhere else would silently mean a different database), the data
-dir for an installed wheel. And `instance_settings()` resolves `.env` from
-*there* rather than from wherever the CLI happened to be invoked, so the port an
-instance comes up on doesn't depend on the caller's working directory.
-
-## Request flow: discussion message links
-
-The SPA resolves long-form `/topics/id/<uuid>` and `/chats/id/<uuid>`
-permalinks through the topic/chat public-ID APIs, then normalizes to the
-readable route without dropping the fragment or query. A shared message-link
-controller reads `#message=<uuid>`, loads older transcript pages when necessary,
-and focuses the exact persisted row. Its pending jump is cancelled on navigation.
-Numeric message IDs remain internal pagination/edit cursors.
-
-Agents use `/agents/<uuid>#event=<link_id>`. Their adapter opens Activity across
-all runs, reveals the linked message even inside folded work or hidden assistant
-chatter, mounts its segment and delegates focus/highlighting to the same
-controller. Event link identities are independent of SDK rewind IDs and survive
-archive hydration. Missing targets are reported, never substituted.
-
-Chat/topic history hydration supplies model-only message-reference prefixes,
-preserving compaction boundaries, skill overrides, images and tool-call pairing.
-The shared turn engine instructs the model to cite exact supplied URLs in
-Markdown rather than inventing identifiers. Stored message text is unchanged.
-Agent sessions inject up to 50 current-execution references with 240-character
-excerpts through the SDK's `on_user_prompt_submitted.additionalContext` hook,
-so displayed prompts and sibling runs are unaffected. MCP transcript tools
-also return message permalinks. Markdown reference links navigate in place
-and re-focus the exact message even when its URL is already open.
+`working_dir()` is the repo root for a checkout (its default database URL is
+relative) and the data dir for an installed wheel. `instance_settings()` reads
+`.env` from there, not from the caller's cwd.
 
 ## Request flow: streamed chat
 
-1. `POST /api/topics/{topic_id}/messages/stream` with the user prompt.
-2. A shared turn service persists the user `Message` (binding its attachments),
-   snapshots history and resolves the turn's model and MCP settings; the router
-   adds a system prompt that includes the linked GitHub issue body + most-recent
-   comments + labels, plus any attached skills / memory.
-   The effective provider/model/category, effort and budget come from the
-   conversation's saved `llm_selection`, otherwise global defaults, and are
-   snapshotted before streaming. Explicit providers fail visibly when
-   unconfigured rather than substituting Mock.
-3. Enabled [MCP tool servers](/features/mcp) are opened for the turn; their tools
-   are advertised to the provider. A server that can't be reached (a lapsed
-   credential, say) still contributes its **stored** catalogue, so the turn is
-   never held up by it and the model is never quietly left without the tool. The
-   turn engine runs a **tool loop**: stream text, collect tool calls, execute them,
-   append `tool` results, call again — up to a configured max-rounds — until the
-   model stops requesting tools. A call that reaches a server needing an
-   interactive sign-in raises the prompt **there** and retries while it waits,
-   re-checking every ten seconds until the interactive window elapses;
-   unattended runs skip the wait and return a tool error instead.
-4. Each round is trimmed to a token budget so a few large tool results can't
-   overflow the context window.
-5. Thinking, text deltas and tool-call events stream to the browser over SSE.
-6. On stream end (or user "stop"), the assistant turn is persisted using a
-   **fresh DB session** (the request-scoped one may be closed by the time the
-   generator finishes), each metered round is written to the usage ledger, and
-   `message.changed` / `stream.ended` events publish.
+1. `POST /api/topics/{id}/messages/stream` (or `/api/chats/{id}/…`).
+2. `services/conversation_turn.py` persists the user `Message` (binding
+   attachments), snapshots history, and resolves model, effort, budget and MCP
+   settings from the conversation's `llm_selection`, else global defaults. An
+   explicitly chosen provider that isn't configured fails visibly (no silent
+   Mock). The system prompt adds the linked GitHub issue (body, recent comments,
+   labels), skills and memory.
+3. Enabled [MCP servers](/features/mcp) are opened and their tools advertised.
+   An unreachable server still contributes its **stored** catalogue. The turn
+   engine runs a **tool loop** (stream, collect tool calls, execute, append
+   results, repeat) up to the max-rounds setting. A call hitting a server that
+   needs an interactive sign-in raises the prompt and retries every 10 s while
+   the window is open; unattended runs get a tool error instead.
+4. Each round is trimmed to the token budget.
+5. Reasoning, text deltas and tool events stream over SSE.
+6. On end or stop, the reply is persisted in a **fresh DB session**
+   (`persist_final_turn`), usage rows are written, and `message.changed` /
+   `stream.ended` publish.
 
-Chats take the same path. Scheduled topics and MCP `post_message` run the *same*
-preparation, tool loop and persistence off the request path via
-`services/turn.py`, driven by the scheduler instead of an HTTP request. The
-[workspace](/features/workspaces) assistant is ephemeral — the client sends its
-history and nothing is stored — but it drives the same tool loop and its usage
-counts too. Tool-less features that ask the model once (`/refine`, summaries,
-auto-naming, …) don't take this path; they use `complete_once()` — see
-**One-shot calls** under [LLM provider abstraction](#llm-provider-abstraction).
-Step assessments also use the shared tool loop with the chat's enabled MCP servers and exposed
-built-in tools, its budgeted discussion history and linked source conversation as background,
-but are ephemeral rather than persisted turns. Their reviewer gate treats autonomous as balanced
-and declines calls requiring approval; explicit allow rules still apply. One reviewer receives the
-complete original request and accepted revisions, the scoped work, and available evidence, and
-may use the chat's tools. It is instructed to honor the request's applicable restrictions on its
-own tool calls; this model guidance does not replace MCP exposure or approval rules. Its internal
-inspection calls use the same gate under `step-inspector`; automatic evidence collection and supplied
-history are separate. Headless
-Step-by-Step prompts record whether they were user-requested
-or initiated by automation. Hydration labels that origin, retaining both discussion content and
-tool history; matching older prompts whose origin was not recorded are labelled uncertain.
-The reviewer receives earlier turns as labelled background data, including their tool calls,
-results and images, rather than continuing their assistant dialogue. Prior model-review feedback
-is not itself a user requirement. If context trimming would discard that required review input, the
-assessment fails explicitly. Deterministic failed checks are applied afterward. An automated
-step run treats reported gaps and contradictions as blocking findings before allowing dependent
-work. The assessment and its score remain fallible model judgments, not proof.
+Other callers of the same engine:
 
-While a turn is streaming, the transcript's tail is in flux. So
-[compaction](/features/context-compression) and [rewind](/features/rewind)
-(`POST …/messages/rewind`, which deletes a prompt and every later row in one
-transaction) both answer `409` until it ends. A rewind confirmed in the UI is
-committed only after its undo grace, or before the next prompt is sent, and is
-bounded to the rows the user saw, so rows created in the meantime survive.
+| Caller | Path |
+| --- | --- |
+| Chats | identical flow |
+| Scheduled topics, MCP `post_message` | `services/turn.py`, off the request path |
+| [Workspace](/features/workspaces) assistant | same tool loop, history sent by the client, nothing stored |
+| Step assessments | same tool loop with the chat's MCP servers; ephemeral; reviewer gate capped at *balanced* |
+| One-shot features (`/refine`, summaries, naming, …) | `complete_once()`, no tools (see [below](#llm-provider-abstraction)) |
+
+While a turn streams, [compaction](/features/context-compression) and
+[rewind](/features/rewind) answer `409`. A rewind confirmed in the UI commits
+after its undo grace (or before the next prompt) and only deletes rows the user
+saw.
+
+### Message permalinks
+
+- Topics, chats and messages carry an immutable `public_id` (UUID). The SPA
+  resolves `/topics/id/<uuid>` and `/chats/id/<uuid>`, then a shared controller
+  handles `#message=<uuid>`: it pages older history if needed and focuses the
+  exact row. Numeric ids stay internal cursors.
+- Agents use `/agents/<uuid>#event=<link_id>`; `link_id` is independent of SDK
+  rewind ids and survives archive hydration. Missing targets are reported, never
+  substituted.
+- The turn engine tells the model to cite exact supplied URLs. Agent sessions
+  get up to 50 current-run message references (240-char excerpts) through the
+  SDK's `on_user_prompt_submitted.additionalContext` hook. MCP transcript tools
+  return permalinks too.
 
 ## Request flow: editable topic summary
 
-`POST /api/topics/{id}/topic-summary/generate` snapshots the brief and assembles
-bounded conversation, scratchpad and filename context. It releases the database
-connection before waiting for the model; no summary row is inserted until the
-generation succeeds. A compare-and-swap write rejects concurrent changes with
-`409`. User-owned briefs receive a proposal rather than an overwrite.
-
-Reads include a content revision covering both the brief and the proposal.
-Review submissions must echo that revision so change indices cannot silently
-apply to different text. Individual decisions include `reviewed` indices:
-accepted hunks update the live brief, rejected hunks are removed from the
-proposal, and unresolved hunks are re-diffed against the updated brief. Omitting
-`reviewed` preserves the bulk-resolution behavior. Manual saves and item appends
-invalidate old proposals.
-Committed mutations emit `topic-summary.changed` for cross-window and scheduled
-updates without reloading the transcript. This is separate from the GitHub issue
-summary at `/api/topics/{id}/summary`.
+`POST /api/topics/{id}/topic-summary/generate` snapshots the brief, builds
+bounded context (conversation, scratchpad, filenames), releases the DB
+connection while the model runs, and writes with compare-and-swap (`409` on a
+concurrent change). User-owned briefs get a **proposal**, not an overwrite.
+Reads carry a `revision` that review submissions must echo; per-hunk decisions
+use `reviewed` indices. Changes emit `topic-summary.changed`. Unrelated to the
+GitHub issue summary at `/api/topics/{id}/summary`.
 
 ## Database
 
-Models live in `precursor/backend/models/`; async SQLAlchemy 2 via `AsyncSession`.
-Highlights:
+Models in `precursor/backend/models/`, async SQLAlchemy 2.
 
-- **`Topic`** — a self-referencing tree (parent/children). A topic is "scheduled"
-  when it has an enabled `TopicSchedule`. Its optional `collection_id` places it
-  in a [collection](/features/collections).
-- **`Collection`** — a named group of topics (name, slug, description, colour
-  accent, optional GitHub repo override, optional default Assistant Role for new
-  topics). A protected **General** collection is
-  seeded on first boot and every existing topic is backfilled into it.
-- **`Message`** — per-topic, cascade delete; roles `user` / `assistant` /
-  `system` / `tool`. Large `tool` results can be age-pruned in place.
-- **`TopicSchedule`** / **`AgentSchedule`** — recurrence config + run state
-  (interval, weekday mask, time-of-day, timezone, lease/status).
-- **`AgentSession`** / **`AgentRun`** — the **definition/execution split**.
-  `AgentSession` is the reusable definition (objective, model, role, capability
-  defaults, `public_id`, and cumulative governance: `token_budget`,
-  `max_retries`, `retry_count`, `retry_at`). `AgentRun` is *one execution* — its
-  own `status`, `copilot_session_id`, transcript counters, token meter and a
-  frozen capability snapshot, tagged with the `trigger` that opened it and,
-  when a pipeline drove it, its `workflow_run_id` / `workflow_run_step_id`.
-  This mirrors `Workflow` → `WorkflowRun` → `WorkflowRunStep`, and is what makes
-  a single agent safe to share between two concurrent workflows: every runtime
-  registry, the live SDK session, artifacts, events and token accounting are
-  keyed by **run**, not by agent. `AgentSession.current_run_id` points at the
-  live one, and the agent's execution columns are a write-through **mirror** of
-  that run so list/inbox/dashboard reads stay a single cheap lookup.
-- **`AgentTrigger`** / **`AgentArtifact`** / **`AgentBlueprint`** — the
-  [agent orchestrator](/features/agents-mode/orchestration): webhook/manual
-  triggers, the shared-artifact blackboard (scoped to the `AgentRun` that
-  published each artifact), and reusable task+governance templates.
-- **`AgentState`** / **`WorkflowState`** — the two durable key/value stores that
-  survive a re-run, unlike artifacts: an
-  [agent's private scratchpad](/features/agents-mode/artifacts-state#durable-state-the-private-scratchpad)
-  and a
-  [pipeline's shared memory](/features/workflows/steps#pipeline-state-what-a-workflow-remembers).
-  Only the **key index** enters a prompt; bodies are fetched on demand through
-  MCP tools.
-- **`Workspace`** — a git clone or plain folder.
-- **`Skill`** — an enablement record for a file-backed `SKILL.md` prompt preset.
-- **`Memory`** — long-term notes injected into the system prompt.
-- **`Attachment`** — file metadata + a `sha256` pointer; **bytes live on disk** as
-  content-addressed blobs, deduped, with a startup GC sweep.
-- **`MCPServer`** — user-defined external MCP tool servers.
-- **`MCPToolCache`** — each MCP server's last-known tool catalogue, so it survives
-  a restart and is available before anything connects.
-- **`IssueContextCache`** — cached GitHub issue summary/state/labels (TTL refresh).
-- **`AppSetting`** — JSON key/value for runtime settings and **secrets that are
-  never echoed back** (only `*_present` booleans are returned).
+| Model | Notes |
+| --- | --- |
+| `Topic` | self-referencing tree; "scheduled" when it has an enabled `TopicSchedule`; optional `collection_id` |
+| `Collection` | name, slug, colour, optional GitHub repo override and default role; a protected **General** collection is seeded |
+| `Chat` | quick or side chat; may link to a parent topic, a step or a step plan |
+| `Message` | per topic/chat, cascade delete; roles `user`/`assistant`/`system`/`tool`; large tool results can be age-pruned |
+| `TopicSummary` | the topic's editable [status brief](/features/topic-summary) and pending proposal |
+| `ConversationArtifact` | workspace files linked to a chat or topic |
+| `ToolApproval` / `ApprovalRule` | parked tool calls and standing allow/ask [rules](/features/approvals) |
+| `TopicSchedule` / `AgentSchedule` / `Reminder` | recurrence rules + run state (lease/status); one-shot reminders |
+| `AgentSession` / `AgentRun` | **definition / execution split** (see below) |
+| `AgentTrigger` / `AgentArtifact` / `AgentBlueprint` | [orchestrator](/features/agents-mode/orchestration): triggers, per-run artifact blackboard, templates |
+| `AgentState` / `WorkflowState` | durable key/value stores that survive re-runs ([agent](/features/agents-mode/artifacts-state#durable-state-the-private-scratchpad), [pipeline](/features/workflows/steps#pipeline-state-what-a-workflow-remembers)); only the key index enters a prompt |
+| `AgentEventRecord` | archived agent timeline events |
+| `Workflow` / `WorkflowStep` / `WorkflowRun` / `WorkflowRunStep` | pipelines and their runs |
+| `StepPlan` / `Step` / `StepArtifactVersion` / `StepPlanFinalVersion` | [step plans](#step-plans) |
+| `MeetingSession` / `MeetingSegment` / `MeetingInsight` / `MeetingAttachment` | [live sessions](/features/live-sessions) |
+| `Role` | assistant [roles](/features/skills-memory) |
+| `NoteDraft` / `NoteDraftAttachment` | the per-topic/chat notes scratchpad |
+| `IQChunk` / `IQDirty` | [Precursor IQ](#precursor-iq) index and change queue |
+| `UsageRecord` | the token-usage ledger |
+| `Workspace` | git clone or plain folder |
+| `Skill`, `Memory` | skill enablement; long-term notes injected into the system prompt |
+| `Attachment` | metadata + `sha256`; bytes are content-addressed blobs on disk, deduped, GC'd at startup |
+| `MCPServer`, `MCPToolCache` | user MCP servers; each server's last-known tool catalogue |
+| `IssueContextCache` | GitHub issue summary/state/labels with a TTL |
+| `AppSetting` | JSON key/value runtime settings and secrets (only `*_present` booleans are returned) |
 
-The schema is managed entirely by **Alembic**: `init_db` runs `alembic upgrade
-head` on startup, building a fresh database from migrations or migrating an
-existing one — dev and prod alike, no `create_all`. An older build refuses to
-start on a database a newer build has migrated, and leaves it untouched.
+`AgentSession` is the reusable definition (objective, model, role, capability
+defaults, `public_id`, budget and retry governance). `AgentRun` is one
+execution: status, `copilot_session_id`, counters, token meter, frozen
+capability snapshot, `trigger`, and `workflow_run_id` / `workflow_run_step_id`
+when a pipeline drove it. Runtime registries, the live SDK session, artifacts,
+events and token accounting are keyed by **run**, so one agent can serve two
+concurrent workflows. `AgentSession.current_run_id` points at the live run and
+its execution columns mirror it for cheap list reads.
+
+**Alembic owns the schema**: `init_db` runs `alembic upgrade head` on startup
+(no `create_all`). An older build refuses to start on a database a newer build
+migrated, and leaves it untouched.
 
 ## GitHub integration
 
-`services/github_client.py` wraps just the endpoints the app needs (list/get
-issues, list comments, list labels, create/update issue, post comment). Topic
-context is rebuilt on every turn so changes to the linked issue propagate
-instantly; the result is cached (`IssueContextCache`) with a TTL. Auth resolves
-in order: a token saved in settings, then the GitHub CLI session
-(`gh auth token`). With neither, the LLM falls back to the mock provider.
+`services/github_client.py` wraps the endpoints the app needs (issues,
+comments, labels, create/update, post comment). Topic context is rebuilt every
+turn and cached in `IssueContextCache`. Token resolution: saved token, then
+`gh auth token`.
 
-The **repository** an issue is created in resolves through
-`services/collections.resolve_topic_github_repo()`, which walks three levels and
-returns the first non-empty value: the topic's own `github_repo`, then its
-collection's, then the global `github_repo` setting.
+The target repository resolves via
+`services/collections.resolve_topic_github_repo()`: topic `github_repo` →
+collection's → global `github_repo` setting.
 
 ## LLM provider abstraction
 
-Chat/topic preferences are nullable JSON-encoded `llm_selection` records.
-The shared turn and one-shot resolvers honor them for replies, retries,
-compaction, summaries, notes, naming and scheduled/MCP topic turns. Model
-catalogues and frontend caches are provider-scoped, including models with the
-same ID. Side chats copy overrides and promotion preserves them.
-Live/IQ one-shots explicitly opt out, and agents, workflows and
-the OpenAI relay retain their existing global/runtime selection. Credentials
-remain in the write-only provider configuration, separate from conversations.
+`services/llm/base.py` defines the protocol: plain text streaming, a
+tool-capable event stream, and `list_models()`. Providers are `ProviderSpec`
+entries in `services/llm/registry.py`; `get_llm_provider(session)` builds the
+active one per request, falling back to Mock when credentials are missing.
 
-`services/llm/base.py` defines a small protocol — two streaming methods (plain
-text and a tool-capable event stream) plus `list_models()`. Providers are declared
-in `services/llm/registry.py`; `get_llm_provider(session)` reads the active
-provider + config from the DB per request and constructs it, falling back to the
-mock when credentials are missing. Shipped providers: **GitHub Copilot**
-(default), **Azure AI Foundry**, **OpenAI-compatible**, and **Mock**. Adding a
-provider is one `ProviderSpec` plus an implementation class.
+Shipped: **GitHub Copilot** (default), **Azure AI Foundry**, **OpenAI** (any
+OpenAI-compatible gateway through its base URL), **Mistral AI**, **Hugging
+Face**, **Ollama**, **Mock**. Adding one is a `ProviderSpec` plus an
+implementation class.
 
-**One-shot calls.** Features that ask the model once with no tools (the `/gh-*`
-drafts, `/notes rephrase`, `/refine`, auto-naming, the issue and topic
-summaries, the live recap, analysis and translation) go through
-`services/llm/one_shot.complete_once()`. It resolves the provider and model,
-commits the caller's session before the provider call so a slow model doesn't
-hold a pooled connection, and writes the usage row in its own session with the
-topic or chat it belongs to. Failures raise `LLMCallFailed`; if a router doesn't
-catch it, `create_app` maps it to a `502`. Prompts, output clean-up and
-fallbacks stay with each feature.
-
-**Optional category recovery.** The `model_fallbacks` runtime setting holds
-user-defined categories of ordered presets; each preset names its own provider
-(or `agents` for the Copilot SDK), so one category can span providers. Shared category matching and rejection
-classification live in `services/model_fallbacks.py`. A category selection
-builds a `services/llm/fallback.py` wrapper that serves each preset from its own provider, which retries recognised
-model/effort/context rejections before any event is yielded and re-budgets
-history for the replacement. Final/tool turns and one-shot results carry
-the actual model into persistence and usage accounting. SDK `ModelSelector`
-uses the same matching at creation/switch and recovers pre-output error
-events with a bounded attempt set; trailing idle cannot complete a workflow
-while recovery is pending. Output/tool/permission activity closes the replay
-window. Saved selections and workflow pins are never rewritten. Provider and
-SDK scopes have different context controls and are configured independently.
-See [Model alternatives](/guide/configuration#optional-model-alternatives).
-
-Preset-health checks use the provider/SDK catalogue endpoints, not inference.
-The provider read models carry the actual `catalog_provider`, so a factory
-fallback to the offline mock is surfaced as configuration needing setup, not a
-valid selected-provider catalogue. `lib/modelPresetHealth.ts` checks membership
-and advertised effort/window limits, local completeness and duplicate profiles.
-UI fetch generations discard stale responses after provider switches/unmounts;
-unavailable catalogues never imply that every stored model is missing.
-
-**Category intent, not a model pin.** The runtime-only
-`llm_model_category` / `agents_model_category` fields select a category separately
-from manual defaults. Default turns and inherited one-shot/live calls pass the
-selected category to the provider wrapper, which resolves ordered presets with
-their own configuration and never starts from the stored manual model. The tool
-loop keeps enough history for all candidates; each invocation is trimmed to the
-chosen preset's budget. SDK sessions resolve category defaults only when no
-agent/run model is pinned. Live session signatures retain category intent while
-actual model/configuration signatures drive execution. Explicit model overrides
-win; missing/emptied categories fail instead of escaping to another category.
-`llm_category_preset` previews the first catalogue candidate for display without
-changing the saved manual defaults.
-
-**Two endpoints, one provider.** Copilot splits its catalogue across
-`/chat/completions` and the newer Responses API, and a model served by one is
-rejected by the other. `github_copilot.py` reads the `supported_endpoints` each
-model publishes, drops any model neither endpoint can serve, and routes the rest
-to the right surface; `_responses_compat.py` translates that surface back into
-the same provider events (`text_delta`, `reasoning_delta`, `tool_calls`,
-`usage`, `turn_done`), so the turn engine never learns which API answered. A model we
-haven't catalogued yet is tried on `/chat/completions` first and transparently
-retried on Responses if it is refused, which keeps the hot path free of an
-extra round-trip and self-corrects for the rest of the process's life.
-
-**The model's thinking.** Reasoning models stream what they are thinking ahead
-of the answer, and each surface spells it differently: on `/chat/completions`
-Copilot sends `reasoning_text` deltas (DeepSeek-style servers `reasoning_content`,
-OpenRouter and Ollama `reasoning`); the Responses API streams nothing unless a
-reasoning *summary* is requested, so Precursor always asks for one. Both become
-`reasoning_delta` events. The turn engine stores them on the assistant message
-of the round that produced them, for display only — they are never replayed to
-the model as history.
-
-**Serving the models outward.** The [OpenAI-compatible endpoint](/features/openai-endpoint)
-(`routers/openai_proxy.py`, `services/openai_proxy.py`) runs the same providers
-for outside clients. It translates an OpenAI chat-completions request into
-provider messages and tools, calls `stream_chat_with_tools` once — the client
-runs its own tool loop — and renders the provider events back as OpenAI chunks
-or a single completion. Its sampling options travel as `request_options`, which
-each provider passes on in its own API's vocabulary (the Responses helper
-respells them). It pulls the first event before answering, so a provider refusal
-becomes a real HTTP error rather than a half-sent stream. Only providers with
-`ProviderSpec.openai_proxy` set are relayed to; anything that would fall back to
-the mock is refused with a `503`.
-
-**Refusals that don't mean no.** Copilot serves a given model from only part of
-its fleet, so the same request alternates between `200` and
-`400 model_not_available_for_integrator` — a 4xx that says nothing durable about
-the model. `open_stream_with_retry` in `_openai_compat.py` retries just that code
-a handful of times while opening the stream. Retrying is safe there because the
-refusal lands *before* the first token is yielded, so a second attempt cannot
-duplicate output; every other 4xx is translated and raised on the first try,
-since retrying a verdict that won't change only delays the message.
+| Concern | How |
+| --- | --- |
+| Per-conversation choice | nullable `llm_selection` on chats/topics, honoured by replies, retries, compaction, summaries, notes, naming and scheduled/MCP turns. Live/IQ one-shots, agents, workflows and the OpenAI relay keep the global/runtime selection. Model catalogues and caches are provider-scoped. |
+| One-shot calls | `services/llm/one_shot.complete_once()` (`/gh-*` drafts, `/notes rephrase`, `/refine`, naming, summaries, live recap/analysis/translation). Commits the caller's session before the call, writes usage in its own session. Raises `LLMCallFailed`, mapped to `502` if uncaught. |
+| Model categories | `model_fallbacks` setting: categories of ordered presets, each naming its provider (or `agents` for the Copilot SDK). `services/llm/fallback.py` retries recognised model/effort/context rejections **before the first event** and re-budgets history. `llm_model_category` / `agents_model_category` select a category as the default; explicit model overrides and pins win. The actual model is recorded in persistence and usage. See [Model alternatives](/guide/configuration#optional-model-alternatives). |
+| Preset health | catalogue endpoints only (no inference); `catalog_provider` exposes a fallback to Mock; checked in `lib/modelPresetHealth.ts` |
+| Copilot's two APIs | `github_copilot.py` routes each model to `/chat/completions` or the Responses API from its `supported_endpoints`; `_responses_compat.py` maps Responses back to the same events (`text_delta`, `reasoning_delta`, `tool_calls`, `usage`, `turn_done`). Unknown models try `/chat/completions` first, then Responses. |
+| Reasoning | `reasoning_text` / `reasoning_content` / `reasoning` deltas and Responses reasoning summaries all become `reasoning_delta`; stored per round for display, never replayed to the model |
+| Transient refusals | `open_stream_with_retry` (`_openai_compat.py`) retries Copilot's `400 model_not_available_for_integrator` while opening the stream (before any token); other 4xx raise immediately |
+| Serving outward | the [OpenAI-compatible endpoint](/features/openai-endpoint) (`routers/openai_proxy.py`, `services/openai_proxy.py`) calls `stream_chat_with_tools` once (the client runs its own loop), passes sampling options as `request_options`, and reads the first event before answering so refusals become HTTP errors. Only providers with `ProviderSpec.openai_proxy` are relayed; Mock fallback → `503`. |
 
 ## MCP
 
-Precursor is both an MCP client and an MCP server.
+Precursor is both an MCP client and server ([user guide](/features/mcp)).
 
-- **As client** (`services/mcp/client.py`) — an `MCPClientManager` holds the
-  tool-server registry: built-ins (`github`, `workiq`, `playwright`, `fetch`,
-  `drawio`, `cmd-runner`, `precursor`) plus user-defined servers.
-  Servers are toggled in Settings; sessions are kept warm in a per-server pool
-  across turns. `services/mcp/warmup.py` connects the enabled ones sequentially
-  in the background after startup, and `services/mcp/tool_cache.py` persists each
-  catalogue so it survives a restart.
-- **As server** (`services/mcp/precursor_server.py`) — an `MCPServer` exposing
-  Precursor's own data, gated per-section by `mcp_expose` (off by default), over
-  **stdio** and an in-process **HTTP** transport at `/mcp` (off by default,
-  loopback-only, Host-header allowlisted).
-
-See the [MCP feature guide](/features/mcp) for the user-facing side.
+- **Client** (`services/mcp/client.py`): `MCPClientManager` holds built-ins
+  (`github`, `workiq` and the Agent 365 `workiq-*` servers, `playwright`,
+  `fetch`, `drawio`, `cmd-runner`, `precursor`), plugin servers and user
+  servers. Sessions are pooled per server across turns; `warmup.py` connects
+  enabled servers in the background after startup; `tool_cache.py` persists
+  each catalogue.
+- **Server** (`services/mcp/precursor_server.py`, tools in
+  `precursor_tools/`): exposes Precursor's data, gated per section by
+  `mcp_expose` (off by default), over **stdio** and HTTP at `/mcp` (off by
+  default, loopback-only, Host allowlist). Stdio children publish events back
+  through [`POST /api/events/publish`](/reference/api#events-raised-in-a-subprocess).
 
 ## Precursor IQ
 
-`services/iq/` keeps a derived retrieval index (`iq_chunks`) of passages from
-topics, briefs, messages, attachments, chats, agents, live sessions and memory.
-It serves the ⌘K palette (`/api/iq/*`) and the `retrieve` / `ask` MCP tools.
+`services/iq/` maintains a retrieval index (`iq_chunks`) over topics, briefs,
+messages, attachments, chats, agents, live sessions and memory. It serves the
+⌘K palette (`/api/iq/*`) and the `retrieve` / `ask` MCP tools.
 
-- **Change capture**: an `after_flush` hook on every ORM session upserts
-  `(source_kind, source_id)` into `iq_dirty` inside the writer's transaction.
-  `indexer.drain` rebuilds those sources' chunks, rewriting only the ones whose
-  content hash changed. `indexer.reconcile` catches bulk statements and deletes
-  that the hook can't see.
-- **Full text**: the migration creates an external-content **FTS5** table with
-  sync triggers on SQLite, or a generated weighted `tsvector` plus a GIN index on
-  Postgres. `alembic/env.py` keeps autogenerate from proposing to drop them.
-- **Vectors** (opt-in): the provider's `embed()` (OpenAI-style `/embeddings`)
-  fills `iq_chunks.embedding` with normalised 256-dimension float32 vectors. They
-  are compared in-process from an incrementally refreshed cache.
-- **Ranking**: Reciprocal Rank Fusion of the two lists, a title and recency
-  boost, one passage per source and a per-container cap. Archived or deleted
-  containers are dropped at query time.
-- **Ask**: `ask.ask` grounds a single `complete_once` call on the numbered
-  excerpts and returns the `[^n]` citations it used.
+| Piece | How |
+| --- | --- |
+| Change capture | an `after_flush` hook upserts `(source_kind, source_id)` into `iq_dirty` in the writer's transaction; `indexer.drain` rebuilds changed chunks by content hash; `indexer.reconcile` catches bulk statements |
+| Full text | FTS5 external-content table + triggers (SQLite), or weighted `tsvector` + GIN (Postgres); `alembic/env.py` hides them from autogenerate |
+| Vectors (opt-in) | provider `embed()` → normalised 256-d float32, compared in-process from a cache |
+| Ranking | Reciprocal Rank Fusion, title/recency boost, one passage per source, per-container cap; archived/deleted containers dropped |
+| Ask | `ask.ask`: one `complete_once` over numbered excerpts, returns `[^n]` citations |
 
-`services/iq/ticker.py` drains and embeds in the background, gated by
-`scheduler_enabled`. Retrieval also runs a short, bounded drain first, so it
-stays current when the ticker is off.
+`services/iq/ticker.py` drains and embeds in the background (gated by
+`scheduler_enabled`); retrieval runs a short bounded drain first.
 
 ## Scheduler
 
-`services/scheduler.py` drives recurring topics **and** scheduled agents: a single
-async ticker enqueues due `TopicSchedule` and `AgentSchedule` rows, a bounded
-worker pool runs each, with DB row leasing for crash recovery. Scheduled prompts
-that start with a slash command are dispatched to that command's backend action;
-`/guard` directives gate a run behind a cheap MCP probe. The same ticker also
-drives the [agent orchestrator](/features/agents-mode/orchestration):
-re-running failed agents whose exponential-backoff retry is due, sweeping
-orphaned `pending` agents (via `services/agents/fleet.py`), and honouring the
-concurrency governor. See the
-[scheduler feature guide](/features/scheduler).
+`services/scheduler.py`: one async ticker enqueues due `TopicSchedule` and
+`AgentSchedule` rows; a bounded pool runs them with DB row leasing for crash
+recovery. Prompts starting with a slash command dispatch to that command;
+`/guard` gates a run behind a cheap MCP probe. The same ticker retries failed
+agents (exponential backoff), sweeps orphaned `pending` agents
+(`services/agents/fleet.py`) and enforces the concurrency governor. See
+[Scheduler](/features/scheduler).
 
 ## Workspaces
 
-A `Workspace` is a git clone or local directory the assistant can browse and edit.
-`services/workspace_git.py` clones/fetches/pulls/commits/pushes (token injected at
-op time, never stored; paths, branch names and revisions checked before git sees
-them; literal pathspecs, no terminal prompts); `services/workspace_fs.py` does sandboxed file ops — every path is routed
-through `safe_join`, which rejects traversal outside the workspace root and blocks
-`.git`. The same sandbox backs the workspace tools of the `precursor` MCP server and the `drawio` server; `services/workspaces.py` holds the create/allocate logic shared by the REST router and those tools.
+A `Workspace` is a git clone or local directory.
+
+- `services/workspace_git.py`: clone/fetch/pull/commit/push. Token injected per
+  operation, never stored; paths, branches and revisions validated before git
+  sees them; literal pathspecs; no terminal prompts.
+- `services/workspace_fs.py`: every path goes through `safe_join` (no traversal,
+  no `.git`). The `precursor` and `drawio` MCP servers use the same sandbox.
+- `services/workspaces.py`: create/allocate logic shared by the REST router and
+  MCP tools.
 
 ## Step plans
 
-A `StepPlan` freezes an ask and owns a tree of `Step` rows, each with a Markdown artifact
-and its `StepArtifactVersion` history (`models/step_plan.py`; no ORM relationships — the
-services query by id). `services/step_plans.py` holds the tree and status rules (a step
-with accepted children is a group whose status is derived) and the prompt grounding that
-`turn_engine.build_chat_system_context` injects into step chats, which are ordinary `Chat`
-rows linked by `step_id`/`step_plan_id`. `services/step_plan_llm.py` uses `complete_once`
-for structured proposals and review; artifact drafts and consolidation run as real chat turns.
-For delegated plans, `approvals.build_gate` defaults those discussions to the plan's
-recorded source autonomy and combines their own rules, source-conversation rules and global
-rules in that order. An explicit discussion policy overrides the default; user-started
-plans keep the usual chat defaults. The assessor uses that gate, capped at balanced.
-SQLite doesn't enforce foreign keys, so deleting a plan or step removes its
-chats and versions explicitly, and deleting a topic or source chat detaches its plans. Changes publish
-`step-plan.changed`. See [Step by step](/features/step-by-step).
+`models/step_plan.py`: a `StepPlan` freezes an ask and owns a tree of `Step`
+rows, each with a Markdown artifact and `StepArtifactVersion` history (no ORM
+relationships; services query by id).
 
-Creating a topic-linked plan commits the plan and a UI-only `Message(kind="step_plan")`
-together. Its content is a versioned `StepPlanTraceData` JSON snapshot of the effective
-ask, its submitted/topic-message provenance, and the plan's id and title at creation.
-`StepPlanTrace` decodes the whole payload and displays the ask as plain text, never as
-Markdown or metadata. It shares the filed-output header, with a bounded preview and
-accessible expansion. Legacy Markdown link traces and later linking notes remain
-navigable, but carry no original-prompt claim; reads never reconstruct one from
-`StepPlan.source_text`. Source chats have the same receipt and delivery path; promoting a
-chat transfers its plan links to the new topic.
-
-A model follow-up reads the plan's state token, then `amend_step_plan` routes its atomic
-mutation to the app process, which owns automated runs. The mutation checks the source,
-token and run state, records the ordered amendment and its new steps, marks the existing
-final stale and publishes a revision receipt. A per-plan lock serializes amendments with
-run starts. The run reuses approved steps, builds a revised final and assesses it against
-the original ask plus accepted follow-ups; prior final text versions remain in the database.
-Saving or restoring a different final version reopens a completed plan while leaving its
-approved steps and posted-version records intact. The text history does not snapshot
-workspace files.
-
-For same-source `create_step_plan` and `amend_step_plan` calls, the streaming turn fills in
-an omitted source and attaches its persisted user-message ID before the call is saved or parked. The MCP server validates
-the message's role and conversation, then keeps its text alongside the model's delegated
-scope. A parked `ToolApproval` retains that origin across resume; unrelated intervening
-user-role messages are not used as a substitute. Model prompts distinguish the narrower
-scope from the full request, but do not guarantee that generated steps obey every constraint.
-When a final output is filed during another source turn, hand-back waits for that turn and
-any outstanding approval. A source turn that read the exact final-version text and answered
-after it was filed avoids a duplicate hand-back, even when the read preceded filing.
-
-Archiving uses the same per-plan lock as amendments and run starts. Normal lists exclude
-archived plans, while direct reads and histories remain available. Archived plans cannot be
-started or amended until restored, and archiving a live run is rejected.
+- `services/step_plans.py`: tree and status rules (a step with accepted children
+  is a group with derived status) and the grounding injected into step chats
+  (ordinary `Chat` rows linked by `step_id` / `step_plan_id`).
+- `services/step_plan_llm.py`: structured proposals and review via
+  `complete_once`; drafts and consolidation are real chat turns.
+- Approvals: for delegated plans, `approvals.build_gate` defaults discussions to
+  the source's recorded autonomy, with rules in order discussion → source →
+  global; an explicit discussion policy overrides it. The assessor is capped at
+  *balanced*.
+- Source trace: creating a topic- or chat-linked plan commits a UI-only
+  `Message(kind="step_plan")` holding a versioned `StepPlanTraceData` snapshot
+  of the ask ([shape](/reference/api#step-plans)). It is rendered as plain text
+  and never reconstructed from `StepPlan.source_text`.
+- Amendments: `amend_step_plan` checks source, `state_token` and run state under
+  a per-plan lock (shared with run starts and archiving), appends steps, marks
+  the final stale and reuses approved steps on the next run. Saving or restoring
+  a different final reopens a completed plan. Workspace files are not
+  versioned.
+- The streaming turn fills in the source and user-message id for same-source
+  `create_step_plan` / `amend_step_plan` calls; parked approvals keep that
+  origin.
+- SQLite doesn't enforce foreign keys: deleting a plan/step removes its chats
+  and versions explicitly; deleting a topic or source chat detaches its plans.
+  Changes publish `step-plan.changed`. See [Step by step](/features/step-by-step).
 
 ## SPA
 
-Vite + React 19 + Tailwind, built to `frontend/dist` and bundled inside the wheel.
-All HTTP goes through `src/lib/api.ts`; streaming chat uses a manual SSE reader
-(`src/lib/sse.ts`) since it POSTs a JSON body; cross-window sync uses the
-`/api/events` SSE stream. Theming is via CSS variables (`light` / `dark` /
-`system`). The Files editor (Monaco) is a lazily loaded chunk: `lib/monaco.ts`
-wires its workers and derives the editor theme from those variables.
+Vite + React 19 + Tailwind, built to `frontend/dist` and bundled in the wheel.
+HTTP through `src/lib/api.ts`, chat streams through `src/lib/sse.ts`,
+cross-window sync through `/api/events`. Theme via CSS variables
+(`light` / `dark` / `system`). Monaco is lazy-loaded (`lib/monaco.ts` wires
+workers and derives its theme from those variables).
 
 ## Security & deployment model
 
 ::: warning Single-user, no auth
-Precursor is designed as a **single-user, local-first** app and ships with **no
-authentication**. Run it bound to `127.0.0.1` (the default) and don't expose it to
-a network without your own authenticating reverse proxy.
+Precursor is a **single-user, local-first** app with **no authentication**.
+Keep it bound to `127.0.0.1` (the default) or put your own authenticating
+reverse proxy in front.
 :::
 
-Specifically:
+- Anyone who can reach the port has full access to topics, settings and stored
+  tokens.
+- The [command runner](/features/command-runner) executes shell/python/node:
+  keep the Docker jail on.
+- [MCP over HTTP](/features/mcp) is off by default and loopback-only.
+- Secrets live in the local DB and are **never echoed** (only `*_present`
+  booleans), except the [OpenAI-compatible endpoint](/features/openai-endpoint)'s
+  own key, shown in clear so it can be pasted into clients (endpoint off by
+  default).
+- `GET /raw/{slug}/{path}` serves workspace files unauthenticated, by design.
 
-- The API and SPA have **no auth** — anyone who can reach the port has full access
-  to your topics, settings, and stored tokens.
-- The optional [command-runner](/features/command-runner) can execute
-  shell/python/node — keep the Docker jail enabled.
-- The [MCP-over-HTTP](/features/mcp) transport is off by default and only binds to
-  loopback.
-- Secrets (GitHub token, provider keys) live in the local DB and are **never
-  echoed** by the API — only `*_present` booleans are returned. The one exception
-  is the [OpenAI-compatible endpoint](/features/openai-endpoint)'s own API key,
-  which Settings shows in clear so it can be pasted into more clients; the
-  endpoint itself is off by default.
-
-See [SECURITY.md](https://github.com/lrivallain/precursor/blob/main/SECURITY.md)
-for vulnerability reporting.
+Vulnerability reporting:
+[SECURITY.md](https://github.com/lrivallain/precursor/blob/main/SECURITY.md).

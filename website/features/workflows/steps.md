@@ -4,230 +4,141 @@ title: Configuring a step
 
 # Configuring a step
 
-A step's *kind* is chosen when you
-[build the pipeline](/features/workflows/building). This page is about everything
-else on the step modal: what it's told to do, what it's handed, and what it's
-allowed to reach for.
-
-The last two are the cost controls. Tool schemas and upstream transcripts are
-re-sent on every turn, so a long pipeline where every step inherits everything is
-the expensive default.
+Everything on the step modal besides its [kind](/features/workflows/building):
+what the step is told, what it is fed, and what it may use. The last two are
+your main cost controls, since tool schemas and upstream material are re-sent
+every turn.
 
 ## Per-step instructions
 
-A step is a *reference* to an agent, and the same agent can appear in many
-workflows. **Step instructions** are the extra mandate for that stage only,
-layered on top of the agent's standing objective and taking precedence where they
-differ:
+**Step instructions** add a mandate for this stage only, on top of the agent's
+objective (and winning where they differ). One `Summariser` agent can be "three
+bullets, exec tone" in one pipeline and a long brief in another.
 
-> **Agent objective:** "Summarise the material you're given."
-> **Step instructions:** "Three bullets, exec tone, lead with the number."
-
-That's what makes an agent genuinely reusable — one `Summariser` row can be the
-terse-bullets step in one pipeline and the long-form brief in another, with no
-cloning. They appear **only on a step that reuses an existing agent**; an Inline
-step already states its job in its own field. On an approval step, the
-instructions are what the reviewer sees on the decision panel.
+They are offered on steps that reuse an existing agent (an Inline step states its
+job in its own prompt). On an approval step they are the brief the reviewer sees.
 
 ### Placeholders
 
-Step instructions aren't static text — they can pull in live values, so one
-generic definition adapts to each run:
-
 | Placeholder | Resolves to |
 | --- | --- |
-| <code v-pre>{{run.input}}</code> | The [run brief](/features/workflows/running#the-run-brief-one-workflow-a-different-subject-each-run) for *this* run |
-| <code v-pre>{{step.N.output}}</code> | What the step at 0-based position `N` produced this run — capped at 8000 characters (see the note below) |
-| <code v-pre>{{state.&lt;key&gt;}}</code> | A value from the workflow's [saved state](#pipeline-state-what-a-workflow-remembers) |
+| <code v-pre>{{run.input}}</code> | This run's [brief](/features/workflows/running#the-run-brief-one-workflow-a-different-subject-each-run) |
+| <code v-pre>{{step.N.output}}</code> | What 0-based step `N` produced **in this run** (max 8000 characters) |
+| <code v-pre>{{state.&lt;key&gt;}}</code> | A value from [pipeline state](#pipeline-state-what-a-workflow-remembers) |
 
-Each takes an optional fallback after a pipe — <code v-pre>{{state.cursor | the
-beginning of time}}</code> — which is what makes a first run safe, since nothing
-is stored yet. Without one, an unresolved placeholder renders as `(unset)`: an
-explicit absence the agent can reason about rather than a silent blank.
+- Add a fallback after a pipe: <code v-pre>{{state.cursor | the beginning of time}}</code>.
+  Without one, an unresolved placeholder renders as `(unset)`.
+- Placeholders are resolved before the agent sees the text.
+  <code v-pre>{{step.N.output}}</code> reads the run trace, so it still works
+  after artifacts are cleared, and gives the latest attempt of a re-run step.
+- In [definition files](/features/definitions), steps can also be referenced by
+  key: <code v-pre>{{step.draft.output}}</code>.
+- Pair <code v-pre>{{step.N.output}}</code> with **Context: None** so a step
+  gets only the output it names.
 
-Substitution happens **before** the agent is handed its instructions — it never
-sees a raw template. <code v-pre>{{step.N.output}}</code> reads the run trace
-rather than live artifacts, so it still resolves after the blackboard is cleared.
-
-::: tip Narrowing what a step is fed
-<code v-pre>{{step.N.output}}</code> pairs well with `context_mode: none`:
-instead of inheriting the whole upstream transcript, a step names the one earlier
-output it needs. In a long pipeline that's the difference between a focused
-prompt and an expensive, distracting one.
-:::
-
-::: warning A step's output has a ceiling — 8000 characters
-The trace keeps a step's whole answer, not the shorter summary the agent list
-shows, so a substantial payload survives the hand-off intact. But it is still
-capped: past 8000 characters the value is cut, and the cut is **marked in the
-text** — `… [truncated: 41230 characters, capped at 8000]` — so a step reading it
-can tell its input is incomplete rather than treating half a JSON array as the
-whole thing.
-
-For anything that might get that big, don't use the placeholder as the transport.
-Have the producing step publish an **[artifact](/features/agents-mode/artifacts-state)**
-and let the consumer inherit it through `context_mode` — that channel is uncapped
-and is what the blackboard is for. <code v-pre>{{step.N.output}}</code> is at its
-best carrying a short value: a verdict, a chosen option, a cursor, a filename.
+::: warning 8000-character ceiling
+A longer output is cut and marked in the text
+(`… [truncated: 41230 characters, capped at 8000]`). For large payloads, have
+the producer publish an [artifact](/features/agents-mode/artifacts-state) and let
+the consumer inherit it through its context setting (uncapped). Use the
+placeholder for short values: a verdict, a choice, a cursor, a filename.
 :::
 
 ## Pipeline state: what a workflow remembers
 
-The run brief, the run trace and the artifact blackboard all describe **one
-execution** — the blackboard is even wiped between runs. So a scheduled pipeline
-had nowhere to record what it must not redo next time. **Pipeline state** is that
-place: named values scoped to the workflow, shared by every step, kept **across
-runs**.
-
-It is deliberately *not* the same as an agent's
-[own state](/features/agents-mode/artifacts-state#durable-state-the-private-scratchpad):
+Named values scoped to the **workflow**, shared by all its steps and kept
+**across runs**: the place for a cursor ("last invoice processed") that a
+scheduled pipeline must not redo.
 
 | | Scope | Survives a run? |
 | --- | --- | --- |
-| Agent state | One agent — which several pipelines may share | Yes |
-| Artifacts | One agent **run** | **No** — a new run starts with a clean slate |
+| [Agent state](/features/agents-mode/artifacts-state#durable-state-the-private-scratchpad) | One agent, shared by every pipeline using it | Yes |
+| Artifacts | One agent run | No |
 | **Pipeline state** | **One workflow, all its steps** | **Yes** |
 
-That distinction is the whole point. A step points at a *reusable* agent, so a
-cursor written under the agent's own scope is shared with every other pipeline
-using that agent. A fact like "the last invoice we processed" belongs to the
-**pipeline**.
+- **Read** with <code v-pre>{{state.&lt;key&gt;}}</code> in step instructions.
+- **Write** with the `workflow_state_set` MCP tool (plus `workflow_state_get`,
+  `_list`, `_delete`), which targets the workflow running the calling agent.
+- Each step's kickoff lists the stored key names (never the bodies). The step
+  needs access to the `precursor` MCP server for the tools and the index.
+- The **Pipeline state** panel lists values and lets you add, delete or reset them.
+  Seed a starting cursor there; reset when a cursor goes bad.
 
-Steps use it two ways:
-
-- **Read** — a <code v-pre>{{state.&lt;key&gt;}}</code> placeholder in the step's
-  instructions, resolved before the agent runs.
-- **Write** — the `workflow_state_set` tool, which defaults to whichever workflow
-  is running the calling agent right now. `workflow_state_get`,
-  `workflow_state_list` and `workflow_state_delete` round it out.
-
-Each step's kickoff also carries a **key index** — the names of the stored values,
-never the bodies — so an agent knows what it can look up without paying for the
-whole store in every prompt.
-
-The **Pipeline state** panel lists what's saved, expands a value, and lets you
-add, delete, or reset entries. Seeding a value by hand is how you give a pipeline
-its starting cursor without faking a run; **reset** is the lever when a saved
-cursor has gone bad.
+::: warning Bookkeeping, not a blob store
+Up to 100,000 characters per value, 200 keys per workflow. Put documents in
+artifacts and large files in a [workspace](/features/workspaces) (store the
+path).
+:::
 
 ### A worked example
 
-The repo ships one at
 [`examples/workflows/stateful-digest.yaml`](https://github.com/lrivallain/precursor/blob/main/examples/workflows/stateful-digest.yaml)
-— import it from **Workflows → Import**. It's a three-step digest that shows the
-whole loop:
+(import it from **Workflows → Import**):
 
-1. **Survey since last run** reads <code v-pre>{{state.last_digest_at | the
-   beginning of time…}}</code>. First run: nothing is stored, so the default
-   lands and the step surveys everything.
-2. **Write the digest** reads <code v-pre>{{step.0.output}}</code> plus
-   <code v-pre>{{state.audience | a general technical audience}}</code> — an
-   operator-tunable knob you seed from the panel without editing the workflow.
-3. **Record the cursor** calls `workflow_state_set` to store the new
-   `last_digest_at`, which is what step 1 reads on the *next* run.
+1. **Survey since last run** reads <code v-pre>{{state.last_digest_at | the beginning of time…}}</code>.
+2. **Write the digest** reads <code v-pre>{{step.0.output}}</code> and
+   <code v-pre>{{state.audience | a general technical audience}}</code>, a knob
+   you seed from the panel.
+3. **Record the cursor** calls `workflow_state_set` for `last_digest_at`.
 
-Those three moves — read a cursor with a safe first-run default, work relative to
-it, write the new cursor at the end — cover most stateful pipelines.
-
-::: warning Bookkeeping, not a blob store
-Values are capped (100 KB each, 200 keys per workflow) and are meant to be small
-facts: a cursor, a set of seen ids, a baseline. A document belongs in an
-**artifact**; a large file belongs in a [workspace](/features/workspaces), with
-only its path recorded here.
-:::
+Read a cursor with a safe default, work relative to it, write the new cursor:
+that covers most stateful pipelines.
 
 ## What each step is fed
 
-By default a step inherits the **previous producer's output plus the accumulated
-artifact board** — the implicit hand-off that makes a bare chain work with no
-wiring. In a long pipeline that gets expensive, so each step can choose:
-
 | Context | The step receives |
 | --- | --- |
-| **Previous step** (default) | The last real producer's output + every earlier step's artifacts. |
-| **Pick steps** | Only the earlier steps you name. The **highest-numbered** one you name is the hand-off; the rest form its reference board. |
-| **None** | Nothing upstream — the step runs on its own objective and the run brief alone. |
+| **Previous step** (default) | The last producing step's output + every earlier step's artifacts |
+| **Pick steps** | Only the steps you name. The **highest-numbered** one is the hand-off; the others are reference material |
+| **None** | No upstream material; just its objective and the run brief |
 
-The run brief, reviewer directives and the step's own instructions are *always*
-delivered; this setting governs the **material**, not the intent.
+The run brief, reviewer notes and the step's instructions are always delivered;
+this setting only governs upstream material.
 
-Whatever the setting, the hand-off is **scoped to the current run**. If the
-previous step produced nothing this time — a turn that ended without speaking —
-the next step is told exactly that ("produced no output in this run") rather
-than being handed an earlier run's output with nothing marking it stale. It
-matters most for pipelines that act on the world: a step should decline a
-meeting it scored *this* run, not one it scored yesterday.
-
-::: tip Cumulative boards are the one exception — deliberately
-Unticking *Clear each step's artifacts at the start of every run* (a workflow
-option, set when [building](/features/workflows/building) it) keeps the
-**artifact board** spanning runs on purpose. Even then the immediate hand-off
-body stays scoped to this run.
-:::
+The hand-off is always **this run's**: if the source step produced nothing, the
+step is told "produced no output in this run" instead of getting a stale
+output. Unticking *Clear each step's artifacts at the start of every run* (a
+workflow option) keeps the **artifact board** cumulative across runs on purpose;
+the hand-off itself stays run-scoped.
 
 ## What each step may use
 
-A step can also narrow what its agent draws on. Each toggle is tri-state —
-**auto** (inherit the agent's own setting), **on**, or **off**:
+Each toggle is tri-state: **auto** (inherit the agent's setting), **on**, **off**.
 
-- **Tools** — MCP servers. Tool schemas are a large *fixed* context cost paid on
-  every turn, so a step that only has to rewrite a paragraph shouldn't carry the
-  whole catalogue.
-- **Skills** — stored skills. Off tells the agent to solve the task directly.
-- **Memory** — long-term memory. A pure transform step is usually better off not
-  consulting it.
+- **Tools**: MCP servers. Turn off for steps that only transform text.
+- **Skills**: stored skills.
+- **Memory**: long-term memory.
 
-The override is **snapshotted onto that step's
-[agent run](/features/agents-mode/orchestration#an-agent-is-a-definition-each-start-is-a-run)**,
-never written back onto the shared agent. So a step that narrows an agent to "no
-tools" doesn't silently disarm the same agent in another pipeline.
+New steps start from the defaults in **Settings → Workflows**. Overrides apply
+to that step's [agent run](/features/agents-mode/orchestration#an-agent-is-a-definition-each-start-is-a-run)
+only and are never written back to the shared agent.
 
 ### Picking which tool servers a step gets
 
-**Tools: on** still means *every* enabled [MCP server](/features/mcp), and that is
-rarely what a step needs. A modest install can register a few hundred tools
-between them, and their schemas are re-sent on every turn — enough, in a measured
-six-step briefing run, for the tool-using turns to account for well over 95% of
-the run's tokens while each step actually needed exactly one server.
-
-So a step with tools on can also name **which servers** it may see. The
-**Servers** row lists every server you've enabled in **Settings → MCP**, with its
-tool count, so the cost is visible where the choice is made.
+With tools on, the **Servers** row (listing each server enabled in **Settings →
+MCP servers** with its tool count) narrows which servers the step sees. Tool
+schemas usually dominate a pipeline's token spend, so name the one or two a
+step needs.
 
 | Selection | The step gets |
 | --- | --- |
-| **All** (default) | Every enabled server. |
-| One or more servers | Only those. |
-| Nothing selected | No tool servers at all — identical to **Tools: off**. |
+| **All** (default) | Every enabled server |
+| One or more servers | Only those |
+| Nothing selected | No tool servers (same as **Tools: off**) |
 
-This is a real allowlist, not a request: the servers you didn't pick are never
-attached to the session, so the step *cannot* call them and their schemas cost
-nothing. Asking a model in the prompt not to use a tool is not equivalent — it
-reliably reaches for one anyway.
-
-Precursor's own first-party server is listed alongside the rest and scoped like
-any of them. Leave it selected if the step writes back into Precursor (posting to
-a topic, storing a memory); a step's result is handed to the next step from the
-transcript either way, so dropping it doesn't break the pipeline.
-
-A name this machine can't attach shows as a struck-through chip — **red** if
-nothing by that name is installed here, **amber** if it's installed but switched
-off in **Settings → MCP**, which is the case you can fix without leaving the app.
-
-A server that's installed *and* enabled but merely **signed out** is treated as a
-hard requirement: if an allowlisted server can't be attached because its
-[OAuth sign-in](/features/mcp) has lapsed, the step parks **Blocked** naming the
-server instead of quietly answering without it. Sign in, then **Resume** the run.
-A step left on **All** is unaffected.
-
-Names are kept rather than dropped, so an exported workflow imports cleanly onto
-a machine with a different server set. The import preview warns before you commit,
-naming the servers this install can't attach.
+- Unpicked servers are never attached: the step can't call them and pays
+  nothing for them.
+- Precursor's own server is scoped like the others. Keep it if the step writes
+  back to Precursor or uses [pipeline state](#pipeline-state-what-a-workflow-remembers).
+- Unknown names are kept and shown struck through (**red** = not installed,
+  **amber** = installed but disabled), so exports import cleanly; the import
+  preview warns about them.
+- An allowlisted server that is enabled but **signed out** (lapsed
+  [OAuth](/features/mcp)) parks the step **Blocked**, naming the server. Sign in,
+  then **Resume**. Steps on **All** aren't affected.
 
 ## One voice for the whole pipeline
 
-A workflow can select an **Assistant role**, applied to every step's agent while
-the workflow runs. Because agents are shared and reusable, the role is applied at
-launch rather than stamped onto the agent rows — so the same `Summariser` can be
-formal in one workflow and blunt in another. Leave it unset and each agent keeps
+Pick an **Assistant role** on the workflow to apply it to every step's agent
+during the run, without changing the agents. Leave it unset and each agent keeps
 its own role.

@@ -4,229 +4,153 @@ title: Running an agent
 
 # Running an agent
 
-What a single run looks like while it happens — what you can watch, what it will
-stop to ask you, and how it reaches you when you aren't looking.
+What you can watch during a run, what the agent stops to ask, and how it reaches
+you when you aren't looking.
 
 ## Following a run
 
-Give an agent a **task prompt** and it works autonomously, streaming its steps
-into a **timeline** you can watch: tool calls visualised inline, permission
-prompts surfaced for actions needing approval, and per-session token accounting.
+Give an agent a **task prompt** and it works on its own, streaming into a
+**timeline**: tool calls inline, approval prompts, and per-session token usage.
 
-The timeline reads as **exchanges**: your prompt, the work it set off, and the
-answer it concluded with. Once a turn has its answer, the steps in between fold
-into one line (*Worked for 3m 13s · 19 tool calls · 7 updates*). Click it to see
-every step. The turn still in flight, and any turn waiting on an approval, stay
-open. The goal loop's "keep going" nudge between steps of an autonomous mission
-shows as a quiet *Continued autonomously* marker, not as a message from you. To
-see every step all the time, switch off **Fold finished turns** under **Show** in
-the insights sidebar.
+The timeline reads as **exchanges**: your prompt, the work, the answer. Once a
+turn has its answer, its steps fold into one line
+(*Worked for 3m 13s · 19 tool calls · 7 updates*); click it to expand. In-flight
+turns and turns waiting on an approval stay open. In a
+[mission](/features/agents-mode/missions), the goal loop's nudge between steps
+shows as a *Continued autonomously* marker. To never fold, switch off **Fold
+finished turns** under **Show** in the insights sidebar.
 
 <Screenshot src="/screenshots/agents-activity.png" alt="An agent's Activity tab: each follow-up prompt is followed by a folded Worked-for summary and the answer, which links to the result version it published" caption="Finished turns fold above their answers. Each answer links to the result version it published." />
 
+An agent that publishes a result gets a **Result** tab next to the timeline;
+see [Reading an agent's result](/features/agents-mode/artifacts-state#reading-an-agent-s-result).
+
+**Run agent** (play button in the header) starts a new execution of the saved
+task. It doesn't send the composer draft, and is disabled while the agent is
+pending, running, awaiting approval or interrupted, or when the runtime is
+unavailable. Use **Stop** for an active run and **Resume** to continue an
+interrupted turn.
+
 ### Watching an agent think
 
-Agents show the model's thinking the way [chats and topics
-do](/features/topics#watching-the-model-think). While the model thinks, a
-pulsing **Thinking…** row at the end of the timeline previews the step it is on;
-click it to read the thinking in full as it streams. Once the round is done, its
-thinking stays with the message it led to, as a collapsed **Thinking** area at
-the top of that message. A round that went straight to a tool call keeps its
-own collapsed Thinking row just before the tool, so you can see *why* the agent
-reached for it. Stopping a turn keeps whatever thinking arrived before it.
-**Thinking** under **Show** in the insights sidebar hides all of it.
+As in [chats and topics](/features/topics#watching-the-model-think): a pulsing
+**Thinking…** row previews the current step; click it to read the full
+thinking as it streams. Afterwards it stays as a collapsed **Thinking** area on
+the message it led to (or just before the tool call it led to). Stopping keeps
+what arrived. **Thinking** under **Show** hides it all.
 
 <Screenshot src="/screenshots/agents-thinking.png" alt="An agent's answer with its Thinking area opened above it, showing two titled steps of the model's reasoning" caption="A round's thinking, opened on the answer it led to. Collapsed, the row shows only the latest step." />
 
-What appears depends on the model and on the reasoning effort picked under the
-composer or in **Settings → Agents**:
-
-- **Claude** thinks only with an effort picked, and streams its thinking live.
-- **Gemini** sends each round's thinking with its message, so it shows up once
-  the round is done rather than live.
-- **GPT** models keep their reasoning encrypted in the agents runtime, so they
-  show no Thinking area.
-
-A running agent's **dashboard card** and a workflow's **active step** show the
-same pulsing *Thinking…* line while the model thinks.
-
-An agent that publishes a result gets a **Result** tab next to this timeline,
-with each refinement kept as a version. See
-[Reading an agent's result](/features/agents-mode/artifacts-state#reading-an-agent-s-result).
-
-Use the **Run agent** play button in the header to start a parked agent or run
-its saved task again without opening settings or typing a follow-up. It starts
-a **new execution** with the saved definition; it does not send the composer
-draft. The button shows a spinner while the request is in flight, and any launch
-error appears below the header.
-
-Run is disabled while the agent is pending, running, awaiting approval, or
-interrupted, and whenever Agents mode or the Copilot runtime is unavailable.
-Use **Stop** for an active run, or the timeline's **Resume** action to continue
-an interrupted turn rather than replace it.
+| Model | Thinking shown |
+| --- | --- |
+| Claude | Live, only when a reasoning effort is picked (composer or **Settings → Agents**) |
+| Gemini | Once the round is done, with its message |
+| GPT | None (reasoning stays encrypted in the runtime) |
 
 ### Keeping a long run within the window
 
-The runtime compacts a long conversation on its own when the context window runs
-low. **`/compact [focus]`** in the composer, or **Compact context** under
-**Usage** in the insights sidebar, does it now. Each compaction shows in the
-timeline as a *context compacted* marker with the tokens freed. The **Usage**
-section also breaks the window down into system prompt, system tools and
-messages, with the free space and the compaction buffer. See
+The runtime compacts automatically when the context window runs low. To compact
+now, use **`/compact [focus]`** or **Compact context** under **Usage** in the
+insights sidebar. Each compaction leaves a *context compacted* marker with the
+tokens freed; **Usage** also breaks down the window. See
 [context compression](/features/context-compression#compacting-an-agent).
 
-To drop only the last few turns instead of the whole context, [rewind](/features/rewind#in-agent-sessions)
-from the timeline rail or a prompt's toolbar. Unlike `/clear`, the turns before
-the cut stay in the agent's context.
+To drop only the last few turns, [rewind](/features/rewind#in-agent-sessions)
+from the timeline rail or a prompt's toolbar; earlier turns stay in context.
 
 ## Message links
 
-Choose **Copy link to message** in a user prompt or assistant reply's action bar,
-revealed on hover or keyboard focus (always visible on touch devices):
+**Copy link to message** in a prompt's or reply's action bar gives:
 
 ```text
 /agents/<agent-uuid>#event=<event-link-uuid>
 ```
 
-The link opens **Activity**, includes earlier runs, reveals the exact message
-inside folded work or hidden assistant chatter, and briefly highlights it.
-It survives reloads and process restarts; it does not depend on the message's
-position in the timeline or on the SDK's rewind IDs.
+It opens **Activity**, unfolds whatever hides the message (including earlier
+runs) and highlights it. Links survive reloads and restarts. If a rewind, clear,
+retention sweep or deletion removed the event, the view says **This message is
+no longer available**. Streaming text and approval cards aren't linkable. Links
+grant no access by themselves.
 
-If a rewind, clear, retention sweep or deletion removed the event, the view
-reports **This message is no longer available**. In-flight streaming text and
-temporary approval cards are not linkable messages. Links point into the same
-Precursor instance and do not grant access or publish the transcript.
-
-Before each prompt, the agent receives a model-only reference index for the
-latest 50 linkable messages from its own execution, with short excerpts and
-exact URLs. It can use those URLs in Markdown to point back to a specific reply.
-Other concurrent executions are excluded. The index is not added to the
-displayed user prompt. Reference links open the exact message in place.
+Before each prompt the agent also receives a hidden index of the latest 50
+linkable messages of its own execution (excerpts + URLs), so its answers can
+link back to a specific earlier reply.
 
 ## When a model disappears or rejects its configuration
 
-Optional [model alternatives](/guide/configuration#optional-model-alternatives)
-under **Settings -> Presets** give agents and workflow steps ordered
-presets. Add entries tagged **Copilot agents** to a category: entries from other
-providers do not apply to agent runs.
+Under **Settings → Presets**, add [model alternatives](/guide/configuration#optional-model-alternatives)
+tagged **Copilot agents** to a category (other providers' entries don't apply).
+The **Agent model** dropdown then offers those categories under **Presets**;
+explicit model pins on an agent or workflow win over the default category.
 
-The agent prompt's **Agent model** dropdown also offers **Presets**, listing
-your categories. Select a category and the engine resolves
-its ordered models, reasoning efforts and context tiers for unpinned runs.
-The category remains selected even when a model is substituted. Explicit agent
-and workflow model pins win over the default category. Only Copilot SDK categories
-appear here; chat presets use the provider scope instead.
-
-A missing model or rejected effort/context can switch to a same-category preset
-with its own effort and context tier, keeping the SDK conversation and saved
-model pin. Recovery is shown in the timeline. It stops after the configured
-alternatives, never changes category, and never replays a turn once output or
-tool/permission activity begins. Credentials/quota/network failures still fail
-normally. Without configured presets, the existing SDK `auto` fallback for
-retired model ids remains.
+If a model is missing or rejects its effort/context, the run switches to the
+next preset in the same category, keeping the conversation; the timeline shows
+it. It never changes category and never replays a turn once output or tool
+activity has started. Credential, quota and network errors fail normally.
+Without presets, the SDK's `auto` fallback for retired model ids still applies.
 
 ## Approval policy (per agent)
 
-Every agent action is gated by an **approval policy**. There's a global default
-in **Settings → Agents** (`manual` asks before every action, `balanced`
-auto-approves read-only tools, `autonomous` approves everything), and each agent
-either **inherits** it — moving with the global whenever you change it — or
-**overrides** it, letting you run a trusted mission more freely without touching
-the fleet-wide default.
+| Policy | Behaviour |
+| --- | --- |
+| `manual` | Ask before every action |
+| `balanced` | Auto-approve read-only tools |
+| `autonomous` | Approve everything |
 
-The policy is read at the start of each turn, so switching it takes effect next
-turn with **no session rebuild**, unlike editing the objective or role.
+The global default is in **Settings → Agents**. Each agent either **inherits**
+it (and follows later changes) or **overrides** it. The policy is read at the
+start of each turn, so a change applies next turn without a session rebuild.
 
 ## Picking which tool servers an agent gets (per agent)
 
-An agent attaches **every** [MCP server](/features/mcp) you have enabled, and
-that is rarely what a focused agent needs. A modest install registers a few
-hundred tools between them and re-sends their schemas on **every turn**, so the
-cost is continuous rather than one-off — and an agent handed a browser, a CRM
-and a shell will reach for them, whatever its instructions say.
-
-So the settings drawer has an **MCP servers** row. It lists every server enabled
-in **Settings → MCP** with its tool count, so the cost is visible where the
-choice is made.
+By default an agent gets every enabled [MCP server](/features/mcp), and their
+tool schemas are re-sent on every turn. The settings drawer's **MCP servers**
+row (with each server's tool count) narrows that:
 
 | Selection | The agent gets |
 | --- | --- |
-| **All** (default) | Every enabled server, including ones you add later. |
-| One or more servers | Only those. |
-| Nothing selected | No tool servers at all — identical to **Tools: off**. |
+| **All** (default) | Every enabled server, including ones added later |
+| One or more servers | Only those |
+| Nothing selected | No tool servers (same as **Tools: off**) |
 
-This is a real allowlist, not a request: the servers you didn't pick are never
-attached to the session, so the agent *cannot* call them and their schemas cost
-nothing. Asking a model in the prompt not to use a tool is not equivalent — it
-reliably reaches for one anyway.
+Unpicked servers are never attached, so the agent can't call them and pays
+nothing for them. Names aren't validated against this machine: an unknown name
+is kept and shown struck through (**red** = not installed, **amber** =
+installed but disabled), so an imported agent keeps its scope.
 
-Note what stays dynamic. The list is **not** a fixed catalogue: it's whatever is
-registered and enabled right now, so a server you install tomorrow is offered
-tomorrow, and an unscoped agent picks it up on its next turn with nothing to
-edit. Names are never validated against the local registry either — a scope that
-mentions a server this machine doesn't have keeps it (shown struck through,
-**red** if nothing by that name is installed, **amber** if it's installed but
-switched off) rather than silently dropping it, so an agent survives the trip
-between machines.
-
-Changing the scope **rebuilds the session** on the next run, exactly like the
-capability toggles — the server set is wired in at build time.
-
-A shared agent driven by a [workflow step](/features/workflows/steps) keeps that
-step's own scope for the duration of the step: the step's choice is snapshotted
-onto its run and wins, including its "all servers" default, so narrowing an agent
-here never silently disarms a pipeline that depends on it.
+Changing the scope rebuilds the session on the next run. A
+[workflow step](/features/workflows/steps#picking-which-tool-servers-a-step-gets)
+driving a shared agent uses the step's own scope for that run.
 
 ## Editing an agent (save vs. run)
 
-The **settings drawer** separates *persisting* changes from *acting* on them.
-**Save** only writes your edits — changing the objective or role primes the new
-instructions for the next run, but never launches a turn. **Save & run** persists
-the same edits and starts the objective now, clearing the previous run's
-artifacts first; it's disabled while the agent is active.
-
-Editing is safe **while a run is in flight**: a run snapshots the model, role,
-approval policy and capability toggles it started with, so changing the
-definition mid-flight primes the *next* run rather than moving the ground under
-the current one.
+In the settings drawer, **Save** only stores the edits (a new objective or role
+applies to the next run). **Save & run** stores them and starts the objective
+now, clearing the previous run's artifacts; it is disabled while the agent is
+active. A run in flight keeps the model, role, policy and capabilities it
+started with.
 
 ## Session lifetime and runtime recovery
 
-Every agent drives the same **Copilot CLI** process, and each run holds a live
-session in it. Once a run has been at rest for **15 minutes** (idle, completed,
-failed or blocked, not waiting on an approval), Precursor disconnects its
-session to free the memory. Nothing is lost: the conversation stays on disk, and
-the next message, Resume or answer reconnects to it. Approvals you granted
-**for the session** are reset along with it, just as they are when a session is
-rebuilt.
-
-If the CLI process itself dies, for example when it runs out of memory, the
-next agent request or the watchdog's next check (at most a minute later)
-restarts it. You don't need to restart Precursor. A turn that was in flight when
-the CLI died is marked **interrupted** by the watchdog. Use **Resume** to retry
-it.
+- A run at rest (idle, completed, failed or blocked, not waiting on approval)
+  for **15 minutes** has its CLI session disconnected to free memory. The next
+  message, **Resume** or answer reconnects; only "approve for this session"
+  grants are reset.
+- If the CLI process dies, the next agent request or the watchdog (checks every
+  minute) restarts it. A turn in flight is marked **interrupted**; use
+  **Resume**.
 
 ## Unread badges & notifications
 
-Agent sessions track unread activity just like topics and chats. When a
-background or scheduled agent replies while you aren't looking, its card is
-highlighted with an unread count and — when notifications are enabled and the
-window is unfocused — a browser notification fires. Opening the session clears
-the badge.
+When a background or scheduled agent replies while you aren't looking, its card
+gets an unread count and, if notifications are on and the window is unfocused,
+a browser notification fires. Opening the agent clears it.
 
 ### The "agent needs you" signal
 
-Background agents pause when they hit an action needing approval, and the whole
-point of running them in the background is that you're *not* watching. So that
-block is surfaced **out of band**, the moment it happens:
+When an agent moves to **Needs approval**:
 
-- A **browser notification fires regardless of focus** the instant an agent
-  transitions to **Needs approval**, deep-linking straight to it.
-- The **browser tab title** grows a 🔔 bell and a `(n)` count whenever any agent
-  is waiting on you.
-- The **⌘K command palette** lists the agents that need attention **first**.
-
-Everything waiting on you is also collected into the
-[unified inbox](/features/agents-mode/orchestration#the-unified-inbox) across the
-top of the dashboard.
+- a browser notification fires **regardless of focus**, linking to the agent;
+- the tab title shows 🔔 and a `(n)` count while any agent waits;
+- the ⌘K palette lists waiting agents first;
+- it appears in the [unified inbox](/features/agents-mode/orchestration#the-unified-inbox).

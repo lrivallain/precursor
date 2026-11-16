@@ -6,154 +6,103 @@ title: Development workflow
 
 ## Branch, commit, PR
 
-1. **Open (or claim) an issue** describing the change.
-2. **Branch from `main`**: `git checkout -b feat/short-description`.
-3. **Keep commits focused.** Conventional commit prefixes (`feat:`, `fix:`,
-   `chore:`, `docs:`) are encouraged.
-4. **Open a PR** using the template; reference the issue with `Closes #N` when
-   applicable.
+1. Open (or claim) an issue.
+2. Branch from `main`: `git checkout -b feat/short-description`.
+3. Keep commits focused, with [Conventional Commits](https://www.conventionalcommits.org/)
+   prefixes (`feat:`, `fix:`, `chore:`, `docs:`); release notes are generated
+   from them.
+4. Open a PR from the template; reference the issue with `Closes #N`.
+
+Merging into `main` is the ship decision: the next
+[nightly release](/contributing/releasing) picks it up.
 
 ## Database migrations
 
-Alembic migrations are the single source of truth for the schema. On startup the
-app brings the database to `head` automatically (`alembic upgrade head`), so a
-fresh database is built from migrations and an existing one is migrated in place —
-there is no manual step and no separate dev backfill.
-
-After changing a model, generate the matching migration from the diff and review
-it:
+Alembic is the single source of truth for the schema; startup runs
+`alembic upgrade head` for dev and prod alike.
 
 ```bash
 make migration m="add foo to chats"   # autogenerate from the model change
-# review the new file under precursor/backend/alembic/versions/, then commit it
-make migrate                          # (optional) apply it to your local DB now
+# review precursor/backend/alembic/versions/<new>.py, then commit it
+make migrate                          # optional: apply to your local DB now
 ```
 
-The migration then applies to dev and prod alike on the next startup. Keep **one
-migration per change**. Autogenerate covers most cases — double-check column type
-changes, server defaults, and any data migrations by hand.
+One migration per change. Check column type changes, server defaults and data
+migrations by hand.
 
 ## Continuous integration
 
-Every PR runs `.github/workflows/ci.yml`:
+`.github/workflows/ci.yml` runs on every PR and `main` push. All jobs must pass.
 
-- **Lockfiles** — every artifact must resolve to a public registry with a strong
-  hash (see [Lockfiles](#lockfiles) below).
-- **Backend** (Linux and Windows) — `uv sync --locked`, then ruff check, ruff
-  format check, mypy (strict), and pytest across 8 workers (`pytest-xdist`,
-  `-n 8 --dist loadgroup`; locally `make test` uses one per core). Tests that
-  share a fixed resource, such as a hard-coded port, are pinned to one worker
-  with `pytest.mark.xdist_group`. A PR that only touches `frontend/`, `website/`
-  or Markdown skips these steps but still reports success, since the checks are
-  required. The few frontend files a backend test reads still trigger them: if
-  you add a test that reads one, list it in `BACKEND_READS` in
-  `scripts/ci_backend_scope.py` (`tests/test_ci_backend_scope.py` fails
-  until you do).
-- **Fresh wheel install** — builds the wheel, installs it with the `kanban`
-  extra into an empty environment *without* the lockfile (the way an end user's
-  `uvx precursor-ai` resolves), then runs the release smoke gate and
-  `scripts/smoke_mcp.py kanban`, which also starts every installed plugin's MCP
-  server. The locked backend job can't see a new dependency major that the
-  published wheel would pick up; this one can.
-- **Frontend** — `npm ci`, then typecheck and build.
-- **Docs site** — `npm ci` and `npm run docs:build` for `website/`, so a broken
-  docs build fails the PR instead of the deploy.
+| Job | Checks |
+| --- | --- |
+| Lockfiles | every artifact pinned to a public registry with a strong hash |
+| Quality ratchet | complexity, size, duplication, untyped responses; API types up to date |
+| Backend | `uv sync --locked`, ruff, ruff format, mypy, `pytest -n 8 --dist loadgroup` |
+| Backend on Windows | pytest |
+| Fresh wheel install | builds the wheel, installs it with the `kanban` extra **without** the lockfile (as `uvx precursor-ai` would), runs the release smoke gate and `scripts/smoke_mcp.py kanban` |
+| Install on Windows | `install.ps1`, login item, service lifecycle, self-update |
+| Frontend | `npm ci`, typecheck, Vitest, build |
+| Docs site | `npm run docs:build` for `website/` |
 
-All jobs must pass before merge. Run `make check` locally first to catch failures
-early.
+Backend steps are skipped (but report success) when a PR only touches
+`frontend/`, `website/` or Markdown. If a backend test reads a frontend file,
+add it to `BACKEND_READS` in `scripts/ci_backend_scope.py`
+(`tests/test_ci_backend_scope.py` enforces it). Tests sharing a fixed resource
+(e.g. a port) use `pytest.mark.xdist_group`.
 
 ## Lockfiles
 
-`uv.lock` and the two `package-lock.json` files are committed, and must pin
-**public** artifacts (`files.pythonhosted.org`, `registry.npmjs.org`) with strong
-hashes. **Regenerating them is CI's job, not yours.**
+`uv.lock` and both `package-lock.json` files pin **public** artifacts
+(`files.pythonhosted.org`, `registry.npmjs.org`) with strong hashes.
+**Regenerating them is CI's job.** Corporate mirrors weaken them (`sha1`
+integrity, missing uv provenance), so never commit a locally re-resolved
+lockfile; revert it.
 
-Many managed devices route uv and npm through a corporate package mirror.
-Re-resolving there doesn't just relabel URLs, it *weakens* the lockfile: npm
-integrity comes back as `sha1` instead of `sha512`, and uv drops the
-`size`/`upload-time` provenance — which in a diff looks like a harmless URL
-change. Rewriting the URLs back by hand is worse, since it pairs a public
-artifact with the weakened metadata. If you find `uv.lock` modified after a
-local command, revert it rather than committing it.
+| Task | Command |
+| --- | --- |
+| Install from lockfiles | `make sync` (`npm ci`, `UV_FROZEN=1`) |
+| Block bad lockfiles at commit | `make hooks` (once); `make lockcheck` on demand |
+| Change a dependency | edit `pyproject.toml` / `package.json`, commit, then `gh workflow run relock.yml --ref "$(git branch --show-current)"` |
+| Need the new package locally first | `UV_FROZEN=0 uv lock && uv sync && git restore uv.lock` |
+| `npm ci` 404s on a mirror | `npm --prefix website install --no-package-lock` (leaves the lockfile untouched) |
 
-::: tip Enable the guard once
-```bash
-make hooks        # git config core.hooksPath .githooks
-```
-The pre-commit hook then rejects any lockfile you'd commit with a proxy URL or a
-weak hash. `make lockcheck` runs the same check on demand.
-:::
-
-Day to day, install *from* the lockfiles instead of re-resolving — `make sync`
-uses `npm ci` and exports `UV_FROZEN=1`. That flag matters more than it looks:
-every `uv run` re-locks by default, so `make dev`, `make check`, and `make test`
-would each rewrite `uv.lock` without it.
-
-To change a dependency, edit `pyproject.toml` or `package.json`, commit that,
-then let a clean runner resolve it:
-
-```bash
-gh workflow run relock.yml --ref "$(git branch --show-current)"
-```
-
-The `Relock` workflow regenerates the lockfiles, verifies they install *and*
-build, then pushes the result back to your branch (or opens a PR when run
-against `main`). Dependabot updates arrive the same way.
-
-::: warning If `npm ci` can't find a version
-Corporate mirrors lag the public registries, so a lockfile CI just produced may
-pin a version yours hasn't cached — `npm ci` then fails with a 404 for a single
-package. Install without consulting the lockfile instead:
-
-```bash
-npm --prefix website install --no-package-lock
-```
-
-There is no lockfile to write, so the committed one stays untouched. Your
-`node_modules` may differ slightly from CI's, which is fine for local work.
-:::
+The **Relock** workflow regenerates the lockfiles, verifies install and build,
+and pushes to your branch (or opens a PR against `main`). Dependabot updates
+arrive the same way.
 
 ## Adding a plugin
 
-Plugins live in their own packages and register via
+Plugins live in their own repositories and register via
 `[project.entry-points."precursor.plugins"]`. See the
-[plugin reference](/reference/plugins).
+[plugin reference](/reference/plugins) and, to list one,
+[Submitting a plugin](/plugins/submitting).
 
 ## Documentation
 
-**Documentation is part of every change.** When you add or change a user-facing
-feature, update the docs in the *same* PR — don't defer it. Use the decision
-checklist in
-[`.github/copilot-instructions.md`](https://github.com/lrivallain/precursor/blob/main/.github/copilot-instructions.md#documentation)
-to decide what to touch (a feature page, the landing grid, configuration
-reference, `CHANGELOG.md`, screenshots, …), and keep the `[Unreleased]` section
-of `CHANGELOG.md` current.
+Docs ship **in the same PR** as the change. The decision checklist (feature
+page, landing grid, configuration reference, API reference, `CHANGELOG.md`
+`[Unreleased]`, screenshots) is in
+[`.github/copilot-instructions.md`](https://github.com/lrivallain/precursor/blob/main/.github/copilot-instructions.md#documentation).
 
-- In-repo docs live under `docs/` and the top-level markdown files
-  (`README.md`, `CONTRIBUTING.md`, …).
-- This showcase + docs **site** lives under `website/` (VitePress) and is
-  published to GitHub Pages automatically on push to `main` via
-  `.github/workflows/pages.yml`.
-
-To work on the site locally:
+| Where | What |
+| --- | --- |
+| `website/` | this VitePress site: GitHub Pages via `pages.yml` on `main` pushes, and in-app at [`/docs/`](/reference/api#serving-the-docs-in-app) |
+| `README.md`, `CONTRIBUTING.md`, `RELEASING.md`, `ARCHITECTURE.md` | repository front door and contributor rules |
+| `docs/` | in-repo design notes and JSON schemas |
 
 ```bash
 cd website
-npm install
-npm run docs:dev        # live-reload dev server
-npm run docs:build      # production build → website/.vitepress/dist
+npm ci
+npm run docs:dev        # live reload (precursor --dev also serves it at /docs/)
+npm run docs:build      # must pass before you open the PR
 ```
-
-The site is also served **in-app** at `/docs/`, and `precursor --dev` starts a
-live VitePress server automatically. See
-[Serving the docs in-app](/reference/api#serving-the-docs-in-app).
 
 ### Screenshots
 
-Screenshots in `website/public/screenshots/` are **theme-aware** — each has a
-light file (`foo.png`) and a dark file (`foo-dark.png`), and the `<Screenshot>`
-component swaps them by site theme. If a UI change alters a screenshotted screen,
-**retake both variants** from a seeded demo instance **with the account hidden**
-(no resolvable token → "Guest") and **no config warnings** (fake missing config
-rather than using real secrets). Capture light + dark at 2× and clip out the
-persona footer when it would leak the account.
+Screenshots in `website/public/screenshots/` come in pairs (`foo.png`,
+`foo-dark.png`); retake both when a UI change alters one. Capture them from the
+seeded demo (`scripts/seed_demo.py`, `scripts/demo_server.sh`,
+`scripts/capture_screenshots.js`) so the persona reads "Guest / Not connected"
+and no config warnings show. The full loop is in
+[`.github/copilot-instructions.md`](https://github.com/lrivallain/precursor/blob/main/.github/copilot-instructions.md#screenshots).
