@@ -84,7 +84,13 @@ export function InlineTitle({
             cancel();
           }
         }}
-        onBlur={() => void commit()}
+        // Committing on the next tick lets a frame that grabbed focus without
+        // the user asking (see DrawioEditor) hand it back first.
+        onBlur={() =>
+          window.setTimeout(() => {
+            if (document.activeElement !== inputRef.current) void commit();
+          }, 0)
+        }
         className={
           inputClassName ??
           "min-w-0 flex-1 rounded border border-accent/60 bg-bg px-1 py-0 text-sm outline-none"

@@ -12,11 +12,9 @@ import {
   Download,
   ExternalLink,
   Eye,
-  FilePlus2,
   FileText,
   FileCode2,
   FolderOpen,
-  FolderPlus,
   GitMerge,
   History,
   Image as ImageIcon,
@@ -30,6 +28,7 @@ import {
   Workflow,
 } from "lucide-react";
 import { api, workspaceRawUrl } from "../lib/api";
+import { useBusyAction } from "../lib/useBusyAction";
 import { vscodeUrl, workspaceAbsolutePath } from "../lib/localPath";
 import { useResizableWidth } from "../lib/useResizableWidth";
 import { useIsNarrow } from "../lib/useMediaQuery";
@@ -38,7 +37,7 @@ import { Markdown } from "./Markdown";
 import { ResizeHandle } from "./ResizeHandle";
 import { DiscussButton, WorkspaceDiscussionPanel } from "./WorkspaceDiscussion";
 import type { WsDiscussionRef } from "../lib/routes";
-import { FileTree } from "./FileTree";
+import { FileTree, FileTreeActions } from "./FileTree";
 import { ChangesPanel, GitDiffPane, discardPrompt } from "./GitChanges";
 import type { DiffTarget } from "./GitChanges";
 import { HistoryPanel } from "./GitHistory";
@@ -349,6 +348,13 @@ export function WorkspaceView({
     void refreshStatus();
   }, [refreshFiles, refreshStatus]);
 
+  // The tree's refresh button: pick up files written outside the app.
+  const treeRefresh = useBusyAction();
+  const refreshTree = () =>
+    treeRefresh.run(() => Promise.all([refreshFiles(), refreshStatus()])).then((ok) => {
+      if (!ok) setError("Couldn't refresh the file tree.");
+    });
+
   // Ask the remote what it has, so ahead/behind are real: on open, and on
   // Refresh. Changes no file.
   const [fetching, setFetching] = useState(false);
@@ -440,7 +446,7 @@ export function WorkspaceView({
   }, [files, initialPath]);
 
   async function openFile(path: string, refresh = false): Promise<void> {
-    if (refresh && (loadingFile || saving)) return;
+    if (refresh ? loadingFile || saving : path === activePath && !diff) return;
     if (
       dirty &&
       !(await confirmAction({
@@ -983,7 +989,7 @@ export function WorkspaceView({
             open, so the commit message, the expanded commit and the scroll
             position are still there on the way back. */}
         <aside
-          className={`relative border-r border-border flex flex-col min-h-0 ${
+          className={`relative border-r border-border flex flex-col min-h-0 overflow-hidden ${
             // Beside the assistant's 2.25rem rail, so it fills what's left
             // rather than claiming a full viewport width the row can't afford.
             narrow ? "flex-1 min-w-0 border-r-0" : "shrink min-w-36"
@@ -991,9 +997,9 @@ export function WorkspaceView({
           style={narrow ? undefined : { width: filesWidth }}
         >
           {!narrow && <ResizeHandle onMouseDown={onFilesResize} side="right" />}
-          <div className="flex items-center justify-between px-3 h-10 border-b border-border">
+          <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 px-3 py-1.5 min-h-10 border-b border-border">
             {isGit ? (
-              <div role="tablist" aria-label="Workspace panes" className="-ml-1.5 flex items-center gap-0.5">
+              <div role="tablist" aria-label="Workspace panes" className="-ml-1.5 flex flex-wrap items-center gap-0.5">
                 <PaneTab active={leftTab === "files"} onSelect={() => setLeftTab("files")}>
                   Files
                 </PaneTab>
@@ -1022,24 +1028,11 @@ export function WorkspaceView({
               </span>
             )}
             {leftTab === "files" && (
-            <div className="flex items-center gap-0.5">
-              <button
-                className="p-1 rounded hover:bg-surface text-muted hover:text-text"
-                aria-label="New folder"
-                data-tooltip="New folder (in root)"
-                onClick={() => setPendingCreate({ kind: "folder", parent: "" })}
-              >
-                <FolderPlus size={15} />
-              </button>
-              <button
-                className="p-1 rounded hover:bg-surface text-muted hover:text-text"
-                aria-label="New file"
-                data-tooltip="New file (in root)"
-                onClick={() => setPendingCreate({ kind: "file", parent: "" })}
-              >
-                <FilePlus2 size={15} />
-              </button>
-            </div>
+              <FileTreeActions
+                refreshing={treeRefresh.busy}
+                onCreate={(kind) => setPendingCreate({ kind, parent: "" })}
+                onRefresh={() => void refreshTree()}
+              />
             )}
           </div>
           {leftTab === "history" ? (

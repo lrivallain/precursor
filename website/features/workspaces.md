@@ -217,6 +217,10 @@ Use it to pick up changes made by an assistant or an external editor, including
 updated image and PDF previews. If you have unsaved edits, it asks before
 discarding them; cancelling leaves your buffer untouched.
 
+**Refresh files** (the circular arrow in the Files header) reloads the tree
+and its git status, for files an assistant, a command or another app created,
+moved or deleted. Double-click a file or folder name to rename it in place.
+
 Hover a folder in the tree for its actions: **New file**, **New folder**, and
 **Delete folder**, which removes the folder with everything in it once you
 confirm by typing its name (a **Copy** button in the dialog saves retyping it).
@@ -285,6 +289,9 @@ The picker offers:
   left out.
 - **Open another** — search any chat or topic and bring it in. One discussion is
   open at a time; **Switch** returns to the picker.
+
+The discussion's title in the panel header links to the chat or topic itself,
+to carry on there with the full view.
 
 Opening a discussion attaches the file you are viewing to it, and it keeps
 attaching whichever file you move to while it is open. The open file also rides
