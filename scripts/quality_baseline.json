@@ -23,7 +23,7 @@
     "precursor/backend/services/conversation_turn.py": 893,
     "precursor/backend/services/definitions/migration.py": 1068,
     "precursor/backend/services/mcp/client.py": 1570,
-    "precursor/backend/services/mcp/drawio_server.py": 1023,
+    "precursor/backend/services/mcp/drawio_server.py": 1020,
     "precursor/backend/services/mcp/workiq_preview.py": 2285,
     "precursor/backend/services/scheduled_commands.py": 947,
     "precursor/backend/services/step_plan_llm.py": 1385,

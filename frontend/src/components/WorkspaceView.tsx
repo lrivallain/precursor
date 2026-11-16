@@ -51,6 +51,7 @@ import {
 } from "./DefinitionFileIssues";
 import type { CodeEditorHandle, EditorMarker } from "./CodeEditor";
 import { lineChanges } from "../lib/diffGutter";
+import { resolveLinkedFile } from "../lib/workspaceLink";
 import type { LineChange } from "../lib/diffGutter";
 import { PlainTextEditor } from "./PlainTextEditor";
 import type {
@@ -439,9 +440,8 @@ export function WorkspaceView({
   useEffect(() => {
     if (!initialPath || files.length === 0 || loadingFile) return;
     if (initialPath === activePath) return;
-    if (files.some((f) => f.path === initialPath && f.type !== "dir")) {
-      void openFile(initialPath);
-    }
+    const target = resolveLinkedFile(files, initialPath);
+    if (target && target !== activePath) void openFile(target);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [files, initialPath]);
 

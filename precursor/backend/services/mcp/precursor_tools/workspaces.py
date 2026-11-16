@@ -127,7 +127,12 @@ async def read_workspace_file(
     truncated = len(content.encode("utf-8")) > max_bytes
     if truncated:
         content = content.encode("utf-8")[:max_bytes].decode("utf-8", "ignore")
-    return with_open_link({"path": path, "content": content, "truncated": truncated}, ws.slug, path)
+    return with_open_link(
+        {"path": path, "content": content, "truncated": truncated},
+        ws.slug,
+        path,
+        root=browse_root(ws),
+    )
 
 
 @mcp.tool()
@@ -197,7 +202,7 @@ async def create_workspace_file(workspace_id: int, path: str, content: str = "")
         return {"error": str(exc)}
     except FileExistsError:
         return {"error": f"File already exists: {path}"}
-    return with_open_link({"path": path, "created": True}, ws.slug, path)
+    return with_open_link({"path": path, "created": True}, ws.slug, path, root=root)
 
 
 @mcp.tool()
@@ -224,6 +229,7 @@ async def write_workspace_file(workspace_id: int, path: str, content: str) -> di
         {"path": path, "written": True, "bytes": len(content.encode("utf-8"))},
         ws.slug,
         path,
+        root=root,
     )
 
 
