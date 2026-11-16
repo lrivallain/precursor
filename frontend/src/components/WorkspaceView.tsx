@@ -29,6 +29,8 @@ import {
 } from "lucide-react";
 import { api, workspaceRawUrl } from "../lib/api";
 import { useBusyAction } from "../lib/useBusyAction";
+import { useSaveShortcut } from "../lib/useSaveShortcut";
+import { useWorkspaceRootPath } from "../lib/useWorkspaceRootPath";
 import { vscodeUrl, workspaceAbsolutePath } from "../lib/localPath";
 import { useResizableWidth } from "../lib/useResizableWidth";
 import { useIsNarrow } from "../lib/useMediaQuery";
@@ -240,8 +242,7 @@ export function WorkspaceView({
   const [status, setStatus] = useState<GitStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copiedPath, setCopiedPath] = useState(false);
-  // The working copy's absolute path on the server, for "Open in VS Code".
-  const [rootPath, setRootPath] = useState<string | null>(null);
+  const rootPath = useWorkspaceRootPath(area.id);
   // Monaco's cursor, for opening VS Code on the same line.
   const cursorRef = useRef<{ line: number; column: number } | null>(null);
   // The file whose editor has been shown: it then stays mounted (hidden) under
@@ -419,20 +420,6 @@ export function WorkspaceView({
     };
   }, [area.id, repoPath, status]);
 
-  useEffect(() => {
-    let cancelled = false;
-    setRootPath(null);
-    api.workspaces
-      .localPath(area.id)
-      .then(({ path }) => {
-        if (!cancelled) setRootPath(path);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [area.id]);
-
   // Open the file named in the URL once the tree has loaded. Keyed off the
   // currently-open file rather than a one-shot flag, so a *new* deep link —
   // e.g. the workspace-file chip on a tool call in a chat — still opens while
@@ -511,6 +498,9 @@ export function WorkspaceView({
       setSaving(false);
     }
   }
+
+  // Cmd/Ctrl+S with the focus outside the editor (a preview, the toolbar).
+  useSaveShortcut(activePath !== null && isEditable(activePath), () => void save());
 
   async function applyPathChange(oldPath: string, newPath: string): Promise<void> {
     if (!newPath || newPath === oldPath) return;
@@ -1303,6 +1293,7 @@ export function WorkspaceView({
                         path={activePath}
                         xml={content}
                         onChange={setContent}
+                        onSave={(xml) => void save(xml)}
                       />
                     ) : showPreview && isHtml(activePath) ? (
                       <iframe

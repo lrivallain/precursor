@@ -242,7 +242,9 @@ Files open in **Monaco**, the editor core of VS Code:
 - **Highlighting and editing:** syntax highlighting, find and replace
   (<kbd>Cmd/Ctrl</kbd>+<kbd>F</kbd>), multiple cursors, folding, and the command
   palette (<kbd>F1</kbd>).
-- **Saving:** <kbd>Cmd/Ctrl</kbd>+<kbd>S</kbd> saves.
+- **Saving:** <kbd>Cmd/Ctrl</kbd>+<kbd>S</kbd> saves, in the editor, in the
+  diagram editor, or with the focus anywhere else on the file's page (a
+  preview, the toolbar, the tree).
 - **YAML and JSON:** these files are checked as you type, and a syntax error is
   underlined where it is.
 - **Previews:** switching a Markdown, HTML or diagram file to **Preview** and
@@ -326,7 +328,8 @@ When the assistant touches a file in a workspace — a diagram via the
 [`drawio` MCP server](/features/mcp), or any file via the `precursor` workspace tools — the tool
 call in the transcript carries an **Open** chip naming it. That holds in a chat
 or a topic, including one opened beside a workspace. One click switches to the
-Files section with that file already open, so a
+Files section with that file already open, and the tree unfolded down to it
+as if you had browsed there, so a
 diagram produced (or merely inspected) mid-conversation doesn't have to be
 hunted down in the tree. Browser **Back** returns to the discussion.
 
@@ -343,7 +346,8 @@ A `.drawio` file — whether you drew it yourself or the assistant authored it
 with the [`drawio` MCP server](/features/mcp) — opens in an embedded draw.io
 editor, with an **XML / Diagram** toggle to drop down to the raw mxGraph source.
 Edits stream back into the same buffer as any other file, so the usual dirty
-marker, **Save**, and `git diff` apply unchanged.
+marker, **Save** (or <kbd>Cmd/Ctrl</kbd>+<kbd>S</kbd> inside the diagram), and
+`git diff` apply unchanged.
 
 The editor follows the app's light or dark theme. Change the theme in
 **Settings** and an open diagram reloads in the new one, keeping your unsaved

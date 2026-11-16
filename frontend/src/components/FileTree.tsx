@@ -12,6 +12,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { InlineTitle } from "./InlineTitle";
+import { revealPath } from "../lib/fileTreePaths";
 import type { WorkspaceFileNode } from "../lib/types";
 
 // --------------------------------------------------------------------------
@@ -225,6 +226,26 @@ export function FileTree({
     );
   }, [files]);
 
+  // Open the folders holding the active file and bring its row into view, as
+  // if the user had browsed to it: a deep link or a file opened from the
+  // Changes pane would otherwise sit inside collapsed folders. Declared after
+  // the collapse-all above so, on first load, it runs second.
+  // The row only exists once its folders have rendered open, so the scroll
+  // waits for the first render that has it.
+  const activeRow = useRef<HTMLDivElement | null>(null);
+  const scrollPending = useRef(false);
+  const hasFiles = files.length > 0;
+  useEffect(() => {
+    if (!activePath || !hasFiles) return;
+    scrollPending.current = true;
+    setCollapsed((prev) => revealPath(prev, activePath));
+  }, [activePath, hasFiles]);
+  useEffect(() => {
+    if (!scrollPending.current || !activeRow.current) return;
+    scrollPending.current = false;
+    activeRow.current.scrollIntoView({ block: "nearest" });
+  });
+
   // Expand a folder the moment it becomes the create target so its inline
   // input row is visible.
   useEffect(() => {
@@ -350,6 +371,7 @@ export function FileTree({
       return (
         <div
           key={node.path}
+          ref={active ? activeRow : undefined}
           className={`group flex items-center gap-1.5 pr-2 py-1 text-sm cursor-pointer ${
             active ? "bg-surface" : "hover:bg-surface/60"
           }`}
