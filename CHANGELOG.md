@@ -49,6 +49,13 @@ are the per-version history; releasing does not rewrite this file.
 
 ### Fixed
 
+- **Cmd/Ctrl+S saves a workspace diagram.** In the draw.io editor, and with the
+  focus anywhere else on a workspace file (a preview, the toolbar, the tree),
+  the shortcut now saves the file instead of opening the browser's "Save page"
+  dialog.
+- **A link to a workspace file unfolds the tree down to it.** Opening a file
+  from a link (a tool call's chip, a shared URL) or from the Changes pane now
+  expands its folders and scrolls it into view, as if you had browsed to it.
 - **Renaming a draw.io file from the workspace tree works.** Double-clicking
   its name loaded the diagram twice, and the editor then took focus from the
   rename field. A double-click no longer reopens the file, and the diagram

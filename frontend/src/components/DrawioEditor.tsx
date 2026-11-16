@@ -87,10 +87,13 @@ export function DrawioEditor({
   path,
   xml,
   onChange,
+  onSave,
 }: {
   path: string;
   xml: string;
   onChange: (xml: string) => void;
+  /** Cmd/Ctrl+S inside the diagram, with its latest XML. */
+  onSave?: (xml: string) => void;
 }) {
   const frameRef = useRef<HTMLIFrameElement>(null);
   const [status, setStatus] = useState<DrawioStatus | null>(null);
@@ -108,6 +111,8 @@ export function DrawioEditor({
   pendingXml.current = xml;
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  const onSaveRef = useRef(onSave);
+  onSaveRef.current = onSave;
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -173,6 +178,9 @@ export function DrawioEditor({
       if ((msg.event === "autosave" || msg.event === "save") && msg.xml != null) {
         onChangeRef.current(msg.xml);
       }
+      // Keys pressed in the frame never reach the page, but draw.io binds
+      // Cmd/Ctrl+S to its own save action, which in embed mode posts "save".
+      if (msg.event === "save" && msg.xml != null) onSaveRef.current?.(msg.xml);
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
