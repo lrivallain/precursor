@@ -14,6 +14,7 @@ from precursor.backend.db import get_session
 from precursor.backend.models import AppSetting
 from precursor.backend.schemas import SettingsPayload, SettingsRead
 from precursor.backend.schemas.model_fallback import normalize_stored_categories
+from precursor.backend.services import update_prefs, updates
 from precursor.backend.services.agents.manager import get_agent_manager
 from precursor.backend.services.agents.runtime import agents_available
 from precursor.backend.services.app_settings import (
@@ -251,6 +252,15 @@ async def _agents_block(session: AsyncSession) -> dict[str, Any]:
     }
 
 
+def _updates_block() -> dict[str, Any]:
+    prefs = update_prefs.load()
+    return {
+        "update_channel": updates.default_channel(),
+        "update_checks_enabled": prefs.checks_enabled,
+        "update_notifications_enabled": prefs.notifications_enabled,
+    }
+
+
 async def _settings_response(session: AsyncSession) -> SettingsRead:
     data = await _load_all(session)
     system = await resolve_system_settings(session)
@@ -262,6 +272,7 @@ async def _settings_response(session: AsyncSession) -> SettingsRead:
     system.update(await _llm_block(session, data))
     system.update(await _agents_block(session))
     system.update(await resolve_backup_status(session))
+    system.update(_updates_block())
     return _as_read(data, system, docker_available()[0], await resolve_llm_model(session))
 
 

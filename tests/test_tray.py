@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from precursor.backend import supervisor, tray
-from precursor.backend.services import updates
+from precursor.backend.services import update_prefs, updates
 
 requires_gui = pytest.mark.skipif(
     not tray.gui_available(), reason="needs the `tray` extra (pystray + Pillow)"
@@ -26,14 +26,14 @@ _ACCENT_RGB = tray._ACCENT[:3]
 
 
 @pytest.fixture(autouse=True)
-def _no_real_prompts(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Never let a test put an actual dialog on the developer's screen."""
-    monkeypatch.setattr(tray.notifications, "can_ask", lambda: False)
-    monkeypatch.setattr(
-        tray.notifications,
-        "ask",
-        lambda *_a, **_k: pytest.fail("raised a real desktop prompt"),
-    )
+def _default_prefs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Notifying preferences, whatever the developer saved in Settings."""
+    _prefs(monkeypatch, notifications_enabled=True)
+
+
+def _prefs(monkeypatch: pytest.MonkeyPatch, **changes: object) -> None:
+    prefs = update_prefs.UpdatePrefs(**changes)  # type: ignore[arg-type]
+    monkeypatch.setattr(tray.update_prefs, "load", lambda: prefs)
 
 
 def test_module_imports_without_the_gui_extra() -> None:
@@ -602,73 +602,10 @@ def test_a_newer_build_gets_its_own_announcement(monkeypatch: pytest.MonkeyPatch
     assert len(notices) == 2
 
 
-def test_a_desktop_without_buttons_still_gets_told(monkeypatch: pytest.MonkeyPatch) -> None:
-    """`can_ask` is false in the autouse fixture, so this is the fallback path."""
-    app = _app(_running_at("2026.9.0"), monkeypatch)
-    notices: list[tuple[str, str]] = []
-    monkeypatch.setattr(app, "_notify", lambda title, message: notices.append((title, message)))
-    app._announce_update(_update_info(latest_version="2026.9.1"))
-    assert notices and "2026.9.1" in notices[0][1]
-
-
-def _prompting(app: tray.TrayApp, monkeypatch: pytest.MonkeyPatch, answer: str | None) -> list[str]:
-    """Wire the app to an actionable prompt that returns ``answer``, inline."""
-    applied: list[str] = []
-    monkeypatch.setattr(tray.notifications, "can_ask", lambda: True)
-    monkeypatch.setattr(tray.notifications, "ask", lambda *_a, **_kw: answer)
-    monkeypatch.setattr(tray.threading, "Thread", _InlineThread)
-    monkeypatch.setattr(app, "_apply_update", lambda *_a: applied.append("applied"))
-    return applied
-
-
-class _InlineThread:
-    """Run the "background" prompt synchronously so the test can assert on it."""
-
-    def __init__(self, *, target: object, daemon: bool = False) -> None:
-        self._target = target
-
-    def start(self) -> None:
-        self._target()  # type: ignore[operator]
-
-
-def test_the_notification_can_apply_the_update(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The point of the button: take the update without hunting for the menu."""
-    app = _app(_running_at("2026.9.0"), monkeypatch)
-    applied = _prompting(app, monkeypatch, tray._APPLY.key)
-    app._announce_update(_update_info(latest_version="2026.9.1"))
-    assert applied == ["applied"]
-
-
-@pytest.mark.parametrize("answer", [tray._LATER.key, None])
-def test_anything_but_yes_leaves_the_build_waiting(
-    monkeypatch: pytest.MonkeyPatch, answer: str | None
-) -> None:
-    """Dismissed, timed out or "Later" — none of them is consent to restart."""
-    app = _app(_running_at("2026.9.0"), monkeypatch)
-    applied = _prompting(app, monkeypatch, answer)
-    app._announce_update(_update_info(latest_version="2026.9.1"))
-    assert applied == []
-
-
-def test_the_prompt_can_be_turned_down_to_a_toast(monkeypatch: pytest.MonkeyPatch) -> None:
-    app = _app(_running_at("2026.9.0"), monkeypatch)
-    monkeypatch.setattr(tray.notifications, "can_ask", lambda: True)
-    monkeypatch.setattr(
-        tray.notifications, "ask", lambda *_a, **_kw: pytest.fail("prompted anyway")
-    )
-    monkeypatch.setattr(tray, "_notify_mode", lambda: "notify")
-    notices: list[tuple[str, str]] = []
-    monkeypatch.setattr(app, "_notify", lambda title, message: notices.append((title, message)))
-
-    app._announce_update(_update_info(latest_version="2026.9.1"))
-
-    assert len(notices) == 1
-
-
 def test_announcements_can_be_turned_off(monkeypatch: pytest.MonkeyPatch) -> None:
     """The menu still says so; the desktop just stays quiet."""
     app = _app(_running_at("2026.9.0"), monkeypatch)
-    monkeypatch.setattr(tray, "_notify_mode", lambda: "off")
+    _prefs(monkeypatch, notifications_enabled=False)
     monkeypatch.setattr(app, "_notify", lambda *_a: pytest.fail("notified anyway"))
 
     app._announce_update(_update_info(latest_version="2026.9.1"))
@@ -680,27 +617,32 @@ def test_announcements_can_be_turned_off(monkeypatch: pytest.MonkeyPatch) -> Non
     assert len(forced) == 1
 
 
-def test_an_unknown_notify_mode_falls_back_to_prompting() -> None:
-    """A typo in the setting must not silently disable the announcement."""
-    from precursor.backend.config import Settings
+def test_settings_can_turn_background_checks_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(tray.supervisor, "status", lambda: _running_at("2026.9.0"))
+    monkeypatch.setattr(tray, "_OWN_VERSION", "2026.9.0")
+    app = tray.TrayApp(check_updates=True)
+    assert app._background_check_due(tray._UPDATE_POLL_SECONDS)
 
-    assert Settings(update_notify="shout").update_notify == "shout"
-    assert tray._notify_mode() in ("prompt", "notify", "off")
+    _prefs(monkeypatch, checks_enabled=False, notifications_enabled=True)
+    assert not app._background_check_due(tray._UPDATE_POLL_SECONDS)
+    assert "off" in app._update_status()
 
 
-def test_a_prompt_already_on_screen_is_never_doubled(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Clicking "Check for updates" while a dialog waits must not stack a second
-    one on top of it — that dialog is the user's turn to answer."""
-    app = _app(_running_at("2026.9.0"), monkeypatch)
-    monkeypatch.setattr(tray.notifications, "can_ask", lambda: True)
-    monkeypatch.setattr(
-        tray.notifications, "ask", lambda *_a, **_kw: pytest.fail("stacked a second dialog")
-    )
-    monkeypatch.setattr(app, "_notify", lambda *_a: pytest.fail("notified over a live dialog"))
-    app._prompting = True
+def test_a_channel_switch_rechecks_straight_away(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The cached answer was for the other channel; waiting half an hour to
+    replace it would leave the menu describing builds the user opted out of."""
+    monkeypatch.setattr(tray.supervisor, "status", lambda: _running_at("2026.9.0"))
+    app = tray.TrayApp(check_updates=True)
+    app._update = _update_info(latest_version="2026.9.1")
+    invalidated: list[bool] = []
+    monkeypatch.setattr(tray.updates, "invalidate", lambda: invalidated.append(True))
 
-    app._announce_update(_update_info(latest_version="2026.9.1"))
-    app._announce_update(_update_info(latest_version="2026.9.2"), force=True)
+    _prefs(monkeypatch, channel="nightly")
+
+    assert app._background_check_due(0.0)
+    assert app._update is None and invalidated
+    # Only once: the switch has been taken into account.
+    assert not app._background_check_due(0.0)
 
 
 def test_the_status_line_does_not_claim_up_to_date_mid_update(

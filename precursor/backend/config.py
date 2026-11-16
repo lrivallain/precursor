@@ -404,19 +404,19 @@ class Settings(BaseSettings):
     # Update checks (services/updates.py). "stable" tracks tagged releases;
     # "nightly" tracks the rolling prerelease built from main. Empty means
     # "match the running build" — a dev version follows nightly, a tagged one
-    # follows stable.
+    # follows stable. Only a default: a channel picked in Settings wins
+    # (services/update_prefs.py).
     update_repo: str = "lrivallain/precursor"
-    update_channel: str = ""
+    update_channel: str = "stable"
     # Extras carried across a self-update, so `precursor service update` doesn't
     # silently drop the kanban plugin (or Agents mode) the user installed with.
     update_extras: str = "kanban"
     update_check_ttl_seconds: int = 900
-    # What the tray does when a *background* check finds a new build.
-    # "prompt" raises an actionable notification with an "Update and restart"
-    # button; "notify" is a plain toast; "off" leaves the menu to say it. A
-    # dialog you didn't ask for is intrusive by nature, so it has to be
-    # refusable without turning update checks off altogether.
-    update_notify: str = "prompt"
+    # Whether the tray posts an OS notification when a *background* check finds
+    # a new build: "off" (the default) leaves the menu to say it, anything else
+    # notifies ("prompt" is the old name for it). Only a default, like
+    # update_channel.
+    update_notify: str = "off"
 
     @cached_property
     def logs_dir(self) -> str:

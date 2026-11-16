@@ -37,10 +37,10 @@ from typing import Any, Literal
 # instance against. Aliased so the staleness check reads as a deliberate
 # snapshot rather than a live lookup.
 from precursor import __version__ as _OWN_VERSION
-from precursor.backend import desktop, notifications, supervisor, winproc
+from precursor.backend import desktop, supervisor, winproc
 from precursor.backend.config import get_settings
 from precursor.backend.logging_config import TRAY_LOG_FILENAME, configure_logging, log_path
-from precursor.backend.services import updates
+from precursor.backend.services import update_prefs, updates
 
 logger = logging.getLogger(__name__)
 
@@ -79,10 +79,6 @@ _MARK_OK = "🟢"
 _MARK_UPDATE = "🟡"
 _MARK_ERROR = "🔴"
 _MARK_UNKNOWN = "⚪"
-
-# The buttons an actionable "update available" notification offers.
-_APPLY = notifications.Choice("apply", "Update and restart")
-_LATER = notifications.Choice("later", "Later")
 
 # The busy label the status line reacts to, named once so the two places that
 # have to agree — the action that sets it and the menu that reads it — can't
@@ -274,16 +270,6 @@ def _on_ui_thread(fn: Callable[[], None]) -> None:
     importlib.import_module("PyObjCTools.AppHelper").callAfter(fn)
 
 
-def _notify_mode() -> str:
-    """What the tray does when a background check finds a new build.
-
-    A dialog you didn't ask for is intrusive by nature, so it has to be
-    refusable without giving up update checks altogether.
-    """
-    mode = get_settings().update_notify.strip().lower()
-    return mode if mode in ("prompt", "notify", "off") else "prompt"
-
-
 class TrayApp:
     def __init__(self, *, check_updates: bool = True) -> None:
         self._check_updates = check_updates
@@ -293,9 +279,11 @@ class TrayApp:
         self._busy: str | None = None
         self._icon: Any | None = None
         # The build the user has already been told about, so a check every half
-        # hour doesn't turn into a prompt every half hour.
+        # hour doesn't turn into a notification every half hour.
         self._announced: str | None = None
-        self._prompting = False
+        # The channel the cached result was measured on, to notice a switch in
+        # Settings.
+        self._channel = update_prefs.load().channel
 
     # --- state -----------------------------------------------------------
 
@@ -535,57 +523,28 @@ class TrayApp:
     # --- announcing a new build ------------------------------------------
 
     def _announce_update(self, info: updates.UpdateInfo, *, force: bool = False) -> None:
-        """Say a new build exists — and, where the desktop allows, offer to take it.
+        """Post an OS notification saying a new build exists.
 
-        Noticing an update in the background is only half the feature: without a
-        way to act on it, the user still has to find the menu. So this raises an
-        *actionable* notification where the platform has one, and a plain toast
-        where it doesn't.
+        A notification, never a dialog: it goes through the platform's
+        notification centre, so Focus / Do Not Disturb and the system's
+        per-app notification settings apply, and nothing grabs the keyboard
+        mid-sentence. Taking the update stays one click in the menu.
 
-        Announced at most once per published build (``force`` overrides, for a
-        check the user asked for), because a half-hourly poll must not become a
-        half-hourly interruption. A prompt already on screen is never doubled,
-        forced or not — that one is the user's turn to answer.
+        At most once per published build (``force`` overrides, for a check the
+        user asked for), so a half-hourly poll can't nag. Turned off in
+        Settings, a background find stays in the menu only.
         """
-        mode = _notify_mode()
-        if self._prompting:
-            return
-        if mode == "off" and not force:
+        if not force and not update_prefs.load().notifications_enabled:
             return
         key = info.latest_commit or info.latest_version or ""
         if not force and key == self._announced:
             return
         self._announced = key
         headline = info.latest_version or "A newer build"
-        detail = f"{info.current_version} → {headline}"
-
-        if mode == "notify" or not notifications.can_ask():
-            self._notify("Precursor update available", detail)
-            return
-
-        def _prompt() -> None:
-            try:
-                choice = notifications.ask(
-                    "Precursor update available",
-                    f"{detail}\n\nInstall it now and restart?",
-                    (_APPLY, _LATER),
-                    default=_APPLY.key,
-                )
-            finally:
-                self._prompting = False
-            # Anything other than an explicit yes — dismissed, timed out,
-            # "Later" — leaves the build waiting in the menu.
-            if choice == _APPLY.key:
-                self._apply_update()
-
-        # Set before the thread starts, not inside it: the flag exists to stop a
-        # second announcement stacking a second dialog, and a thread that hasn't
-        # been scheduled yet would leave that window open.
-        self._prompting = True
-        # Off the caller's thread: the prompt blocks until answered, and the
-        # poll loop (or the busy state) must not be held hostage by a dialog
-        # nobody is looking at.
-        threading.Thread(target=_prompt, daemon=True).start()
+        self._notify(
+            "Precursor update available",
+            f"{info.current_version} → {headline}. Install it from the Precursor menu.",
+        )
 
     def _quit(self, *_: object) -> None:
         self._stop.set()
@@ -614,7 +573,7 @@ class TrayApp:
         if info is None:
             # Automatic checks off, but a manual one still fills this in — so
             # "off" is what we say only while there is genuinely nothing to say.
-            pending = "Checking for updates…" if self._check_updates else "Update checks are off"
+            pending = "Checking for updates…" if self._auto_checks() else "Update checks are off"
             return f"{_MARK_UNKNOWN} {pending} — {_OWN_VERSION}"
         if info.error:
             return f"{_MARK_ERROR} Could not check for updates — {info.current_version}"
@@ -729,7 +688,7 @@ class TrayApp:
                 first = False
                 self._report_finished_update()
             elapsed += _POLL_SECONDS
-            if self._check_updates and elapsed >= _UPDATE_POLL_SECONDS:
+            if self._background_check_due(elapsed):
                 elapsed = 0.0
                 try:
                     self._refresh_update_info()
@@ -746,7 +705,7 @@ class TrayApp:
             menu=self._build_menu(),
         )
         threading.Thread(target=self._poll_loop, daemon=True).start()
-        if self._check_updates:
+        if self._auto_checks():
             self._in_background("checking for updates", self._refresh_update_info)
         _record_self()
         try:
@@ -754,6 +713,20 @@ class TrayApp:
         finally:
             _forget_self()
         return 0
+
+    def _auto_checks(self) -> bool:
+        """Background checks: on unless ``--no-update-check`` or Settings say no."""
+        return self._check_updates and update_prefs.load().checks_enabled
+
+    def _background_check_due(self, elapsed: float) -> bool:
+        channel = update_prefs.load().channel
+        if channel != self._channel:
+            # Switched in Settings: the cached result answers the other channel.
+            self._channel = channel
+            self._update = None
+            updates.invalidate()
+            return self._auto_checks()
+        return elapsed >= _UPDATE_POLL_SECONDS and self._auto_checks()
 
     def _refresh_update_info(self) -> None:
         info = updates.check()

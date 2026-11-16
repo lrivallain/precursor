@@ -1005,11 +1005,11 @@ export type ModelCategory = string;
 export type ModelCategoryDef = Api.ModelCategoryDef;
 export type ModelCategories = Api.ModelCategories;
 
-// Azure AI Speech: endpoint, language and sign-in (key or `az login`); the key is never echoed.
-type SpeechFields = "azure_speech_endpoint" | "azure_speech_language" | "azure_speech_auth"
-  | "azure_speech_tenant" | "azure_speech_resource_id";
+// Typed from the API: Azure AI Speech (the key is never echoed) and the tray's update prefs.
+type PickedFields = "azure_speech_endpoint" | "azure_speech_language" | "azure_speech_auth" | "azure_speech_tenant"
+  | "azure_speech_resource_id" | "update_channel" | "update_checks_enabled" | "update_notifications_enabled";
 
-export interface Settings extends Pick<Api.SettingsRead, SpeechFields | "stt_azure_ready"> {
+export interface Settings extends Pick<Api.SettingsRead, PickedFields | "stt_azure_ready"> {
   theme: "light" | "dark" | "system";
   font_family: "system" | "opendyslexic" | "atkinson-hyperlegible" | "lexend";
   llm_model: string;
@@ -1138,7 +1138,7 @@ export interface Settings extends Pick<Api.SettingsRead, SpeechFields | "stt_azu
   backup_last_error: string | null;
 }
 
-export interface SettingsUpdate extends Partial<Pick<Api.SettingsRead, SpeechFields>> {
+export interface SettingsUpdate extends Partial<Pick<Api.SettingsRead, PickedFields>> {
   theme?: Settings["theme"];
   font_family?: Settings["font_family"];
   llm_model?: string;

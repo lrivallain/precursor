@@ -31,7 +31,6 @@
     "precursor/backend/services/step_plans.py": 1964,
     "precursor/backend/services/turn_engine.py": 1740,
     "precursor/backend/services/workspace_git.py": 1021,
-    "precursor/backend/tray.py": 807,
     "scripts/seed_demo.py": 2120,
     "tests/test_agents.py": 8313,
     "tests/test_app.py": 1109,
@@ -42,7 +41,7 @@
     "tests/test_plugins.py": 1310,
     "tests/test_step_assessor_tools.py": 916,
     "tests/test_step_plans.py": 4859,
-    "tests/test_tray.py": 925,
+    "tests/test_tray.py": 867,
     "tests/test_workiq_preview.py": 1526,
     "tests/test_workspace_git.py": 1149
   },

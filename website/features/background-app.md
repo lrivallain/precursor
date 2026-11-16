@@ -212,24 +212,28 @@ The tray checks for updates in the background, and a check nobody asked for is
 exactly the one worth speaking up about — otherwise the menu sits there knowing
 about a new build until you next happen to click the icon.
 
-So when a background check finds one, Precursor raises a notification with an
-**Update and restart** button: taking the update is one click, from wherever you
-were. Anything else — *Later*, dismissing it, or letting it time out — leaves the
-build waiting in the menu; only an explicit yes restarts anything.
+So the tray can post a **system notification** when a background check finds
+one. It is a notification, never a dialog: it goes through the operating
+system's notification centre, so Focus, Do Not Disturb and Focus Assist apply,
+and you can silence or restyle it in your system settings (on macOS it is listed
+under *Script Editor*, which delivers it). Taking the update stays one click in
+the menu; nothing is ever installed on its own.
 
 Each build is announced **once**. A poll every half hour must not become an
 interruption every half hour.
 
-| `PRECURSOR_UPDATE_NOTIFY` | Behaviour |
-| --- | --- |
-| `prompt` *(default)* | a notification with buttons, where the desktop supports them |
-| `notify` | a plain toast — no buttons, nothing to dismiss |
-| `off` | say nothing; the menu's status line still shows 🟡 |
+Choose all of this in **Settings → Updates**:
 
-Buttons need something on the desktop that can draw them: macOS uses
-`osascript`, Linux uses `notify-send --action` (libnotify 0.8+). Where neither
-is available — Windows, a bare session — the announcement degrades to a plain
-toast rather than disappearing.
+| Setting | Default | |
+| --- | --- | --- |
+| Update channel | Releases | *Releases* (tagged versions) or *Nightly* (see [Channels](#channels)) |
+| Check for updates automatically | on | the half-hourly background check; when off, use *Check for updates* in the menu |
+| Notify me when an update is available | off | the system notification above; the menu's status line shows 🟡 either way |
+
+The tray reads these from `update-prefs.json` in the data folder, so they apply
+whether or not the app is running, and the channel also drives `precursor
+service update`. Until you save a choice, `PRECURSOR_UPDATE_CHANNEL` and
+`PRECURSOR_UPDATE_NOTIFY` supply the defaults.
 
 The data-folder entry is deliberately **not** disabled while the instance is
 stopped: the database and the logs are exactly what you want to reach when it
@@ -306,12 +310,14 @@ restarts the previous build.
 
 ### Channels
 
-| Channel | Tracks | Chosen when |
-| --- | --- | --- |
-| `nightly` | a rolling prerelease of `main` after CI succeeds on that exact commit | you're running a dev build |
-| `stable` | the latest tagged release | you're running a tagged version |
+| Channel | Tracks |
+| --- | --- |
+| `stable` (*Releases*, the default) | the latest tagged release |
+| `nightly` | a rolling prerelease of `main` after CI succeeds on that exact commit |
 
-Pin one explicitly with `PRECURSOR_UPDATE_CHANNEL`.
+Pick one in **Settings → Updates**. `PRECURSOR_UPDATE_CHANNEL` sets the default
+before a choice is saved; set it empty to match the running build (a dev
+version follows nightly, a tagged one follows stable).
 
 A nightly build isn't ordered — two branches can share a base version — so the
 nightly channel compares the **commit** rather than the version number, and a

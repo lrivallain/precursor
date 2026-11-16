@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.models import AppSetting
 from precursor.backend.schemas.model_fallback import ModelCategories
+from precursor.backend.services import update_prefs, updates
 from precursor.backend.services.agents.manager import get_agent_manager
 from precursor.backend.services.app_settings import resolve_agents_enabled
 from precursor.backend.services.github_auth import invalidate_gh_cli_token, resolve_github_token
@@ -137,12 +138,33 @@ async def _provider_switch(session: AsyncSession, data: Settings) -> None:
         invalidate_model_catalog()
 
 
+_UPDATE_PREF_FIELDS = {
+    "update_channel": "channel",
+    "update_checks_enabled": "checks_enabled",
+    "update_notifications_enabled": "notifications_enabled",
+}
+
+
+async def _store_update_prefs(session: AsyncSession, data: Settings) -> None:
+    # The tray reads these and never opens the database, so they go to their
+    # own file instead of the AppSetting table. A null channel means "follow the
+    # running build" again; a null toggle is just not sent.
+    changes = {field: data.pop(key) for key, field in _UPDATE_PREF_FIELDS.items() if key in data}
+    changes = {k: v for k, v in changes.items() if v is not None or k == "channel"}
+    if not changes:
+        return
+    update_prefs.save(**changes)
+    if "channel" in changes:
+        updates.invalidate()
+
+
 _NORMALISERS: tuple[Callable[[AsyncSession, Settings], Awaitable[None]], ...] = (
     _check_categories,
     _check_iq_providers,
     _merge_api_keys,
     _merge_llm_providers,
     _provider_switch,
+    _store_update_prefs,
 )
 
 

@@ -2185,6 +2185,9 @@ export interface SettingsPayload {
   iq_ask_model?: string | null;
   workiq_tenant_id?: string | null;
   playwright_browser?: string | null;
+  update_channel?: ("stable" | "nightly") | null;
+  update_checks_enabled?: boolean | null;
+  update_notifications_enabled?: boolean | null;
   llm_max_input_tokens?: number | null;
   llm_max_tool_result_tokens?: number | null;
   llm_tool_result_keep_turns?: number | null;
@@ -2279,6 +2282,9 @@ export interface SettingsRead {
   workiq_tenant_id: string;
   workiq_tenant_discovered: boolean;
   playwright_browser: string;
+  update_channel: "stable" | "nightly";
+  update_checks_enabled: boolean;
+  update_notifications_enabled: boolean;
   llm_max_input_tokens: number;
   llm_max_tool_result_tokens: number;
   llm_tool_result_keep_turns: number;

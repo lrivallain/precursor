@@ -26,6 +26,9 @@ _applies_out_of_process = updates.applies_out_of_process
 @pytest.fixture(autouse=True)
 def _clean(monkeypatch: pytest.MonkeyPatch):
     updates.invalidate()
+    # The tests below are about matching the running build ("" channel), not
+    # about the shipped default.
+    monkeypatch.setenv("PRECURSOR_UPDATE_CHANNEL", "")
     config.get_settings.cache_clear()
     # On Windows a uv-tool update hands off to a detached helper that runs the
     # real `uv tool install`. The tests below exercise the in-process install;
