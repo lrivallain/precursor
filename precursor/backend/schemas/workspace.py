@@ -25,7 +25,8 @@ class WorkspaceRead(BaseModel):
     id: int
     name: str
     slug: str
-    kind: Literal["git", "local"] = "git"
+    # Plain ``str``: a row with an unexpected kind must not break the listing.
+    kind: str = "git"
     repo_url: str | None = None
     branch: str
     subdir: str | None = None

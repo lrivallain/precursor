@@ -3388,7 +3388,7 @@ export interface WorkspaceRead {
   id: number;
   name: string;
   slug: string;
-  kind: "git" | "local";
+  kind: string;
   repo_url: string | null;
   branch: string;
   subdir: string | null;

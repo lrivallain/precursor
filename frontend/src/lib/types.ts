@@ -1627,7 +1627,7 @@ export type MemoryUpdate = Api.MemoryUpdate;
 
 export type WorkspaceKind = "git" | "local";
 
-export type Workspace = Api.WorkspaceRead;
+export type Workspace = Omit<Api.WorkspaceRead, "kind"> & { kind: WorkspaceKind };
 
 export type WorkspaceCreate = Api.WorkspaceCreate;
 
