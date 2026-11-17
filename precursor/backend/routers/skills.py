@@ -27,6 +27,7 @@ def _to_read(skill: ResolvedSkill) -> SkillRead:
         enabled=skill.enabled,
         active=skill.active,
         legacy=skill.legacy,
+        builtin=skill.builtin,
     )
 
 

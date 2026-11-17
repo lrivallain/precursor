@@ -179,6 +179,7 @@ PRECURSOR_SKILLS_DIR="$PWD/.demo/skills" \
 
 # 3. Serve it on :8899. The launcher strips `gh` from PATH and clears any
 #    GITHUB_TOKEN, so the persona resolves to "Guest / Not connected".
+#    (DEMO_WITH_GH=1 keeps your sign-in to try real models; never capture then.)
 ./scripts/demo_server.sh &
 
 # 4. Capture. Omit the scene names to retake everything.

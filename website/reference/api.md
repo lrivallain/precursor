@@ -273,6 +273,17 @@ Paths are repo-relative; leaving the repo or touching `.git` → `400`. Names
 with surrounding whitespace, control characters or ref-like prefixes
 (`refs/…`, `heads/…`, `origin/…`, `HEAD`) are refused.
 
+### Canvases
+
+`/api/canvas` ([canvases](/features/canvas)): `GET workspace` (the built-in
+Canvas workspace, created on first call), `GET /{conversation_id}` (a
+conversation's canvases, newest first), `GET`/`PUT /{conversation_id}/{name}/state`
+(`{state}`, the JSON a canvas page saves; `404` for an unknown canvas). An
+invalid conversation id → `400`. Canvas files themselves are served at
+`/raw/canvas/<conversation_id>/<file>` and written with the workspace file
+routes. `GET /api/skills` items carry `builtin` (built-in skills refuse edits
+and deletion with `400`).
+
 ## Live sessions
 
 `/api/live`: [live sessions](/features/live-sessions), segments, insights,

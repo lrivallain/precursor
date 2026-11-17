@@ -21,8 +21,8 @@ from precursor.backend.schemas import (
     TopicNoteSend,
 )
 from precursor.backend.schemas.topic import TopicRead
+from precursor.backend.services import canvases, side_chat_notes, step_plans
 from precursor.backend.services import roles as roles_service
-from precursor.backend.services import side_chat_notes, step_plans
 from precursor.backend.services.collections import (
     resolve_collection_default_role,
     resolve_collection_id,
@@ -202,8 +202,10 @@ async def delete_chat(
         raise HTTPException(status_code=404, detail="Chat not found")
     parent_topic_id = chat.parent_topic_id
     detached_plans = await step_plans.detach_chat(session, chat_id)
+    public_id = chat.public_id
     await session.delete(chat)
     await session.commit()
+    canvases.remove_conversation_canvases(public_id)
     for plan_id in detached_plans:
         await publish_step_plan_changed(plan_id)
     if parent_topic_id is not None:

@@ -14,7 +14,11 @@ from typing import Literal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from precursor.backend.config import DEFINITIONS_WORKSPACE_SLUG, get_settings
+from precursor.backend.config import (
+    CANVAS_WORKSPACE_SLUG,
+    DEFINITIONS_WORKSPACE_SLUG,
+    get_settings,
+)
 from precursor.backend.models import Workspace
 from precursor.backend.services import workspace_git as git
 from precursor.backend.services.github_auth import resolve_github_token
@@ -31,6 +35,9 @@ WORKSPACE_WRITE_TOOLS = frozenset(
 
 class WorkspaceError(Exception):
     """A workspace couldn't be created; the message is safe to show the caller."""
+
+
+_RESERVED_SLUGS = frozenset({DEFINITIONS_WORKSPACE_SLUG, CANVAS_WORKSPACE_SLUG})
 
 
 def workspace_root(ws: Workspace) -> Path:
@@ -54,9 +61,9 @@ async def allocate_slug(session: AsyncSession, base: str) -> str:
         existing = (
             await session.execute(select(Workspace.id).where(Workspace.slug == candidate))
         ).first()
-        # The built-in definitions workspace's slug is kept for it, even while
-        # it doesn't exist yet.
-        if existing is None and candidate != DEFINITIONS_WORKSPACE_SLUG:
+        # The built-in workspaces' slugs are kept for them, even while they
+        # don't exist yet.
+        if existing is None and candidate not in _RESERVED_SLUGS:
             return candidate
         candidate = f"{base}-{n}"
         n += 1

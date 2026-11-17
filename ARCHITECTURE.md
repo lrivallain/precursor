@@ -54,6 +54,8 @@ scripts/             CI and maintenance scripts (stdlib-only where they run in h
 | A tool on the built-in MCP server | `@mcp.tool()` in the matching `precursor_tools/<group>.py`, gated with `_section_enabled`; new groups are added to `precursor_tools/__init__.py` | `services/mcp/precursor_tools/` |
 | An Entra ID token from the Azure CLI sign-in (`az login`, optional tenant) | `AzureCliTokenProvider(tenant, resource)`; narrow its `error` to your own type | `services/azure_cli.py` |
 | Sign an MCP server's requests with an Azure CLI Entra token; read the tenant and resource it advertises | `build_auth`, `AzureCliBearerAuth`, `detect_server_auth` | `services/mcp/entra_auth.py` |
+| A conversation's canvases (built-in `canvas` workspace, one folder per conversation), their state and prompt block | `canvases.py` (`write_canvas`, `list_canvases`, `ensure_canvas_workspace`) | `services/canvases.py` |
+| A skill shipped with Precursor | a `SKILL.md` in `builtin_skills/<name>/`; `skills.builtin_instructions(name)` reads it | `builtin_skills/`, `services/skills.py` |
 | Links to topics, chats and messages | `app_base_url`, `topic_paths`, `message_path` | `services/links.py`, `services/message_links.py` |
 
 Conventions that keep this reusable:
@@ -83,6 +85,7 @@ Conventions that keep this reusable:
 | A "Copied!" style feedback that clears itself | `useFlash(ms)` | `lib/useFlash.ts` |
 | Agent timeline rows, exchanges and folds | `buildRows`, `buildCockpitTimeline` | `lib/agentWorkflow.ts`, `lib/agentCockpitTimeline.ts` |
 | The M365 agenda (WorkIQ) and its Past / Current & upcoming list; hide M365 surfaces when WorkIQ is off | `useAgenda()`, `MeetingAgendaList`, `useM365Enabled()` | `lib/useAgenda.ts`, `components/MeetingAgendaList.tsx`, `lib/settingsStore.ts` |
+| Show a conversation canvas, or render a workspace file's preview | `CanvasBlock` (```canvas fence), `parseCanvasRef`, `WorkspaceFilePreview`, `workspaceFileTypes` | `components/CanvasBlock.tsx`, `lib/canvas.ts`, `components/WorkspaceFilePreview.tsx` |
 | A settings tab | a component in `components/settings/` taking `{ s }` from its own `use<Tab>Settings` hook, called in `SettingsPanel` (only the active tab is mounted); the hook returns a `SettingsSection` (`hydrate`, `payload`, `snapshot`, `onSaved`) that `useSettingsForm` merges into the one Save and the unsaved-changes check | `components/settings/settingsSection.ts`, `components/settings/useSettingsForm.ts` |
 
 Conventions that keep this reusable:

@@ -49,6 +49,9 @@ Sections → tools:
                      write_workspace_file, create_workspace_folder (write —
                      lands in the working tree only; committing/pushing stays
                      a separate user action)
+- ``canvas``       → canvas_guide, list_canvases, read_canvas, write_canvas,
+                     edit_canvas (on by default — only the built-in "canvas"
+                     workspace, one folder per conversation)
 
 The two workspace sections are *strict*: first-party agents run this server with
 full access, but file writes and workspace creation must still be opted into.
@@ -109,6 +112,13 @@ from precursor.backend.services.mcp.precursor_tools.basic import (
     get_system_info,
     hash_or_encode,
     random_value,
+)
+from precursor.backend.services.mcp.precursor_tools.canvas import (
+    canvas_guide,
+    edit_canvas,
+    list_canvases,
+    read_canvas,
+    write_canvas,
 )
 from precursor.backend.services.mcp.precursor_tools.conversations import (
     get_agent,
@@ -246,6 +256,7 @@ __all__ = [
     "build_mcp",
     "calculate",
     "cancel_reminder",
+    "canvas_guide",
     "convert_timezone",
     "convert_units",
     "count_text",
@@ -256,6 +267,7 @@ __all__ = [
     "create_workspace_file",
     "create_workspace_folder",
     "date_math",
+    "edit_canvas",
     "edit_step_plan",
     "generate_uuid",
     "get_agent",
@@ -272,6 +284,7 @@ __all__ = [
     "http_endpoint_url",
     "is_loopback_host",
     "list_agents",
+    "list_canvases",
     "list_chat_messages",
     "list_chats",
     "list_live_sessions",
@@ -290,6 +303,7 @@ __all__ = [
     "post_message",
     "precursor_info",
     "random_value",
+    "read_canvas",
     "read_workspace_file",
     "retrieve",
     "run_schedule_now",
@@ -307,6 +321,7 @@ __all__ = [
     "workflow_state_get",
     "workflow_state_list",
     "workflow_state_set",
+    "write_canvas",
     "write_workspace_file",
 ]
 

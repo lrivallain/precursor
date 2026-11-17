@@ -13,8 +13,6 @@ import {
   ExternalLink,
   Eye,
   FileText,
-  FileCode2,
-  FolderOpen,
   GitMerge,
   History,
   Image as ImageIcon,
@@ -35,7 +33,15 @@ import { vscodeUrl, workspaceAbsolutePath } from "../lib/localPath";
 import { useResizableWidth } from "../lib/useResizableWidth";
 import { useIsNarrow } from "../lib/useMediaQuery";
 import { useConfirm } from "./ConfirmDialog";
-import { Markdown } from "./Markdown";
+import { WorkspaceFilePreview } from "./WorkspaceFilePreview";
+import { isBuiltinWorkspace, LocalWorkspaceLabel } from "./WorkspaceIcon";
+import {
+  hasPreview,
+  isDrawio,
+  isEditable,
+  isImage,
+  isPdf,
+} from "../lib/workspaceFileTypes";
 import { ResizeHandle } from "./ResizeHandle";
 import { DiscussButton, WorkspaceDiscussionPanel } from "./WorkspaceDiscussion";
 import type { WsDiscussionRef } from "../lib/routes";
@@ -45,7 +51,7 @@ import type { DiffTarget } from "./GitChanges";
 import { HistoryPanel } from "./GitHistory";
 import { BranchPicker } from "./BranchPicker";
 import { ConflictPane } from "./GitConflict";
-import { DrawioEditor, DrawioThemeToggle } from "./DrawioEditor";
+import { DrawioThemeToggle } from "./DrawioEditor";
 import {
   DefinitionFileIssues,
   isPlaced,
@@ -64,63 +70,6 @@ import type {
   Workspace,
   WorkspaceFileNode,
 } from "../lib/types";
-
-const TEXT_EXTS = [
-  ".md",
-  ".markdown",
-  ".txt",
-  ".rst",
-  ".json",
-  ".yaml",
-  ".yml",
-  ".toml",
-  ".csv",
-  ".html",
-  ".css",
-  ".js",
-  ".ts",
-  ".py",
-  ".sh",
-  ".drawio",
-  ".drawio.xml",
-];
-
-function isEditable(name: string): boolean {
-  const lower = name.toLowerCase();
-  return TEXT_EXTS.some((e) => lower.endsWith(e)) || lower.startsWith(".");
-}
-
-function isMarkdown(name: string): boolean {
-  const lower = name.toLowerCase();
-  return lower.endsWith(".md") || lower.endsWith(".markdown");
-}
-
-function isHtml(name: string): boolean {
-  const lower = name.toLowerCase();
-  return lower.endsWith(".html") || lower.endsWith(".htm");
-}
-
-// Extensions the drawio MCP server writes (services/mcp/drawio_server.py).
-function isDrawio(name: string): boolean {
-  const lower = name.toLowerCase();
-  return lower.endsWith(".drawio") || lower.endsWith(".drawio.xml");
-}
-
-function hasPreview(name: string): boolean {
-  return isMarkdown(name) || isHtml(name) || isDrawio(name);
-}
-
-// SVG stays out: it's text, and editable as such.
-const IMAGE_EXTS = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".avif"];
-
-function isImage(name: string): boolean {
-  const lower = name.toLowerCase();
-  return IMAGE_EXTS.some((e) => lower.endsWith(e));
-}
-
-function isPdf(name: string): boolean {
-  return name.toLowerCase().endsWith(".pdf");
-}
 
 // Monaco is its own chunk, fetched the first time a file is edited.
 const CodeEditor = lazy(() =>
@@ -1283,27 +1232,16 @@ export function WorkspaceView({
                   </div>
                 ) : (
                   <>
-                    {showPreview && isMarkdown(activePath) ? (
-                      <Markdown className="text-sm leading-relaxed p-6 max-w-3xl">
-                        {content || "\u200B"}
-                      </Markdown>
-                    ) : showPreview && isDrawio(activePath) ? (
-                      <DrawioEditor
-                        key={`${activePath}#${mediaVersion}`}
+                    {showPreview && (
+                      <WorkspaceFilePreview
+                        slug={area.slug}
                         path={activePath}
-                        xml={content}
+                        content={content}
+                        mediaVersion={mediaVersion}
                         onChange={setContent}
-                        onSave={(xml) => void save(xml)}
+                        onSave={(text) => void save(text)}
                       />
-                    ) : showPreview && isHtml(activePath) ? (
-                      <iframe
-                        key={`${activePath}#${mediaVersion}`}
-                        title={activePath}
-                        src={`${workspaceRawUrl(area.slug, activePath)}?v=${mediaVersion}`}
-                        sandbox="allow-scripts allow-same-origin"
-                        className="w-full h-full border-0 bg-white"
-                      />
-                    ) : null}
+                    )}
                     {(editorVisible || editorFor === activePath) && (
                       <div className={editorVisible ? "h-full" : "hidden"}>
                         <Suspense
@@ -1436,25 +1374,7 @@ function LocalWorkspaceBar({
 
   return (
     <div className="flex items-center gap-3 px-4 h-10 border-b border-border bg-surface/40 text-sm">
-      {area.hosts_definitions ? (
-        <span
-          className="inline-flex items-center gap-1.5 text-muted"
-          data-tooltip={
-            "Definition files: agents, workflows and live summary templates\n" +
-            "(*.agent.yaml, *.workflow.yaml, *.summary.yaml).\n" +
-            "Opening one shows its check under the editor. The assistant's file tools can only read here.\n" +
-            "Settings → Workflows migrates your agents and workflows into files."
-          }
-        >
-          <FileCode2 size={14} />
-          Definition files
-        </span>
-      ) : (
-        <span className="inline-flex items-center gap-1.5 text-muted">
-          <FolderOpen size={14} />
-          Local folder
-        </span>
-      )}
+      <LocalWorkspaceLabel workspace={area} />
       <button
         className="p-1 rounded hover:bg-surface text-muted hover:text-text"
         aria-label="Copy local path"
@@ -1476,8 +1396,8 @@ function LocalWorkspaceBar({
       )}
       <div className="flex-1" />
       {discuss}
-      {/* Its folder holds every agent and workflow declaration. */}
-      {!area.hosts_definitions && (
+      {/* Built-in: its folder holds every definition file, or every canvas. */}
+      {!isBuiltinWorkspace(area) && (
         <button
           className="p-1.5 rounded hover:bg-surface text-muted hover:text-red-500"
           aria-label="Remove workspace"

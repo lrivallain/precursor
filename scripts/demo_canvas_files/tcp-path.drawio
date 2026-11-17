@@ -1,0 +1,20 @@
+<mxfile host="precursor"><diagram name="TCP path"><mxGraphModel dx="900" dy="500" grid="1" gridSize="10" page="1" pageWidth="900" pageHeight="420"><root>
+<mxCell id="0"/><mxCell id="1" parent="0"/>
+<mxCell id="host-a" value="Sender host" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;verticalAlign=top;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="20" y="40" width="200" height="300" as="geometry"/></mxCell>
+<mxCell id="app-a" value="Application&lt;br&gt;&lt;i&gt;write()&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;" vertex="1" parent="1"><mxGeometry x="50" y="80" width="140" height="50" as="geometry"/></mxCell>
+<mxCell id="tcp-a" value="TCP&lt;br&gt;cwnd, ssthresh, RTO" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1"><mxGeometry x="50" y="160" width="140" height="60" as="geometry"/></mxCell>
+<mxCell id="ip-a" value="IP / NIC" style="rounded=1;whiteSpace=wrap;html=1;" vertex="1" parent="1"><mxGeometry x="50" y="250" width="140" height="50" as="geometry"/></mxCell>
+<mxCell id="router" value="Bottleneck router&lt;br&gt;&lt;i&gt;queue fills, drops&lt;/i&gt;" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;size=10;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1"><mxGeometry x="350" y="225" width="160" height="90" as="geometry"/></mxCell>
+<mxCell id="host-b" value="Receiver host" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;verticalAlign=top;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="640" y="40" width="200" height="300" as="geometry"/></mxCell>
+<mxCell id="app-b" value="Application&lt;br&gt;&lt;i&gt;read()&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;" vertex="1" parent="1"><mxGeometry x="670" y="80" width="140" height="50" as="geometry"/></mxCell>
+<mxCell id="tcp-b" value="TCP&lt;br&gt;rwnd (advertised)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1"><mxGeometry x="670" y="160" width="140" height="60" as="geometry"/></mxCell>
+<mxCell id="ip-b" value="IP / NIC" style="rounded=1;whiteSpace=wrap;html=1;" vertex="1" parent="1"><mxGeometry x="670" y="250" width="140" height="50" as="geometry"/></mxCell>
+<mxCell id="e1" style="edgeStyle=orthogonalEdgeStyle;html=1;" edge="1" parent="1" source="app-a" target="tcp-a"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="e2" style="edgeStyle=orthogonalEdgeStyle;html=1;" edge="1" parent="1" source="tcp-a" target="ip-a"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="e3" value="data segments" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeWidth=2;" edge="1" parent="1" source="ip-a" target="router"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="e4" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeWidth=2;" edge="1" parent="1" source="router" target="ip-b"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="e5" style="edgeStyle=orthogonalEdgeStyle;html=1;" edge="1" parent="1" source="ip-b" target="tcp-b"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="e6" style="edgeStyle=orthogonalEdgeStyle;html=1;" edge="1" parent="1" source="tcp-b" target="app-b"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="e7" value="ACKs + rwnd" style="edgeStyle=orthogonalEdgeStyle;html=1;dashed=1;" edge="1" parent="1" source="tcp-b" target="tcp-a"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="note" value="Send rate ≈ min(cwnd, rwnd) / RTT" style="text;html=1;align=center;fontStyle=2;" vertex="1" parent="1"><mxGeometry x="300" y="120" width="260" height="30" as="geometry"/></mxCell>
+</root></mxGraphModel></diagram></mxfile>

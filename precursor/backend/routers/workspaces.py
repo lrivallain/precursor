@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from precursor.backend.config import get_settings
+from precursor.backend.config import CANVAS_WORKSPACE_SLUG, get_settings
 from precursor.backend.db import get_session
 from precursor.backend.lookups import get_or_404
 from precursor.backend.models import Workspace
@@ -107,9 +107,10 @@ async def list_workspaces(
     for ws in result.scalars().all():
         read = WorkspaceRead.model_validate(ws)
         read.hosts_definitions = definitions_home.holds_definitions(workspace_root(ws))
+        read.hosts_canvases = ws.slug == CANVAS_WORKSPACE_SLUG
         reads.append(read)
-    # The definitions workspace leads the list: it's the one every install has.
-    return sorted(reads, key=lambda r: not r.hosts_definitions)
+    # The built-in workspaces lead the list: definitions, then canvases.
+    return sorted(reads, key=lambda r: (not r.hosts_definitions, not r.hosts_canvases))
 
 
 @router.post("", response_model=WorkspaceRead, status_code=status.HTTP_201_CREATED)

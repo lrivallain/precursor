@@ -4,6 +4,8 @@ import { AlertTriangle, Check, Code2, Copy, Image as ImageIcon } from "lucide-re
 interface MermaidBlockProps {
   /** Raw mermaid source as produced inside a ```mermaid fence. */
   code: string;
+  /** Just the diagram, without the frame and its header (a canvas has its own). */
+  bare?: boolean;
 }
 
 // A single mermaid instance shared across every block. Loaded lazily so the
@@ -29,7 +31,7 @@ let renderSeq = 0;
  * directly in chat, topics, and agents. The library is imported lazily and the
  * theme follows the app's light/dark mode.
  */
-export function MermaidBlock({ code }: MermaidBlockProps) {
+export function MermaidBlock({ code, bare = false }: MermaidBlockProps) {
   const [showSource, setShowSource] = useState(false);
   const [copied, setCopied] = useState(false);
   const [svg, setSvg] = useState<string | null>(null);
@@ -81,6 +83,29 @@ export function MermaidBlock({ code }: MermaidBlockProps) {
   };
 
   const showDiagram = !showSource && svg && !error;
+  const body = error && !showSource ? (
+    <div className="flex items-start gap-2 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">
+      <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+      <div className="min-w-0">
+        <p className="mb-1 font-medium">Couldn't render this diagram.</p>
+        <pre className="!my-0 !rounded-none !border-0 overflow-x-auto whitespace-pre-wrap">
+          <code>{code}</code>
+        </pre>
+      </div>
+    </div>
+  ) : showDiagram ? (
+    <div
+      className="flex justify-center p-3 [&>svg]:h-auto [&>svg]:max-w-full"
+      // Markup comes from mermaid with securityLevel "strict" (scripts and
+      // event handlers stripped, HTML labels disabled).
+      dangerouslySetInnerHTML={{ __html: svg }}
+    />
+  ) : (
+    <pre className="!my-0 !rounded-none !border-0 overflow-x-auto">
+      <code>{code}</code>
+    </pre>
+  );
+  if (bare) return body;
 
   return (
     <div className="my-2 overflow-hidden rounded-md border border-border bg-surface" data-copy-source={code}>
@@ -107,28 +132,7 @@ export function MermaidBlock({ code }: MermaidBlockProps) {
           </button>
         </div>
       </div>
-      {error && !showSource ? (
-        <div className="flex items-start gap-2 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">
-          <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-          <div className="min-w-0">
-            <p className="mb-1 font-medium">Couldn't render this diagram.</p>
-            <pre className="!my-0 !rounded-none !border-0 overflow-x-auto whitespace-pre-wrap">
-              <code>{code}</code>
-            </pre>
-          </div>
-        </div>
-      ) : showDiagram ? (
-        <div
-          className="flex justify-center p-3 [&>svg]:h-auto [&>svg]:max-w-full"
-          // Markup comes from mermaid with securityLevel "strict" (scripts and
-          // event handlers stripped, HTML labels disabled).
-          dangerouslySetInnerHTML={{ __html: svg }}
-        />
-      ) : (
-        <pre className="!my-0 !rounded-none !border-0 overflow-x-auto">
-          <code>{code}</code>
-        </pre>
-      )}
+      {body}
     </div>
   );
 }

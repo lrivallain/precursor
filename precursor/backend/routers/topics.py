@@ -28,8 +28,8 @@ from precursor.backend.schemas.schedule import (
     TopicScheduleCreate,
 )
 from precursor.backend.services import approvals as approval_service
+from precursor.backend.services import canvases, side_chats, step_plans
 from precursor.backend.services import roles as roles_service
-from precursor.backend.services import side_chats, step_plans
 from precursor.backend.services.collections import (
     move_subtree_to_collection,
     resolve_collection_default_role,
@@ -340,8 +340,10 @@ async def delete_topic(topic_id: int, session: AsyncSession = Depends(get_sessio
     )
     detached = await side_chats.detach_topic(session, topic_id)
     detached_plans = await step_plans.detach_topic(session, topic_id)
+    public_id = topic.public_id
     await session.delete(topic)
     await session.commit()
+    canvases.remove_conversation_canvases(public_id)
     await publish_topic_changed(topic_id)
     for plan_id in detached_plans:
         await publish_step_plan_changed(plan_id)

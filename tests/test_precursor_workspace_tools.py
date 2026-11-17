@@ -290,10 +290,12 @@ async def test_tools_list_follows_the_exposed_sections(monkeypatch) -> None:
     monkeypatch.delenv("PRECURSOR_MCP_FULL_ACCESS", raising=False)
     server = ps.build_mcp()
 
+    # Canvases are the one section on by default.
+    canvas_tools = {"canvas_guide", "list_canvases", "read_canvas", "write_canvas", "edit_canvas"}
     await _set_expose({})
-    assert {t.name for t in await server.list_tools()} == {"precursor_info"}
+    assert {t.name for t in await server.list_tools()} == {"precursor_info", *canvas_tools}
 
-    await _set_expose({"topics": True, "workspaces_write": True})
+    await _set_expose({"topics": True, "workspaces_write": True, "canvas": False})
     names = {t.name for t in await server.list_tools()}
     assert names == {"precursor_info", "list_topics", "get_topic", *WORKSPACE_WRITE_TOOLS}
 

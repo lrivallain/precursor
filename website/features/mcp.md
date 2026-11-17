@@ -229,7 +229,7 @@ server marks read-only (`readOnlyHint`) run without asking.
 ## As a server — exposing your conversations
 
 The built-in **`precursor`** server exposes Precursor's data to MCP hosts. Every
-section is **off by default**; enable them in **Settings → MCP servers →
+section but **Canvases** is **off by default**; enable them in **Settings → MCP servers →
 Precursor capabilities** (**Select all** / **Unselect all** flip them at once).
 Only the tools of exposed sections are advertised.
 
@@ -244,9 +244,10 @@ Only the tools of exposed sections are advertised.
 | Skills, memory (`memory_write`), schedules, reminders | Read and manage them. |
 | [Agent](/features/agents-mode/artifacts-state#durable-state-the-private-scratchpad) and [workflow](/features/workflows/steps#pipeline-state-what-a-workflow-remembers) state | Durable key/value state. |
 | [Workspaces](/features/workspaces) / Edit workspaces | `list_workspaces`, `list_workspace_files`, `read_workspace_file`; edit adds `create_workspace` (empty or git clone), `create_workspace_file`, `write_workspace_file`, `create_workspace_folder`. Agents still ask before each write. |
+| [Canvases](/features/canvas) (`canvas`, on by default) | `canvas_guide`, `list_canvases`, `read_canvas`, `write_canvas`, `edit_canvas`: visuals shown inline in a reply, kept in the built-in Canvas workspace. |
 | Basic tools | Stateless helpers ([below](#basic-tools)). |
 
-With nothing exposed, only `precursor_info` is advertised. The tool-by-tool
+With every section off, only `precursor_info` is advertised. The tool-by-tool
 behaviour of step plans and the event relay are in the
 [MCP reference](/reference/mcp#the-precursor-server).
 

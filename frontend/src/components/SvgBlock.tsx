@@ -4,6 +4,8 @@ import { Check, Code2, Copy, Image as ImageIcon } from "lucide-react";
 interface SvgBlockProps {
   /** Raw `<svg>…</svg>` source as produced by the model. */
   code: string;
+  /** Just the image, without the frame and its header (a canvas has its own). */
+  bare?: boolean;
 }
 
 /**
@@ -67,7 +69,7 @@ function sanitizeSvg(raw: string): string | null {
  * with a toggle back to the source and a copy button. Used by the shared
  * Markdown renderer so SVG shows up directly in chat, topics, and agents.
  */
-export function SvgBlock({ code }: SvgBlockProps) {
+export function SvgBlock({ code, bare = false }: SvgBlockProps) {
   const [showSource, setShowSource] = useState(false);
   const [copied, setCopied] = useState(false);
 
@@ -81,6 +83,15 @@ export function SvgBlock({ code }: SvgBlockProps) {
       </pre>
     );
   }
+
+  const image = (
+    <div
+      className="flex justify-center p-3 [&>svg]:h-auto [&>svg]:max-w-full"
+      // Markup is sanitized above (script/handlers/js: URLs removed).
+      dangerouslySetInnerHTML={{ __html: sanitized }}
+    />
+  );
+  if (bare) return image;
 
   const copy = async () => {
     try {
@@ -122,11 +133,7 @@ export function SvgBlock({ code }: SvgBlockProps) {
           <code>{code}</code>
         </pre>
       ) : (
-        <div
-          className="flex justify-center p-3 [&>svg]:h-auto [&>svg]:max-w-full"
-          // Markup is sanitized above (script/handlers/js: URLs removed).
-          dangerouslySetInnerHTML={{ __html: sanitized }}
-        />
+        image
       )}
     </div>
   );

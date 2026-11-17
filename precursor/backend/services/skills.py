@@ -34,6 +34,9 @@ from precursor.backend.models import Skill
 
 _NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
 
+# Skills shipped with Precursor, in the same SKILL.md format.
+BUILTIN_SKILLS_DIR = Path(__file__).resolve().parent.parent / "builtin_skills"
+
 # A ``/skill-name`` reference anywhere in a body of text. Anchored to the start
 # of the string or to whitespace, and refusing a trailing word char or ``/``, so
 # paths (``/usr/bin``), URLs (``https://host/rewrite``) and prose (``and/or``)
@@ -73,6 +76,9 @@ class ResolvedSkill:
     legacy: bool
     # Whether the skill is usable as a slash command right now.
     active: bool
+    # Shipped with Precursor (``builtin_skills/``): on unless turned off, and
+    # neither editable nor deletable. A user skill of the same name replaces it.
+    builtin: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -163,6 +169,21 @@ def _discover_files() -> dict[str, tuple[str | None, str]]:
     return found
 
 
+def _discover_builtins() -> dict[str, tuple[str | None, str]]:
+    found: dict[str, tuple[str | None, str]] = {}
+    for entry in sorted(BUILTIN_SKILLS_DIR.iterdir()):
+        skill_md = entry / "SKILL.md"
+        if entry.is_dir() and skill_md.is_file():
+            _, description, instructions = _parse_skill_file(skill_md, entry.name)
+            found[entry.name] = (description, instructions)
+    return found
+
+
+def builtin_instructions(name: str) -> str:
+    """A built-in skill's body, whether or not it is turned on (tools quote it)."""
+    return _discover_builtins()[name][1]
+
+
 def write_skill_file(name: str, description: str | None, instructions: str) -> None:
     path = _skill_file(name)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -195,11 +216,12 @@ async def reconcile_and_list(session: AsyncSession) -> list[ResolvedSkill]:
     # or not yet mounted — a transient condition. Dropping rows here would
     # silently disable every skill, so we preserve enablement until files
     # reappear (see module docstring).
+    builtins = _discover_builtins()
     if files:
         dropped = False
         for name, row in list(rows.items()):
             # A tracked file-backed row whose file vanished loses its enablement.
-            if row.migrated and name not in files:
+            if row.migrated and name not in files and name not in builtins:
                 await session.delete(row)
                 del rows[name]
                 dropped = True
@@ -233,6 +255,21 @@ async def reconcile_and_list(session: AsyncSession) -> list[ResolvedSkill]:
             enabled=enabled,
             legacy=False,
             active=enabled,
+        )
+
+    for name, (description, instructions) in builtins.items():
+        if name in resolved:  # a user skill of the same name replaces it
+            continue
+        db_row = rows.get(name)
+        enabled = db_row.enabled if db_row is not None else True
+        resolved[name] = ResolvedSkill(
+            name=name,
+            description=description,
+            instructions=instructions,
+            enabled=enabled,
+            legacy=False,
+            active=enabled,
+            builtin=True,
         )
 
     return sorted(resolved.values(), key=lambda s: s.name)
@@ -374,6 +411,10 @@ async def update_skill(
         raise SkillError("Skill not found")
 
     row = (await session.execute(select(Skill).where(Skill.name == name))).scalar_one_or_none()
+    if skill.builtin and (
+        new_name not in (None, name) or description is not UNSET or instructions is not UNSET
+    ):
+        raise SkillError("A built-in skill can only be turned on or off.")
 
     target_name = name
     if new_name is not None and new_name != name:
@@ -446,6 +487,8 @@ async def delete_skill(session: AsyncSession, name: str) -> None:
     skill = await get_resolved(session, name)
     if skill is None:
         raise SkillError("Skill not found")
+    if skill.builtin:
+        raise SkillError("A built-in skill can't be deleted; turn it off instead.")
     row = (await session.execute(select(Skill).where(Skill.name == name))).scalar_one_or_none()
     if not skill.legacy:
         delete_skill_dir(name)

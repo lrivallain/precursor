@@ -9,7 +9,14 @@ cd "$(dirname "$0")/.."
 UV=$(command -v uv) || { echo "uv not found on PATH" >&2; exit 1; }
 PORT=${DEMO_PORT:-8899}
 CLEANPATH=$(echo "$PATH" | tr ':' '\n' | while read -r d; do [ -x "$d/gh" ] || echo "$d"; done | paste -sd: -)
-exec env -u GITHUB_TOKEN -u GH_TOKEN -u GH_ENTERPRISE_TOKEN \
+UNSET_TOKENS=(-u GITHUB_TOKEN -u GH_TOKEN -u GH_ENTERPRISE_TOKEN)
+# DEMO_WITH_GH=1 keeps your `gh` sign-in, to try real models on the demo data.
+# Never take screenshots that way: the persona shows your account.
+if [ "${DEMO_WITH_GH:-}" = "1" ]; then
+  CLEANPATH=$PATH
+  UNSET_TOKENS=()
+fi
+exec env "${UNSET_TOKENS[@]}" \
   PATH="$CLEANPATH" \
   PRECURSOR_DATABASE_URL="sqlite+aiosqlite:///$(pwd)/.demo/demo.db" \
   PRECURSOR_DATA_DIR="$(pwd)/.demo/data" \

@@ -14,6 +14,24 @@ the exact per-version history.
 
 ## [Unreleased]
 
+### Added
+
+- **Canvases: visuals drawn right in the conversation.** The assistant can
+  illustrate a reply with an interactive HTML page (simulations, sliders,
+  step-throughs), an editable draw.io diagram, a Mermaid flow or an SVG, shown
+  inline with reload, download, full screen and "open in workspace". Canvases
+  are files in a built-in **Canvas** workspace, one folder per conversation,
+  attached to it as artifacts and removed with it. Interactive canvases get the
+  `window.precursor` SDK (`/canvas-sdk.js`): theme, saved state, `ask` to fill
+  the message box (from the Canvas workspace too), downloads and API calls.
+  New `canvas` tools on the `precursor` MCP server (section on by default), a
+  built-in `/canvas` skill, and `/api/canvas` routes. The Canvas workspace is
+  listed after Definitions, with its own colour, and can't be removed.
+- **Built-in skills.** Skills shipped with Precursor show as **built-in** in
+  Settings → Skills: on by default, can be turned off, not edited or deleted.
+- **Mermaid and SVG previews in Files.** `.mmd` and `.svg` files render in the
+  workspace preview and are editable as text.
+
 ## [2026.11.8] - 2026-11-17
 
 ### Added

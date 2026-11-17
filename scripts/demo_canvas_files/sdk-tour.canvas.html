@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Canvas SDK tour</title>
+<script src="/canvas-sdk.js"></script>
+<style>
+  body { margin: 0; background: var(--pc-bg); color: var(--pc-text); font: 13px system-ui, sans-serif; }
+  .wrap { padding: 14px 16px 16px; display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+  .card { border: 1px solid var(--pc-border); background: var(--pc-surface); border-radius: 8px; padding: 10px 12px; }
+  h2 { font-size: 13px; margin: 0 0 2px; display: flex; align-items: center; gap: 6px; }
+  code { font: 11px ui-monospace, Menlo, monospace; color: var(--pc-accent); }
+  .muted { color: var(--pc-muted); font-size: 12px; margin: 0 0 8px; }
+  .row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  button { font: inherit; font-size: 12px; padding: 4px 9px; border-radius: 6px; border: 1px solid var(--pc-border); background: var(--pc-bg); color: var(--pc-text); cursor: pointer; }
+  button:hover { border-color: var(--pc-accent); }
+  input { font: inherit; font-size: 12px; padding: 4px 6px; border-radius: 6px; border: 1px solid var(--pc-border); background: var(--pc-bg); color: var(--pc-text); flex: 1; min-width: 0; }
+  dl { display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; margin: 0; font-size: 12px; }
+  dt { color: var(--pc-muted); } dd { margin: 0; overflow-wrap: anywhere; }
+  .swatches { display: flex; gap: 4px; margin-top: 6px; }
+  .swatches span { width: 22px; height: 22px; border-radius: 4px; border: 1px solid var(--pc-border); }
+  .big { font-size: 22px; font-weight: 600; min-width: 2ch; text-align: center; }
+  .out { font-size: 12px; margin-top: 6px; min-height: 16px; color: var(--pc-muted); }
+  ul { margin: 6px 0 0; padding-left: 18px; font-size: 12px; }
+  .extra { display: none; margin-top: 8px; font-size: 12px; } .extra.on { display: block; }
+  .wide { grid-column: 1 / -1; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <section class="card">
+    <h2>Identity <code>precursor.canvas</code></h2>
+    <p class="muted">Which canvas this page is, and of which conversation.</p>
+    <dl id="identity"></dl>
+  </section>
+
+  <section class="card">
+    <h2>Theme <code>precursor.theme</code></h2>
+    <p class="muted">Switch Precursor between light and dark: this card follows live.</p>
+    <div>Current theme: <b id="theme"></b> <span id="themeChanges" class="muted"></span></div>
+    <div class="swatches" id="swatches"></div>
+  </section>
+
+  <section class="card">
+    <h2>Saved state <code>precursor.state</code></h2>
+    <p class="muted">Kept beside the canvas: reload the page or come back later.</p>
+    <div class="row">
+      <button id="dec">−</button><span class="big" id="count">…</span><button id="inc">+</button>
+      <input id="note" placeholder="A note to remember" />
+    </div>
+    <div class="out" id="stateOut"></div>
+  </section>
+
+  <section class="card">
+    <h2>Back to the conversation <code>precursor.ask</code></h2>
+    <p class="muted">Fills the message box with a question; you choose whether to send it.</p>
+    <div class="row">
+      <input id="question" value="Suggest three more widgets this SDK tour could show." />
+      <button id="ask">Ask</button>
+    </div>
+    <div class="out" id="askOut"></div>
+  </section>
+
+  <section class="card">
+    <h2>Files <code>download</code> · <code>exportSvg</code></h2>
+    <p class="muted">Save what the canvas produced.</p>
+    <svg id="badge" viewBox="0 0 120 40" width="120" height="40" role="img" aria-label="Badge">
+      <rect width="120" height="40" rx="8" fill="currentColor" opacity="0.12" />
+      <text x="60" y="25" text-anchor="middle" font-size="14" fill="currentColor">count: <tspan id="badgeCount">0</tspan></text>
+    </svg>
+    <div class="row">
+      <button id="csv">Download CSV</button><button id="json">Download state JSON</button><button id="svg">Export SVG</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Precursor API <code>precursor.api</code></h2>
+    <p class="muted">Read live data as you: this conversation's canvases, your recent chats.</p>
+    <div class="row"><button id="canvases">List canvases</button><button id="chats">Recent chats</button></div>
+    <ul id="apiOut"></ul>
+  </section>
+
+  <section class="card wide">
+    <h2>Size <code>precursor.resize</code></h2>
+    <p class="muted">The frame follows the page's height on its own; <code>resize()</code> forces a new measure.</p>
+    <button id="grow">Show more</button>
+    <div class="extra" id="extra">
+      This block appeared and the frame grew to fit it: no scrollbar, no fixed height.
+      The SDK watches the page with a ResizeObserver and tells the conversation the new height.
+    </div>
+  </section>
+</div>
+<script>
+  var $ = function (id) { return document.getElementById(id); };
+  var c = precursor.canvas;
+
+  // Identity
+  var rows = c
+    ? [["name", c.name], ["kind", c.kind], ["conversation", c.conversationId], ["embedded", String(precursor.embedded)]]
+    : [["canvas", "opened outside the canvas workspace"]];
+  $("identity").innerHTML = rows.map(function (r) { return "<dt>" + r[0] + "</dt><dd>" + r[1] + "</dd>"; }).join("");
+
+  // Theme
+  var changes = 0;
+  function showTheme(theme) {
+    $("theme").textContent = theme;
+    $("swatches").innerHTML = ["bg", "surface", "text", "muted", "border", "accent"].map(function (t) {
+      return '<span title="--pc-' + t + '" style="background: var(--pc-' + t + ')"></span>';
+    }).join("");
+  }
+  showTheme(precursor.theme);
+  precursor.onThemeChange(function (theme) {
+    changes += 1;
+    $("themeChanges").textContent = "(changed " + changes + "×)";
+    showTheme(theme);
+  });
+
+  // State
+  var state = { count: 0, note: "" };
+  function render() { $("count").textContent = state.count; $("badgeCount").textContent = state.count; $("note").value = state.note; }
+  function save() {
+    if (!c) return;
+    precursor.state.save(state).then(function () { $("stateOut").textContent = "Saved at " + new Date().toLocaleTimeString(); });
+  }
+  $("inc").onclick = function () { state.count += 1; render(); save(); };
+  $("dec").onclick = function () { state.count -= 1; render(); save(); };
+  $("note").onchange = function (e) { state.note = e.target.value; save(); };
+  if (c) {
+    precursor.state.load().then(function (saved) {
+      if (saved) { state = saved; $("stateOut").textContent = "Restored from the last visit."; }
+      render();
+    });
+  } else { render(); }
+
+  // Ask
+  $("ask").onclick = function () {
+    var ok = precursor.ask($("question").value + " (Counter is at " + state.count + ".)");
+    $("askOut").textContent = ok ? "Look at the message box." : "Open this canvas inside Precursor to use ask().";
+  };
+
+  // Files
+  $("csv").onclick = function () {
+    var csv = "metric,value\ncount," + state.count + "\nnote," + JSON.stringify(state.note) + "\n";
+    precursor.download("sdk-tour.csv", csv, "text/csv");
+  };
+  $("json").onclick = function () { precursor.download("sdk-tour-state.json", JSON.stringify(state, null, 2), "application/json"); };
+  $("svg").onclick = function () { precursor.exportSvg($("badge"), "sdk-tour-badge.svg"); };
+
+  // API
+  function list(items) { $("apiOut").innerHTML = items.map(function (i) { return "<li>" + i + "</li>"; }).join("") || "<li>Nothing yet.</li>"; }
+  function fail(e) { list(["Error: " + e.message]); }
+  $("canvases").onclick = function () {
+    if (!c) return list(["Only inside the canvas workspace."]);
+    precursor.api("canvas/" + c.conversationId).then(function (all) {
+      list(all.map(function (x) { return x.name + " <code>" + x.kind + "</code> · " + x.bytes + " bytes"; }));
+    }).catch(fail);
+  };
+  $("chats").onclick = function () {
+    precursor.api("chats").then(function (chats) {
+      list(chats.slice(0, 5).map(function (x) { return x.title; }));
+    }).catch(fail);
+  };
+
+  // Size
+  $("grow").onclick = function () {
+    var on = $("extra").classList.toggle("on");
+    $("grow").textContent = on ? "Show less" : "Show more";
+    precursor.resize();
+  };
+</script>
+</body>
+</html>

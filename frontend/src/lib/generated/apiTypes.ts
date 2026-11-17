@@ -706,6 +706,30 @@ export interface BranchRequest {
   name: string;
 }
 
+export interface CanvasRead {
+  name: string;
+  kind: "html" | "drawio" | "mermaid" | "svg";
+  path: string;
+  bytes: number;
+  updated_at: string;
+}
+
+/** JSON a canvas page keeps between visits (``precursor.state`` in the SDK). */
+export interface CanvasState {
+  state: unknown;
+}
+
+/** JSON a canvas page keeps between visits (``precursor.state`` in the SDK). */
+export interface CanvasStateInput {
+  state?: unknown;
+}
+
+/** The built-in workspace that holds every conversation's canvases. */
+export interface CanvasWorkspace {
+  id: number;
+  slug: string;
+}
+
 export interface ChatCreate {
   llm_selection?: ConversationLLMSelectionInput | null;
   title: string;
@@ -2382,6 +2406,7 @@ export interface SkillRead {
   enabled: boolean;
   active: boolean;
   legacy: boolean;
+  builtin: boolean;
 }
 
 export interface SkillUpdate {
@@ -3363,13 +3388,14 @@ export interface WorkspaceRead {
   id: number;
   name: string;
   slug: string;
-  kind: string;
+  kind: "git" | "local";
   repo_url: string | null;
   branch: string;
   subdir: string | null;
   cloned_at: string | null;
   last_synced_at: string | null;
   hosts_definitions: boolean;
+  hosts_canvases: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -3754,6 +3780,30 @@ export interface Operations {
       attachment_id: number;
     };
     response: void;
+  };
+  "GET /api/canvas/workspace": {
+    response: CanvasWorkspace;
+  };
+  "GET /api/canvas/{conversation_id}": {
+    path: {
+      conversation_id: string;
+    };
+    response: CanvasRead[];
+  };
+  "GET /api/canvas/{conversation_id}/{name}/state": {
+    path: {
+      conversation_id: string;
+      name: string;
+    };
+    response: CanvasState;
+  };
+  "PUT /api/canvas/{conversation_id}/{name}/state": {
+    path: {
+      conversation_id: string;
+      name: string;
+    };
+    body: CanvasStateInput;
+    response: CanvasState;
   };
   "GET /api/chats": {
     query?: {

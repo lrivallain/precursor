@@ -17,6 +17,8 @@ import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import { SvgBlock } from "./SvgBlock";
 import { MermaidBlock } from "./MermaidBlock";
+import { CanvasBlock } from "./CanvasBlock";
+import { parseCanvasRef } from "../lib/canvas";
 import { makeHighlightRehype, useSearchHighlight } from "../lib/searchHighlight";
 import { openChatBySlug } from "../lib/sideChats";
 import { openStepPlan } from "../lib/stepPlans";
@@ -199,17 +201,17 @@ function svgFromPre(children: ReactNode): string | null {
 }
 
 /**
- * Pull mermaid source out of a `<pre>`'s `<code class="language-mermaid">`
- * child, or null when the fence isn't tagged as mermaid.
+ * Pull the body of a fence tagged `language` (```mermaid, ```canvas) out of a
+ * `<pre>`'s `<code>` child, or null when the fence carries another tag.
  */
-function mermaidFromPre(children: ReactNode): string | null {
+function fenceFromPre(children: ReactNode, language: string): string | null {
   const code = Children.toArray(children).find(
     (child): child is ReactElement<{ className?: string; children?: ReactNode }> =>
       isValidElement(child),
   );
   if (!code) return null;
   const className = code.props.className ?? "";
-  if (!/\blanguage-mermaid\b/.test(className)) return null;
+  if (!new RegExp(`\\blanguage-${language}\\b`).test(className)) return null;
   const text = flattenText(code.props.children).replace(/\n$/, "");
   return text.trim() ? text : null;
 }
@@ -301,7 +303,9 @@ export const Markdown = memo(function Markdown({
         components={{
           li: onTaskChange ? TaskListItem : "li",
           pre({ children: preChildren, ...props }) {
-            const mermaid = mermaidFromPre(preChildren);
+            const canvas = parseCanvasRef(fenceFromPre(preChildren, "canvas") ?? "");
+            if (canvas) return <CanvasBlock canvas={canvas} />;
+            const mermaid = fenceFromPre(preChildren, "mermaid");
             if (mermaid) return <MermaidBlock code={mermaid} />;
             const svg = svgFromPre(preChildren);
             if (svg) return <SvgBlock code={svg} />;

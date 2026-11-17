@@ -1,0 +1,18 @@
+sequenceDiagram
+    autonumber
+    participant S as Sender
+    participant R as Receiver
+    S->>R: SYN
+    R->>S: SYN-ACK
+    S->>R: ACK (connection open, cwnd = 1)
+    S->>R: Segments 1-4
+    R-->>S: ACK 5
+    S-xR: Segment 5 (lost)
+    S->>R: Segments 6-8
+    R-->>S: dup ACK 5
+    R-->>S: dup ACK 5
+    R-->>S: dup ACK 5
+    Note over S: 3 duplicate ACKs: fast retransmit,<br/>ssthresh = cwnd / 2
+    S->>R: Segment 5 (retransmitted)
+    R-->>S: ACK 9
+    Note over S,R: Reno: fast recovery, cwnd = ssthresh,<br/>then +1 segment per round trip
