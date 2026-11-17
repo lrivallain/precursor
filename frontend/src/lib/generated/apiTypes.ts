@@ -1570,6 +1570,14 @@ export interface MeetingSegmentCreate {
   offset_ms?: number | null;
 }
 
+export interface MeetingSegmentDiscard {
+  ids: number[];
+}
+
+export interface MeetingSegmentDiscardResult {
+  deleted: number;
+}
+
 export interface MeetingSegmentRead {
   id: number;
   session_id: number;
@@ -4331,6 +4339,13 @@ export interface Operations {
     };
     body: MeetingSegmentCreate;
     response: MeetingSegmentRead;
+  };
+  "POST /api/live/{session_id}/segments/discard": {
+    path: {
+      session_id: number;
+    };
+    body: MeetingSegmentDiscard;
+    response: MeetingSegmentDiscardResult;
   };
   "PATCH /api/live/{session_id}/segments/{segment_id}": {
     path: {

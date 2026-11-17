@@ -284,6 +284,8 @@ notes, summary, attendees.
   `languages`, last choices, definitions `folder`/`workspace`.
   `PUT /summary-templates/selection` (`204`); `POST /summary-templates/files`
   `{template, duplicate?}` returns the file to edit.
+- `POST /{id}/segments/discard` `{ids}` deletes those transcript phrases and
+  returns `{deleted}`; ids from another session are ignored.
 - `POST /{id}/speakers/me` `{label, me?}` marks a speaker as you.
 - `POST /{id}/suggest` `{question, speaker_label?}` streams a
   [suggested answer](/features/live-sessions#suggested-answers) (`token`, then

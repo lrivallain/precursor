@@ -22,6 +22,10 @@ the exact per-version history.
   the tray's background update checks off, and choose whether a new build posts
   a system notification. The tray reads them whether or not the app is running,
   and `precursor service update` follows the channel.
+- **Discard live transcript phrases in bulk.** A recording left running after
+  the meeting no longer pollutes the transcript: **Select** above the
+  transcript, pick phrases (Shift-click for a range, or "from here to the
+  end"), then **Discard**. Backed by `POST /api/live/{id}/segments/discard`.
 - **Workspace tree refresh and discussion links.** A refresh button in the
   workspace's Files header reloads the tree and its git status, for files
   changed outside the app. The title of a workspace's side discussion now links

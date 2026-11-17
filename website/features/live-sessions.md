@@ -49,6 +49,10 @@ In the transcript:
 - Click a **speaker label** to rename it (`Guest-2` → `Thomas`) everywhere, or mark it **This
   is me**.
 - **Double-click a phrase** to fix a misheard word.
+- **Discard phrases in bulk** (e.g. a recording left running after the meeting): **Select**
+  above the transcript, tick phrases (**Shift-click** for a range, the arrow next to a checkbox
+  for "from here to the end", **All** / **Invert** / **Clear**), then **Discard**. It is
+  permanent; re-run the analysis if the insights already used the discarded talk.
 
 ## The panels
 

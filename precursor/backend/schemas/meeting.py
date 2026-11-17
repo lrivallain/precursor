@@ -145,6 +145,15 @@ class MeetingSegmentUpdate(BaseModel):
     text: str = Field(min_length=1)
 
 
+class MeetingSegmentDiscard(BaseModel):
+    # Phrases to remove, e.g. everything recorded after a forgotten Stop.
+    ids: list[int] = Field(min_length=1, max_length=50_000)
+
+
+class MeetingSegmentDiscardResult(BaseModel):
+    deleted: int
+
+
 class MeetingSegmentRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

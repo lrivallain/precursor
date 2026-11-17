@@ -51,9 +51,6 @@ from precursor.backend.schemas import (
     MeetingAttachmentRead,
     MeetingInsightRead,
     MeetingPostResult,
-    MeetingSegmentCreate,
-    MeetingSegmentRead,
-    MeetingSegmentUpdate,
     MeetingSessionCreate,
     MeetingSessionRead,
     MeetingSessionUpdate,
@@ -401,79 +398,6 @@ async def unarchive_session_endpoint(
         await session.refresh(ms)
     await publish_meeting_changed(ms.id)
     return ms
-
-
-# --------------------------------------------------------------------------
-# Transcript segments
-# --------------------------------------------------------------------------
-
-
-@router.get("/{session_id}/segments", response_model=list[MeetingSegmentRead])
-async def list_segments(
-    session_id: int, session: AsyncSession = Depends(get_session)
-) -> list[MeetingSegment]:
-    await _get_session_or_404(session_id, session)
-    result = await session.execute(
-        select(MeetingSegment)
-        .where(MeetingSegment.session_id == session_id)
-        .order_by(MeetingSegment.created_at, MeetingSegment.id)
-    )
-    return list(result.scalars().all())
-
-
-@router.post(
-    "/{session_id}/segments",
-    response_model=MeetingSegmentRead,
-    status_code=status.HTTP_201_CREATED,
-)
-async def append_segment(
-    session_id: int,
-    payload: MeetingSegmentCreate,
-    session: AsyncSession = Depends(get_session),
-) -> MeetingSegment:
-    ms = await _get_session_or_404(session_id, session)
-    # First persisted phrase marks when recording actually began.
-    if ms.started_at is None:
-        ms.started_at = datetime.now(UTC)
-
-    segment = MeetingSegment(
-        session_id=session_id,
-        text=payload.text.strip(),
-        speaker_label=(payload.speaker_label or "").strip() or None,
-        offset_ms=payload.offset_ms,
-    )
-    session.add(segment)
-    await session.commit()
-    await session.refresh(segment)
-    return segment
-
-
-@router.patch(
-    "/{session_id}/segments/{segment_id}",
-    response_model=MeetingSegmentRead,
-)
-async def update_segment(
-    session_id: int,
-    segment_id: int,
-    payload: MeetingSegmentUpdate,
-    session: AsyncSession = Depends(get_session),
-) -> MeetingSegment:
-    """Correct the spoken text of a single transcript phrase.
-
-    Lets a user fix mistaken words in place (double-click to edit in the UI).
-    Only the text changes; the speaker label and offset are preserved.
-    """
-    await _get_session_or_404(session_id, session)
-    segment = await session.get(MeetingSegment, segment_id)
-    if segment is None or segment.session_id != session_id:
-        raise HTTPException(status_code=404, detail="Segment not found")
-    text = payload.text.strip()
-    if not text:
-        raise HTTPException(status_code=400, detail="Segment text cannot be empty")
-    segment.text = text
-    await session.commit()
-    await session.refresh(segment)
-    return segment
 
 
 @router.post("/{session_id}/speakers", response_model=MeetingSessionRead)
