@@ -12,13 +12,14 @@ from __future__ import annotations
 
 import atexit
 import contextlib
+import hashlib
 import os
 import shutil
 import sqlite3
 import tempfile
 import uuid
 import warnings
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 
 import pytest
 
@@ -308,6 +309,24 @@ def _no_agents_runtime():
 
 
 @pytest.fixture(autouse=True)
+def _no_docker_probe():
+    """Answer the Docker capability probe without running ``docker version``.
+
+    ``GET /api/settings`` reports whether Docker is usable, and the suite reads
+    settings a few hundred times. Each read shelled out to the real CLI, which
+    is installed on CI runners and is slowest exactly where subprocesses
+    already are: on Windows. Tests about the cmd-runner's jail patch this same
+    attribute with the answer they need.
+    """
+    from precursor.backend.services import cmd_runner
+
+    prev = cmd_runner.docker_available
+    cmd_runner.docker_available = lambda: (False, "test: docker probe stubbed out")
+    yield
+    cmd_runner.docker_available = prev
+
+
+@pytest.fixture(autouse=True)
 def _no_llm_credentials():
     """Keep the LLM provider off the network by pretending there's no token.
 
@@ -333,3 +352,43 @@ def _no_llm_credentials():
     llm_module.resolve_github_token = _no_token  # type: ignore[assignment]
     yield
     llm_module.resolve_github_token = prev  # type: ignore[assignment]
+
+
+def shard_selection(keys: Iterable[str], shard: int, total: int) -> list[bool]:
+    """Whether each test key belongs to ``shard`` (1-based) of ``total``.
+
+    A content hash, not ``hash()``: string hashing is salted per process, and
+    every xdist worker must deselect exactly the same tests as the controller.
+    """
+    return [
+        int.from_bytes(hashlib.sha1(key.encode()).digest()[:8], "big") % total == shard - 1
+        for key in keys
+    ]
+
+
+def _shard_key(item: pytest.Item) -> str:
+    # Tests pinned together for xdist share a resource, so they share a shard too.
+    marker = item.get_closest_marker("xdist_group")
+    if marker is not None:
+        name = marker.args[0] if marker.args else marker.kwargs.get("name", "")
+        return f"xdist_group:{name}"
+    return item.nodeid
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Run one slice of the suite when ``PRECURSOR_TEST_SHARD=k/n`` is set.
+
+    CI splits the backend suite across parallel jobs this way, so the slowest
+    platform no longer gates every merge on the whole suite in one runner.
+    Unset, every test runs.
+    """
+    spec = os.environ.get("PRECURSOR_TEST_SHARD", "").strip()
+    if not spec:
+        return
+    shard_text, _, total_text = spec.partition("/")
+    shard, total = int(shard_text), int(total_text)
+    if not 1 <= shard <= total:
+        raise pytest.UsageError(f"PRECURSOR_TEST_SHARD={spec!r}: expected k/n with 1 <= k <= n")
+    keep = shard_selection([_shard_key(item) for item in items], shard, total)
+    config.hook.pytest_deselected(items=[i for i, k in zip(items, keep, strict=True) if not k])
+    items[:] = [i for i, k in zip(items, keep, strict=True) if k]

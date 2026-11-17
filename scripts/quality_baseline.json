@@ -43,7 +43,7 @@
     "tests/test_step_plans.py": 4859,
     "tests/test_tray.py": 867,
     "tests/test_workiq_preview.py": 1526,
-    "tests/test_workspace_git.py": 1149
+    "tests/test_workspace_git.py": 1133
   },
   "ruff": {
     "precursor/backend/__main__.py::PLR0915": 1,
