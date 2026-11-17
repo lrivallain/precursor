@@ -207,9 +207,17 @@ jobs:
         run: uv python install 3.12
 
       # With the tray extra, so the icon's Windows paths import for real.
+      # Bytecode is compiled once here: otherwise all 8 xdist workers compile
+      # the same modules at once on 4 cores, each .pyc write scanned by
+      # Defender, and the first tests in every worker stalled for 40-50 s.
       - name: Sync dependencies
         if: steps.scope.outputs.backend == 'true'
-        run: uv sync --locked --extra tray
+        run: uv sync --locked --extra tray --compile-bytecode
+
+      # The project is installed editable, so --compile-bytecode skips it.
+      - name: Compile project bytecode
+        if: steps.scope.outputs.backend == 'true'
+        run: uv run --no-sync python -m compileall -q -j 0 precursor
 
       - name: Pytest
         if: steps.scope.outputs.backend == 'true'
