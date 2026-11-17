@@ -5,28 +5,25 @@ description: Add one markdown file and open a pull request to get your plugin li
 
 # Submitting a plugin
 
-Getting listed in the [catalogue](/plugins) is **one file and one pull request**.
-That file is both the metadata Precursor reads and the documentation page people
-land on — there is no second place to keep in sync.
+Getting listed in the [catalogue](/plugins) is **one file and one pull
+request**. The file is both the metadata Precursor reads and the plugin's
+documentation page.
 
-## 1. Publish the package first
+## 1. Publish the package
 
-The catalogue installs from PyPI by name, so the distribution has to exist there
-and actually be a Precursor plugin: a package exposing a `register(registry)`
-callable through the `precursor.plugins` entry-point group. If you haven't built
-one yet, start with the [plugin contract](/features/plugins) and
-[`precursor-kanban`](https://github.com/lrivallain/precursor-kanban) as the
-worked example.
+The catalogue installs from PyPI by name, so the distribution must exist there
+and expose a `register(registry)` callable in the `precursor.plugins`
+entry-point group. See the [plugin reference](/reference/plugins) and
+[`precursor-kanban`](https://github.com/lrivallain/precursor-kanban).
 
-Attach the built wheel to each GitHub release too, and declare `repository`
-below: users whose package index lags PyPI can then install and upgrade from
-your releases instead, and every user can pick an older release when the newest
-doesn't fit their Precursor yet.
+Also attach the built wheel to each GitHub release and declare `repository`:
+users whose index lags PyPI can then install from your releases, and anyone can
+pick an older release.
 
 ## 2. Add `website/plugins/<your-plugin-id>.md`
 
-The file name **must** be your plugin id — the entry-point name — because it is
-both the page URL and the key Precursor matches against installed plugins.
+The file name **must** be the plugin id (the entry-point name): it is the page
+URL and the key matched against installed plugins.
 
 ```markdown
 ---
@@ -52,80 +49,68 @@ What it does, what it needs to work, and how to install it.
 
 | Field | Required | What it is |
 | --- | --- | --- |
-| `title` | ✅ | Display name. Doubles as the page title. |
-| `description` | ✅ | One-line summary, shown on the catalogue card. |
-| `plugin` | ✅ | Entry-point name. Lowercase, alphanumeric and dashes, **equal to the file name**. |
-| `distribution` | ✅ | PyPI project name. A **bare name** — see below. |
-| `homepage` | — | `https://` URL of the source repository. |
-| `repository` | — | `https://github.com/<owner>/<repo>`, exactly. Lets the app install from the wheels attached to your GitHub releases — the way around a package index that hasn't caught up. Only useful if your releases carry a built wheel. |
-| `author` | — | Who maintains it. |
-| `license` | — | SPDX identifier, e.g. `MIT`. |
-| `tags` | — | Free-form keywords for scanning the list. |
-| `contributes` | — | Any of `section`, `settings`, `mcp`, `api`. |
-| `recommended` | — | Maintainers set this. Leave it `false` (or omit it) in your PR. |
+| `title` | ✅ | Display name and page title. |
+| `description` | ✅ | One-line summary on the catalogue card. |
+| `plugin` | ✅ | Entry-point name: lowercase alphanumerics and dashes, **equal to the file name**. |
+| `distribution` | ✅ | PyPI project name, a **bare name** (see below). |
+| `homepage` | | `https://` URL of the source repository. |
+| `repository` | | Exactly `https://github.com/<owner>/<repo>`. Enables installing from wheels attached to your GitHub releases. |
+| `author` | | Maintainer. |
+| `license` | | SPDX identifier, e.g. `MIT`. |
+| `tags` | | Free-form keywords. |
+| `contributes` | | Any of `section`, `settings`, `mcp`, `api`. |
+| `recommended` | | Maintainers set this; leave it `false` or omit it. |
 
 ::: warning `distribution` is a bare name, and that is enforced
-It is the one value handed to an installer, so it is validated against PEP 508's
-name grammar: no URL, no path, no `@ …` requirement, no extra, no version
-specifier. A catalogue that could say `pkg @ https://example.invalid/evil.whl`
-would make a merged pull request into code execution on every machine that opens
-the panel. The check runs when the catalogue loads **and** in CI, so a malformed
-entry fails the build rather than shipping.
+It is the only value handed to an installer, so it must match PEP 508's name
+grammar: no URL, path, `@ …` requirement, extra or version specifier. The check
+runs when the catalogue loads **and** in CI.
 :::
 
 ### The body
 
-The body becomes your page at `/plugins/<id>`, and it is bundled into the app's
-own offline docs — so write it for someone deciding whether to install:
+The body becomes `/plugins/<id>` and ships in the app's offline docs. Write it
+for someone deciding whether to install:
 
-- **what it does**, in a paragraph, not a feature dump;
-- **what it needs** — a token, a scope, an external service, a configured
-  repository;
-- **what it adds** — sections, MCP servers, API routes;
+- **what it does**, in a paragraph;
+- **what it needs**: token, scopes, external service, configured repository;
+- **what it adds**: sections, MCP servers, API routes;
 - **how to install it**, including any extra.
 
-Keep it a page, not a manual. Deep documentation belongs in your own repository;
-link to it.
+Keep deep documentation in your own repository and link to it.
 
 ## 3. Check it locally
 
-The site and the app read the same file, so verify both:
-
 ```bash
-# The catalogue page and your entry's own page.
-cd website && npm install && npm run docs:dev
+# The catalogue page and your entry's page.
+cd website && npm ci && npm run docs:dev
 
-# The parsed entry, exactly as the app will see it.
+# The entry as the app parses it.
 uv run --frozen python -c "
 from precursor.backend.plugins.catalog import load_catalog
 for entry in load_catalog(): print(entry)
 "
 
-# The validation CI will run.
+# The validation CI runs.
 uv run --frozen pytest tests/test_plugin_catalog.py
 ```
 
-If your entry doesn't appear, it failed validation — the loader logs the reason
-and skips it rather than taking the panel down.
+An entry that doesn't appear failed validation; the loader logs why and skips
+it.
 
 ## 4. Open the pull request
 
-Title it `catalog: add <your plugin>`. Nothing else needs to change: the
-catalogue page, the sidebar entry and the in-app listing are all generated from
-your file.
+Title it `catalog: add <your plugin>`. Nothing else changes: the catalogue page,
+sidebar and in-app list are generated from your file.
 
-We'll look for the basics — the package resolves on PyPI, it really is a
-Precursor plugin, the repository is public, and the page says what the plugin
-does. We are not auditing your code, and listing is not an endorsement: only
-entries the maintainers mark `recommended` carry one.
+Review checks the basics: the package resolves on PyPI, it is a Precursor
+plugin, the repository is public, and the page explains it. It is not a code
+audit, and listing is not an endorsement (only `recommended` entries are).
 
-Once merged, the entry ships with the **next Precursor release** — the catalogue
-is bundled rather than fetched, so it needs no network at runtime and no entry
-appears that a human didn't review.
+Once merged, the entry ships with the **next Precursor release**.
 
 ## Getting removed
 
-Open a pull request deleting the file, or an issue if you'd rather we did. An
-abandoned plugin — one whose package no longer resolves, or that no longer loads
-against a supported host — may be delisted; that removes it from the catalogue
-and nothing else. Nobody's install breaks, because the package is still on PyPI.
+Open a pull request deleting the file, or an issue. Abandoned plugins (package
+no longer resolves, or no longer loads on a supported host) may be delisted.
+Delisting removes the catalogue entry only; existing installs keep working.

@@ -5,7 +5,8 @@ hero:
   name: Precursor
   text: Opinionated approach to work follow-up, built as an AI assistant
   tagline: >-
-    A single, local-first app that keeps track of your work and/or personal topics with AI conversations enhancement, live meetings transcript, autonomous agents, a workflow engine, MCP integration and more.
+    One local-first app for your work topics, chats and meetings, with
+    autonomous agents, workflows, workspaces and MCP tools to act on them.
   actions:
     - theme: brand
       text: Get started
@@ -19,173 +20,109 @@ hero:
 
 features:
   - icon: 🧵
-    title: Topic-scoped conversations
+    title: Topics
     details: >-
-      Long-lived, tree-organized threads that each carry their own history and
-      context. Optionally link a topic to a GitHub issue and its body, comments,
-      and labels become live context — newer updates outweigh older ones.
+      Long-lived, tree-organized threads with an editable summary. Link one to a GitHub issue and its body, comments and labels become live context.
     link: /features/topics
     linkText: About topics
-  - icon: 📝
-    title: Editable topic summaries
-    details: >-
-      Keep status, open actions and key information above each topic's
-      transcript. Refresh on demand and review changes individually without
-      letting the model overwrite your edits.
-    link: /features/topic-summary
-    linkText: About topic summaries
   - icon: 💬
-    title: Quick chats
+    title: Chats
     details: >-
-      Simple conversations for when you just need an answer fast. Streaming
-      replies, markdown, diagrams generation, and code highlighting out of the box.
-      Pick GitHub Copilot or Azure AI Foundry per conversation without switching
-      other chats or topics.
+      Quick conversations with streaming, markdown, diagrams and code highlighting. Pick the provider and model per conversation.
     link: /features/chats
     linkText: About chats
   - icon: 🎙️
-    title: Live meeting assistant
+    title: Live meetings
     details: >-
-      Transcribe a meeting with speaker labels via Azure Speech, and
-      get live insights, suggested answers to the questions you're asked, Q&A, notes and an editable summary — from the template
-      and in the language you pick — you can post to a topic.
+      Transcribe with speaker labels (Azure Speech) and get live insights, suggested answers, notes and a templated summary to file in a topic.
     link: /features/live-sessions
     linkText: About live sessions
   - icon: 🤖
     title: Autonomous agents
     details: >-
-      Hand complex, long-running tasks to Copilot SDK agents that run in the background, and monitor the whole fleet from a control-tower dashboard that surfaces the ones that need you.
+      Hand long-running tasks to Copilot SDK agents in the background and follow the fleet from a control tower.
     link: /features/agents-mode
     linkText: About agents
   - icon: 🔗
     title: Workflows
     details: >-
-      Chain independent agents into a reusable pipeline — research → draft →
-      review — that the workflow coordinates in the background, with schedule and
-      webhook triggers.
+      Chain agents into reusable pipelines with quality gates, human approvals, and schedule or webhook triggers.
     link: /features/workflows
     linkText: About workflows
   - icon: ✅
     title: Step by step
     details: >-
-      Split a long ask into a tree of steps, work and validate each one in its
-      own chat, then consolidate the results into one answer filed back into
-      the topic.
+      Split a long ask into a tree of steps, validate each in its own chat, and consolidate one answer.
     link: /features/step-by-step
     linkText: About step plans
   - icon: 🗂️
     title: Workspaces & files
     details: >-
-      Point the assistant at a git clone or a local directory and let it browse
-      and edit files inside a path-traversal-proof sandbox.
+      Let the assistant browse and edit a git clone or local folder inside a sandbox.
     link: /features/workspaces
     linkText: About workspaces
-  - icon: 📋
-    title: Kanban board
-    details: >-
-      Track the GitHub issues linked to your topics on a board that spans your
-      projects — a bird's-eye view of work in flight. Ships as a plugin, so you
-      can install it or leave it out.
-    link: /features/kanban
-    linkText: About the board
   - icon: 🔌
     title: MCP, both ways
     details: >-
-      Precursor is an MCP server (it exposes your conversations) and an MCP
-      client (it attaches tool servers per turn) — GitHub, fetch, workspaces,
-      a command runner, WorkIQ, and your own.
+      An MCP server exposing your conversations, and an MCP client loading tools on demand: GitHub, fetch, workspaces, a command runner, WorkIQ and your own.
     link: /features/mcp
     linkText: About MCP
   - icon: 🛡️
     title: Tool approvals
     details: >-
-      Choose per conversation whether tool calls run freely, only when
-      read-only, or always wait for you. Pending approvals survive a reload
-      and show in the sidebar.
+      Per conversation: run tools freely, only read-only ones, or always ask first.
     link: /features/approvals
     linkText: About approvals
   - icon: 🔎
     title: Precursor IQ
     details: >-
-      Ask questions about your own topics, chats, agents and meetings in the
-      IQ section, ⌘K or over MCP, and get cited answers that open their
-      sources.
+      Ask about your own topics, chats, agents and meetings and get cited answers.
     link: /features/iq
     linkText: About Precursor IQ
   - icon: 🧠
     title: Skills & memory
     details: >-
-      Reusable /slash prompt presets stored as SKILL.md files (interoperable with
-      the Copilot CLI) plus long-term memory injected into conversation.
+      /slash prompt presets as SKILL.md files, roles, and long-term memory.
     link: /features/skills-memory
     linkText: About skills & memory
-  - icon: 🗜️
-    title: Context compression
-    details: >-
-      Long threads stay usable: screenshots and older tool output are trimmed
-      automatically, and /compact summarises the conversation so far so you
-      can keep going.
-    link: /features/context-compression
-    linkText: About context compression
-  - icon: ⏪
-    title: Timeline & rewind
-    details: >-
-      A timeline of dashes on the right edge of every conversation and agent session. Jump to any
-      turn, or rewind there and continue, with a preview and an undo.
-    link: /features/rewind
-    linkText: About timeline & rewind
   - icon: ⏰
     title: Scheduler & reminders
     details: >-
-      Put any topic, agent or workflow on a cadence or set one-shot reminders that resurface the thread on a specified date/time.
+      Run topics, agents or workflows on a cadence, or resurface a thread at a set time.
     link: /features/scheduler
     linkText: About the scheduler
+  - icon: 📋
+    title: Kanban board
+    details: >-
+      The GitHub issues linked to your topics on one board across projects. Ships as a plugin.
+    link: /features/kanban
+    linkText: About the board
   - icon: 🧰
     title: Bring your own model
     details: >-
-      GitHub Copilot, Azure AI Foundry, OpenAI, Mistral, Hugging Face, Ollama —
-      or a deterministic mock provider for offline development.
+      GitHub Copilot, Azure AI Foundry, OpenAI, Mistral, Hugging Face, Ollama, or a mock provider offline. Expose them to other clients through an OpenAI-compatible endpoint.
     link: /guide/configuration
     linkText: Configure a provider
-  - icon: 🔁
-    title: An OpenAI endpoint for your models
-    details: >-
-      Point VS Code, Open WebUI or any OpenAI client at Precursor and use the
-      active provider's models — Copilot included — with a key you control.
-    link: /features/openai-endpoint
-    linkText: About the endpoint
-  - icon: 📱
-    title: Works on your phone
-    details: >-
-      Below 768px the sidebar becomes a drawer and the content takes the whole
-      screen, with touch-friendly actions, real viewport height and safe-area
-      padding. Add it to your home screen and it behaves.
-    link: /features/mobile
-    linkText: About the mobile layout
-  - icon: 🔒
-    title: Local-first & private
-    details: >-
-      A single-user app that binds to localhost by default. Secrets live in the
-      local DB and are never echoed back by the API.
-    link: /reference/architecture
-    linkText: How it works
   - icon: 🚦
     title: Runs in the background
     details: >-
-      Install with one command, start at login, and drive it from a menu-bar
-      icon that shows whether it's up — including a one-click update to the
-      newest build.
+      One-command install, start at login, a menu-bar icon, and self-update from the Releases or Nightly channel.
     link: /features/background-app
     linkText: About the background app
+  - icon: 🔒
+    title: Local-first & private
+    details: >-
+      Single-user, bound to localhost by default. Secrets stay in the local database and are never echoed by the API.
+    link: /reference/architecture
+    linkText: How it works
 ---
 
 <div style="max-width: 1152px; margin: 4rem auto 0; padding: 0 24px;">
 
 ## Let's go!
 
-Precursor is an AI assistant, built with an opinionated approach to
-tracking work-in-progress conversations alongside the GitHub issues they may
-belong to.
+Precursor is a single-user AI assistant that runs on your machine and keeps
+your work, its context and the agents acting on it in one place.
 
 Installing it is one command — it sets Precursor up, starts it, and brings it
 back after every reboot:
@@ -205,7 +142,7 @@ irm https://raw.githubusercontent.com/lrivallain/precursor/main/scripts/install.
 Then open the URL it prints. That's the whole setup: no clone, no build step, no
 database to create.
 
-Head to the [installation guide](/guide/installation) for the details, or browse
-the [feature guides](/features/) to see everything Precursor can do.
+See the [installation guide](/guide/installation) for other options, or browse
+the [feature guides](/features/).
 
 </div>

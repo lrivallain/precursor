@@ -4,168 +4,97 @@ title: Releasing
 
 # Releasing Precursor
 
-Precursor ships from **git tags**. The version is **CalVer** — `YYYY.M.MICRO` —
-resolved automatically by [hatch-vcs](https://github.com/ofek/hatch-vcs) from the
-latest `v<version>` tag. **There is no version literal to bump by hand.**
+Releases are **automatic**: merging into `main` is the ship decision. This page
+summarizes
+[`RELEASING.md`](https://github.com/lrivallain/precursor/blob/main/RELEASING.md),
+which has the recovery rules and one-time setup in full.
 
-## Versioning policy — CalVer `YYYY.M.MICRO`
+| Channel | Workflow | When | Published as |
+| --- | --- | --- | --- |
+| **Stable** | `release.yml` | nightly at **01:17 UTC**, if `main` has unreleased commits and green CI | `v<CalVer>` tag, GitHub Release (**latest**), PyPI `precursor-ai` |
+| **Nightly** | `nightly.yml` | after each successful CI run on a `main` push | rolling `nightly` prerelease + `version.json` |
 
-- `YYYY` — four-digit year of the release.
-- `M` — month, **no leading zero** (`6`, not `06`).
-- `MICRO` — release counter **within that month**, starting at `0`; resets to `0`
-  on the first release of a new month.
+## Versioning
 
-Examples: first June 2026 release `2026.6.0`, a follow-up the same month
-`2026.6.1`, the first July release `2026.7.0`. The format is valid under both PEP
-440 (Python) and semver (npm), sorts chronologically, and is human-readable.
-Untagged/dev builds get a suffix, e.g. `2026.6.1.dev3+g0f3ad9f.d20260615`.
+**CalVer `YYYY.M.MICRO`**, resolved from the latest `v<version>` tag by
+[hatch-vcs](https://github.com/ofek/hatch-vcs); there is no literal to bump.
+`M` has no leading zero; `MICRO` counts releases within the month from `0`
+(`2026.6.0`, `2026.6.1`, `2026.7.0`). Untagged builds get a dev suffix
+(`2026.6.1.dev3+g0f3ad9f.d20260615`).
 
-## Autonomous stable releases
+## Stable releases
 
-Every night at **01:17 UTC** (02:17/03:17 in Paris), the **Release** workflow
-ships unreleased changes from `main`. Merging into `main` is the ship decision;
-unmerged branches are never released. Documentation and dependency changes
-are eligible too.
+Each scheduled run:
 
-1. Capture the exact `main` commit and compare it with the last successful
-   stable release, ignoring the rolling `nightly` tag. No changes means no tag.
-2. Require a successful **CI** push run on `main` for that exact commit. Missing,
-   pending, cancelled or failing CI stops the release.
-3. Choose the next CalVer and build the wheel and sdist, including the SPA and
-   in-app documentation. uv runs with `UV_FROZEN=1`.
-4. Exercise a fresh Python 3.12 wheel installation outside the checkout, with
-   newly resolved dependencies: installed version, startup, migrations in a
-   disposable database, API, SPA and docs. No real credentials or Node.js
-   runtime are needed.
-5. Create the immutable tag and a **draft** GitHub Release. Stage the original
-   artifacts and their SHA-256 manifest, publish them to PyPI via OIDC, then
-   make the GitHub Release public and **latest**.
+1. Takes the exact `main` SHA and compares it with the last stable release
+   (the `nightly` tag is ignored). No new commits, no release.
+2. Requires a **successful CI push run on `main` for that SHA**. Missing,
+   pending, cancelled or failed CI stops the run.
+3. Picks the next CalVer and builds the frontend, in-app docs, wheel and sdist
+   (`UV_FROZEN=1`).
+4. Installs the wheel into a fresh Python 3.12 env with freshly resolved
+   dependencies and smoke-tests version, startup, migrations, API, SPA and docs.
+5. Creates the tag and a **draft** GitHub Release with the artifacts and a
+   `release-manifest.json` (SHA-256 + commit).
+6. Publishes to PyPI (Trusted Publishing, OIDC), then makes the GitHub Release
+   public and latest.
 
-The comparison spans all commits since the last successful release, not just
-"today", so missed runs do not lose changes. GitHub's scheduler is best-effort:
-runs may start late and inactive public repositories may have schedules disabled.
-
-The automation does not push commits to `main` or require a PAT. Tag creation
-and publishing run in the same workflow because a tag pushed by `GITHUB_TOKEN`
-does not start another push-triggered workflow.
-
-### Release now or preview
-
-Use **Actions → Release → Run workflow** on **main**. Check **dry_run** for a
-planning-only run: it computes the candidate and enforces the CI gate but
-does not build, tag or publish.
+Missed or failed runs lose nothing: the next run takes every commit since the
+last successful release. GitHub Release notes, generated from merged PRs, are
+the per-version history; `CHANGELOG.md` `[Unreleased]` is still kept current in
+PRs but isn't promoted by the release.
 
 ```bash
-gh workflow run release.yml --ref main -f dry_run=true
-gh workflow run release.yml --ref main
+gh workflow run release.yml --ref main -f dry_run=true   # plan + CI gate only
+gh workflow run release.yml --ref main                   # release now
 ```
 
-Manual `v<version>` tag pushes still work, with the same CI and ancestry gates.
-Tags must use canonical CalVer and point to a commit with successful main-push
-CI. Prefer the workflow button to avoid choosing the counter yourself.
+Manual `v<version>` tags run the same gated pipeline; prefer the workflow so the
+counter is chosen for you.
 
-### Notes and recovery
-
-**GitHub Release notes are the per-version history**, generated from merged PRs
-since the previous stable tag. Contributors continue updating the changelog's
-`[Unreleased]` development notes and feature documentation in their PRs. The
-release does not promote that section or require a changelog commit.
-
-All stable runs share one concurrency group. Once a tag is reserved, retries
-finish that tag and commit before releasing newer changes. A completed draft's
-artifacts are downloaded, not rebuilt. `release-manifest.json` records the full
-commit and SHA-256 hashes; it is uploaded last as the staging completion marker.
-An unfinished manifest upload can be retried before any files reach PyPI,
-but a completed manifest is never replaced.
-
-Partial PyPI uploads resume with only the missing files. Already-uploaded files
-must match the manifest; hash conflicts, yanked files and multiple unfinished
-stable tags stop the run for maintainer attention. A GitHub finalization failure
-after PyPI publication is also recoverable by rerunning. Do not delete/move
-stable tags or overwrite completed draft assets to force a retry.
-
-Failures surface in Actions and its workflow notifications. Fix CI and rerun,
-or let the next scheduled run retry. A bad published release needs a new version.
-
-Publishing a release does not automatically update running installations or
-change the installer's default rolling channel.
+::: warning Recovery
+Runs are serialized and resumable: a reserved tag is finished before newer
+changes ship, and retries reuse the draft's artifacts. Never delete or move a
+published tag, overwrite a completed draft's assets, or delete its manifest. A
+bad release needs a new version. Details:
+[Failures and retries](https://github.com/lrivallain/precursor/blob/main/RELEASING.md#failures-and-retries).
+:::
 
 ## Rolling Nightly builds
 
-The **Nightly** workflow publishes after **CI** succeeds on `main`, independently
-of stable releases. It listens for completed CI runs rather than publishing
-directly on a push. Only a successful push run on this repository's `main` is
-eligible; pull-request, foreign-repository, failed and cancelled runs cannot
-publish.
+`nightly.yml` listens for completed **CI** runs and publishes only for a
+successful push run on this repository's `main`, at that exact tested SHA. It
+replaces the `nightly` release (moving, never deleting, the tag) and uploads:
 
-Before building, the workflow requires the latest main-push `ci.yml` run for
-the **exact candidate commit** to be complete and successful. Checkout, package
-version, tag, release notes and `version.json` all refer to that tested commit,
-not a newer `main` head. Superseded commits are skipped, with main and CI checked
-again immediately before publication. Publication is serialized without
-cancelling an in-progress release replacement.
-
-To retry, use **Actions → Nightly → Run workflow** on **main**, or:
-
-```bash
-gh workflow run nightly.yml --ref main
+```json
+{
+  "channel": "nightly",
+  "version": "2026.7.1.dev229",
+  "commit": "679a4fe6e",
+  "wheel_url": "https://github.com/…/precursor_ai-….whl",
+  "extra_wheel_urls": []
+}
 ```
 
-This manual path enforces the same gate: missing, pending, cancelled or failing
-CI cannot publish, and an older green commit cannot replace the current rolling
-build while a newer `main` commit is awaiting CI.
+`precursor service check` reads that `version.json`. The nightly channel
+compares **commits**, not versions. Superseded commits are skipped, so an older
+green commit never replaces a newer one. Retry with
+`gh workflow run nightly.yml --ref main` (still CI-gated). `pages.yml` deploys
+the website independently.
 
-**Website deployment stays independent.** `pages.yml` still deploys directly
-on relevant main pushes; it does not wait for CI or Nightly.
-
-## PyPI Trusted Publishing (one-time setup)
-
-Publishing uses [PyPI Trusted Publishing](https://docs.pypi.org/trusted-publishers/)
-(OpenID Connect), so there is **no API token** to store or rotate. Configure it
-once:
-
-1. On PyPI, create a trusted publisher for the **`precursor-ai`** project (the
-   plain `precursor` name is already taken) — **PyPI Project Name** `precursor-ai`,
-   **Owner** `lrivallain`, **Repository** `precursor`, **Workflow** `release.yml`,
-   **Environment** `pypi`.
-2. In this repo, add a GitHub **Environment** named `pypi`
-   (**Settings → Environments**). **Remove required reviewers and wait timers**
-   for unattended releases. Deployment restrictions, if enabled, must allow
-   both `main` (scheduled/manual runs) and `v*` tags (manual tag runs).
-
-The `publish` job runs in the `pypi` environment and requests an
-`id-token` — both must match the publisher registered on PyPI.
-The workflow name remains `release.yml`; tag rules must allow it to create
-`v*` tags. It does not need a bypass of `main`'s branch protection.
-
-## Verifying a build locally
+## Building locally
 
 ```bash
-make wheel          # builds the SPA, then `uv build` → dist/*.whl + *.tar.gz
-# or by hand:
-export UV_FROZEN=1
-npm --prefix frontend ci && npm --prefix frontend run build
-npm --prefix website ci && DOCS_BASE=/docs/ npm --prefix website run docs:build
-uv build
+make wheel        # SPA + docs, then uv build → dist/*.whl + *.tar.gz
 ```
 
-The built filename encodes the resolved version (the `precursor-ai` distribution
-normalises to `precursor_ai` in the filename). The wheel is **self-contained**:
-the SPA is bundled inside the package (`precursor/frontend_dist/`), so an installed
-build serves the UI with no extra files:
+The wheel is self-contained (SPA in `precursor/frontend_dist/`):
 
 ```bash
-uvx precursor-ai              # run the published wheel directly
-uv tool install precursor-ai  # or install the `precursor-ai` command
+uvx precursor-ai              # run the published wheel
+uv tool install precursor-ai  # install the `precursor-ai` command (+ `precursor` alias)
 ```
 
-## Notes
-
-- **Commit messages** follow Conventional Commits — the GitHub Release notes are
-  generated from them.
-- **PyPI**: each tagged release publishes the wheel + sdist to PyPI via Trusted
-  Publishing (OIDC) — see the one-time setup above. The GitHub Release ships the
-  same artifacts as attached assets.
-- **Distribution name**: the PyPI project is `precursor-ai`; it ships a matching
-  `precursor-ai` command (so `uvx precursor-ai` needs no `--from`) plus a
-  `precursor` alias, and the import package is unchanged.
+The PyPI project is `precursor-ai` (the import package is `precursor`). PyPI
+publishing uses Trusted Publishing from `release.yml` in the `pypi` environment;
+see [the one-time setup](https://github.com/lrivallain/precursor/blob/main/RELEASING.md#pypi-trusted-publishing-one-time-setup).

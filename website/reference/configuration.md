@@ -4,70 +4,49 @@ title: Configuration reference
 
 # Configuration reference
 
-Most configuration happens **at runtime in the app** (see the
-[Configuration guide](/guide/configuration)). This page documents the
-**process-level** settings that live in `.env` — every one has a built-in default,
-so the file is optional.
+Every process-level variable (`.env`), plus the database-stored settings that
+other pages refer to by key. For the common settings, see the
+[Configuration guide](/guide/configuration).
 
-The split is deliberate and enforced by a test: anything you can change in
-**Settings** is stored in the database and has *no* environment twin, so there is
-exactly one place to set it — bar two deliberate exceptions, noted at the foot of
-this page. `.env` keeps only what has to be known before the database exists — bind address, database URL, data
-directory, ticker cadences.
+**Where a value lives.** Anything editable in **Settings** is stored in the
+database and has no environment variable (enforced by a test). `.env` holds only
+what must be known before the database is opened. Two exceptions,
+`PRECURSOR_PLAYWRIGHT_BROWSER` and `PRECURSOR_WORKIQ_TENANT_ID`, describe the
+machine or tenant: `.env` seeds them and a value saved in **Settings → MCP
+servers** wins.
 
-Copy `.env.example` to `.env` and uncomment only what you want to override.
-
-Azure AI Foundry's runtime **Deployment names** setting adds names individually
-as removable bubbles on the same endpoint, sharing its key and API version. The persisted
-`llm_providers.azure_foundry.deployment` string also accepts a single name for
-backward compatibility and stores multiple names separated by commas.
-The same provider config takes `auth`: `azure_cli` signs in through the Azure CLI
-(`az login`), in the optional `tenant` or the CLI's default tenant; `key` uses
-`key`. When `auth` is unset (configs saved before it existed), a stored `key`
-means `key` and no key means `azure_cli`.
-See [Connecting a model](/guide/configuration#connecting-a-model).
-
-Chats/topics store an optional `llm_selection` alongside their metadata:
-`provider`, `model` or `category`, `reasoning_effort` and `context_tokens`
-(1,000-5,000,000). Null means use global defaults. These are conversation
-preferences, not credentials or environment variables.
-
-`llm_provider` remains the global default and `llm_providers` remains the map of
-saved provider configurations. Editing a configuration no longer selects it as
-the default. Explicit conversation selections never fall back to Mock or switch
-providers; missing configuration is an error. Agents/workflows stay Copilot-only.
+All variables are optional. In a source checkout, copy `.env.example` to `.env`;
+an installed instance reads the `.env` in its
+[data directory](/features/background-app#where-the-data-lives).
 
 ## Server
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `PRECURSOR_HOST` | `127.0.0.1` | Bind address. Keep it on loopback unless you front the app with your own auth. |
-| `PRECURSOR_PORT` | `8000` | The URL you open. In `--dev`, the Vite UI runs here and the backend moves to `PORT + 1`. A busy port auto-bumps to the next free one — and `precursor service install` writes the port it settled on back to the [instance `.env`](/features/background-app#picking-a-port) so it stays put. |
-| `PRECURSOR_LOG_LEVEL` | `info` | uvicorn/app log level. |
-| `PRECURSOR_LOG_FILE_MAX_BYTES` | `5242880` | Size at which `logs/precursor.log` rotates. The app writes [its own log file](/features/background-app#reading-the-log), so this is what caps it — nothing else prunes it. |
-| `PRECURSOR_LOG_FILE_BACKUPS` | `3` | How many rotated generations (`precursor.log.1`, …) to keep. |
-| `PRECURSOR_SHUTDOWN_GRACE_SECONDS` | `3` | Seconds to wait for in-flight requests (e.g. SSE streams) before force-closing on Ctrl-C, so the port is released promptly. |
-| `PRECURSOR_CORS_ORIGINS` | *(empty)* | Comma-separated list of extra allowed origins. Empty means same-origin only, which is what a local-first single-user app wants. |
+| `PRECURSOR_HOST` | `127.0.0.1` | Bind address. Keep it on loopback unless an authenticating proxy fronts the app. |
+| `PRECURSOR_PORT` | `8000` | The URL you open. A busy port bumps to the next free one; `precursor service install` [writes the chosen port back](/features/background-app#picking-a-port). In `--dev`, Vite serves this port and the backend uses `PORT + 1`. |
+| `PRECURSOR_LOG_LEVEL` | `info` | App and uvicorn log level. |
+| `PRECURSOR_LOG_FILE_MAX_BYTES` | `5242880` | Rotation size of [`logs/precursor.log`](/features/background-app#reading-the-log). |
+| `PRECURSOR_LOG_FILE_BACKUPS` | `3` | Rotated generations kept. |
+| `PRECURSOR_SHUTDOWN_GRACE_SECONDS` | `3` | Wait for in-flight requests (e.g. SSE streams) on Ctrl-C before force-closing. |
+| `PRECURSOR_CORS_ORIGINS` | *(empty)* | Comma-separated extra origins. Empty = same-origin only. |
 
-CLI flags mirror several of these: `--port`, `--api-port`, `--host`,
-`--strict-port` (fail instead of bumping a busy port), `--port 0` (any free port),
-`--open` (open the browser when ready), `--dev`, and `--no-frontend`.
+CLI flags: `--port`, `--api-port`, `--host`, `--strict-port` (fail instead of
+bumping), `--port 0` (any free port), `--open`, `--dev`, `--no-frontend`.
 
 ## Database & data directory
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `PRECURSOR_DATABASE_URL` | `sqlite+aiosqlite:///./precursor.db` | Async SQLAlchemy URL. Point at Postgres for production. |
-| `PRECURSOR_DATA_DIR` | `.precursor` *(checkout)* / *user data dir* *(installed)* | On-disk working directory. Holds [workspace](/features/workspaces) clones (`workspaces/`), content-addressed [attachment](/features/attachments) blobs (`blobs/`), the self-hosted draw.io editor (`drawio/`), the agents runtime's Copilot home (`agents/copilot-home/`), and the [background app](/features/background-app)'s `runtime.json` + `logs/`. Relative paths resolve against the process working directory. |
-| `PRECURSOR_DEFINITIONS_DIR` | the **Definitions** workspace (`<data dir>/workspaces/definitions`) | **Work in progress.** Folder of [definition files](/features/definitions): agents and workflows (`*.agent.yaml`, `*.workflow.yaml`) and live [summary templates](/features/live-sessions#your-own-templates) (`*.summary.yaml`). Read by the definitions check, written by the export and the migration; the runtime reads agents and workflows only in files mode (below), summary templates always. Set, it replaces the built-in workspace. |
-| `PRECURSOR_DEFINITIONS_SOURCE` | `database` | **Work in progress.** Normally left alone: the [migration wizard](/features/definitions#getting-there-from-today-s-data) in Settings → Definition files switches an install to files mode (and back) and remembers it. `files` here forces files mode regardless. |
-| `PRECURSOR_DEFINITIONS_WORKSPACE` | *(empty)* | **Work in progress.** Keep the definitions folder in a [workspace](/features/workspaces) — its slug, optionally followed by a folder inside it (`team-defs/precursor`) — so it can be pulled, edited and pushed from the Files section. Ignored when `PRECURSOR_DEFINITIONS_DIR` is set. |
+| `PRECURSOR_DATABASE_URL` | `sqlite+aiosqlite:///./precursor.db` *(checkout)* / `<data dir>/precursor.db` *(installed)* | Async SQLAlchemy URL. PostgreSQL (`postgresql+asyncpg://…`) needs the `postgres` extra. |
+| `PRECURSOR_DATA_DIR` | `.precursor` *(checkout)* / user data dir *(installed)* | Holds `workspaces/`, attachment `blobs/`, `drawio/`, `agents/copilot-home/`, `runtime.json` and `logs/`. Relative paths resolve against the working directory. |
+| `PRECURSOR_SKILLS_DIR` | *(empty)* | [Skills](/features/skills-memory) folder. Unset: `COPILOT_HOME` → `$XDG_CONFIG_HOME/copilot` → `~/.copilot`. |
+| `PRECURSOR_DEFINITIONS_DIR` | `<data dir>/workspaces/definitions` | **WIP.** Folder of [definition files](/features/definitions) (`*.agent.yaml`, `*.workflow.yaml`, `*.summary.yaml`). Replaces the built-in Definitions workspace. |
+| `PRECURSOR_DEFINITIONS_SOURCE` | `database` | **WIP.** `files` forces files mode. Normally set by the [migration wizard](/features/definitions#getting-there-from-today-s-data) instead. |
+| `PRECURSOR_DEFINITIONS_WORKSPACE` | *(empty)* | **WIP.** Keep definitions in a [workspace](/features/workspaces): its slug, optionally with a subfolder (`team-defs/precursor`). Ignored when `PRECURSOR_DEFINITIONS_DIR` is set. |
 
-The two defaults above depend on **how Precursor was installed**. A source
-checkout keeps its state beside the code, so every clone and worktree is an
-isolated sandbox. An installed wheel has no such home — and is typically started
-by a login item whose working directory is `/` — so it resolves to a per-user
-directory instead:
+A source checkout keeps state beside the code (one sandbox per clone/worktree).
+An installed wheel uses the per-user data dir:
 
 | Platform | User data dir |
 | --- | --- |
@@ -75,102 +54,70 @@ directory instead:
 | Linux | `$XDG_DATA_HOME/precursor`, else `~/.local/share/precursor` |
 | Windows | `%APPDATA%\Precursor` |
 
-Setting either variable explicitly overrides both behaviours.
-
-```bash
-# SQLite (default — no setup)
-PRECURSOR_DATABASE_URL=sqlite+aiosqlite:///./precursor.db
-
-# PostgreSQL (needs the `postgres` extra for asyncpg)
-PRECURSOR_DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/precursor
-```
-
 ## Background app & updates
 
-Used by the [background app](/features/background-app) — the supervisor, the
-menu-bar tray, and the in-place updater.
+Used by the [background app](/features/background-app) (supervisor, tray, updater).
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `PRECURSOR_UPDATE_REPO` | `lrivallain/precursor` | Repository the update check reads releases from. Point it at a fork to track your own builds. |
-| `PRECURSOR_UPDATE_CHANNEL` | `stable` | `stable` (tagged releases) or `nightly` (rolling build of `main`). Empty means "match the running build": a dev version follows nightly, a tagged one follows stable. Only the default: a channel picked in **Settings → Updates** wins. |
-| `PRECURSOR_UPDATE_EXTRAS` | `kanban` | Comma-separated extras carried across a self-update, so `precursor service update` doesn't silently drop the plugins you installed with. Add `tray` if you use the menu-bar icon. This is *unioned* with `uv`'s install receipt; prefix a name with `-` (`-kanban`) to drop one instead. |
-| `PRECURSOR_UPDATE_CHECK_TTL_SECONDS` | `900` | How long an update-check result is cached before GitHub is asked again. |
-| `PRECURSOR_UPDATE_NOTIFY` | `off` | Whether the tray posts a system notification when a *background* check finds a new build: `off` leaves it to the menu's status line, anything else (`notify`) notifies. Only the default: **Settings → Updates** wins. |
+| `PRECURSOR_UPDATE_REPO` | `lrivallain/precursor` | Repository whose releases the update check reads. |
+| `PRECURSOR_UPDATE_CHANNEL` | `stable` | `stable` or `nightly`. Empty = match the running build (dev → nightly). **Settings → Updates** wins. |
+| `PRECURSOR_UPDATE_EXTRAS` | `kanban` | Extras kept across `precursor service update`, unioned with uv's install receipt. Add `tray` if you use the icon; `-name` drops one. |
+| `PRECURSOR_UPDATE_CHECK_TTL_SECONDS` | `900` | Cache lifetime of an update-check result. |
+| `PRECURSOR_UPDATE_NOTIFY` | `off` | `notify` posts a system notification when a background check finds a build. **Settings → Updates** wins. |
+
+### Installer variables
+
+Read by `install.sh` / `install.ps1` (see [Installation](/guide/installation)):
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `PRECURSOR_CHANNEL` | `nightly` | `stable` installs the latest tagged release from PyPI. |
+| `PRECURSOR_EXTRAS` | `kanban,tray` | Extras to install; `none` for the lean core. |
+| `PRECURSOR_NO_START` | — | `1` installs the command without registering or starting anything. |
+| `PRECURSOR_WHEEL` | — | Install this wheel (path or URL) instead of a channel build. |
+| `PRECURSOR_REPO` | `lrivallain/precursor` | Repository whose nightly builds to install. |
 
 ## Diagram editor
 
-`.drawio` files open in a self-hosted draw.io editor. The webapp is downloaded
-on demand into `<data_dir>/drawio/<version>/` the first time you open a diagram
-— it is deliberately not bundled in the wheel (~53 MB download, ~150 MB on
-disk). See [Workspaces → Editing diagrams](/features/workspaces#editing-diagrams).
+`.drawio` files open in a self-hosted draw.io editor, downloaded on first use
+into `<data dir>/drawio/<version>/` (~53 MB download, ~150 MB on disk). See
+[Workspaces → Editing diagrams](/features/workspaces#editing-diagrams).
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `PRECURSOR_DRAWIO_VERSION` | `v31.3.1` | draw.io release tag to install. Changing it installs the new release on next use and removes the old one. |
-| `PRECURSOR_DRAWIO_DOWNLOAD_URL` | GitHub release `draw.war` | Template for the archive URL; `{version}` is substituted. Point it at an internal mirror on an air-gapped network. |
+| `PRECURSOR_DRAWIO_VERSION` | `v31.3.1` | draw.io release to install; changing it replaces the old one on next use. |
+| `PRECURSOR_DRAWIO_DOWNLOAD_URL` | GitHub release `draw.war` | Archive URL template (`{version}` substituted). Point it at a mirror when offline. |
 
 ## LLM provider
 
-The provider and its credentials are configured **at runtime** — **Settings →
-Model** — not via the environment. The GitHub providers fall back to your
-`gh auth login` session when no token is saved. See
-[Configuration → Connecting a model](/guide/configuration#connecting-a-model).
-
-Ollama requires an explicitly saved `llm_providers.ollama.base_url`, such as
-`http://localhost:11434/v1`, to be configured and included in conversation model
-menus. The Base URL placeholder is a suggestion, not a saved setting.
-
-`model_fallbacks` is an optional runtime-only setting (default
-`{"categories": []}`), edited in **Settings -> Presets**. It is a list of
-user-defined categories, each with ordered presets that carry their own
-`provider` (a provider id, or `agents`). Each preset has `model`, `reasoning_effort` (default `""`),
-`context_tokens` (default `128000`, range 1,000-5,000,000) and `context_tier`
-(`default` or `long_context`, default `default`). Chat uses the token budget;
-Agents/Workflows use the context tier. Each category accepts at most twelve
-presets, with at most 24 categories; duplicate effective presets, unknown scopes and `auto` are rejected.
-See [Model alternatives](/guide/configuration#optional-model-alternatives)
-for matching and retry rules. There is no environment variable or DB migration.
-
-`llm_model_category` and `agents_model_category` are runtime-only selected intents,
-default `null` (direct model selection). Values are `efficiency`, `balanced` or
-`intelligence`; the chosen category must have configured presets in the relevant
-scope. Selecting a category leaves manual model/effort/context defaults stored
-and lets the engine resolve an available preset. Setting a direct model clears
-the corresponding category unless a category was explicitly supplied alongside
-it. `llm_category_preset` is a read-only catalogue preview of the category's first
-candidate, not a promise that inference will succeed or use that model. An
-emptied/unavailable category remains selected and fails clearly at execution.
+Providers, credentials, models and presets are set in **Settings → Model** and
+**Settings → Presets**; their stored keys are in the
+[Models & presets reference](/reference/models).
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `PRECURSOR_GITHUB_CLI_USER` | *(empty)* | Which `gh` login supplies the token (`gh auth token --user …`). Set it when several accounts are signed in, so the resolved token doesn't depend on the CLI's active account — see [GitHub authentication](/guide/configuration#several-accounts-signed-in-to-gh). |
+| `PRECURSOR_GITHUB_CLI_USER` | *(empty)* | `gh` login that supplies the token (`gh auth token --user …`), for [several signed-in accounts](/guide/configuration#several-accounts-signed-in-to-gh). |
 
-Prompt budgeting is runtime-only as well, under **Settings → Model → Prompt
-budgeting**:
+Prompt budgeting (**Settings → Model → Prompt budgeting**):
 
 | Setting | Default | Description |
 | --- | --- | --- |
-| `llm_max_input_tokens` | `600000` | Estimated prompt tokens per request. The oldest turns are dropped first. [`/compact`](/features/context-compression) keeps them as a summary instead. |
-| `llm_max_tool_result_tokens` | `20000` | Cap on a single tool result before it enters the prompt. |
-| `llm_tool_result_keep_turns` | `5` | Tool results over 2,000 characters from turns older than this many user turns reach the model as a short preview. `0` always sends them in full. See [Context compression](/features/context-compression#automatic-trimming). |
-| `llm_max_attachment_chars` | `200000` | Extracted text kept per attached document (PDF, DOCX, PPTX, text). Anything longer is cut, with an explicit note to the model. Range 1,000–2,000,000. See [Attachments](/features/attachments#how-much-of-a-document-the-model-sees). |
+| `llm_max_input_tokens` | `600000` | Estimated prompt tokens per request; oldest turns are dropped first ([`/compact`](/features/context-compression) summarises them instead). |
+| `llm_max_tool_result_tokens` | `20000` | Cap on one tool result entering the prompt. |
+| `llm_tool_result_keep_turns` | `5` | Tool results over 2,000 characters older than this many user turns are sent as a preview. `0` = always in full. See [automatic trimming](/features/context-compression#automatic-trimming). |
+| `llm_max_attachment_chars` | `200000` | Extracted text kept per attached document (1,000–2,000,000); longer text is cut with a note. See [Attachments](/features/attachments#how-much-of-a-document-the-model-sees). |
 
-The [OpenAI-compatible endpoint](/features/openai-endpoint) is runtime-only too:
-its switch (`openai_proxy_enabled`, off by default) and its API key live in the
-database, set from **Settings → Model**, with no environment twin. Its base URL
+The [OpenAI-compatible endpoint](/features/openai-endpoint) (`openai_proxy_enabled`,
+off by default, and its API key) is set in **Settings → Model**; its URL
 follows `PRECURSOR_HOST` / `PRECURSOR_PORT`.
 
 ## Backup
 
-A periodic copy of the SQLite DB, attachment blobs and the
-[definitions folder](/features/workspaces#the-definitions-workspace) (the built-in
-**Definitions** workspace by default) into a plain folder (e.g. a
-OneDrive/Dropbox/iCloud-synced directory). The folder holds `db/` snapshots, a
-`blobs/` mirror and one dated `definitions/definitions-<timestamp>.zip` per run;
-snapshot retention applies to the DB snapshots and the definitions archives alike.
-Enable it, pick the target folder, and set retention **at runtime** —
-**Settings → Backup**. Only the scheduling knobs are env-level:
+Enabled, targeted and retained from **Settings → Backup**. Each run writes `db/`
+snapshots, a `blobs/` mirror and a `definitions/definitions-<timestamp>.zip`
+of the [definitions folder](/features/workspaces#the-definitions-workspace);
+retention applies to snapshots and archives.
 
 | Variable | Default | Description |
 | --- | --- | --- |
@@ -179,145 +126,108 @@ Enable it, pick the target folder, and set retention **at runtime** —
 
 ## Scheduler & reminders
 
-The in-process ticker behind [scheduled topics, agents and workflows](/features/scheduler)
-and one-shot reminders. The *cadence* is process-level; each schedule's own
-recurrence is stored in the database.
+Ticker for [scheduled topics, agents and workflows](/features/scheduler) and
+reminders. Each schedule's recurrence is stored in the database.
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `PRECURSOR_SCHEDULER_ENABLED` | `true` | Master switch for every background ticker — the scheduler, reminders, the retention sweeps and the [Precursor IQ](/features/iq) indexer. Set `false` for a read-only or CI instance. |
-| `PRECURSOR_SCHEDULER_POLL_SECONDS` | `30` | How often the scheduler looks for due runs. |
-| `PRECURSOR_SCHEDULER_CONCURRENCY` | `2` | How many scheduled runs may execute at once. |
-| `PRECURSOR_REMINDER_POLL_SECONDS` | `30` | How often the reminder ticker looks for due reminders. |
+| `PRECURSOR_SCHEDULER_ENABLED` | `true` | Master switch for every background ticker: scheduler, reminders, retention sweeps, IQ indexer. `false` for a read-only or CI instance. |
+| `PRECURSOR_SCHEDULER_POLL_SECONDS` | `30` | Scheduler poll interval. |
+| `PRECURSOR_SCHEDULER_CONCURRENCY` | `2` | Scheduled runs executing at once. |
+| `PRECURSOR_REMINDER_POLL_SECONDS` | `30` | Reminder poll interval. |
 
-How long a single scheduled run may take isn't env-level: it's **Settings →
-System → Scheduled run timeout** (default `600` s), read afresh for every run.
+The per-run timeout is **Settings → System → Scheduled run timeout** (default `600` s).
 
 ## Retention
 
-Independent sweeps bound long-term database growth — see
-[Storage & retention](/features/storage) for the full picture and the on-demand
-cockpit. Each window is set **at runtime** in an `AppSetting`; every sweep runs on
-startup and repeats daily via a background ticker. Only the poll cadence is
-env-level.
+Sweeps run at startup and daily (see [Storage & retention](/features/storage)).
+Windows are database settings:
 
 | Setting | Default | Where | Description |
 | --- | --- | --- | --- |
-| `tool_result_retention_days` | `0` (keep forever) | Settings → System | Days before a large tool result's content is replaced in place with a short placeholder, and the model's thinking is removed from a reply. |
-| `live_transcript_retention_days` | `7` | Settings → Live | Days after a [Live session](/features/live-sessions#transcript-retention) ends before its transcript segments are deleted. `0` keeps them forever. Insights, notes and summary are preserved. |
-| `workflow_step_retention_days` | `30` | Settings → Workflows | Days after a workflow run finishes before its steps' archived input (the prompt each step received) is replaced with a placeholder. `0` keeps it forever. Outputs, status and token counts are kept; a step whose input was cleared can no longer be replayed. |
-| `agent_event_retention_days` | `30` | Settings → Agents | Days before an agent's archived timeline events are deleted. `0` keeps them forever. A *running* agent is never pruned, and every agent keeps its result, artifacts and messages. |
-| `agent_event_max_per_session` | `2000` | Settings → Agents | Hard ceiling on archived events per agent — only the newest are kept. `0` is unlimited. |
+| `tool_result_retention_days` | `0` (forever) | Settings → System | Replace large tool-result content with a placeholder and drop the model's thinking. |
+| `live_transcript_retention_days` | `7` | Settings → Live | Delete a [Live session](/features/live-sessions#transcript-retention)'s transcript segments after it ends. Insights, notes, summary kept. `0` = forever. |
+| `workflow_step_retention_days` | `30` | Settings → Workflows | Replace a finished run's step inputs with a placeholder; such steps can't be replayed. Outputs kept. `0` = forever. |
+| `agent_event_retention_days` | `30` | Settings → Agents | Delete archived agent timeline events. Running agents are never pruned; results, artifacts and messages kept. `0` = forever. |
+| `agent_event_max_per_session` | `2000` | Settings → Agents | Keep only the newest N archived events per agent. `0` = unlimited. |
 
-Two levers govern agent timelines because agent traffic is **bursty rather than
-aged**: one long autonomous session can add tens of MB in a day, which a time
-window alone wouldn't touch for weeks.
-
-Poll cadences (`PRECURSOR_TOOL_RESULT_RETENTION_POLL_SECONDS`,
+Poll cadences: `PRECURSOR_TOOL_RESULT_RETENTION_POLL_SECONDS`,
 `PRECURSOR_LIVE_TRANSCRIPT_RETENTION_POLL_SECONDS`,
-`PRECURSOR_AGENT_EVENT_RETENTION_POLL_SECONDS`) default to `86400` (daily).
-Every sweep is gated by `PRECURSOR_SCHEDULER_ENABLED`.
+`PRECURSOR_AGENT_EVENT_RETENTION_POLL_SECONDS`, all `86400`, all gated by
+`PRECURSOR_SCHEDULER_ENABLED`.
 
 ## Precursor IQ
 
-The retrieval index behind [Precursor IQ](/features/iq): ⌘K ranking, Ask mode,
-`/api/iq/*` and the `retrieve` / `ask` MCP tools.
+The [Precursor IQ](/features/iq) index (⌘K ranking, Ask, `/api/iq/*`, the
+`retrieve` / `ask` MCP tools).
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `PRECURSOR_IQ_ENABLED` | `true` | Build and serve the index. When `false`, ⌘K falls back to substring search and `/api/iq/*` returns `404`. |
-| `PRECURSOR_IQ_INDEX_POLL_SECONDS` | `20` | How often the background indexer processes queued changes and computes missing embeddings (floor 5 s). Gated by `PRECURSOR_SCHEDULER_ENABLED`; queries still process a small batch on their own. |
-| `PRECURSOR_IQ_RECONCILE_POLL_SECONDS` | `3600` | How often the check for bulk edits and deletes that bypassed the change queue runs. |
+| `PRECURSOR_IQ_ENABLED` | `true` | `false`: ⌘K uses substring search and `/api/iq/*` returns `404`. |
+| `PRECURSOR_IQ_INDEX_POLL_SECONDS` | `20` | Indexer interval for queued changes and missing embeddings (min 5 s). |
+| `PRECURSOR_IQ_RECONCILE_POLL_SECONDS` | `3600` | Interval of the check for bulk edits that bypassed the queue. |
 
-Runtime settings (**Settings → Precursor IQ**) stored in `AppSetting`:
+**Settings → Precursor IQ**:
 
 | Setting | Default | Description |
 | --- | --- | --- |
-| `iq_embeddings_enabled` | `false` | Embed every indexed passage with the active provider (uses quota) and add vector similarity to the ranking. |
-| `iq_embedding_provider` | `""` | Provider serving embeddings (an id from `/api/llm/providers`). Empty uses the default provider. An unconfigured provider disables semantic matching rather than falling back. |
-| `iq_embedding_model` | `text-embedding-3-small` | Embeddings model, or the deployment name on Azure AI Foundry. Requested at 256 dimensions. |
-| `iq_ask_provider` | `""` | Provider serving Ask answers. Only used together with `iq_ask_model`; empty uses the default provider. |
-| `iq_ask_model` | `""` | Model that writes Ask answers. Empty uses the chat model. |
-
-Two `mcp_expose` sections gate the MCP tools: `iq` (`retrieve`) and `iq_ask`
-(`ask`), both off by default. The `workspaces` (read) and `workspaces_write` (create workspaces, write files) sections gate the workspace tools; they stay opt-in even for Precursor's own agents. The `tools` section gates the basic stateless helpers (`get_datetime`, `calculate`, `date_math`, and so on).
-
-## Skills directory
-
-The [skills](/features/skills-memory) folder is resolved the way the Copilot CLI
-resolves its home: `COPILOT_HOME` → `XDG_CONFIG_HOME/copilot` → `~/.copilot`, with
-a `PRECURSOR_SKILLS_DIR` override.
+| `iq_embeddings_enabled` | `false` | Embed every passage (uses quota) and add vector similarity to ranking. |
+| `iq_embedding_provider` | `""` | Provider id for embeddings; empty = default provider. An unconfigured provider disables semantic matching. |
+| `iq_embedding_model` | `text-embedding-3-small` | Model or Azure deployment name, at 256 dimensions. |
+| `iq_ask_provider` | `""` | Provider for Ask answers (with `iq_ask_model`); empty = default. |
+| `iq_ask_model` | `""` | Model for Ask answers; empty = chat model. |
 
 ## Agents
 
-[Agents mode](/features/agents-mode) is toggled at runtime (**Settings → Agents**),
-which is the only on/off control — there is no env-level default, because
-installing the `agents` extra is itself the opt-in. One env var affects *which*
-runtime it drives, and the [agent
-orchestrator](/features/agents-mode/orchestration) governance adds two
-process-level knobs:
+[Agents mode](/features/agents-mode) is switched on in **Settings → Agents**
+(no env default).
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `COPILOT_CLI_PATH` | *(empty)* | Read by the Copilot SDK, and the first thing Precursor's runtime probe checks. Point it at a `copilot` binary to pin the runtime; otherwise Precursor falls back to the SDK's download cache and then to `copilot` on `PATH`. The probe never downloads — see [agents mode](/features/agents-mode#pointing-at-a-specific-cli). |
-| `PRECURSOR_AGENTS_MAX_CONCURRENT` | `3` | Concurrency governor — the max agents the [orchestrator](/features/agents-mode/orchestration#budgets-the-concurrency-governor) lets execute a turn at once. Extra ready agents queue and are released as slots free up. `0` or negative disables the cap (unbounded). |
-| `PRECURSOR_AGENTS_RETRY_BACKOFF_SECONDS` | `60` | Base backoff for [auto-retry](/features/agents-mode/orchestration#retry-auto-recovery) of a failed agent. Delay grows exponentially per attempt (`base × 2ⁿ`); the scheduler re-runs the agent once its retry time is due, up to the agent's `max_retries`. |
-
-A runtime setting (an `AppSetting`, edited in **Settings → Agents**) shapes new
-agent sessions:
+| `COPILOT_CLI_PATH` | *(empty)* | `copilot` binary to use. Otherwise: the SDK's download cache, then `PATH`. The probe never downloads ([details](/features/agents-mode#pointing-at-a-specific-cli)). |
+| `PRECURSOR_AGENTS_MAX_CONCURRENT` | `3` | Agents [executing a turn at once](/features/agents-mode/orchestration#budgets-the-concurrency-governor); others queue. `≤ 0` = unbounded. |
+| `PRECURSOR_AGENTS_RETRY_BACKOFF_SECONDS` | `60` | Base delay of [auto-retry](/features/agents-mode/orchestration#retry-auto-recovery), doubling per attempt, up to the agent's `max_retries`. |
 
 | Setting | Default | Description |
 | --- | --- | --- |
-| `agents_file_change_tracking` | `true` | New Copilot sessions capture the files an agent changes, so a [rewind](/features/rewind#restoring-files) can restore them. Applies to sessions created after the change; a session not tracked from its first turn rewinds its conversation only. |
+| `agents_file_change_tracking` | `true` | New sessions record changed files so a [rewind](/features/rewind#restoring-files) can restore them. |
 
-Per-agent **token budget** and **max retries** aren't env vars — they're set in
-each agent's settings drawer (or baked into a
+Token budget and max retries are per agent (settings drawer or
 [blueprint](/features/agents-mode/orchestration#blueprints-reusable-templates)).
 
 ## MCP tool servers
 
-Most [MCP](/features/mcp) built-ins are toggled **at runtime** (**Settings →
-MCP**). A few env knobs affect the `playwright` and Agent 365 servers:
+Built-in [MCP](/features/mcp) servers are toggled in **Settings → MCP servers**.
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `PRECURSOR_MCP_IDLE_TTL_SECONDS` | `600` | How long an idle MCP client session is kept warm before it's torn down. A later call re-attaches; lower it to hold fewer child processes open. |
-| `PRECURSOR_MCP_WARMUP_ENABLED` | `true` | Connect the enabled servers in the background shortly after startup, one at a time, so the first prompt doesn't pay connect + initialize + list_tools for all of them at once. Never blocks startup or a request, and never starts an interactive sign-in. Off means every server connects lazily on first use. |
-| `PRECURSOR_MCP_WARMUP_DELAY_SECONDS` | `5` | Grace period before the warm-up touches the first server, leaving startup (schema migration, plugin hydration, the SPA's own first requests) the machine to itself. |
-| `PRECURSOR_MCP_WARMUP_GAP_SECONDS` | `1` | Pause between servers during the sweep. Raise it to spread the cost further; the sweep is sequential either way. |
-| `PRECURSOR_GITHUB_MCP_TOOLSETS` | `context,repos,issues,pull_requests,users` | Which toolsets the bundled GitHub MCP server registers. Trimming it is the cheapest way to cut that server's schema cost, since tool schemas are re-sent every turn. |
-| `PRECURSOR_PLAYWRIGHT_BROWSER` | `msedge` | Browser channel the `playwright` server drives (`--browser`): one of `msedge`, `chromium`, `chrome`, `firefox`, `webkit`, or `default`. Defaults to **Microsoft Edge** so it can ride the corporate SSO/WAM broker for authenticated Entra scraping. Set `chromium` on machines without Edge. `default` **omits `--browser` entirely** — the escape hatch for an `@playwright/mcp` build that predates the flag (fails with `unknown option '--browser'`). Overridable at runtime in **Settings → MCP → Playwright browser** (the DB value wins). |
-| `PRECURSOR_WORKIQ_TENANT_ID` | *(empty)* | Microsoft tenant **GUID** the [Agent 365](/features/mcp#agent-365-workiq-teams-and-workiq-user) servers (`workiq-teams`, `workiq-user`, `workiq-planner`, `workiq-word`, `workiq-excel`) address. Overridden by **Settings → MCP → Microsoft 365 tenant**; when both are empty Precursor reads the tenant off an existing WorkIQ sign-in. Entra rejects `common` / `organizations` here — it must be a GUID. |
-| `PRECURSOR_PLAYWRIGHT_PROFILE_DIR` | *(empty)* | Browser profile the `playwright` server uses (`--user-data-dir`). Empty means **reuse `@playwright/mcp`'s own shared, machine-wide profile** — so any Entra/SSO sign-in already onboarded there (incl. via other Playwright-MCP tools) carries over. Set a path to pin an isolated profile for Precursor instead. |
+| `PRECURSOR_MCP_IDLE_TTL_SECONDS` | `600` | Idle time before an MCP client session is closed (reattached on next call). |
+| `PRECURSOR_MCP_WARMUP_ENABLED` | `true` | Connect enabled servers one by one in the background after startup. Never blocks, never starts an interactive sign-in. `false` = connect on first use. |
+| `PRECURSOR_MCP_WARMUP_DELAY_SECONDS` | `5` | Delay before warm-up starts. |
+| `PRECURSOR_MCP_WARMUP_GAP_SECONDS` | `1` | Pause between servers during warm-up. |
+| `PRECURSOR_GITHUB_MCP_TOOLSETS` | `context,repos,issues,pull_requests,users` | Toolsets of the bundled GitHub server. Fewer toolsets = smaller schemas sent every turn. |
+| `PRECURSOR_PLAYWRIGHT_BROWSER` | `msedge` | `playwright` browser: `msedge` (rides corporate SSO), `chromium`, `chrome`, `firefox`, `webkit`, or `default` (omit `--browser`, for builds that reject it). Settings wins. |
+| `PRECURSOR_PLAYWRIGHT_PROFILE_DIR` | *(empty)* | `--user-data-dir`. Empty = `@playwright/mcp`'s shared profile, so existing SSO sign-ins carry over. |
+| `PRECURSOR_WORKIQ_TENANT_ID` | *(empty)* | Tenant **GUID** for the [Agent 365](/features/mcp#agent-365-workiq-teams-and-workiq-user) servers (`common`/`organizations` are rejected). Settings wins; if both are empty, read from an existing WorkIQ sign-in. |
+
+`mcp_expose` sections of the built-in server, all off by default: `iq`
+(`retrieve`), `iq_ask` (`ask`), `workspaces` (read), `workspaces_write` (create
+and write; opt-in even for Precursor's agents), `tools` (`get_datetime`,
+`calculate`, `date_math`, …).
 
 ### WorkIQ / Agent 365 sign-in
 
-These govern how the Entra credentials behind the WorkIQ and Agent 365 servers
-are kept alive. Defaults are tuned for an unattended install — a
-[scheduled workflow](/features/workflows/running#triggers-and-scheduling) has
-nobody at a browser.
+Defaults suit an unattended instance (e.g. a
+[scheduled workflow](/features/workflows/running#triggers-and-scheduling)).
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `PRECURSOR_WORKIQ_KEEPALIVE_ENABLED` | `true` | Run the background ticker that silently refreshes WorkIQ tokens before they expire. Off means every lapse needs an interactive sign-in. |
-| `PRECURSOR_WORKIQ_KEEPALIVE_POLL_SECONDS` | `60` | How often that ticker checks whether a token is near expiry. How far ahead of expiry it renews is **not** configurable: it is a quarter of the token's own lifetime (at least five minutes), which is what decides how many attempts fit before the token dies. `GET /api/mcp/auth/diagnostics` reports the resulting `renewal_lead_seconds` per credential. |
-| `PRECURSOR_WORKIQ_SILENT_REAUTH_ENABLED` | `true` | Try the hands-free (no-browser) re-authentication path before falling back to an interactive prompt. |
-| `PRECURSOR_WORKIQ_AUTO_REAUTH_ENABLED` | `true` | Automatically start a re-authentication when a credential is found to have lapsed, rather than waiting for you to click the banner. |
-| `PRECURSOR_WORKIQ_CHAIN_REAUTH_ENABLED` | `true` | After a WorkIQ / Agent 365 sign-in succeeds, immediately retry the **other** Entra credential on the hands-free silent path while the SSO session is hot, so you get [one prompt instead of one per credential](/features/mcp#signing-in-to-workiq-and-agent-365). Set `false` to renew each credential only when it's independently needed. |
-| `PRECURSOR_WORKIQ_LOOPBACK_PORT_FALLBACK` | `true` | When an OAuth sign-in's preferred loopback callback port (`12798` / `12799` / `12800`) is already in use, bind a free **ephemeral** port instead of failing. Entra ignores the port of a loopback redirect for public clients, so this is transparent and lets several windows sign in at once. Set `false` for the strict "port is busy — finish that other sign-in first" behaviour. |
-| `PRECURSOR_WORKIQ_KEEPALIVE_IDLE_AFTER_SECONDS` | `21600` (6 h) | Stop keeping a WorkIQ / Agent 365 credential warm once no server using it has been called for this long, so a server you never use doesn't [nag you to sign in](/features/mcp#signing-in-to-workiq-and-agent-365). Usage is tracked per credential and the clock is seeded at startup, so a restart doesn't leave everything cold. `0` disables the back-off and refreshes every signed-in credential indefinitely. |
-| `PRECURSOR_WORKIQ_KEEPALIVE_SURFACE_IDLE_LAPSE` | `true` | Let the keep-alive [surface an idle credential's lapse proactively](/features/mcp#signing-in-to-workiq-and-agent-365): once an idle token has genuinely expired it probes once, and if the refresh token is dead it raises the sign-in banner instead of waiting for your next request to stall on the doomed handshake. A still-refreshable idle session recovers silently. Set `false` to keep idle credentials completely quiet until you touch them yourself. |
-| `PRECURSOR_WORKIQ_AUTH_LOG_LEVEL` | `debug` | Level of the dedicated **`precursor.mcp.auth`** channel that traces [every decision taken about a WorkIQ credential](/features/mcp#when-a-sign-in-prompt-needs-explaining) — keep-alive verdicts, the Entra `AADSTS…` code that refused a silent refresh, each leg of a re-auth. Independent of `PRECURSOR_LOG_LEVEL`, and verbose by default because a sign-in lapse only happens in the wild and can't be reproduced on demand. The channel is quiet outside an auth episode. Use `info` for transitions only, or `warning` to silence it — `GET /api/mcp/auth/diagnostics` keeps the full in-memory trace either way. |
-
-::: tip Where a value comes from
-Almost everything you can change in **Settings** is stored in the database and
-has **no** environment variable — the panel is the only place to set it.
-
-The two exceptions are `PRECURSOR_PLAYWRIGHT_BROWSER` and
-`PRECURSOR_WORKIQ_TENANT_ID`: both describe the *machine or tenant* rather than
-a preference, so they're seedable from `.env` and overridden by the
-corresponding **Settings → MCP** field when one is saved.
-
-Never read `os.environ` directly in app code — resolve settings through
-`services/app_settings.py`.
-:::
+| `PRECURSOR_WORKIQ_KEEPALIVE_ENABLED` | `true` | Refresh tokens in the background before they expire. |
+| `PRECURSOR_WORKIQ_KEEPALIVE_POLL_SECONDS` | `60` | Keep-alive check interval. Renewal starts a quarter of the token's lifetime (≥ 5 min) before expiry; not configurable. |
+| `PRECURSOR_WORKIQ_KEEPALIVE_IDLE_AFTER_SECONDS` | `21600` | Stop refreshing a credential no server has used for this long. `0` = refresh forever. |
+| `PRECURSOR_WORKIQ_KEEPALIVE_SURFACE_IDLE_LAPSE` | `true` | When an idle credential has really expired and can't refresh, raise the sign-in banner instead of waiting for your next request. |
+| `PRECURSOR_WORKIQ_SILENT_REAUTH_ENABLED` | `true` | Try no-browser re-authentication before prompting. |
+| `PRECURSOR_WORKIQ_AUTO_REAUTH_ENABLED` | `true` | Start re-authentication automatically when a credential lapses. |
+| `PRECURSOR_WORKIQ_CHAIN_REAUTH_ENABLED` | `true` | After one sign-in, silently renew the other Entra credential too ([one prompt instead of two](/features/mcp#signing-in-to-workiq-and-agent-365)). |
+| `PRECURSOR_WORKIQ_LOOPBACK_PORT_FALLBACK` | `true` | If the OAuth callback port (`12798`–`12800`) is busy, use an ephemeral one. `false` = fail instead. |
+| `PRECURSOR_WORKIQ_AUTH_LOG_LEVEL` | `debug` | Level of the `precursor.mcp.auth` [trace channel](/features/mcp#when-a-sign-in-prompt-needs-explaining), independent of `PRECURSOR_LOG_LEVEL`. `GET /api/mcp/auth/diagnostics` keeps the full trace regardless. |

@@ -4,27 +4,9 @@ title: Topic summary
 
 # Topic summary
 
-A **topic summary** is the short status brief that sits above the transcript:
-where the topic stands, the actions still open, and the handful of facts needed
-to act. It is written by the model and **owned by you** — once you edit it, no
-refresh can silently overwrite your text.
-
-The slim **Summary bar** beneath the topic header only exists once a brief has
-been generated (or written). Its centered chevron expands or collapses the
-panel; refresh, edit and delete controls stay inside the expanded area.
-
-By default a topic has **no summary at all**, and no bar: nothing is generated
-until you ask. Click the **document icon in the topic header** (or run
-`/show-summary`) to open an empty panel and choose **Generate summary**. Merely
-opening it does not call the model, and collapsing it again while it is still
-empty removes the bar. Pending suggestions remain visible as a small count on
-the collapsed bar.
-
-Drag the **bottom divider** to resize the expanded summary. Its height is
-remembered in this browser and adapts to the available space without hiding the
-composer. The body scrolls when needed, including the full review and editor
-controls. The divider also supports touch and keyboard resizing: focus it and
-use **↑/↓**, or **Home/End** for the minimum/maximum height.
+A short status brief above a topic's transcript (status, open actions, key facts), written by
+the model and **owned by you**: once you edit it, refreshes arrive as suggestions you accept or
+reject.
 
 <Screenshot
   src="/screenshots/topic-summary-collapsed.png"
@@ -40,18 +22,21 @@ use **↑/↓**, or **Home/End** for the minimum/maximum height.
 
 ## Generating one
 
-`/update-summary` (or the ↻ button in the panel) writes a brief from the
-topic's **conversation**, its [`/notes` scratchpad](/features/topics) and the
-names of the files [attached](/features/attachments) to it. Add an instruction
-to steer it — `/update-summary focus on what blocks the release`.
+A topic has no summary until you ask. Click the **document icon** in the topic header (or
+`/show-summary`), then **Generate summary**; or run `/update-summary [instruction]`
+(e.g. `/update-summary focus on what blocks the release`). Once a brief exists, a slim
+**Summary bar** under the header expands or collapses it; drag its bottom divider (or focus it
+and use **↑/↓**, **Home/End**) to resize.
 
-The prompt uses the latest 40 non-tool messages (up to 2,000 characters each),
-up to 4,000 characters of scratchpad notes, and the latest 100 attached filenames.
-It does not independently read attachment contents. Empty or failed model
-responses leave the existing brief unchanged and display an error.
+The model reads:
 
-The first generated brief uses three sections, so it stays scannable and
-diffable:
+| Source | Limit |
+| --- | --- |
+| Conversation | Latest 40 non-tool messages, 2,000 characters each |
+| [`/notes`](/features/topics#under-the-composer) scratchpad | 4,000 characters |
+| [Attachments](/features/attachments) | Latest 100 file **names** (not contents) |
+
+The first brief has three sections:
 
 ```markdown
 ## Status
@@ -65,37 +50,16 @@ diffable:
 - Ship window closes Friday
 ```
 
-Content is deliberately limited to **real actions, updates and information** —
-no retelling of the conversation.
+A refresh (↻ or `/update-summary`) is a **minimal update**: the model is told to keep wording
+and order and change only material facts. With nothing new, the bar shows **"Summary
+refreshed — no changes"**. Ask for a rewrite explicitly in the instruction if you want one. A
+failed or empty reply leaves the brief unchanged.
 
-Refreshing an existing brief is a **minimal-update pass**, not a rewrite. The
-model is instructed to preserve wording, formatting and ordering, and to change
-only material facts or actions supported by explicit updates. Repeated facts,
-paraphrases and missing mentions in recent history should not trigger changes.
-With nothing substantive to update, it is asked to return the existing text
-verbatim, including for a brief you have not edited yourself. You can still
-explicitly request a rewrite or reorganization in the command's instruction.
-This is prompt guidance, not a semantic filter; review suggestions before
-accepting them.
+## Editing
 
-When a requested refresh completes without changing the brief or proposing any
-changes, the Saved status area briefly confirms **“Summary refreshed — no
-changes”**. It returns to the normal status after three seconds. The same
-confirmation appears for `/update-summary`.
-
-## Editing, and what happens next
-
-Check or uncheck an action **directly in view mode** to mark it done or reopen
-it. The checkbox change is saved immediately; task lists elsewhere in the
-conversation remain read-only.
-
-Double-click the summary text to edit its Markdown **at the clicked position**,
-or use the ✎ button. Links, action checkboxes and other controls keep their
-normal behavior. Changes **autosave after a
-1.2-second pause**, with **Saving…**, **Saved**, or **Not saved** feedback.
-You can keep typing while a save is in flight. **Done** returns to view mode;
-leaving the editor, collapsing the panel, or navigating to another topic also
-flushes pending edits. There is no separate Save or Cancel step.
+- Tick or untick an action **in view mode**; it saves at once.
+- Double-click the text (or ✎) to edit the Markdown at that spot. Edits **autosave** after
+  1.2 s (**Saving… / Saved / Not saved**). **Done** returns to view mode.
 
 <Screenshot
   src="/screenshots/topic-summary-editing.png"
@@ -103,51 +67,30 @@ flushes pending edits. There is no separate Save or Cancel step.
   caption="Edit the Markdown directly; changes save automatically without leaving the editor."
 />
 
-Both manual edits and checkbox changes mark the summary as **yours**. From then on:
+Once you've edited or ticked anything, the summary is **yours**:
 
-- a refresh is told to treat your wording as authoritative and to keep it
-  wherever it is still accurate — your edits carry more weight than the model's
-  previous text;
-- the new version is **never written straight in**. It is merged into the
-  brief **in place** — each changed line or block shown right where it sits in
-  the document, with the unchanged text around it — removed lines struck
-  through in red, added lines in green, and a compact **✔ Accept** / **✗
-  Reject** pair sharing the same row (with tooltips and keyboard-accessible
-  labels). Each decision is **saved immediately** and removes that suggestion,
-  leaving the others pending. Accepting updates the brief; rejecting keeps
-  that part of your text. **Accept all** and **Reject all** act only on the
-  suggestions still pending. There is no final Apply step, and rejected
-  changes cannot reappear from the same proposal when you accept another
-  change later.
+- Refreshes treat your wording as authoritative.
+- A new version is never written straight in. Changes appear **in place**, removed lines in red
+  and added in green, each with **✔ Accept** / **✗ Reject**, saved immediately. **Accept all**
+  / **Reject all** act on what's still pending.
+- Saving an edit discards a pending proposal, since it was based on older text.
 
-Everything is persisted server-side, so the brief (and whether the panel is
-expanded) survives reloads and updates other open windows immediately.
-Saving an edit or appending an item discards the old proposal because it was
-based on different text. A refresh with no changes creates no review.
-
-If another window or scheduled run changes the brief while you are editing,
-generating, or reviewing it, the stale write is rejected rather than overwriting
-newer work. A failed save keeps your local changes visible. Use **Retry save**
-after a connection error, or copy any text you want to keep and choose
-**Reload latest** to explicitly discard the unsaved draft and use the latest
-server version. Unsaved drafts are also cached in the current tab so a failed
-save is recoverable after navigation or reload. Closing the browser tab with
-unsaved edits prompts a warning.
+The brief and its expanded state are stored server-side and sync across windows. A write based
+on stale text (another window, a scheduled run) is rejected rather than overwriting newer work:
+use **Retry save**, or **Reload latest** to drop your draft. Unsaved drafts are cached in the
+tab, and closing it with unsaved edits warns you.
 
 ## Slash commands
 
 | Command | What it does |
 | --- | --- |
-| `/update-summary [instruction]` | Generate or refresh the brief. On an edited brief, arrives as reviewable changes. |
-| `/show-summary` | Expand the summary area. |
-| `/hide-summary` | Collapse it — the text is kept. |
-| `/todo-summary <action>` | Add a pending action to **Actions**. |
-| `/important-summary <information>` | Add a fact to **Key information** so it survives future refreshes. |
+| `/update-summary [instruction]` | Generate or refresh. On an edited brief, arrives as reviewable changes. |
+| `/show-summary` | Expand the summary. |
+| `/hide-summary` | Collapse it (the text is kept). |
+| `/todo-summary <action>` | Add an open action to **Actions**. |
+| `/important-summary <information>` | Add a fact to **Key information** so refreshes keep it. |
 
-The 🗑 button asks for confirmation, then drops the summary entirely, returning
-the topic to having none.
+The 🗑 button deletes the summary after confirmation.
 
-All five commands also work from a [scheduled](/features/scheduler) topic
-prompt, so a recurring run can keep a brief up to date on its own — a refresh
-that lands on an edited brief leaves a note in the transcript instead of
-applying itself, and waits for your review.
+All five commands work in [scheduled](/features/scheduler) topic prompts. A scheduled refresh
+on an edited brief leaves a note in the transcript and waits for your review.

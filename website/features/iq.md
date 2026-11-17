@@ -4,18 +4,15 @@ title: Precursor IQ
 
 # Precursor IQ
 
-Find anything in your workspace by meaning, not exact wording, and ask
-questions that come back with cited answers. The same engine powers the **IQ**
-section, the ⌘K palette and the `retrieve` / `ask` MCP tools. It follows the WorkIQ pattern
-(retrieval returns ranked passages plus a grounding block with `[^n]`
-citations), applied to Precursor's own content instead of Microsoft 365.
+Search your own content by meaning and get cited answers, from the **IQ**
+section, the ⌘K palette and the `retrieve` / `ask` MCP tools. On by default
+(`PRECURSOR_IQ_ENABLED`).
 
 <Screenshot src="/screenshots/iq-palette.png" alt="The command palette ranking results for the query 'retries latency regression': a topic, several passages from a live session's summary, transcript and insight, and topic briefs and messages, each badged with the field that matched, followed by an 'Ask Precursor' row" caption="⌘K ranked by Precursor IQ. The words can come in any order and in any field, and title hits float to the top." />
 
 ## What gets indexed
 
-Precursor IQ keeps a derived index of passages of up to about 1,200 characters,
-split on paragraph boundaries with a small overlap:
+The index holds passages of up to ~1,200 characters, split on paragraphs:
 
 | Source | Passages from | Gated over MCP by |
 | --- | --- | --- |
@@ -33,41 +30,31 @@ re-index.
 
 ### Staying current
 
-Every write to an indexed row queues it for re-indexing **in the same
-transaction** as the write. A background indexer processes the queue every few
-seconds (`PRECURSOR_IQ_INDEX_POLL_SECONDS`), and every query first processes a
-small batch itself, so results include what you just wrote. An hourly check
-(`PRECURSOR_IQ_RECONCILE_POLL_SECONDS`) catches bulk edits and deletes that
-bypass the queue. On first start, Precursor queues everything once and builds
-the index in the background.
+Every write queues its row for re-indexing. A background indexer drains the
+queue, and each query drains a small batch first, so results include what you
+just wrote. An hourly reconcile catches bulk changes. The first start indexes
+everything in the background.
 
-**Settings → Precursor IQ** shows the passage count, the queue depth and which
-full-text engine is active, and has a **Rebuild index** button. It also holds
-the embeddings and answer-model settings described below.
+**Settings → Precursor IQ** shows the passage count, queue depth and full-text
+engine, has **Rebuild index**, and holds the embeddings and answer-model
+settings.
 
 ## How ranking works
 
-Precursor IQ builds two ranked lists and merges them with *Reciprocal Rank
-Fusion*:
+- **Full-text**: BM25 via **SQLite FTS5** (accent-insensitive) or **Postgres**
+  `tsvector`; query words match as prefixes and title hits weigh more. Without
+  FTS5 it falls back to a substring scan.
+- **Semantic** *(optional)*: embedding similarity, so paraphrases match. See
+  [Semantic matching](#semantic-matching-embeddings).
 
-- **Full-text**: BM25 over the index, using **SQLite FTS5** (accent-insensitive,
-  so `reunion` matches `réunion`) or **Postgres** `tsvector`. Each query word
-  also matches as a prefix, and a hit on a title counts more than a hit in the
-  body. On a SQLite build without FTS5, it falls back to a plain substring scan.
-- **Semantic** *(optional)*: cosine similarity between embedding vectors, so
-  paraphrases match too. See [Semantic matching](#semantic-matching-embeddings).
-
-Titles that contain every query word get a boost, and recent items get a small
-one. Results then keep only the best passage per item, and at most three items
-per topic, chat or session, so one long thread can't fill the list.
+Both lists are merged (Reciprocal Rank Fusion), with boosts for titles holding
+every query word and for recent items. Each item shows its best passage, and at
+most three items per topic, chat or session.
 
 ## The IQ section
 
-**IQ** in the section rail (or `/iq`) is a single question box. Press
-**⌘⇧K** (**Ctrl+Shift+K**) from anywhere in Precursor, even mid-typing or with
-⌘K open, to jump straight to it. Text you had selected (a line of a message, a
-meeting note) is pre-filled as the question, ready to edit before you press
-Enter. Ask something in plain words, or pick one of the example questions:
+Open **IQ** from the section rail, `/iq`, or **⌘⇧K** (**Ctrl+Shift+K**) from
+anywhere (selected text becomes the question). Ask in plain words:
 
 1. **Matching content** appears first, within a moment. Each row opens the real
    topic, chat, agent or live session, and items whose title matches your
@@ -78,9 +65,8 @@ Enter. Ask something in plain words, or pick one of the example questions:
 
 <Screenshot src="/screenshots/iq-section.png" alt="The IQ section: a question about the latency regression, a short answer with numbered citation links, and eight numbered sources (topics, a live session's transcript, summary and insight, release messages and a brief), three of them marked cited" caption="The IQ section: ask once, then open the sources behind the answer." />
 
-It's a way to find things, not a conversation: questions and answers aren't
-saved, and asking again replaces the previous answer. Memory entries can be
-sources, but they have no page to open.
+Questions and answers aren't saved; asking again replaces the answer. Memory
+entries can be sources but have no page to open.
 
 ## Ask from ⌘K {#ask-from-k}
 
@@ -116,18 +102,16 @@ caller sees topic titles, descriptions and briefs, but not topic messages
 the exact words. `retrieve` is the tool for natural-language lookups.
 :::
 
-## Semantic matching (embeddings)
+## Semantic matching (embeddings) {#semantic-matching-embeddings}
 
-Embeddings are **off by default** because each indexed passage is sent once to
-your provider's `/embeddings` endpoint, which uses quota. To turn them on,
-tick **Semantic matching** in **Settings → Precursor IQ**.
+**Off by default**, since each passage is sent once to your provider's
+`/embeddings` endpoint. Tick **Semantic matching** in **Settings → Precursor
+IQ**.
 
-- **Provider**: any provider configured under **Settings → Model**, or the
-  default provider. Azure AI Foundry reuses its endpoint, key and API version,
-  so you configure it once. GitHub Copilot and the OpenAI-compatible providers
-  work too. A provider that is not configured, or has no embeddings endpoint,
-  never falls back to another one: retrieval stays full-text only and the page
-  says so.
+- **Provider**: any provider from **Settings → Model** (Azure AI Foundry reuses
+  its endpoint and key; Copilot and OpenAI-compatible providers work). If it
+  isn't configured or has no embeddings endpoint, retrieval stays full-text and
+  the page says so; there is no fallback to another provider.
 - **Model**: defaults to `text-embedding-3-small`, requested at 256 dimensions.
   On Azure AI Foundry, enter your embeddings **deployment** name (add it to the
   provider's deployment names to pick it from the list). Models that can't
@@ -135,10 +119,9 @@ tick **Semantic matching** in **Settings → Precursor IQ**.
 - **Test embeddings**: embeds one short text with the provider and model
   currently selected, saved or not, and reports the vector size and latency or
   the provider's error, before the whole index starts spending quota.
-- **Storage**: vectors are stored next to their passages and compared in-process,
-  with no vector database or extra dependency. Changing the provider or the
-  model re-embeds everything in the background. Embedding calls appear in usage
-  stats as `/iq-embeddings`.
+- **Storage**: vectors are stored in the database and compared in-process (no
+  vector database). Changing provider or model re-embeds in the background.
+  Usage stats list the calls as `/iq-embeddings`.
 
 ## Configuration
 

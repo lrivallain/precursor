@@ -4,143 +4,89 @@ title: Contribution guide
 
 # Contributing to Precursor
 
-Thanks for your interest in improving Precursor. The project is small and
-opinionated — issues and small, focused PRs are the easiest way to land changes.
+Issues and small, focused PRs land best. The canonical rules are in the
+repository:
+[`CONTRIBUTING.md`](https://github.com/lrivallain/precursor/blob/main/CONTRIBUTING.md)
+(setup, gates, lockfiles, tests) and
+[`ARCHITECTURE.md`](https://github.com/lrivallain/precursor/blob/main/ARCHITECTURE.md)
+(where code goes, building blocks to reuse, size and complexity limits). This
+page is the short version.
 
-## Getting set up
+## Setup
 
-A source checkout is the **contributor** path — if you only want to *use*
-Precursor, the [one-command install](/guide/installation) is a lot shorter.
-
-Precursor uses **[uv](https://docs.astral.sh/uv/)** for the Python toolchain
-(env, run, build, release) and **Node.js** for the frontend toolchain. Install
-both once, then:
+Only want to *use* Precursor? Use the [one-command install](/guide/installation).
+A checkout needs **[uv](https://docs.astral.sh/uv/)** and **Node.js 24 LTS**
+(or 22.12+).
 
 ```bash
 git clone https://github.com/lrivallain/precursor.git
 cd precursor
-
-make sync                 # uv sync + npm --prefix frontend install
+make sync                 # uv sync + npm ci (frontend and website)
+make hooks                # once: lockfile guard + file-size ratchet in pre-commit
 cp .env.example .env
+make dev                  # uvicorn --reload + Vite HMR; Ctrl-C stops both
 ```
 
-<details>
-<summary>Without <code>make</code></summary>
+| Command | Runs |
+| --- | --- |
+| `uv run precursor --dev --port 9000` | UI on :9000, API on a hidden port behind Vite (`--port` + 1 by default; busy ports bump) |
+| `uv run precursor --dev --no-frontend` | backend only |
+| `npm --prefix frontend run dev` | Vite only |
+| `make build && uv run precursor` | one process, API + built SPA on :8000 |
 
-```bash
-uv sync
-cp .env.example .env
-cd frontend && npm install && cd ..
-```
-
-</details>
-
-Run the dev stack (uvicorn `--reload` + Vite HMR, both stop on Ctrl-C):
-
-```bash
-make dev
-# or:  uv run precursor --dev
-```
-
-In `--dev`, the port you pass is the **UI** (Vite), and Vite proxies `/api` to
-the backend on a hidden port (`--port` + 1 by default). A busy port bumps to the
-next free one, so several checkouts can run side by side.
-
-Other launch options:
-
-```bash
-uv run precursor --dev --port 9000     # open :9000 (UI); API on :9001 behind it
-uv run precursor --dev --no-frontend   # backend only (uvicorn --reload)
-npm --prefix frontend run dev          # Vite only
-```
-
-For a one-process production run, build the SPA first so FastAPI can serve it:
-
-```bash
-make build                # npm --prefix frontend run build → frontend/dist
-uv run precursor          # serves API + SPA on :8000
-```
+Run `uv` outside `make` with `UV_FROZEN=1` (the Makefile sets it), or it
+re-locks. Plugins aren't in a checkout; add one with
+`uv pip install precursor-kanban`.
 
 ::: tip Upgrades are automatic
-After a `git pull`, the next `uv run precursor` rebuilds the frontend if
-`frontend/dist` is stale and runs Alembic `upgrade head` on the database — no
-manual build or migration step.
+After a `git pull`, `uv run precursor` rebuilds a stale `frontend/dist` and runs
+`alembic upgrade head`.
 :::
 
-Plugins are separate distributions with their own release cadence, so a source
-checkout starts without them. Add one the way an end user would:
-
-```bash
-uv pip install precursor-kanban
-```
-
-## Quality gates
-
-Before opening a PR, run the full gate set (it mirrors CI):
+## Definition of done
 
 ```bash
 make check
 ```
 
-<details>
-<summary>Individual commands</summary>
+It mirrors CI: lockfile check, quality ratchet, API types up to date, ruff
+(lint + format), mypy, pytest, frontend typecheck, Vitest unit tests, frontend
+build. Also:
 
-```bash
-uv run ruff check .
-uv run ruff format --check .
-uv run mypy precursor
-uv run pytest -n auto --dist loadgroup   # parallel, as in CI; drop -n to debug serially
-
-npm --prefix frontend run typecheck
-npm --prefix frontend run build
-```
-
-</details>
-
-All of these run in CI (`.github/workflows/ci.yml`) on every PR and must pass.
-
-Parallel workers each reuse a scratch database. Wizard tests use
-`tests.definitions_support.isolated_migration_database()` to start in database
-mode with migration, finalization and role-filing markers cleared, then restore
-the incoming settings and overlay cache even on failure. Snapshot/restore alone
-does not establish an unfinalized install.
-
-Successful main-push CI gates [rolling Nightly publication](/contributing/releasing#rolling-nightly-builds)
-on the exact tested commit, including manual retries. Website deployment remains
-independent.
+- **New logic has tests**: `tests/` for the backend, `*.test.ts` next to the
+  module for the frontend. The suite is hermetic (throwaway DB, offline
+  `MockProvider`).
+- **Stay under the [limits](https://github.com/lrivallain/precursor/blob/main/ARCHITECTURE.md#limits-and-the-quality-ratchet)**:
+  800-line files, complexity 15, no new 8+ line duplicates. `make ratchet` fails
+  on regressions; after an improvement, run `make ratchet-update` and commit
+  the baseline.
+- **API change**: update the Pydantic schema (with a `response_model`), run
+  `make api-types` and commit `frontend/src/lib/generated/apiTypes.ts`. Never
+  edit that file by hand.
+- **Model change**: add a [migration](/contributing/workflow#database-migrations).
+- **User-facing change**: update the docs and `CHANGELOG.md` `[Unreleased]` in
+  the same PR (see [Documentation](/contributing/workflow#documentation)).
 
 ## Code style
 
-- **Python** — ruff config in `pyproject.toml` (line length 100, target 3.12).
-  Type-annotate public surfaces; rely on `from __future__ import annotations`.
-- **TypeScript** — strict mode is on. Prefer **named exports** and function
-  components only. Tailwind classes for styling; **CSS variables** for theme
-  tokens (`frontend/src/index.css`).
-- **Comments** — only where the *why* isn't obvious. The codebase favors small,
-  self-explanatory units over heavy docstrings.
+- **Python**: ruff (line length 100, target 3.12), `from __future__ import
+  annotations`, async for DB and network, thin routers with logic in
+  `services/`.
+- **TypeScript**: strict, function components, named exports, Tailwind with CSS
+  variable tokens, `data-tooltip` instead of `title`.
+- **Comments** explain *why*, not *what*.
 
-## When you change the API
+## Don't
 
-1. Update **both** the Pydantic schema **and** the TS `types.ts` for any API
-   change — they mirror each other.
-2. When models change, generate and review a migration — see
-   [database migrations](/contributing/workflow#database-migrations).
-3. Keep the `[Unreleased]` section of `CHANGELOG.md` up to date when the change is
-   user-facing.
-
-## What *not* to do
-
-- Don't add new top-level dependencies without flagging it in the PR.
-- Don't introduce a Node.js runtime requirement in production — the SPA must be
-  pre-built and served by FastAPI.
-- Don't echo secret values (API tokens) in API responses — use the
-  `*_present` boolean pattern.
-- Don't hardcode the version anywhere — it's CalVer from git tags via hatch-vcs.
-- Don't add unrelated refactors to a feature PR.
-- Don't grow core to host a single use case — write a [plugin](/reference/plugins)
-  instead.
+- add top-level dependencies without flagging them in the PR;
+- require Node.js at runtime (the SPA is pre-built);
+- echo secrets in API responses (use `*_present` booleans);
+- hardcode the version (CalVer from git tags);
+- mix unrelated refactors into a feature PR;
+- grow core for a single use case: write a [plugin](/reference/plugins).
 
 ## Next
 
-- [Development workflow](/contributing/workflow) — branches, commits, and PRs.
-- [Releasing](/contributing/releasing) — how a version ships.
+- [Development workflow](/contributing/workflow): branches, migrations, CI,
+  lockfiles, docs.
+- [Releasing](/contributing/releasing): how a version ships.

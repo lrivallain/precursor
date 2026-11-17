@@ -4,10 +4,9 @@ title: Skills, roles & memory
 
 # Skills, roles & memory
 
-Three complementary ways to give the assistant standing context: **skills** are
-reusable prompt presets you invoke on demand, **roles** are named personas a
-conversation adopts, and **memory** is long-term notes injected into every
-conversation automatically.
+Give the assistant standing context: **skills** are prompts you invoke on
+demand, **roles** are personas a conversation adopts, **memory** is notes
+injected into every conversation.
 
 <Screenshot src="/screenshots/skills-memory.png" alt="Settings → Skills listing four slash-command skills, each with a description and an enable toggle; one is switched off" caption="Settings → Skills. Each row is a SKILL.md file on disk; the toggle decides whether it is offered as a slash command." />
 
@@ -22,10 +21,9 @@ conversation automatically.
 
 ## Skills
 
-A **skill** is a reusable prompt preset invoked as **`/name`** in chat. Skills are
-stored as **`SKILL.md` files** using the GitHub Copilot CLI's format (YAML
-frontmatter with `name` / `description`, plus a markdown body of instructions),
-so they're **interoperable** across tools.
+A **skill** is a prompt invoked as **`/name`**. Skills are **`SKILL.md`** files
+in the GitHub Copilot CLI format (frontmatter `name` / `description`, Markdown
+body), so they work across tools.
 
 ```markdown
 ---
@@ -39,129 +37,83 @@ adherence to the project's conventions. Be concise and cite line numbers.
 
 ### Invoking a skill
 
-A skill at the **start** of a message is the classic invocation: everything after
-it is the argument, and the transcript keeps showing the literal command while
-the model receives the instructions followed by your text.
+At the **start** of a message, the rest of the message is the argument; the
+transcript shows the command, the model gets the instructions plus your text.
 
 ```
 /pr-review here is the diff …
 ```
 
-You can also reference a skill **anywhere inside** a message. There the `/name`
-token is substituted **in place**, so the sentence still reads as one
-instruction:
+**Anywhere inside** a message, `/name` is substituted in place:
 
 ```
 Take the notes below, /rewrite them, then summarise in three bullets.
 ```
 
-Only **active** skills expand, and a reference is recognised only at the start of
-a line or after whitespace — so paths (`/usr/bin`), URLs and prose (`and/or`) are
-never mistaken for a skill call.
-
-::: tip Skills that call skills
-A skill's own body may reference another skill. Expansion is capped at two levels
-and a cycle (`/a` → `/b` → `/a`) stops rather than recursing.
-:::
+Only **enabled** skills expand, and only at the start of a line or after
+whitespace, so paths (`/usr/bin`), URLs and `and/or` are left alone. A skill
+may reference another skill: expansion stops at two levels and on cycles.
 
 ### Where they live
 
-The skills folder is resolved the way the CLI resolves its home:
-`COPILOT_HOME` → `XDG_CONFIG_HOME/copilot` → `~/.copilot`, with a
-`PRECURSOR_SKILLS_DIR` override. Files live at
-`<copilot_home>/skills/<name>/SKILL.md`.
+`<copilot_home>/skills/<name>/SKILL.md`, where the home is `COPILOT_HOME` →
+`XDG_CONFIG_HOME/copilot` → `~/.copilot` (override: `PRECURSOR_SKILLS_DIR`).
 
-A discovered skill is **disabled until you opt in**, so skills authored by other
-tools show up in the **Skills** tab without silently becoming active. Enable,
-edit, export, and delete all operate on the file itself.
+A discovered skill is **disabled until you enable it** in **Settings → Skills**.
+Enable, edit, export and delete act on the file.
 
 ### Standing skills: triggering one from a chat description
 
-A [chat description](/features/chats) can reference a skill too, which turns a
-chat into a **dedicated, single-purpose surface** — no slash command to type,
-ever. Set the description to something like:
+A [chat description](/features/chats) that references a skill turns the chat
+into a single-purpose tool:
 
 ```
 For every message I send: /rewrite
 ```
 
-…and tick **Use as system prompt** in the chat's settings. The skill's body is
-re-asserted as a mandatory instruction on **every** user turn, so each message
-you paste is rewritten without any command. It works in the default **context**
-mode too, where the expanded description rides along as standing context instead
-of being enforced per turn.
+With **Use as system prompt** ticked in the chat's settings, the skill is
+enforced on **every** turn. In the default **context** mode the expanded
+description is sent as standing context instead.
 
 ## Assistant roles
 
-A **role** is a named, reusable **persona** — a system prompt injected into every
-turn of whatever adopts it. Where a skill is a one-shot instruction you invoke, a
-role is *persistent*: assign it once and it re-applies until you change it.
+A **role** is a named persona: a system prompt applied to every turn of
+whatever adopts it, until you change it. Manage roles in **Settings → Roles**.
 
-Roles are managed in **Settings → Roles**. Every install seeds one built-in
-**`default`** role whose prompt is empty — so out of the box a role injects
-nothing. It can be edited but not renamed or deleted, which guarantees every
-discussion always has a fallback.
-
-Conversations refer to a role by its **name**, so a role can't be renamed — create
-a new one to use another name. Deleting a role reverts whatever used it to the
-default. With [definition files](/features/definitions#roles-as-files) in files
-mode, each role is a `roles/<name>.role.yaml` file and this tab edits it.
-Deleting also clears that name from agent and workflow definition files, so
-reloading or restarting cannot restore the old assignment. Other file settings
-and pending permission reviews are kept. A running workflow's saved version
-loses only the deleted role; its pinned steps stay unchanged.
-
-If an agent or workflow definition cannot be checked safely, or an affected
-file has a duplicate id, changes during deletion, or cannot be written, deletion
-reports a conflict and keeps the role. Resolve the reported file problem and
-try again.
-
-Until you migrate, the tab shows where to start: a note linking to
-**Settings → Definition files**.
+- The built-in **`default`** role has an empty prompt; it can be edited but not
+  renamed or deleted.
+- Roles are referenced by **name**, so they can't be renamed; create a new one.
+- Deleting a role reverts its users to `default` and removes the name from agent
+  and workflow definition files (a running workflow's saved version loses only
+  that role). If an affected definition file can't be checked or written, the
+  deletion reports a conflict and keeps the role.
+- With [definition files](/features/definitions#roles-as-files) in files mode,
+  each role is a `roles/<name>.role.yaml` file edited from this tab.
 
 ### Picking a role where you type
 
-The role picker sits in the **composer toolbar**, next to the model controls, on
-every surface that has one: a topic, a chat (including one opened beside a
-[workspace](/features/workspaces#discussing-a-workspace)), an [agent](/features/agents-mode) task, and the *Start a new chat* /
-*Start an agent task* screens. The *Start a new chat* composer also offers
-your `/skills`. [Live sessions](/features/live-sessions) have no
-composer, so their picker sits in the capture toolbar beside the meeting
-language.
+The role picker is in the **composer toolbar** of topics, chats (including one
+beside a [workspace](/features/workspaces#discussing-a-workspace)),
+[agent](/features/agents-mode) tasks and the *Start a new chat* / *Start an
+agent task* screens; [live sessions](/features/live-sessions) have it in the
+capture toolbar.
 
-What it means depends on where you are:
+- On a creation screen it sets the new conversation's role.
+- On an existing conversation it changes the role **saved on that
+  conversation**, not just the next message.
+- `/role <name>` does the same from the keyboard (topics, chats, agents); a bare
+  `/role` opens the picker.
 
-- On the **creation** surfaces it chooses the role the new chat or agent task is
-  born with, so the persona is in place for the very first turn.
-- On an **existing** conversation it reassigns that conversation's role, and the
-  change is **saved to the conversation itself** — it is not a one-off override
-  for the next message. Reload the page and the new role is still there.
-
-The `/role <name>` command does exactly the same thing from the keyboard — on a
-topic, a chat and an
-[agent](/features/agents-mode) session — and a bare `/role` opens that surface's
-picker so you can browse what's available. [Live sessions](/features/live-sessions)
-have no composer to type it in, so they use the toolbar picker only.
-
-The same role can be adopted by a **topic**, a **chat**, a
-[workspace](/features/workspaces), an [agent](/features/agents-mode), a
-[Live session](/features/live-sessions), and a
-[workflow](/features/workflows/steps#one-voice-for-the-whole-pipeline) — all
-resolved through one code path, so a role behaves identically everywhere. A
-[collection](/features/collections) can nominate a default role that new topics
-inside it start from.
-
-A role expands skill references the same way a chat description does, so a role
-prompt like "For every reply: `/role-skill`" follows you across every surface.
+Roles apply to topics, chats, [workspaces](/features/workspaces),
+[agents](/features/agents-mode), [live sessions](/features/live-sessions) and
+[workflows](/features/workflows/steps#one-voice-for-the-whole-pipeline). A
+[collection](/features/collections) can set a default role for new topics.
+A role prompt can reference skills (e.g. "For every reply: `/role-skill`").
 
 ## Memory
 
-**Memory** is long-term notes injected into the system prompt of topic chats,
-flat chats, **and** agent sessions — so standing preferences and facts follow you
-everywhere. Use it for something you want applied automatically ("Always answer
-in French", "Our default branch is `main`").
-
-Manage memory three ways:
+**Memory** is notes injected into the system prompt of topics, chats and agent
+sessions ("Always answer in French", "Our default branch is `main`"). Manage it:
 
 1. **From Settings** — edit the list directly.
 2. **From chat** — slash commands:

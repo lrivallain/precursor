@@ -39,20 +39,16 @@ Rules sit in front of the policy; the conversation's rules come before global
 ones, and **ask beats allow**. Manage them in **Settings → Chat** and in each
 conversation's settings.
 
-For a model-delegated step plan, a step's discussion and the final-output
-discussion default to the plan's recorded source autonomy, rather than the
-global chat default. You can set a different policy in that discussion; choosing
-**Default** returns to the plan's policy. Rules are checked in order: the
-discussion's own rules, the source conversation's rules, then global rules;
-within each level **ask** beats **allow**. The plan's recorded autonomy is
-updated when a follow-up amends it. Plans started by a person keep the ordinary
-chat default and rules.
+### Step plans
 
-The step assessor's internal inspection tools use the server pattern
-`step-inspector` with tools `list_files`, `read_file` and `read_tool_output`.
-They follow the same policy and rules, but a call requiring approval is declined
-instead of parked. App-generated file checks, excerpts and supplied conversation
-history are not tool calls and are not controlled by these rules.
+- A **model-delegated** [step plan](/features/step-by-step)'s step and
+  final-output discussions default to the source conversation's policy (updated
+  when a follow-up amends the plan); **Default** in that discussion returns to
+  it. Rules apply in order: the discussion's, the source conversation's, then
+  global. Plans you start yourself use the ordinary chat default.
+- The step assessor's inspection tools match server `step-inspector` (tools
+  `list_files`, `read_file`, `read_tool_output`). They follow the same policy and
+  rules, but a call needing approval is declined instead of parked.
 
 ## Unattended runs
 

@@ -4,74 +4,45 @@ title: Quick start
 
 # Quick start
 
-This walkthrough gets you from a fresh install to your first conversation in a
-couple of minutes. If you haven't installed Precursor yet, that's
-[one command](/guide/installation).
+From a fresh [install](/guide/installation) to your first conversation.
 
 ## 1. Open the app
 
-Precursor is already running — the installer started it and registered it to
-start at login. Open the URL it printed (<http://localhost:8000> by default);
-`precursor service status` reports it again at any time.
-
-You'll land on the **home** launcher: a greeting and a grid of section cards
-(Topics, Chats, Live, Agents, Workflows, Files, and — when configured — Kanban).
+Open <http://localhost:8000> (or the port `precursor service status` reports).
+The **home** launcher shows a card per section.
 
 <Screenshot src="/screenshots/home.png" alt="The Precursor home launcher with section cards" />
 
 ## 2. Create a topic
 
-Click the **Topics** card, then **New topic**. Give it a name that describes the
-thread of work — for example *"Onboarding checklist for new hires"*.
-
-Optionally **link a GitHub issue**: paste an issue URL or number, or create a new
-issue from the topic. Once linked, the issue's body, comments, and labels become
-live context on every turn — newer comments are preferred over older ones, so the
-assistant always reasons over the current state.
+**Topics → New topic**, give it a name. Optionally **link a GitHub issue** (URL
+or number) or create one: its body, comments and labels are re-read as context
+on every turn, newest comments first.
 
 <Screenshot src="/screenshots/topics.png" alt="An onboarding topic beside the collection picker and topic tree" />
 
 ## 3. Chat
 
-Type a prompt in the composer and send it. The reply **streams in** with live
-markdown rendering — including fenced code blocks and `mermaid` diagrams. Tool
-calls are shown inline so you can see what the assistant did.
+Send a prompt; the reply streams with markdown, code and `mermaid` rendering, and
+tool calls appear inline.
 
-Useful things to try in the composer:
+| Try | Does |
+| --- | --- |
+| `/` | Slash commands: skills, memory, GitHub actions, `/notes`, … |
+| Attach a file | Images as vision input; PDF / DOCX / PPTX as text ([attachments](/features/attachments)) |
+| ⌘K / Ctrl+K | Command palette: jump anywhere, search; **Tab** to [ask a question](/features/iq#ask-from-k) |
+| ⌘⇧K / Ctrl+Shift+K | Open [IQ](/features/iq#the-iq-section) with the selected text |
+| `C` / `N` / `Esc` / `?` | Focus composer / new item / stop streaming / all [shortcuts](/features/keyboard-shortcuts) |
 
-- **`/`** — open the slash-command picker (skills, memory commands, GitHub
-  actions, `/notes`, and more).
-- **Attach a file** — drop in an image (used as vision input) or a PDF / DOCX /
-  PPTX (text-extracted). See [attachments](/features/attachments).
-- **⌘K / Ctrl-K** — open the command palette to jump between sections and
-  conversations, search everything by relevance, or press **Tab** to
-  [ask a question](/features/iq#ask-from-k) and get a cited answer.
-- **⌘⇧K / Ctrl+Shift+K**: open the [IQ section](/features/iq#the-iq-section)
-  with the selected text as the question.
-- **C** focuses the composer, **N** starts a new item in the current section, **Esc** stops a streaming reply, and **?** lists
-  every [keyboard shortcut](/features/keyboard-shortcuts).
-
-That's the core loop. From here, each of Precursor's other sections has its own
-short quick start.
-
-## Start with the other sections
-
-Topics and chats work out of the box. The rest each need a first step of their
-own — and in three cases a prerequisite:
+## Other sections
 
 | Section | Quick start | Needs first |
 | --- | --- | --- |
-| 🤖 **Agents** | [Run a task in the background](/guide/quick-start/agents) | the Copilot CLI (one click in Settings) |
-| 🎙️ **Live sessions** | [Record and summarise a meeting](/guide/quick-start/live-sessions) | Azure Speech credentials |
-| 🔗 **Workflows** | [Chain agents into a pipeline](/guide/quick-start/workflows) | agents enabled |
-| 📋 **Kanban** | [Put your issues on a board](/guide/quick-start/kanban) | a global repo + `read:project` |
+| 🤖 **Agents** | [Run a task in the background](/guide/quick-start/agents) | the Copilot CLI (one click) |
+| 🎙️ **Live sessions** | [Record and summarise a meeting](/guide/quick-start/live-sessions) | Azure Speech |
+| 🔗 **Workflows** | [Chain agents into a pipeline](/guide/quick-start/workflows) | Agents enabled |
+| 📋 **Kanban** | [Put your issues on a board](/guide/quick-start/kanban) | the Kanban plugin + a token with Projects access |
 | 🗂️ **Files** | [Let the assistant edit files](/guide/quick-start/files) | — |
 
-## Where to go next
-
-- [Configuration](/guide/configuration) — connect GitHub and a real model.
-- [Topics](/features/topics) — nest them into a tree, put one on a
-  [schedule](/features/scheduler), or set a `/reminder`.
-- [Chats](/features/chats) — for when you just need a fast answer without the
-  ceremony of a topic.
-- [Feature guides](/features/) — the full detail behind every section.
+Next: [connect a real model](/guide/configuration), or browse the
+[feature guides](/features/).

@@ -4,70 +4,49 @@ title: Storage & retention
 
 # Storage & retention
 
-Precursor keeps everything it has ever done — conversations, tool results,
-meeting transcripts, agent timelines. That's the point, but left unbounded a busy
-install grows without limit. **Storage & retention** is the answer: automatic
-sweeps that cap what each feature keeps, plus an on-demand cockpit for when you
-want space back *now*.
+Cap how much each feature keeps with automatic sweeps, and free space on demand
+from the cleanup cockpit.
 
 ## Where the space goes
 
-**Settings → Usage stats** reports the on-disk footprint and a per-table
-breakdown, largest first. That table is the starting point for any cleanup —
-in practice one or two tables dominate everything else.
+**Settings → Usage stats** shows the on-disk footprint and a per-table
+breakdown, largest first.
 
-The usual suspects, and what bounds each:
+| Feature | Table | Bounded by (default) | Set in |
+| --- | --- | --- | --- |
+| [Agents](/features/agents-mode) timelines | `agent_events` | `agent_event_retention_days` (30) + `agent_event_max_per_session` (2000) | Settings → Agents → Timeline retention |
+| Tool results and model [thinking](/features/topics#watching-the-model-think) in [chats](/features/chats) and [topics](/features/topics) | `messages` | `tool_result_retention_days` (0 = keep) | Settings → System |
+| [Workflow](/features/workflows) step inputs | `workflow_run_steps` | `workflow_step_retention_days` (30) | Settings → Workflows |
+| [Live](/features/live-sessions) transcripts | `meeting_segments` | `live_transcript_retention_days` (7) | Settings → Live |
+| [Attachments](/features/attachments) | *(on disk)* | content-addressed blobs + orphan GC | — |
 
-| Feature | Table | Bounded by |
-| --- | --- | --- |
-| [Agents](/features/agents-mode) timelines | `agent_events` | `agent_event_retention_days` + `agent_event_max_per_session` |
-| Tool results and model [thinking](/features/topics#watching-the-model-think) in [chats](/features/chats) and [topics](/features/topics) | `messages` | `tool_result_retention_days` |
-| [Workflow](/features/workflows) step inputs | `workflow_run_steps` | `workflow_step_retention_days` |
-| [Live](/features/live-sessions) transcripts | `meeting_segments` | `live_transcript_retention_days` |
-| [Attachments](/features/attachments) | *(on disk, not in the DB)* | content-addressed blobs + orphan GC |
+A value of `0` disables that sweep.
 
 ## Automatic sweeps
 
-Every sweep runs once on startup and then daily in the background. They are
-gated by `PRECURSOR_SCHEDULER_ENABLED`, and a sweep whose window is `0` is a
-cheap no-op — so turning retention off costs nothing.
+Sweeps run at startup and then daily, when `PRECURSOR_SCHEDULER_ENABLED` is on.
+They remove bulk, not meaning:
 
-Each one is deliberately **conservative about meaning and aggressive about
-bytes**:
-
-- **Tool results** — the row and its `tool_call_id` metadata stay, only the body
-  is replaced with a short placeholder. The conversation never loses a turn. The
-  same window drops the model's thinking on older replies; the reply itself
-  stays, it just loses its collapsed **Thinking** area.
-- **Live transcripts** — only raw segments of *ended* sessions are deleted.
-  Summary, insights and notes survive, so a cleaned session still shows its
-  recap. An active recording is never touched.
-- **Agent timelines** — the agent keeps its result, artifacts, state and posted
-  messages; only the verbose event trace goes. A **running** agent is never
-  pruned, because its live timeline is rebuilt from those rows after a restart.
+- **Tool results** — the body is replaced with a short placeholder; the turn
+  stays. Older replies also lose their collapsed **Thinking** area.
+- **Live transcripts** — raw segments of *ended* sessions are deleted; summary,
+  insights and notes stay.
+- **Agent timelines** — only the event trace goes; result, artifacts, state and
+  posted messages stay. A running agent is never pruned.
 
 ### Why agent timelines have two levers
 
-Agent traffic is **bursty rather than aged**. A single long autonomous session
-can archive tens of thousands of events in an afternoon — a time window wouldn't
-touch any of it for weeks. So `agent_event_retention_days` prunes by age, and
-`agent_event_max_per_session` caps how many events any one agent may keep,
-newest first. Either can be disabled with `0`; they compose.
-
-Both live under **Settings → Agents → Timeline retention**, next to the feature
-they govern — the same way Live owns its transcript window. They stay readable
-when Agents mode is off, because the archived events outlive the toggle and the
-sweep keeps running.
+One long agent session can produce tens of thousands of events in an afternoon,
+which an age limit wouldn't touch for weeks. So `agent_event_retention_days`
+prunes by age and `agent_event_max_per_session` keeps only the newest N events
+per agent. Both apply; either can be `0`. They stay editable when Agents mode is
+off, since the sweep keeps running.
 
 ## The cleanup cockpit
 
-Retention on a daily cadence is the right default, but a poor answer to "my
-database is 126 MB *right now*". **Settings → Usage stats → Storage cleanup**
-lists every sweep with what it would remove **under your current settings**, then
-lets you run it immediately.
-
-Nothing is deleted to produce those figures — the preview is a dry run. A target
-reading zero means its window is disabled or nothing has expired yet.
+**Settings → Usage stats → Storage cleanup** lists every sweep with what it
+would remove **under your current settings** (a dry run), and runs any of them
+now. Zero means the window is disabled or nothing has expired.
 
 ### Compacting
 
@@ -77,40 +56,24 @@ runs SQLite with `auto_vacuum` off, so the database only gets smaller when you
 **Compact** it.
 :::
 
-**Compact database** rebuilds the file so freed pages return to the filesystem,
-and reports how much it reclaimed. Run it after a cleanup — that's the step you
-actually see on disk. It briefly needs free space roughly equal to the database
-size while it rebuilds.
+**Compact database** rebuilds the file and reports what it reclaimed. It needs
+free disk space about the size of the database while it runs.
 
-### Oversized agent events
+### One-off remediations
 
-One target is a **remediation**, not a retention window. Archived event payloads
-written before the current size caps existed keep their original size forever:
-retention can't reach them, because an oversized payload isn't necessarily old
-and counts as one row against a per-session ceiling however many KB it holds.
+Two targets clean up data written by older versions. Both are idempotent;
+preview, run, then **Compact**.
 
-**Oversized agent events** rewrites those payloads through today's caps. Every
-timeline node, tool name and status is preserved — only long captured blobs are
-shortened, and each trimmed value is marked so it can't be mistaken for the
-original. It's idempotent, so running it twice is harmless.
-
-### Empty agent events
-
-Older versions archived every streaming fragment of an agent's reply and
-thinking as its own row, along with byte counters, message markers and empty
-messages. On a busy install that was nearly nine rows in ten, and they counted
-against `agent_event_max_per_session`, so the cap dropped real history to keep
-them. Agents now stream those fragments to the live view only, and archive just
-the complete message, thinking and tool events.
-
-**Empty agent events** deletes the leftover rows. Timelines never showed them,
-so no step is lost. Preview it, run it once, then **Compact**. It's idempotent,
-and a running agent is safe to clean.
+- **Oversized agent events** — rewrites old event payloads through today's size
+  caps. Timeline nodes, tool names and statuses are kept; long blobs are
+  shortened and marked as trimmed.
+- **Empty agent events** — deletes the streaming-fragment rows older versions
+  archived (often most rows on a busy install). Timelines never showed them,
+  and they counted against `agent_event_max_per_session`. Safe with a running
+  agent.
 
 ## Backups are separate
 
-The [backup](/reference/configuration#backup) job copies the database, blobs and
-definitions into a plain folder on its own schedule and keeps its own snapshot retention.
-Cleaning up doesn't touch existing snapshots — but a snapshot taken *before* a
-cleanup still holds the old data, which is exactly what you want if you ever need
-to go back.
+[Backups](/reference/configuration#backup) keep their own snapshots and
+retention. Cleaning up never touches existing snapshots, so a snapshot from
+before a cleanup still has the old data.

@@ -4,14 +4,8 @@ title: Background app
 
 # Background app
 
-Precursor started life as a thing you run in a terminal, and for development
-that is still the right shape. But an assistant you consult a dozen times a day
-shouldn't need a terminal window kept open, a directory to be `cd`'d into, or a
-four-command ritual after every reboot.
-
-The **background app** is the answer: one install, a login item, and a menu-bar
-icon that tells you whether it's up — plus a self-update that replaces the
-`git pull` you used to run by hand.
+Run Precursor as a login item with a menu-bar icon and in-place updates, with no
+terminal or checkout to keep around.
 
 ## One command to install
 
@@ -27,17 +21,12 @@ irm https://raw.githubusercontent.com/lrivallain/precursor/main/scripts/install.
 
 :::
 
-That installs the latest build, registers it to start when you log in, and
-starts it now. There is no clone, no `npm`, and no build step — the published
-wheel already carries the SPA, the in-app docs and every plugin frontend.
+This installs the latest build, registers it to start at login, and starts it.
+The wheel already carries the SPA, the in-app docs and plugin frontends, so
+there is no clone, `npm` or build step. Under the hood it runs `uv tool install`
+for your channel, then `precursor service install`.
 
-::: info What it actually runs
-`uv tool install` against the wheel for your channel, then
-`precursor service install`. Both are ordinary commands you can run yourself;
-the script only saves you looking up the current wheel URL.
-:::
-
-Prefer stable, tagged releases over the rolling build from `main`?
+For tagged releases instead of the nightly build of `main`:
 
 ::: code-group
 
@@ -54,27 +43,26 @@ irm https://raw.githubusercontent.com/lrivallain/precursor/main/scripts/install.
 
 ## Managing the instance
 
-Everything the tray can do has a command behind it, so the app is never
-dependent on a GUI being present:
-
 ```bash
-precursor service status      # is it running, on which port, since when
-precursor service start       # start a detached instance
-precursor service stop        # stop it
-precursor service restart     # bounce it (keeps the port it was on)
-precursor service logs -n 100 # tail the instance log (see Reading the log)
+precursor service status      # running? port, since when (--json; exits non-zero when stopped)
+precursor service start       # start a detached instance (idempotent)
+precursor service stop
+precursor service restart     # keeps the port
+precursor service logs -n 100 # tail the instance log
 precursor service data-dir    # print the data directory (--reveal opens it)
-precursor service install     # run at login (app + tray) and start now
+precursor service install     # run at login (app + tray) and start now (--no-tray, --port N)
 precursor service uninstall   # remove the login items and stop it
+precursor service check       # is there a newer build?
+precursor service update      # install it and restart
 ```
 
-`status` exits non-zero when nothing is running, so it drops straight into a
-shell prompt or a monitoring check. Add `--json` for a machine-readable form.
+The running instance is recorded in `runtime.json` in the data directory (pid,
+port, URL, version); a stale record from a crash is cleared on the next
+`status`. Concurrent starts never produce two instances.
 
 ### The login items
 
-`precursor service install` registers two login items — the app and the icon —
-with whatever the platform provides:
+`precursor service install` registers the app and the tray icon:
 
 | Platform | Login item | If the app crashes |
 | --- | --- | --- |
@@ -82,59 +70,25 @@ with whatever the platform provides:
 | Linux | a systemd *user* unit in `~/.config/systemd/user` | systemd restarts it |
 | Windows | a `Run` entry under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` | it stays stopped until **Start** (tray or CLI) |
 
-On macOS, repeating `precursor service install` leaves an unchanged, already-loaded
-login item alone: it neither rewrites its plist nor unregisters and registers the
-job again. This avoids unnecessary background-item registration notifications
-from macOS. An unloaded job is loaded again; a changed configuration is written
-and re-registered. This applies to both the app and the tray. macOS may still
-notify you when a login item is first installed or genuinely changes.
-
-On Windows there is no per-user service manager to hand the process to, so the
-entry is a launcher: at login it runs `precursor service start` — exactly what
-typing it would do — through `pythonw`, the windowless Python, so no console
-window is left on screen. That is also how it shows in Task Manager's
-*Startup apps*, where it can be switched off. The icon is started at install
-time too, rather than only at the next login, and stopping sends the app a
-Ctrl+Break so it shuts down as cleanly as it does on the other platforms.
+- **macOS:** re-running `install` leaves an unchanged, loaded login item alone,
+  so macOS doesn't re-notify you about background items.
+- **Windows:** the entry runs `precursor service start` through `pythonw` (no
+  console window); it shows in Task Manager's *Startup apps*.
+- Without the `tray` extra, the tray login item is skipped.
 
 ### Picking a port
 
-Installing is most people's *first* run, and `8000` is a popular port — another
-dev server holding it must not be the thing that makes an install fail.
-
-So `precursor service install` settles the port **before** it registers the
-login item: if the configured one is busy it takes the next free port and writes
-it to `.env` in the [data directory](#where-the-data-lives), then reports both.
+If the configured port (default `8000`) is busy, `install` takes the next free
+one and saves it to `.env` in the [data directory](#where-the-data-lives), so
+the login item keeps using it:
 
 ```
 Port 8000 is in use — Precursor will run on 8001 instead.
 Port 8001 saved to /home/you/.local/share/precursor/.env
 ```
 
-Recording it is what makes the choice stick. launchd, systemd and the Windows
-`Run` entry start the login item with no arguments, so the port has to live in a file the instance re-reads
-on its own — otherwise every boot would read the busy default straight back, and
-the URL would drift with whatever else happened to be listening that day.
-
-A port **you** chose — `PRECURSOR_PORT` in the environment or in that `.env`, or
-`precursor service install --port 8123` — is never moved silently: if it is
-taken, the install stops and says so, because a deliberate choice deserves an
-error rather than a different URL.
-
-### How it knows
-
-The supervisor records the instance it started in `runtime.json` inside the
-[data directory](/reference/configuration#database-data-directory) — pid, host,
-port, URL, version. Everything else is derived from that file plus a liveness
-probe, so there is one source of truth and nothing has to guess a port.
-
-If the process dies (a crash, a hard reboot), the next `status` notices the pid
-is gone and clears the record rather than leaving a file that claims a port
-something else may now own.
-
-Starting is **idempotent**: a login item, a tray click and a manual
-`precursor service start` can all race, and none of them ends up with two
-instances fighting over one database.
+A port you chose (`PRECURSOR_PORT`, or `--port 8123`) is never moved: if it is
+taken, the install stops with an error.
 
 ## The menu-bar icon
 
@@ -142,25 +96,24 @@ instances fighting over one database.
 precursor tray
 ```
 
-On Windows it lives in the notification area, by the clock — pin it from the
-overflow (**^**) if you want it always visible.
+On Windows it sits in the notification area (pin it from the **^** overflow).
+The tray needs the `tray` extra (`pystray` + `Pillow`), which the install script
+includes:
 
-The icon is Precursor's own mark, and it says what the instance is doing:
+```bash
+uv tool install --force "precursor-ai[kanban,tray]"
+```
+
+The tray is a separate process: quitting it doesn't stop Precursor. One icon
+runs per data directory.
 
 | Icon | Means |
 | --- | --- |
-| **Brand colour** | the instance is running |
-| **Grey** | it is stopped |
-| **Grey, with an ellipsis in the bubble** | busy — starting, stopping, or *updating* |
+| **Brand colour** | running |
+| **Grey** | stopped |
+| **Grey, with an ellipsis** | starting, stopping or updating |
 
-Running and stopped are the same silhouette in different colours, so the icon
-never looks like a different app. Busy is the one state that changes the glyph:
-grey alone would read as "stopped", and mid-update the app may still be
-answering on its old port — an icon that looks ready while its own code is being
-replaced is a lie worth avoiding.
-
-The menu leads with two lines you can't click: what the instance is doing, and
-where this install stands.
+The menu starts with the instance state and the update status:
 
 ```
 Precursor — running on :8000
@@ -169,270 +122,151 @@ Precursor — running on :8000
 
 | Bullet | Status line |
 | --- | --- |
-| 🟢 | *Up to date* — the last check found nothing newer |
-| 🟡 | *Update available* — with the version waiting |
-| 🔴 | *Could not check for updates* — offline, rate limited |
-| ⚪ | *Checking…*, or *Update checks are off* (`--no-update-check`) |
-
-"Couldn't check" and "up to date" are different facts, and conflating them is
-how an install goes quietly stale — so they get different colours.
-
-Then the actions:
+| 🟢 | *Up to date* |
+| 🟡 | *Update available*, with the version |
+| 🔴 | *Could not check for updates* (offline, rate limited) |
+| ⚪ | *Checking…*, or *Update checks are off* |
 
 | Entry | Does |
 | --- | --- |
-| **Open Precursor** | opens the running instance in your browser |
-| **Reveal data folder in Finder**¹ | opens the [data directory](#where-the-data-lives) in your file manager |
-| **Open log file** | opens the instance log — falls back to the logs folder when there isn't one yet |
-| **Start** / **Stop** / **Restart** | the supervisor actions above |
+| **Open Precursor** | opens the instance in your browser |
+| **Reveal data folder in Finder**¹ | opens the [data directory](#where-the-data-lives), even while stopped (creates it if missing) |
+| **Open log file** | opens the instance log (or the logs folder) |
+| **Start** / **Stop** / **Restart** | the service actions |
 | **Check for updates** | becomes *"Update to … and restart"* once a newer build exists |
-| **Quit tray** | closes the icon only — Precursor keeps running |
+| **Quit tray** | closes the icon only |
 
-¹ Named for the platform: *Show data folder in Explorer* on Windows, *Open data
-folder* elsewhere.
+¹ *Show data folder in Explorer* on Windows, *Open data folder* on Linux.
 
-::: tip The icon can tell when *it* is the stale one
-`precursor.__version__` is resolved once, when the process starts, so a
-long-running icon would otherwise go on comparing the release it was *started*
-with against the published build — and keep offering an update that is already
-installed. The instance is a fresh process, and its runtime record carries the
-version it actually launched with, so a disagreement means the icon is behind.
-When that happens the update entry becomes **"Restart the icon (running an older
-build)"**, which bounces the tray's login item (on Windows, starts a fresh icon
-and steps aside) and drops the cached check.
-
-This is what catches an update that never went through `precursor service
-update` — a manual `uv tool install --force`, say — where nothing would
-otherwise have told the icon to restart.
-:::
+If the icon is older than the running app (for example after a manual
+`uv tool install --force`), the update entry becomes **"Restart the icon
+(running an older build)"**.
 
 ### Being told about a new build
 
-The tray checks for updates in the background, and a check nobody asked for is
-exactly the one worth speaking up about — otherwise the menu sits there knowing
-about a new build until you next happen to click the icon.
-
-So the tray can post a **system notification** when a background check finds
-one. It is a notification, never a dialog: it goes through the operating
-system's notification centre, so Focus, Do Not Disturb and Focus Assist apply,
-and you can silence or restyle it in your system settings (on macOS it is listed
-under *Script Editor*, which delivers it). Taking the update stays one click in
-the menu; nothing is ever installed on its own.
-
-Each build is announced **once**. A poll every half hour must not become an
-interruption every half hour.
-
-Choose all of this in **Settings → Updates**:
+Configure update checks in **Settings → Updates**:
 
 | Setting | Default | |
 | --- | --- | --- |
 | Update channel | Releases | *Releases* (tagged versions) or *Nightly* (see [Channels](#channels)) |
-| Check for updates automatically | on | the half-hourly background check; when off, use *Check for updates* in the menu |
-| Notify me when an update is available | off | the system notification above; the menu's status line shows 🟡 either way |
+| Check for updates automatically | on | checks every half hour; when off, use *Check for updates* in the menu |
+| Notify me when an update is available | off | a **system notification**, once per build (needs automatic checks on) |
 
-The tray reads these from `update-prefs.json` in the data folder, so they apply
-whether or not the app is running, and the channel also drives `precursor
-service update`. Until you save a choice, `PRECURSOR_UPDATE_CHANNEL` and
-`PRECURSOR_UPDATE_NOTIFY` supply the defaults.
+The notification goes through the OS notification centre, so Focus / Do Not
+Disturb apply; on macOS it is listed under *Script Editor*. The menu shows 🟡
+either way, and nothing is ever installed on its own.
 
-The data-folder entry is deliberately **not** disabled while the instance is
-stopped: the database and the logs are exactly what you want to reach when it
-*won't* start. It also creates the directory if a fresh install hasn't written
-it yet, since an empty folder beats a file-manager error. The same thing from a
-shell:
-
-```bash
-precursor service data-dir            # print the path
-precursor service data-dir --reveal   # open it in the file manager
-cd "$(precursor service data-dir)"    # it composes
-precursor service logs -n 100         # what "Open log file" opens
-```
-
-The tray needs the `tray` extra (`pystray` + `Pillow`), which the install script
-includes by default:
-
-```bash
-uv tool install --force "precursor-ai[kanban,tray]"
-```
-
-::: tip Keep the tray running too
-The tray is a separate, disposable process — quitting it does **not** stop
-Precursor. `precursor service install` registers it as its own login item
-alongside the app, so the icon comes back after a reboot; pass `--no-tray` to
-register only the app. On a machine without the `tray` extra it is skipped
-automatically, rather than leaving a login item that fails every boot. Only one
-icon runs per data directory: on Windows, a second `precursor tray` exits
-straight away.
-:::
+These preferences are stored in `update-prefs.json` in the data folder, so they
+apply whether or not the app is running, and the channel also drives
+`precursor service update`. Until you save a choice, `PRECURSOR_UPDATE_CHANNEL`
+and `PRECURSOR_UPDATE_NOTIFY` supply the defaults.
 
 ## Updating in place
 
 ```bash
-precursor service check    # is there something newer?
-precursor service update   # install it and restart
+precursor service check
+precursor service update
 ```
-
-Precursor is installed in one of two shapes and each updates differently, so the
-command detects which one you have rather than asking:
 
 | Install | Detected as | Updated by |
 | --- | --- | --- |
 | `uv tool install precursor-ai` | `uv-tool` | reinstalling the published wheel |
-| A clone you run with `uv run precursor` | `source` | `git pull --ff-only` + a plugin frontend rebuild |
+| A clone run with `uv run precursor` | `source` | `git pull --ff-only` + a plugin frontend rebuild |
 
-The app also exposes the read-only check at `GET /api/version/check`. Applying an
-update is deliberately *not* an API call: it replaces the very process serving
-the request, so it belongs to the supervisor.
+`GET /api/version/check` exposes the read-only check. Applying an update is
+CLI/tray only.
 
 ### On Windows
 
-Windows won't delete or overwrite a file that a running program has open, and a
-running Precursor holds its whole environment open — as does the icon, and even
-the `precursor service update` command asking for the update. Reinstalling in
-place would fail, or leave a half-replaced install.
-
-So on Windows the update finishes **out of process**. The command (or the icon)
-stops the app gracefully, stops the icon, and hands the install to a small helper
-run by the base Python interpreter — which lives outside the environment being
-replaced — then exits. The helper waits for it to go, installs the new build
-(retrying while Windows or an antivirus scanner still holds a file), and starts
-the app and the icon again. The same plugin retry described below applies.
-
-```
-Installing 2026.9.2 in the background — Windows can't replace Precursor while it
-runs, so it is stopped until the install finishes and restarts it.
-Progress: C:\Users\you\AppData\Roaming\Precursor\logs\update.log
-```
-
-Expect about a minute without the app. The returning icon reports how the update
-went — *Precursor updated*, or the reason it failed — and a failed install still
-restarts the previous build.
+Windows can't replace files a running program holds, so the update stops the
+app and the icon, installs from a helper process (retrying while files are
+locked), then restarts both. Expect about a minute of downtime; progress goes to
+`logs\update.log`, and the returning icon reports success or the failure. A
+failed install restarts the previous build.
 
 ### Channels
 
 | Channel | Tracks |
 | --- | --- |
 | `stable` (*Releases*, the default) | the latest tagged release |
-| `nightly` | a rolling prerelease of `main` after CI succeeds on that exact commit |
+| `nightly` | a prerelease of `main`, published after CI passes on that commit |
 
-Pick one in **Settings → Updates**. `PRECURSOR_UPDATE_CHANNEL` sets the default
-before a choice is saved; set it empty to match the running build (a dev
-version follows nightly, a tagged one follows stable).
+Pick one in **Settings → Updates**. An empty `PRECURSOR_UPDATE_CHANNEL` follows
+the running build (dev version → nightly, tagged → stable). Nightly compares
+commits rather than version numbers, and installs plugin wheels built from the
+same commit.
 
-A nightly build isn't ordered — two branches can share a base version — so the
-nightly channel compares the **commit** rather than the version number, and a
-nightly host is installed together with the plugin wheels built from the same
-commit instead of whatever is on PyPI.
+### Extras
 
-### Extras, and what happens when one can't be resolved
+A `uv tool` update keeps the extras already installed (read from uv's receipt).
+`PRECURSOR_UPDATE_EXTRAS` adds to that list; a `-name` entry removes one.
 
-A `uv tool` install is reinstalled with the extras it already has — read from
-uv's install receipt rather than from configuration, so an update can't quietly
-uninstall the menu-bar icon you asked for. `PRECURSOR_UPDATE_EXTRAS` adds to
-that list; a `-name` entry removes from it.
-
-An extra can fail to resolve — a plugin published an hour ago that your index
-hasn't ingested, or a mirror that doesn't carry it at all. When it does, the
-update **retries once without the extras that only pull a Precursor plugin**,
-and tells you:
+If a **plugin** extra can't be resolved (not yet on your index, missing from a
+mirror), the update retries once without it and says so:
 
 ```
 Installed 2026.9.0. Skipped kanban — not installable from your index: …
 ```
 
-A plugin is optional by construction, so it shouldn't be able to hold the host
-on an old build. Extras that pull libraries the app itself uses (`tray`,
-`postgres`) are never dropped, and a failure that survives the retry is reported
-as a failure. The next update tries the plugin again; use
-`PRECURSOR_UPDATE_EXTRAS=-kanban` to stop asking for good.
+Extras the app itself uses (`tray`, `postgres`) are never dropped. Use
+`PRECURSOR_UPDATE_EXTRAS=-kanban` to stop asking for a plugin.
 
 ## Reading the log
 
-`precursor.log`, in `logs/` under the [data directory](#where-the-data-lives),
-is written by the running app itself — through a size-rotating handler it
-configures at startup, not by whoever happens to own the process's stdio.
-
-That distinction is the whole point. Precursor runs under three different
-owners: a terminal, its own supervisor (`precursor service start`), and a
-launchd agent or systemd user unit. Only the middle one has Precursor holding
-the pipe. So a log written *by the pipe* would go stale the moment you ran
-`precursor service install` — which is exactly what used to happen, silently,
-while `service status` went on advertising the file.
+The app writes `precursor.log` in `logs/` under the
+[data directory](#where-the-data-lives), however it was started, through a
+rotating handler (`PRECURSOR_LOG_FILE_MAX_BYTES`, 5 MB;
+`PRECURSOR_LOG_FILE_BACKUPS`, 3).
 
 ```bash
-precursor service logs -n 100   # the same file the tray's "Open log file" opens
+precursor service logs -n 100   # same file as the tray's "Open log file"
 ```
 
-Rotation matters for the same reason: a service manager's own capture is
-unbounded, and nothing ever prunes it. `PRECURSOR_LOG_FILE_MAX_BYTES` (5 MB) and
-`PRECURSOR_LOG_FILE_BACKUPS` (3) cap it here instead.
-
 ::: details The other files in `logs/`
-`precursor.log` is the log. The rest are raw stdio nets, holding only what
-logging can't catch — an import error, a traceback from before logging was
-configured, a native crash:
+The others only catch what logging can't (import errors, early tracebacks,
+native crashes):
 
 | File | Written by |
 | --- | --- |
-| `precursor.log` | the app (rotating; `precursor.log.1`, … are its generations) |
-| `tray.log` | the menu-bar icon, which is a separate process with its own failures |
-| `precursor.out.log` | the raw pipe of a supervisor-started child, capped at each start |
-| `launchd.app.err.log`, `launchd.tray.err.log` | launchd, for the login items (macOS) |
-| `windows.app.out.log`, `windows.tray.out.log` | the windowless login items and icon (Windows) |
+| `precursor.log` | the app (rotating; `precursor.log.1`, …) |
+| `tray.log` | the menu-bar icon |
+| `precursor.out.log` | the raw output of a supervisor-started child, reset at each start |
+| `launchd.app.err.log`, `launchd.tray.err.log` | launchd (macOS) |
+| `windows.app.out.log`, `windows.tray.out.log` | the login items (Windows) |
 | `update.log` | the out-of-process updater (Windows) |
 
-On Linux the launchd files have no equivalent: systemd captures stderr to the
-journal (`journalctl --user -u precursor`).
-
-When the app is started by a service manager its stderr is *already* being
-captured, so the console handler is dropped — otherwise every line would be
-written twice, and only one of the two copies would ever be rotated.
+On Linux, systemd captures stderr to the journal
+(`journalctl --user -u precursor`).
 :::
 
 ## Where the data lives
-
-This is the part that makes a launcher-started app work at all. A login item
-runs with its working directory set to `/`, so the old
-[relative defaults](/reference/configuration#database-data-directory) would have
-created a fresh, empty database wherever it happened to start.
-
-So the defaults now depend on how Precursor was installed:
 
 | Installed as | Database | Data directory |
 | --- | --- | --- |
 | A source checkout | `./precursor.db` | `./.precursor` |
 | A wheel | `<user data dir>/precursor.db` | `<user data dir>` |
 
-…where *user data dir* is `~/Library/Application Support/Precursor` on macOS,
+*User data dir* is `~/Library/Application Support/Precursor` on macOS,
 `$XDG_DATA_HOME/precursor` (or `~/.local/share/precursor`) on Linux, and
 `%APPDATA%\Precursor` on Windows. `PRECURSOR_DATABASE_URL` and
-`PRECURSOR_DATA_DIR` still override both.
+`PRECURSOR_DATA_DIR` override both.
 
-::: tip Development is untouched
-Keeping the checkout defaults relative is what preserves the worktree workflow:
-every clone keeps its own database beside its code, `precursor --dev` still
-auto-bumps to a free port, and none of it can collide with the installed
-instance — which supervises only the data directory it was configured with.
-:::
+A checkout keeps its own database next to its code and `precursor --dev` picks a
+free port, so development never collides with the installed instance.
 
 ## Pinning the GitHub account
 
-If you keep several accounts signed in to the GitHub CLI, `gh auth token`
-follows whichever one is *active* — so the token Precursor gets depends on
-whoever last ran `gh auth switch` in an unrelated shell. That's fine
-interactively and hopeless for something started at login.
-
-Name the login instead:
+With several accounts in the GitHub CLI, `gh auth token` follows whichever is
+active. Pin one for the login item:
 
 ```bash
 PRECURSOR_GITHUB_CLI_USER=your_login
 ```
 
-Precursor then asks for that account specifically, every time. A token saved in
-**Settings → GitHub** still wins over the CLI, as before.
+A token saved in **Settings → GitHub** still takes precedence.
 
 ## See also
 
-- [Installation](/guide/installation) — the full set of install options
-- [Configuration reference](/reference/configuration) — every variable involved
+- [Installation](/guide/installation) — all install options
+- [Configuration reference](/reference/configuration) — every variable
 - [Storage & retention](/features/storage) — what accumulates in the data directory

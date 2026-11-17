@@ -4,71 +4,59 @@ title: Technical stack
 
 # Technical stack
 
-Precursor is a single Python service that serves a JSON API and a pre-built React
-SPA from the same process. One toolchain — **uv** — covers env, run, build, and
-release.
-
-## At a glance
+One Python process serves the JSON API and the pre-built React SPA. **uv**
+handles env, run, build and release.
 
 | Layer | Technology |
 | --- | --- |
-| **Tooling** | [uv](https://docs.astral.sh/uv/) for env, run, build & release |
-| **Backend** | Python 3.12+, FastAPI, SQLAlchemy 2 (async), Alembic, sse-starlette |
+| **Tooling** | [uv](https://docs.astral.sh/uv/) (env, run, build, release); `make` targets wrap it |
+| **Backend** | Python 3.12+, FastAPI, SQLAlchemy 2 (async), Alembic, Pydantic v2, sse-starlette |
 | **LLM** | the `openai` SDK, pointed at the active provider (Copilot / Azure / any OpenAI-compatible gateway) |
-| **MCP** | the `mcp` Python SDK (client + server) |
-| **Frontend** | Vite + React 19 + TypeScript, Tailwind CSS, Lucide icons |
-| **DB** | SQLite for dev (`aiosqlite`), PostgreSQL for prod (`asyncpg`, extra) |
-| **Desktop** | `pystray` + `Pillow` for the menu-bar icon (`tray` extra); launchd / systemd user units / Windows `Run` entries for login items |
-| **Docs** | Markdown in-repo; this site is built with VitePress |
+| **MCP** | the `mcp` Python SDK, client and server (MCP 2: `>=2.2,<3`, with `httpx2`) |
+| **Frontend** | Vite, React 19, TypeScript (strict), Tailwind CSS, Lucide icons; Monaco + monaco-yaml for the Files editor |
+| **DB** | SQLite (`aiosqlite`) by default, PostgreSQL (`asyncpg`, `postgres` extra) |
+| **Desktop** | `pystray` + `Pillow` (`tray` extra); launchd / systemd user units / Windows `Run` entries for login items |
+| **Docs** | VitePress (`website/`), also bundled in the wheel and served at `/docs/` |
 
 ## Backend
 
-- **Python 3.12+**, with `from __future__ import annotations` throughout.
-- **FastAPI** exposes the JSON API under `/api/*` and mounts the built SPA at `/`.
-- **Async everywhere** DB or network is touched — `AsyncSession` from
-  `precursor.backend.db` via `Depends(get_session)`.
-- **Pydantic v2** models in `schemas/` — read models never embed secrets.
-- **SQLAlchemy 2 (async)** ORM; **Alembic** is the single source of truth for the
-  schema (`alembic upgrade head` runs on startup).
-- **sse-starlette** streams chat replies over Server-Sent Events.
-- **Settings** come from a cached `get_settings()` for the process-level `.env`
-  values; everything editable in the app lives in `AppSetting` rows and, bar two
-  documented exceptions, has no env twin (see
+- `from __future__ import annotations` everywhere; async wherever DB or network
+  is touched (`AsyncSession` via `Depends(get_session)`).
+- Pydantic schemas in `schemas/` are the single source of truth for API shapes;
+  read models never embed secrets.
+- Alembic owns the schema: `alembic upgrade head` runs on startup.
+- `get_settings()` (cached) covers process-level `.env` values; everything
+  editable in the app is an `AppSetting` row (see
   [Configuration](/reference/configuration)).
 
-Key dependencies (floors, from `pyproject.toml`): `fastapi`, `uvicorn[standard]`,
-`sqlalchemy[asyncio]`, `aiosqlite`, `alembic`, `pydantic`, `pydantic-settings`,
-`sse-starlette`, `httpx`, `openai`, `mcp` (MCP 2: `>=2.2,<3`), `httpx2` (the HTTP
-client MCP 2's transports and OAuth take), `python-multipart`, `pypdf`, `pyyaml`.
+Runtime dependency floors live in `pyproject.toml`.
 
 ## Frontend
 
-- **Vite + React 19 + TypeScript** (strict mode), built to `frontend/dist` and
-  **bundled inside the wheel** so an installed package is self-contained.
-- **Tailwind CSS** with **CSS-variable theme tokens**; dark mode toggles by adding
-  `.dark` to `<html>`.
-- All HTTP goes through `src/lib/api.ts`; streaming chat uses a manual SSE reader
-  (`src/lib/sse.ts`) because it POSTs a JSON body (not `EventSource`).
-- Function components with **named exports**; TS types in `src/lib/types.ts`
-  mirror the Pydantic schemas.
-- The Files section edits with **Monaco** (`monaco-editor`, the VS Code editor
-  core) and **monaco-yaml**. Both are loaded on demand as their own chunk,
-  with their workers, so the rest of the app never downloads them. Only JSON
-  and YAML get a language service; other languages are highlighted only.
+- Built to `frontend/dist` and **bundled inside the wheel**; no Node.js at
+  runtime.
+- All HTTP goes through `src/lib/api.ts`; chat streams use a manual SSE reader
+  (`src/lib/sse.ts`) because they POST a JSON body.
+- API types are **generated** from the Pydantic schemas into
+  `src/lib/generated/apiTypes.ts` (`make api-types`) and aliased in
+  `src/lib/types.ts`.
+- Theme tokens are CSS variables; dark mode is `.dark` on `<html>`.
+- Monaco is a lazily loaded chunk; only JSON and YAML get a language service.
+- Lint with oxlint, unit tests with Vitest (`*.test.ts` next to the module).
 
-## Build, versioning & packaging
+## Build, versioning and CI
 
-- **uv** is the toolchain; `pyproject.toml` is a uv project with a committed
-  `uv.lock`.
-- Version is **CalVer** (`YYYY.M.MICRO`) derived from git tags by **hatch-vcs** at
-  build time — there is no literal to edit (`precursor.__version__`), and it's
-  exposed at `GET /api/version`.
-- A conditional build hook (`hatch_build.py`) bundles the built SPA into the wheel
-  only for real (non-editable) builds, so `uv sync` / dev / CI never need a
-  frontend build.
-- **CI** runs ruff, ruff format, mypy (strict), pytest, and the frontend
-  typecheck + build on every PR. A `v*` tag push builds the wheel and publishes a
-  GitHub Release.
+- Version is **CalVer** (`YYYY.M.MICRO`) from git tags via **hatch-vcs**; no
+  literal to edit. Read it from `precursor.__version__` or `GET /api/version`.
+- `hatch_build.py` bundles the built SPA and docs into the wheel only for real
+  (non-editable) builds, so `uv sync`, dev and CI need no frontend build.
+- **CI** (`ci.yml`, every PR and `main` push): lockfile check, quality ratchet
+  and API-types check, ruff, mypy (strict), pytest (Linux and Windows), a fresh
+  wheel install, a Windows install journey, frontend typecheck/tests/build, and
+  the docs build.
+- **Releases** are automatic: a stable release every night from green `main`, and
+  a rolling `nightly` prerelease after each green `main` CI. See
+  [Releasing](/contributing/releasing).
 
-See the [architecture](/reference/architecture) for how the pieces fit together
-at runtime.
+See the [architecture](/reference/architecture) for how the pieces fit at
+runtime.

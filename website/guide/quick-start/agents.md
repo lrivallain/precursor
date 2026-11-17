@@ -4,47 +4,31 @@ title: Quick start — Agents
 
 # Quick start: Agents
 
-[Agents](/features/agents-mode) hand a long-running task to an autonomous agent
-that works in the **background** while you do something else.
+[Agents](/features/agents-mode) run a long task autonomously in the background.
 
-## Enable them first
+## Enable them
 
-The Copilot SDK is a normal dependency. What agents *drive* is a ~90 MB native
-runtime, and downloading it stays opt-in. Open **Agents** and click **Install
-the Copilot CLI**, then confirm the download. **Settings → Agents** and the
-Home launcher's **New agent** surface offer the same setup. Progress and any
-errors appear in place while you keep working.
+Agents drive the Copilot CLI runtime (~90 MB, opt-in download). Open **Agents**
+and click **Install the Copilot CLI** (also offered in **Settings → Agents** and
+the Home launcher's **New agent**). A `copilot` already on your `PATH` is used
+as is.
 
-If you already have a `copilot` on your `PATH` (Homebrew, npm, the official
-installer), Precursor picks it up and there is nothing to install at all.
+Agents switch on once the runtime resolves, unless you turned them off before:
+then enable them in **Settings → Agents**.
 
-Without a saved preference, Agents come on once the runtime resolves. If you
-previously turned Agents off, installing the CLI leaves that choice unchanged;
-enable it in **Settings → Agents** — the checkbox unlocks as soon as a runtime
-is there. A runtime that is installed but failed to start offers restart
-guidance, not another download.
+## Run one
 
-Agents stays visible in navigation and the command palette throughout setup
-and recovery.
+**Agents → New agent**, describe the task, start it. The **dashboard** sorts
+cards by urgency (anything waiting on you first) and shows each agent's current
+tool and a one-line status.
 
-## Run your first agent
-
-Open **Agents → New agent**, describe the task, and start it. You land on the
-**dashboard** rather than inside the run: cards are sorted by urgency, so
-anything waiting on you floats to the top, and a card shows the tool an agent is
-running plus its own one-line narration of what it's doing.
-
-Expect to answer **permission prompts** — until you loosen the
-[approval policy](/features/agents-mode/running#approval-policy-per-agent), the agent
-asks before each tool call. Set it per agent, or globally in **Settings →
-Agents**.
+By default the agent asks before each tool call. Loosen the
+[approval policy](/features/agents-mode/running#approval-policy-per-agent) per
+agent or in **Settings → Agents**.
 
 ## Then try
 
-- **A [token budget](/features/agents-mode/orchestration#budgets-the-concurrency-governor)** so a
-  runaway run parks itself instead of spending.
-- **[Run autonomously](/features/agents-mode)** to turn the task into a standing
-  objective the agent pursues across several turns.
-- **[Chaining agents](/guide/quick-start/workflows)** into a reusable pipeline.
-
-Full detail: [Agents](/features/agents-mode).
+- A [token budget](/features/agents-mode/orchestration#budgets-the-concurrency-governor)
+  so a runaway run parks itself.
+- [Autonomous runs](/features/agents-mode) that pursue an objective across turns.
+- [Workflows](/guide/quick-start/workflows) to chain agents.
