@@ -14,9 +14,9 @@ from precursor.backend.db import get_session
 from precursor.backend.models import AppSetting
 from precursor.backend.schemas import SettingsPayload, SettingsRead
 from precursor.backend.schemas.model_fallback import normalize_stored_categories
-from precursor.backend.services import update_prefs, updates
+from precursor.backend.services import cmd_runner, update_prefs, updates
+from precursor.backend.services.agents import runtime as agents_runtime
 from precursor.backend.services.agents.manager import get_agent_manager
-from precursor.backend.services.agents.runtime import agents_available
 from precursor.backend.services.app_settings import (
     DEFAULT_CHAT_AUTONAME_ENABLED,
     DEFAULT_GITHUB_REPO,
@@ -55,7 +55,6 @@ from precursor.backend.services.app_settings import (
     resolve_workiq_tenant_id,
 )
 from precursor.backend.services.backup import resolve_backup_status, run_backup
-from precursor.backend.services.cmd_runner import docker_available
 from precursor.backend.services.github_auth import github_token_source
 from precursor.backend.services.llm.registry import with_implied_values
 from precursor.backend.services.mcp.precursor_server import (
@@ -220,7 +219,7 @@ async def _llm_block(session: AsyncSession, data: dict[str, Any]) -> dict[str, A
 
 
 async def _agents_block(session: AsyncSession) -> dict[str, Any]:
-    ok, detail = agents_available()
+    ok, detail = agents_runtime.agents_available()
     # ``agents_available`` is a stateless capability probe (SDK package + CLI
     # binary present). ``agents_runtime_started`` reflects whether the manager
     # actually brought its SDK client + watchdog up in *this* process — it can be
@@ -273,7 +272,9 @@ async def _settings_response(session: AsyncSession) -> SettingsRead:
     system.update(await _agents_block(session))
     system.update(await resolve_backup_status(session))
     system.update(_updates_block())
-    return _as_read(data, system, docker_available()[0], await resolve_llm_model(session))
+    return _as_read(
+        data, system, cmd_runner.docker_available()[0], await resolve_llm_model(session)
+    )
 
 
 @router.get("", response_model=SettingsRead)

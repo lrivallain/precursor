@@ -12,13 +12,14 @@ from __future__ import annotations
 
 import atexit
 import contextlib
+import hashlib
 import os
 import shutil
 import sqlite3
 import tempfile
 import uuid
 import warnings
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 
 import pytest
 
@@ -144,21 +145,60 @@ def _installs_start_in_database_mode() -> Iterator[None]:
         yield
 
 
+# Set by the process that migrated a template database, inherited by xdist workers.
+_DB_TEMPLATE_ENV = "PRECURSOR_TEST_DB_TEMPLATE"
+
+
+def _migrate_scratch_db() -> None:
+    import asyncio
+
+    from precursor.backend.db import engine, init_db
+
+    async def _migrate() -> None:
+        await init_db()
+        # Close the pool so nothing still holds the file (Windows won't share it).
+        await engine.dispose()
+
+    asyncio.run(_migrate())
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Migrate one scratch DB before xdist starts its workers.
+
+    The ~80 migrations take 15-30 s on a Windows runner, and every worker used
+    to replay them before its first test. The controller (or the only process,
+    without xdist) migrates its own scratch DB instead and publishes it as the
+    template that :func:`_scratch_db_at_head` copies. Workers spawn after this
+    hook, so they inherit the variable.
+    """
+    if hasattr(config, "workerinput") or os.environ.get(_DB_TEMPLATE_ENV):
+        return
+    _migrate_scratch_db()
+    os.environ[_DB_TEMPLATE_ENV] = _tmp.name
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _scratch_db_at_head() -> None:
-    """Migrate this process's scratch DB once, before its first test.
+    """Bring this process's scratch DB to head once, before its first test.
 
     Most tests reach the schema through an app lifespan (``init_db`` runs
     ``alembic upgrade head``), but a test that seeds rows directly relied on an
     earlier test in the same process having done that. Run alone, or first in
-    an xdist worker, it failed with "no such table". ``init_db`` is idempotent,
-    so tests that also call it are unaffected.
+    an xdist worker, it failed with "no such table".
+
+    A worker starts from a copy of the template :func:`pytest_configure`
+    migrated (SQLite's backup API, so pages still in the WAL come along), then
+    ``init_db`` confirms it is at head, which is then a no-op.
     """
-    import asyncio
-
-    from precursor.backend.db import init_db
-
-    asyncio.run(init_db())
+    template = os.environ.get(_DB_TEMPLATE_ENV)
+    if template and os.path.exists(template) and template != _tmp.name:
+        src, dst = sqlite3.connect(template), sqlite3.connect(_tmp.name)
+        try:
+            src.backup(dst)
+        finally:
+            src.close()
+            dst.close()
+    _migrate_scratch_db()
 
 
 @pytest.fixture(autouse=True)
@@ -308,6 +348,24 @@ def _no_agents_runtime():
 
 
 @pytest.fixture(autouse=True)
+def _no_docker_probe():
+    """Answer the Docker capability probe without running ``docker version``.
+
+    ``GET /api/settings`` reports whether Docker is usable, and the suite reads
+    settings a few hundred times. Each read shelled out to the real CLI, which
+    is installed on CI runners and is slowest exactly where subprocesses
+    already are: on Windows. Tests about the cmd-runner's jail patch this same
+    attribute with the answer they need.
+    """
+    from precursor.backend.services import cmd_runner
+
+    prev = cmd_runner.docker_available
+    cmd_runner.docker_available = lambda: (False, "test: docker probe stubbed out")
+    yield
+    cmd_runner.docker_available = prev
+
+
+@pytest.fixture(autouse=True)
 def _no_llm_credentials():
     """Keep the LLM provider off the network by pretending there's no token.
 
@@ -333,3 +391,43 @@ def _no_llm_credentials():
     llm_module.resolve_github_token = _no_token  # type: ignore[assignment]
     yield
     llm_module.resolve_github_token = prev  # type: ignore[assignment]
+
+
+def shard_selection(keys: Iterable[str], shard: int, total: int) -> list[bool]:
+    """Whether each test key belongs to ``shard`` (1-based) of ``total``.
+
+    A content hash, not ``hash()``: string hashing is salted per process, and
+    every xdist worker must deselect exactly the same tests as the controller.
+    """
+    return [
+        int.from_bytes(hashlib.sha1(key.encode()).digest()[:8], "big") % total == shard - 1
+        for key in keys
+    ]
+
+
+def _shard_key(item: pytest.Item) -> str:
+    # Tests pinned together for xdist share a resource, so they share a shard too.
+    marker = item.get_closest_marker("xdist_group")
+    if marker is not None:
+        name = marker.args[0] if marker.args else marker.kwargs.get("name", "")
+        return f"xdist_group:{name}"
+    return item.nodeid
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Run one slice of the suite when ``PRECURSOR_TEST_SHARD=k/n`` is set.
+
+    CI splits the backend suite across parallel jobs this way, so the slowest
+    platform no longer gates every merge on the whole suite in one runner.
+    Unset, every test runs.
+    """
+    spec = os.environ.get("PRECURSOR_TEST_SHARD", "").strip()
+    if not spec:
+        return
+    shard_text, _, total_text = spec.partition("/")
+    shard, total = int(shard_text), int(total_text)
+    if not 1 <= shard <= total:
+        raise pytest.UsageError(f"PRECURSOR_TEST_SHARD={spec!r}: expected k/n with 1 <= k <= n")
+    keep = shard_selection([_shard_key(item) for item in items], shard, total)
+    config.hook.pytest_deselected(items=[i for i, k in zip(items, keep, strict=True) if not k])
+    items[:] = [i for i, k in zip(items, keep, strict=True) if k]

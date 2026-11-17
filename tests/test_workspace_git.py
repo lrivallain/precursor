@@ -7,7 +7,7 @@ config and a fixed identity, so the developer's own settings can't leak in.
 
 from __future__ import annotations
 
-import subprocess
+import shutil
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -16,41 +16,25 @@ import pytest
 from fastapi.testclient import TestClient
 
 from precursor.backend.services import workspace_git as git
-
-
-def run(cwd: Path, *args: str, check: bool = True) -> str:
-    return subprocess.run(
-        ["git", *args], cwd=cwd, check=check, capture_output=True, text=True
-    ).stdout
-
-
-def write_text(path: Path, text: str) -> None:
-    path.write_text(text, encoding="utf-8", newline="\n")
+from tests.git_support import isolated_git_env, run, seed_bare_remote, write_text
 
 
 @pytest.fixture(autouse=True)
 def _isolated_git(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    config = tmp_path / "gitconfig"
-    config.write_text("", encoding="utf-8", newline="\n")
-    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(config))
-    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
-    for who in ("AUTHOR", "COMMITTER"):
-        monkeypatch.setenv(f"GIT_{who}_NAME", "Test")
-        monkeypatch.setenv(f"GIT_{who}_EMAIL", "test@example.com")
+    for name, value in isolated_git_env(tmp_path / "gitconfig").items():
+        monkeypatch.setenv(name, value)
+
+
+@pytest.fixture(scope="session")
+def _remote_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    return seed_bare_remote(tmp_path_factory.mktemp("git-template"))
 
 
 @pytest.fixture
-def remote(tmp_path: Path) -> str:
+def remote(_remote_template: Path, tmp_path: Path) -> str:
     """A bare remote whose ``main`` has one commit (README.md)."""
     bare = tmp_path / "remote.git"
-    run(tmp_path, "init", "--bare", "--initial-branch=main", str(bare))
-    seed = tmp_path / "seed"
-    run(tmp_path, "init", "--initial-branch=main", str(seed))
-    write_text(seed / "README.md", "# Notes\n\nfirst line\n")
-    run(seed, "add", "-A")
-    run(seed, "commit", "-m", "Initial")
-    run(seed, "remote", "add", "origin", bare.as_uri())
-    run(seed, "push", "origin", "main")
+    shutil.copytree(_remote_template, bare)
     return bare.as_uri()
 
 
@@ -181,7 +165,7 @@ async def test_status_reports_a_conflicted_merge(remote: str, tmp_path: Path) ->
     write_text(repo / "README.md", "# Notes\n\nours\n")
     run(repo, "commit", "-am", "Ours")
     assert (await git.fetch(repo, "main", None))[0]
-    subprocess.run(["git", "merge", "origin/main"], cwd=repo, capture_output=True)
+    run(repo, "merge", "origin/main", check=False)
 
     st = await git.status(repo)
     [readme] = st.files
@@ -598,7 +582,7 @@ async def test_switching_is_refused_while_merging_or_detached(remote: str, tmp_p
     write_text(repo / "README.md", "# Notes\n\nours\n")
     run(repo, "commit", "-am", "Ours")
     await git.fetch(repo, "main", None)
-    subprocess.run(["git", "merge", "origin/main"], cwd=repo, capture_output=True)
+    run(repo, "merge", "origin/main", check=False)
     with pytest.raises(git.GitRefused, match="merge"):
         await git.switch(repo, "other", None)
     with pytest.raises(git.GitRefused, match="merge"):

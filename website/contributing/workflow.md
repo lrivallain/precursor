@@ -38,8 +38,8 @@ migrations by hand.
 | --- | --- |
 | Lockfiles | every artifact pinned to a public registry with a strong hash |
 | Quality ratchet | complexity, size, duplication, untyped responses; API types up to date |
-| Backend | `uv sync --locked`, ruff, ruff format, mypy, `pytest -n 8 --dist loadgroup` |
-| Backend on Windows | pytest |
+| Backend | `uv sync --locked`, ruff, ruff format and mypy in one job; `pytest -n 8 --dist loadgroup` split over 2 shards |
+| Backend on Windows | the same pytest run, split over 4 shards |
 | Fresh wheel install | builds the wheel, installs it with the `kanban` extra **without** the lockfile (as `uvx precursor-ai` would), runs the release smoke gate and `scripts/smoke_mcp.py kanban` |
 | Install on Windows | `install.ps1`, login item, service lifecycle, self-update |
 | Frontend | `npm ci`, typecheck, Vitest, build |
@@ -50,6 +50,13 @@ Backend steps are skipped (but report success) when a PR only touches
 add it to `BACKEND_READS` in `scripts/ci_backend_scope.py`
 (`tests/test_ci_backend_scope.py` enforces it). Tests sharing a fixed resource
 (e.g. a port) use `pytest.mark.xdist_group`.
+
+The backend jobs are sharded: `PRECURSOR_TEST_SHARD=k/n` makes `conftest.py`
+keep one slice of the suite, split by a hash of each test id (an
+`xdist_group` stays in one shard). The check names above are small jobs that
+pass when every shard does, so adding shards never changes the required
+checks. Reproduce a CI shard locally with
+`PRECURSOR_TEST_SHARD=2/4 uv run pytest -n 8 --dist loadgroup`.
 
 ## Lockfiles
 
