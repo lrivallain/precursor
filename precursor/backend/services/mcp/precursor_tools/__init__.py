@@ -15,6 +15,7 @@ from precursor.backend.services.mcp.precursor_tools import (  # noqa: F401
     actions,
     schedules,
     workspaces,
+    canvas,
     step_plans,
     basic,
 )

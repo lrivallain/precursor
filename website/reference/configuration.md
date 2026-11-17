@@ -210,10 +210,11 @@ Built-in [MCP](/features/mcp) servers are toggled in **Settings → MCP servers*
 | `PRECURSOR_PLAYWRIGHT_PROFILE_DIR` | *(empty)* | `--user-data-dir`. Empty = `@playwright/mcp`'s shared profile, so existing SSO sign-ins carry over. |
 | `PRECURSOR_WORKIQ_TENANT_ID` | *(empty)* | Tenant **GUID** for the [Agent 365](/features/mcp#agent-365-workiq-teams-and-workiq-user) servers (`common`/`organizations` are rejected). Settings wins; if both are empty, read from an existing WorkIQ sign-in. |
 
-`mcp_expose` sections of the built-in server, all off by default: `iq`
-(`retrieve`), `iq_ask` (`ask`), `workspaces` (read), `workspaces_write` (create
-and write; opt-in even for Precursor's agents), `tools` (`get_datetime`,
-`calculate`, `date_math`, …).
+`mcp_expose` sections of the built-in server, all off by default except
+`canvas`: `iq` (`retrieve`), `iq_ask` (`ask`), `workspaces` (read),
+`workspaces_write` (create and write; opt-in even for Precursor's agents),
+`canvas` ([canvases](/features/canvas): on by default, writes only to the
+built-in Canvas workspace), `tools` (`get_datetime`, `calculate`, `date_math`, …).
 
 ### WorkIQ / Agent 365 sign-in
 

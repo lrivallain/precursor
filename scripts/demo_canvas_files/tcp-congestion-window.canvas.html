@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>TCP congestion window</title>
+<script src="/canvas-sdk.js"></script>
+<style>
+  body { margin: 0; background: var(--pc-bg); color: var(--pc-text); font: 14px system-ui, sans-serif; }
+  .wrap { padding: 16px 18px 18px; }
+  h1 { font-size: 15px; margin: 0 0 4px; }
+  .sub { color: var(--pc-muted); font-size: 12px; margin-bottom: 12px; }
+  .controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px 18px; margin-bottom: 12px; }
+  label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--pc-muted); }
+  label b { color: var(--pc-text); font-weight: 600; }
+  input[type=range] { accent-color: var(--pc-accent); }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  button { font: inherit; font-size: 12px; padding: 5px 10px; border-radius: 6px; border: 1px solid var(--pc-border); background: var(--pc-surface); color: var(--pc-text); cursor: pointer; }
+  button.primary { background: var(--pc-accent); border-color: var(--pc-accent); color: #fff; }
+  .seg button[aria-pressed=true] { border-color: var(--pc-accent); color: var(--pc-accent); }
+  svg { width: 100%; height: auto; display: block; margin-top: 10px; }
+  .axis { stroke: var(--pc-border); }
+  .grid { stroke: var(--pc-border); stroke-dasharray: 2 4; }
+  .tick { fill: var(--pc-muted); font-size: 10px; }
+  .cwnd { fill: none; stroke: var(--pc-accent); stroke-width: 2.5; }
+  .ssth { fill: none; stroke: #f59e0b; stroke-width: 1.5; stroke-dasharray: 6 4; }
+  .loss { fill: #ef4444; }
+  .phase { font-size: 11px; fill: var(--pc-muted); }
+  .note { margin-top: 10px; padding: 8px 10px; border-radius: 6px; background: var(--pc-surface); border: 1px solid var(--pc-border); font-size: 12px; min-height: 18px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Congestion window over time</h1>
+  <div class="sub">Each step is one round trip. Move the sliders, then press play.</div>
+  <div class="controls">
+    <label>Initial slow-start threshold <b id="ssthV"></b><input id="ssth" type="range" min="4" max="48" step="1" /></label>
+    <label>Packet loss at round trip <b id="lossV"></b><input id="loss" type="range" min="4" max="38" step="1" /></label>
+    <label>Algorithm
+      <span class="row seg"><button data-algo="reno">Reno</button><button data-algo="tahoe">Tahoe</button></span>
+    </label>
+  </div>
+  <div class="row">
+    <button id="play" class="primary">▶ Play</button>
+    <button id="reset">Reset</button>
+    <button id="ask">Ask about this run</button>
+    <button id="export">Export SVG</button>
+  </div>
+  <svg id="chart" viewBox="0 0 640 260" role="img" aria-label="Congestion window chart"></svg>
+  <div class="note" id="note"></div>
+</div>
+<script>
+  var ROUNDS = 40, W = 640, H = 260, PAD = { l: 34, r: 12, t: 12, b: 26 };
+  var state = { ssth: 24, loss: 18, algo: "reno" };
+  var shown = ROUNDS, timer = null;
+  var $ = function (id) { return document.getElementById(id); };
+
+  function simulate(s) {
+    var cwnd = 1, ssth = s.ssth, pts = [];
+    for (var r = 0; r < ROUNDS; r++) {
+      var phase = cwnd < ssth ? "slow start" : "congestion avoidance";
+      var lost = r === s.loss;
+      pts.push({ r: r, cwnd: cwnd, ssth: ssth, phase: phase, lost: lost });
+      if (lost) {
+        ssth = Math.max(2, Math.floor(cwnd / 2));
+        cwnd = s.algo === "reno" ? ssth : 1;
+      } else if (cwnd < ssth) {
+        cwnd = Math.min(cwnd * 2, ssth);
+      } else {
+        cwnd += 1;
+      }
+    }
+    return pts;
+  }
+
+  function x(r) { return PAD.l + (r / (ROUNDS - 1)) * (W - PAD.l - PAD.r); }
+  function y(v, max) { return H - PAD.b - (v / max) * (H - PAD.t - PAD.b); }
+
+  function draw() {
+    var pts = simulate(state).slice(0, shown);
+    var all = simulate(state);
+    var max = Math.max.apply(null, all.map(function (p) { return Math.max(p.cwnd, p.ssth); })) + 4;
+    var out = [];
+    for (var g = 0; g <= max; g += 8) {
+      out.push('<line class="grid" x1="' + PAD.l + '" x2="' + (W - PAD.r) + '" y1="' + y(g, max) + '" y2="' + y(g, max) + '"/>');
+      out.push('<text class="tick" x="' + (PAD.l - 6) + '" y="' + (y(g, max) + 3) + '" text-anchor="end">' + g + "</text>");
+    }
+    for (var t = 0; t < ROUNDS; t += 5) {
+      out.push('<text class="tick" x="' + x(t) + '" y="' + (H - 8) + '" text-anchor="middle">' + t + "</text>");
+    }
+    out.push('<line class="axis" x1="' + PAD.l + '" x2="' + (W - PAD.r) + '" y1="' + (H - PAD.b) + '" y2="' + (H - PAD.b) + '"/>');
+    var path = function (key) {
+      return pts.map(function (p, i) { return (i ? "L" : "M") + x(p.r) + "," + y(p[key], max); }).join(" ");
+    };
+    out.push('<path class="ssth" d="' + path("ssth") + '"/>');
+    out.push('<path class="cwnd" d="' + path("cwnd") + '"/>');
+    pts.forEach(function (p) {
+      if (p.lost) out.push('<circle class="loss" cx="' + x(p.r) + '" cy="' + y(p.cwnd, max) + '" r="5"><title>Loss</title></circle>');
+    });
+    out.push('<text class="phase" x="' + (W - PAD.r) + '" y="' + (PAD.t + 10) + '" text-anchor="end">— cwnd   - - ssthresh</text>');
+    $("chart").innerHTML = out.join("");
+    var last = pts[pts.length - 1];
+    $("note").textContent = last
+      ? "Round trip " + last.r + ": cwnd = " + last.cwnd + " segments, ssthresh = " + last.ssth + " (" + last.phase + ")" +
+        (shown > state.loss ? ". After the loss " + (state.algo === "reno" ? "Reno halves the window (fast recovery)." : "Tahoe restarts from 1 segment.") : ".")
+      : "";
+  }
+
+  function sync() {
+    $("ssth").value = state.ssth; $("ssthV").textContent = state.ssth + " segments";
+    $("loss").value = state.loss; $("lossV").textContent = "#" + state.loss;
+    document.querySelectorAll("[data-algo]").forEach(function (b) {
+      b.setAttribute("aria-pressed", String(b.dataset.algo === state.algo));
+    });
+    draw();
+  }
+
+  function save() { if (precursor.canvas) precursor.state.save(state).catch(function () {}); }
+  function stop() { clearInterval(timer); timer = null; $("play").textContent = "▶ Play"; }
+
+  $("ssth").oninput = function (e) { state.ssth = +e.target.value; shown = ROUNDS; sync(); save(); };
+  $("loss").oninput = function (e) { state.loss = +e.target.value; shown = ROUNDS; sync(); save(); };
+  document.querySelectorAll("[data-algo]").forEach(function (b) {
+    b.onclick = function () { state.algo = b.dataset.algo; sync(); save(); };
+  });
+  $("play").onclick = function () {
+    if (timer) return stop();
+    shown = 1; $("play").textContent = "❚❚ Pause";
+    timer = setInterval(function () { shown += 1; draw(); if (shown >= ROUNDS) stop(); }, 160);
+  };
+  $("reset").onclick = function () { stop(); state = { ssth: 24, loss: 18, algo: "reno" }; shown = ROUNDS; sync(); save(); };
+  $("ask").onclick = function () {
+    precursor.ask("In the canvas, with " + state.algo + ", ssthresh " + state.ssth + " and a loss at round trip " +
+      state.loss + ": why does the window recover the way it does?");
+  };
+  $("export").onclick = function () { precursor.exportSvg($("chart"), "congestion-window.svg"); };
+
+  sync();
+  if (precursor.canvas) {
+    precursor.state.load().then(function (saved) { if (saved) { state = saved; sync(); } }).catch(function () {});
+  }
+</script>
+</body>
+</html>

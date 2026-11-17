@@ -105,6 +105,11 @@ export const EXPOSE_SECTIONS: ReadonlyArray<{
     danger: true,
   },
   {
+    key: "canvas",
+    label: "Canvases",
+    hint: "Let conversations draw canvases (interactive HTML, draw.io, Mermaid, SVG) shown inline. Writes only to the built-in Canvas workspace. On by default.",
+  },
+  {
     key: "tools",
     label: "Basic tools",
     hint: "Small helpers that read none of your data: date and time, calculator, unit conversion, UUIDs, hashing, text counts.",

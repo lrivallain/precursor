@@ -140,6 +140,14 @@ export function SkillsTab() {
                       legacy
                     </span>
                   )}
+                  {s.builtin && (
+                    <span
+                      className="text-[9px] uppercase tracking-wide px-1 py-0.5 rounded bg-accent/15 text-accent shrink-0"
+                      data-tooltip="Shipped with Precursor: turn it on or off; create a skill of the same name to replace it"
+                    >
+                      built-in
+                    </span>
+                  )}
                 </div>
                 {s.description && (
                   <div className="text-[11px] text-muted truncate">
@@ -167,25 +175,13 @@ export function SkillsTab() {
               >
                 <Download size={14} />
               </a>
-              <button
-                type="button"
-                onClick={() => setEditing(s)}
-                className="p-1 rounded hover:bg-surface text-muted hover:text-text"
-                data-tooltip="Edit"
-                aria-label="Edit skill"
-              >
-                <Pencil size={14} />
-              </button>
-              <button
-                type="button"
-                onClick={() => void handleDelete(s)}
-                disabled={busyName === s.name}
-                className="p-1 rounded hover:bg-surface text-muted hover:text-red-500 disabled:opacity-40"
-                data-tooltip="Delete"
-                aria-label="Delete skill"
-              >
-                <Trash2 size={14} />
-              </button>
+              {!s.builtin && (
+                <SkillRowEdits
+                  busy={busyName === s.name}
+                  onEdit={() => setEditing(s)}
+                  onDelete={() => void handleDelete(s)}
+                />
+              )}
             </li>
           ))}
         </ul>
@@ -340,5 +336,41 @@ function SkillEditor({ skill, onClose, onSaved }: EditorProps) {
         </footer>
       </div>
     </div>
+  );
+}
+
+
+/** Edit and delete, offered for every skill but the built-in ones. */
+function SkillRowEdits({
+  busy,
+  onEdit,
+  onDelete,
+}: {
+  busy: boolean;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <>
+      <button
+        type="button"
+        onClick={onEdit}
+        className="p-1 rounded hover:bg-surface text-muted hover:text-text"
+        data-tooltip="Edit"
+        aria-label="Edit skill"
+      >
+        <Pencil size={14} />
+      </button>
+      <button
+        type="button"
+        onClick={onDelete}
+        disabled={busy}
+        className="p-1 rounded hover:bg-surface text-muted hover:text-red-500 disabled:opacity-40"
+        data-tooltip="Delete"
+        aria-label="Delete skill"
+      >
+        <Trash2 size={14} />
+      </button>
+    </>
   );
 }

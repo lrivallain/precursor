@@ -10,6 +10,26 @@
       ],
       "port": 8010,
       "autoPort": true
+    },
+    {
+      "name": "precursor-demo",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "PYTHONPATH=\"$PWD\" DEMO_PORT=\"${PORT:-8899}\" exec ./scripts/demo_server.sh"
+      ],
+      "port": 8899,
+      "autoPort": true
+    },
+    {
+      "name": "precursor-demo-gh",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "DEMO_WITH_GH=1 PYTHONPATH=\"$PWD\" DEMO_PORT=\"${PORT:-8899}\" exec ./scripts/demo_server.sh"
+      ],
+      "port": 8899,
+      "autoPort": true
     }
   ]
 }

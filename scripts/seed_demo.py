@@ -85,6 +85,7 @@ from precursor.backend.services.agents.directives import (  # noqa: E402
     strip_control_directives,
 )
 from precursor.backend.services.schedule_timing import RecurrenceRule  # noqa: E402
+from scripts.demo_canvases import seed_canvas_chat  # noqa: E402
 from scripts.demo_side_chats import seed_side_chats  # noqa: E402
 
 NOW = datetime.now(UTC)
@@ -1441,8 +1442,8 @@ async def seed() -> None:
         await _seed_timeline_chat(s)
         await _seed_breakdown_chat(s)
         await _seed_edited_reply_chat(s)
-        # A topic with side chats started from it and from its replies.
-        await seed_side_chats(s, platform.id)
+        await seed_side_chats(s, platform.id)  # side chats from a topic and its replies
+        await seed_canvas_chat(s)
         await _seed_step_plan(s, t_release.id)
         await _seed_step_prompt_traces(s, platform.id)
 
@@ -2114,7 +2115,6 @@ async def seed() -> None:
 
 
 if __name__ == "__main__":
-    skills_dir = os.environ.get("PRECURSOR_SKILLS_DIR", "")
-    if skills_dir:
+    if skills_dir := os.environ.get("PRECURSOR_SKILLS_DIR", ""):
         write_skill_files(Path(skills_dir))
     asyncio.run(seed())

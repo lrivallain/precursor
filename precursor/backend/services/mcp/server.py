@@ -72,6 +72,7 @@ _TOOLS_BY_SECTION: dict[str, list[str]] = {
         "write_workspace_file",
         "create_workspace_folder",
     ],
+    "canvas": ["canvas_guide", "list_canvases", "read_canvas", "write_canvas", "edit_canvas"],
     "tools": [
         "get_datetime",
         "convert_timezone",

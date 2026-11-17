@@ -25,6 +25,7 @@ class WorkspaceRead(BaseModel):
     id: int
     name: str
     slug: str
+    # Plain ``str``: a row with an unexpected kind must not break the listing.
     kind: str = "git"
     repo_url: str | None = None
     branch: str
@@ -34,6 +35,8 @@ class WorkspaceRead(BaseModel):
     # Holds the agent and workflow definition files (the built-in "Agents &
     # workflows" workspace, or the one PRECURSOR_DEFINITIONS_WORKSPACE names).
     hosts_definitions: bool = False
+    # The built-in "Canvas" workspace, holding every conversation's canvases.
+    hosts_canvases: bool = False
     created_at: datetime
     updated_at: datetime
 

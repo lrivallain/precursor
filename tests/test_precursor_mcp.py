@@ -51,13 +51,14 @@ def test_server_info_describes_sections() -> None:
         assert {"list_topics", "post_message", "create_schedule", "set_reminder"} <= tool_names
 
 
-def test_mcp_expose_defaults_all_off() -> None:
+def test_mcp_expose_defaults_all_off_but_canvas() -> None:
     app = create_app()
     with TestClient(app) as client:
         settings = client.get("/api/settings").json()
         expose = settings["mcp_expose"]
         assert set(expose) == set(MCP_EXPOSE_SECTIONS)
-        assert all(v is False for v in expose.values())
+        # Canvases only write to their own built-in workspace.
+        assert {k for k, v in expose.items() if v} == {"canvas"}
 
 
 def test_mcp_expose_round_trip() -> None:

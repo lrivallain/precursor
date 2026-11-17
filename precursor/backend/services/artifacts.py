@@ -27,7 +27,9 @@ from precursor.backend.models import (
     Workspace,
 )
 from precursor.backend.schemas.artifact import ArtifactRead, DiscussionItem, WorkspaceTurnContext
+from precursor.backend.services import canvases
 from precursor.backend.services import workspace_fs as fs
+from precursor.backend.services.app_settings import resolve_mcp_expose
 from precursor.backend.services.workspaces import browse_root
 
 logger = logging.getLogger(__name__)
@@ -281,11 +283,20 @@ async def list_discussions(
 
 
 async def artifacts_prompt(session: AsyncSession, kind: ContainerKind, container_id: int) -> str:
-    """The files attached to this conversation, as paths only.
+    """The files attached to this conversation, and how to draw canvases in it.
 
     Content is never inlined: the model reads what it needs with the workspace
     tools, which take the ``workspace_id`` named here.
     """
+    blocks = [await _files_prompt(session, kind, container_id)]
+    if (await resolve_mcp_expose(session)).get("canvas"):
+        conversation_id = await canvases.conversation_public_id(session, kind, container_id)
+        if conversation_id:
+            blocks.append(canvases.canvas_prompt(conversation_id))
+    return "\n\n".join(b for b in blocks if b)
+
+
+async def _files_prompt(session: AsyncSession, kind: ContainerKind, container_id: int) -> str:
     artifacts = [a for a in await list_artifacts(session, kind, container_id) if a.exists]
     if not artifacts:
         return ""

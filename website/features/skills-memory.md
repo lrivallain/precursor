@@ -62,6 +62,16 @@ may reference another skill: expansion stops at two levels and on cycles.
 A discovered skill is **disabled until you enable it** in **Settings → Skills**.
 Enable, edit, export and delete act on the file.
 
+### Built-in skills
+
+Precursor ships a few skills of its own, marked **built-in** in **Settings →
+Skills**: they are on by default and can be turned off, but not edited or
+deleted. A skill file of the same name in your skills folder replaces one.
+
+| Skill | What it does |
+| --- | --- |
+| `/canvas` | How to illustrate a concept with a [canvas](/features/canvas): which kind to pick, layout and theme rules, and the canvas SDK. |
+
 ### Standing skills: triggering one from a chat description
 
 A [chat description](/features/chats) that references a skill turns the chat

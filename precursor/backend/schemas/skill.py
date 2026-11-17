@@ -64,3 +64,5 @@ class SkillRead(BaseModel):
     active: bool
     # Legacy skills still carry their content in the DB and expose "Migrate".
     legacy: bool
+    # Shipped with Precursor: can be turned on or off, not edited or deleted.
+    builtin: bool = False

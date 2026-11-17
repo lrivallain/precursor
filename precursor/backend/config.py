@@ -14,6 +14,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # Slug of the built-in workspace that holds agent and workflow definition files
 # by default. Reserved: user workspaces never get it.
 DEFINITIONS_WORKSPACE_SLUG = "definitions"
+# Slug of the built-in workspace that holds conversation canvases, one folder
+# per conversation (its public id). Reserved the same way.
+CANVAS_WORKSPACE_SLUG = "canvas"
 
 
 def is_source_checkout() -> bool:

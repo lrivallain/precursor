@@ -1558,17 +1558,7 @@ export type Me = Api.Me;
 // persona progress bar; `unlimited` plans have nothing to fill.
 export type CopilotQuota = Api.CopilotQuota;
 
-export interface Skill {
-  name: string;
-  description: string | null;
-  instructions: string;
-  /** File-backed skill is turned on (or legacy skill, always on until migrated). */
-  enabled: boolean;
-  /** Usable as a slash command right now. */
-  active: boolean;
-  /** Un-migrated DB skill — exposes a "Migrate" action. */
-  legacy: boolean;
-}
+export type Skill = Api.SkillRead;
 
 export type SkillCreate = Api.SkillCreate;
 
@@ -1637,21 +1627,7 @@ export type MemoryUpdate = Api.MemoryUpdate;
 
 export type WorkspaceKind = "git" | "local";
 
-export interface Workspace {
-  id: number;
-  name: string;
-  slug: string;
-  kind: WorkspaceKind;
-  repo_url: string | null;
-  branch: string;
-  subdir: string | null;
-  cloned_at: string | null;
-  last_synced_at: string | null;
-  /** Holds the definition files (the built-in "Definitions" workspace). */
-  hosts_definitions?: boolean;
-  created_at: string;
-  updated_at: string;
-}
+export type Workspace = Omit<Api.WorkspaceRead, "kind"> & { kind: WorkspaceKind };
 
 export type WorkspaceCreate = Api.WorkspaceCreate;
 

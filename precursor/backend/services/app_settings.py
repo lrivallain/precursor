@@ -90,11 +90,12 @@ MCP_EXPOSE_SECTIONS: tuple[str, ...] = (
     # workspace, which can clone a repo) are a separate, riskier toggle.
     "workspaces",
     "workspaces_write",
+    "canvas",  # conversation canvases: the built-in "canvas" workspace only; on by default
     # Small stateless helpers (the current date and time, ...). They read no
     # Precursor data, so this is the one section with nothing to disclose.
     "tools",
 )
-DEFAULT_MCP_EXPOSE: dict[str, bool] = {s: False for s in MCP_EXPOSE_SECTIONS}
+DEFAULT_MCP_EXPOSE: dict[str, bool] = {s: s == "canvas" for s in MCP_EXPOSE_SECTIONS}
 
 # Whether the built-in "precursor" MCP server is also served over HTTP
 # (streamable-http at /mcp), in addition to stdio. Default off; the endpoint is
@@ -731,8 +732,7 @@ async def resolve_system_settings(session: AsyncSession) -> dict[str, Any]:
 async def resolve_mcp_expose(session: AsyncSession) -> dict[str, bool]:
     """Which Precursor capability sections the built-in MCP server may serve.
 
-    Returns every known section with an explicit boolean (default False),
-    overlaying any DB-stored values. Unknown keys in the DB are ignored.
+    Every section, ``DEFAULT_MCP_EXPOSE`` overlaid with the DB's values (unknown keys ignored).
     """
     out = dict(DEFAULT_MCP_EXPOSE)
     db_value = await _get_db_value(session, "mcp_expose")

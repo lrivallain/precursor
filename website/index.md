@@ -61,6 +61,12 @@ features:
       Let the assistant browse and edit a git clone or local folder inside a sandbox.
     link: /features/workspaces
     linkText: About workspaces
+  - icon: 🎨
+    title: Canvases
+    details: >-
+      Illustrate a concept right in the reply: interactive simulations, editable draw.io diagrams, Mermaid flows and SVG, kept per conversation.
+    link: /features/canvas
+    linkText: About canvases
   - icon: 🔌
     title: MCP, both ways
     details: >-

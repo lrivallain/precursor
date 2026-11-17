@@ -126,6 +126,7 @@ export default withMermaid(
             { text: "Import & export", link: "/features/transfer" },
             { text: "Definition files (WIP)", link: "/features/definitions" },
             { text: "Workspaces & files", link: "/features/workspaces" },
+            { text: "Canvases", link: "/features/canvas" },
             { text: "Kanban board", link: "/features/kanban" },
             { text: "Skills, roles & memory", link: "/features/skills-memory" },
             { text: "Scheduler & reminders", link: "/features/scheduler" },
