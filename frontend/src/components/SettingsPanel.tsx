@@ -21,6 +21,7 @@ import { ModelTab } from "./settings/ModelTab";
 import { GitHubTab } from "./settings/GitHubTab";
 import { SpeechTab } from "./settings/SpeechTab";
 import { UpdatesTab } from "./settings/UpdatesTab";
+import { PrivacyTab } from "./settings/PrivacyTab";
 import { LiveTab } from "./settings/LiveTab";
 import { McpTab } from "./settings/McpTab";
 import { useAppearanceSettings } from "./settings/useAppearanceSettings";
@@ -37,6 +38,7 @@ import { useLoadedSettings, useSettingsForm, type LoadedSettings } from "./setti
 import { useSpeechSettings } from "./settings/useSpeechSettings";
 import { useSystemSettings } from "./settings/useSystemSettings";
 import { useUpdateSettings } from "./settings/useUpdateSettings";
+import { usePrivacySettings } from "./settings/usePrivacySettings";
 
 // Every tab's state lives here, above the tab components: only the active tab
 // is mounted, but its edits must survive switching tabs and one Save sends all.
@@ -53,6 +55,7 @@ function useSettingsTabs(loaded: LoadedSettings) {
     backup: useBackupSettings(loaded),
     system: useSystemSettings(),
     updates: useUpdateSettings(),
+    privacy: usePrivacySettings(),
     version: useAppVersion(),
   };
 }
@@ -114,6 +117,7 @@ const TAB_CONTENT: Record<CoreCategory, (ctx: TabContext) => ReactNode> = {
     />
   ),
   updates: ({ tabs }) => <UpdatesTab s={tabs.updates} />,
+  privacy: ({ tabs }) => <PrivacyTab s={tabs.privacy} />,
   system: ({ tabs: { system } }) =>
     system.sys && <SystemTab sys={system.sys} setSys={system.setSys} dockerAvailable={system.dockerAvailable} />,
 };

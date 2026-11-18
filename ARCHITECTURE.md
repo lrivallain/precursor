@@ -46,6 +46,8 @@ scripts/             CI and maintenance scripts (stdlib-only where they run in h
 | DB session in a route | `Depends(get_session)` | `db.py` |
 | DB session outside a request (tasks, streams) | `async with SessionLocal() as session` | `db.py` |
 | A per-user setting stored in the DB | a `resolve_*` function | `services/app_settings.py` |
+| Write or delete one `AppSetting` row outside the settings router (state a service keeps) | `store_setting`, `delete_setting` | `services/setting_rows.py` |
+| Anonymous, opt-in usage data (heartbeat, sanitised error reports) to Application Insights | `services/telemetry/` (`appinsights.envelope`/`post`, `prefs`, `TelemetryTicker`) | `services/telemetry/` |
 | A background job that wakes every N seconds | subclass `BackgroundPoll`; expose `get_x = X.instance`; add it to the lifespan list in `main.py` | `services/background_poll.py` |
 | An age-limited cleanup sweep | `cutoff`, `replace_column`, `delete_rows`, `rowcount`, `SessionFactory` | `services/retention_sweep.py` |
 | Report what a sweep did | `SweepResult` | `services/sweep_result.py` |
@@ -86,6 +88,8 @@ Conventions that keep this reusable:
 | Agent timeline rows, exchanges and folds | `buildRows`, `buildCockpitTimeline` | `lib/agentWorkflow.ts`, `lib/agentCockpitTimeline.ts` |
 | The M365 agenda (WorkIQ) and its Past / Current & upcoming list; hide M365 surfaces when WorkIQ is off | `useAgenda()`, `MeetingAgendaList`, `useM365Enabled()` | `lib/useAgenda.ts`, `components/MeetingAgendaList.tsx`, `lib/settingsStore.ts` |
 | Show a conversation canvas, or render a workspace file's preview | `CanvasBlock` (```canvas fence), `parseCanvasRef`, `WorkspaceFilePreview`, `workspaceFileTypes` | `components/CanvasBlock.tsx`, `lib/canvas.ts`, `components/WorkspaceFilePreview.tsx` |
+| A settings tab whose form is a slice of the settings, saved as the changed fields | `usePickedSettings(pick, changed)`; a labelled checkbox: `SettingToggle` | `components/settings/usePickedSettings.ts`, `components/settings/SettingToggle.tsx` |
+| A banner shown above every section | add it to `AppBanners` | `components/AppBanners.tsx` |
 | A settings tab | a component in `components/settings/` taking `{ s }` from its own `use<Tab>Settings` hook, called in `SettingsPanel` (only the active tab is mounted); the hook returns a `SettingsSection` (`hydrate`, `payload`, `snapshot`, `onSaved`) that `useSettingsForm` merges into the one Save and the unsaved-changes check | `components/settings/settingsSection.ts`, `components/settings/useSettingsForm.ts` |
 
 Conventions that keep this reusable:

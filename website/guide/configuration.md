@@ -181,6 +181,7 @@ audio is never stored.
 | **Usage stats** | Issue counts over time and database size per table. |
 | **Backup** | Periodic copy of the database, attachments and definitions to a folder. |
 | **Updates** | [Update channel, checks and notifications](/features/background-app#being-told-about-a-new-build). |
+| **Privacy** | [Anonymous usage data](/features/telemetry): the daily heartbeat and error reports, both off until you turn them on. |
 | **System** | Scheduled-run timeout, [storage retention](/features/storage), [command-runner jail](/features/command-runner). |
 
 ## Process-level configuration (`.env`)

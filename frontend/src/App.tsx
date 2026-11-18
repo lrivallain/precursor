@@ -12,7 +12,7 @@ import { CommandPalette } from "./components/CommandPalette";
 import { QuickActions } from "./components/QuickActions";
 import { IQMain, IQSidebar } from "./components/IQMain";
 import type { IQSeed } from "./components/IQMain";
-import { McpAuthBanner } from "./components/McpAuthBanner";
+import { AppBanners } from "./components/AppBanners";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { subscribeModelPresetSettingsOpen } from "./lib/modelPresetSettingsOpen";
 import { HomePage } from "./components/HomePage";
@@ -888,7 +888,7 @@ export default function App() {
 
         {!atHome && sidebarMode === "agents" && <AgentRunErrorBanner controller={agentsCtl} />}
 
-        <McpAuthBanner />
+        <AppBanners />
 
         <SearchHighlightBanner controller={highlightCtl} atHome={atHome} />
 
