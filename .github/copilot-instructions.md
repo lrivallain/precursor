@@ -1,9 +1,11 @@
 # Copilot / agent instructions for Precursor
 
 Use these notes to stay aligned with the project's conventions when working in
-this repo. [`ARCHITECTURE.md`](../ARCHITECTURE.md) maps where code goes and
-lists the building blocks to reuse; check it before writing a new helper,
-store, hook, background job or MCP tool.
+this repo. [`AGENTS.md`](../AGENTS.md) holds the rules every agent follows
+(limits, never-do list, delivery workflow, decision records).
+[`ARCHITECTURE.md`](../ARCHITECTURE.md) maps where code goes and lists the
+building blocks to reuse; check it before writing a new helper, store, hook,
+background job or MCP tool.
 
 ## Architecture in one paragraph
 

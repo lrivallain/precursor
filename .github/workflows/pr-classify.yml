@@ -1,0 +1,33 @@
+name: PR risk & docs impact
+
+# Sets risk:r0|r1|r2 from the changed paths and flags user-facing changes
+# without docs (scripts/agent_pr_classify.py, ADR-0001). pull_request_target
+# gives a write token on fork PRs too, so this job only checks out the base
+# branch and reads the PR's file list through the API: no PR code ever runs.
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions: {}
+
+concurrency:
+  group: pr-classify-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  classify:
+    name: Classify
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: python3 scripts/agent_pr_classify.py --repo "$GITHUB_REPOSITORY" --pr "$PR"

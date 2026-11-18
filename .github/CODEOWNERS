@@ -1,0 +1,21 @@
+# R2 paths (docs/adr/0001-agent-assisted-delivery.md): a human reviews the diff.
+# Keep this list in step with R2_PREFIXES / R2_FILES in scripts/agent_pr_classify.py.
+/.github/workflows/                              @lrivallain
+/.github/skills/                                 @lrivallain
+/.github/CODEOWNERS                              @lrivallain
+/.github/copilot-instructions.md                 @lrivallain
+/.github/labels.json                             @lrivallain
+/.claude/skills                                  @lrivallain
+/.claude/commands/                               @lrivallain
+/.claude/agents/                                 @lrivallain
+/.claude/settings.json                           @lrivallain
+/AGENTS.md                                       @lrivallain
+/CLAUDE.md                                       @lrivallain
+/scripts/agent_*                                 @lrivallain
+/scripts/release.py                              @lrivallain
+/precursor/backend/alembic/                      @lrivallain
+/precursor/backend/services/telemetry/           @lrivallain
+/precursor/backend/services/github_auth.py       @lrivallain
+/precursor/backend/services/azure_cli.py         @lrivallain
+/precursor/backend/services/mcp/entra_auth.py    @lrivallain
+/precursor/backend/services/mcp/oauth_registry.py @lrivallain

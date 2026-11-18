@@ -1,0 +1,596 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Precursor: agent-assisted delivery workflow (proposal)</title>
+<style>
+  :root {
+    --surface-0: #f4f4f2; --surface-1: #fcfcfb; --surface-2: #efeeea;
+    --border: #dcdbd6; --text-primary: #0b0b0b; --text-secondary: #52514e; --text-muted: #7a7973;
+    --human: #2a78d6; --agent: #eb6834; --auto: #8a8984;
+    --human-soft: #e3eefb; --agent-soft: #fdebe3; --auto-soft: #ecebe7;
+    --gate: #6250d6; --good: #0ca30c; --warn: #c98500; --crit: #d03b3b;
+    --radius: 10px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --surface-0: #121211; --surface-1: #1a1a19; --surface-2: #232321;
+      --border: #383835; --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #8f8e86;
+      --human: #3987e5; --agent: #d95926; --auto: #8f8e86;
+      --human-soft: #1b2a3d; --agent-soft: #3a2219; --auto-soft: #2a2a28;
+      --gate: #9085e9; --good: #0ca30c; --warn: #eda100; --crit: #e66767;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--surface-0); color: var(--text-primary);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif; }
+  main { max-width: 1280px; margin: 0 auto; padding: 32px 24px 80px; }
+  h1 { font-size: 30px; margin: 0 0 4px; letter-spacing: -0.02em; }
+  h2 { font-size: 20px; margin: 48px 0 6px; letter-spacing: -0.01em; }
+  h3 { font-size: 15px; margin: 0 0 6px; }
+  p.lead { color: var(--text-secondary); margin: 0 0 16px; max-width: 900px; }
+  .muted { color: var(--text-muted); }
+  code { font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--surface-2);
+    padding: 1px 5px; border-radius: 4px; }
+  .pill { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 99px;
+    border: 1px solid var(--border); background: var(--surface-1); color: var(--text-secondary); white-space: nowrap; }
+  .status { border-color: var(--warn); color: var(--warn); }
+  nav.toc { display: flex; flex-wrap: wrap; gap: 6px; margin: 16px 0 0; }
+  nav.toc a { text-decoration: none; color: var(--text-secondary); font-size: 12px; padding: 4px 10px;
+    border: 1px solid var(--border); border-radius: 99px; background: var(--surface-1); }
+  nav.toc a:hover { color: var(--text-primary); border-color: var(--text-muted); }
+  .card { background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
+  .grid { display: grid; gap: 12px; }
+  .g5 { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+  .g2 { grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); }
+  .principle b { display: block; margin-bottom: 4px; }
+  .principle p { margin: 0; color: var(--text-secondary); font-size: 13px; }
+
+  /* Legend */
+  .legend { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; font-size: 12px; color: var(--text-secondary); margin: 8px 0 12px; }
+  .sw { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -2px; margin-right: 6px; }
+  .sw.human { background: var(--human); } .sw.agent { background: var(--agent); } .sw.auto { background: var(--auto); }
+  .sw.gate { background: transparent; border: 2px solid var(--gate); transform: rotate(45deg); width: 10px; height: 10px; }
+
+  /* Layers */
+  .layers { display: grid; grid-template-columns: 130px 1fr; gap: 8px; }
+  .layers .lh { font-weight: 700; font-size: 13px; display: flex; flex-direction: column; justify-content: center; }
+  .layers .lh small { font-weight: 400; color: var(--text-muted); font-size: 11px; }
+  .layers .colt { font-weight: 700; font-size: 15px; padding: 4px 0; }
+  .layers .colt small { font-weight: 400; color: var(--text-muted); font-size: 12px; margin-left: 6px; }
+  .layer { background: var(--surface-1); border: 1px solid var(--border); border-left: 4px solid var(--gate); border-radius: 8px; padding: 10px 12px; font-size: 12.5px; }
+  .layer.use { border-left-color: var(--human); }
+  .layer .now { color: var(--text-secondary); }
+  .layer .next { margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--border); }
+  .layer .next::before { content: "→ "; color: var(--agent); font-weight: 700; }
+  /* Swimlane */
+  .lanes-wrap { overflow-x: auto; }
+  .lanes { display: grid; grid-template-columns: 150px repeat(8, minmax(140px, 1fr)); gap: 6px; min-width: 1240px; }
+  .lanes .colhead { font-weight: 700; font-size: 12px; text-align: center; padding: 8px 4px; border-radius: 8px;
+    background: var(--surface-2); color: var(--text-primary); }
+  .lanes .colhead small { display: block; font-weight: 400; color: var(--text-muted); }
+  .lanes .lanehead { font-size: 12px; font-weight: 700; padding: 10px; border-radius: 8px; display: flex; flex-direction: column; justify-content: center; }
+  .lanes .lanehead small { font-weight: 400; color: var(--text-secondary); }
+  .lanehead.human { background: var(--human-soft); border-left: 4px solid var(--human); }
+  .lanehead.local { background: var(--agent-soft); border-left: 4px solid var(--agent); }
+  .lanehead.hosted { background: var(--agent-soft); border-left: 4px dashed var(--agent); }
+  .lanehead.auto { background: var(--auto-soft); border-left: 4px solid var(--auto); }
+  .cell { min-height: 64px; display: flex; flex-direction: column; gap: 6px; }
+  .step { font-size: 12px; line-height: 1.35; padding: 8px 9px; border-radius: 8px; background: var(--surface-1);
+    border: 1px solid var(--border); cursor: default; transition: transform .12s, box-shadow .12s; }
+  .step:hover { transform: translateY(-1px); box-shadow: 0 4px 14px rgba(0,0,0,.12); }
+  .step b { display: block; font-size: 12px; margin-bottom: 2px; }
+  .step.human { border-left: 4px solid var(--human); }
+  .step.agent { border-left: 4px solid var(--agent); }
+  .step.hosted { border-left: 4px dashed var(--agent); }
+  .step.auto { border-left: 4px solid var(--auto); }
+  .step.gate { outline: 2px solid var(--gate); outline-offset: -1px; }
+  .step .tag { float: right; font-size: 10px; font-weight: 700; color: var(--gate); margin-left: 4px; }
+  .step .new { font-size: 10px; font-weight: 700; color: var(--agent); }
+  .step .exists { font-size: 10px; font-weight: 700; color: var(--good); }
+  .loopnote { margin-top: 8px; font-size: 12px; color: var(--text-secondary); }
+
+  /* State machine */
+  .states { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  .state { font: 12px ui-monospace, Menlo, monospace; padding: 6px 10px; border-radius: 6px; background: var(--surface-1);
+    border: 1px solid var(--border); position: relative; }
+  .state small { display: block; font-family: -apple-system, sans-serif; font-size: 10px; color: var(--text-muted); }
+  .state.g { border: 2px solid var(--gate); }
+  .arrow { color: var(--text-muted); font-size: 16px; }
+  .side { margin-top: 10px; font-size: 12px; color: var(--text-secondary); }
+
+  /* Tables */
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; background: var(--surface-1);
+    border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { background: var(--surface-2); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-secondary); }
+  tr:last-child td { border-bottom: none; }
+  td.r0 { border-left: 4px solid var(--good); } td.r1 { border-left: 4px solid var(--warn); } td.r2 { border-left: 4px solid var(--crit); }
+
+  /* Debate loop */
+  .loop { display: grid; grid-template-columns: 1fr 60px 1fr; align-items: center; gap: 0; }
+  .loop .actor { padding: 14px; border-radius: 10px; background: var(--agent-soft); text-align: center; font-size: 13px; }
+  .loop .actor small { display: block; color: var(--text-secondary); font-size: 11px; }
+  .loop .mid { text-align: center; color: var(--text-muted); font-size: 11px; line-height: 1.2; }
+  .loop .mid span { display: block; font-size: 18px; }
+  .exits { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 12px; }
+  .exits div { font-size: 12px; padding: 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface-1); }
+
+  /* Chart */
+  .chart-card { position: relative; }
+  .chart-toolbar { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
+  .chart-toolbar button, .btn { font: inherit; font-size: 12px; padding: 5px 12px; border-radius: 6px; border: 1px solid var(--border);
+    background: var(--surface-2); color: var(--text-primary); cursor: pointer; }
+  .chart-toolbar button:hover, .btn:hover { border-color: var(--text-muted); }
+  svg text { font-family: inherit; }
+  #tip { position: fixed; pointer-events: none; background: var(--surface-1); color: var(--text-primary); border: 1px solid var(--border);
+    border-radius: 8px; padding: 8px 10px; font-size: 12px; box-shadow: 0 6px 20px rgba(0,0,0,.18); opacity: 0; transition: opacity .1s; max-width: 280px; z-index: 10; }
+  #chart-table { display: none; margin-top: 12px; }
+
+  /* Decisions */
+  .decision { margin-bottom: 10px; }
+  .decision header { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+  .decision header h3 { margin: 0; }
+  .decision .why { color: var(--text-secondary); font-size: 12.5px; margin: 4px 0 10px; }
+  .opts { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 8px; }
+  .opt { display: block; border: 1px solid var(--border); border-radius: 8px; padding: 9px 10px; cursor: pointer; font-size: 12.5px; background: var(--surface-0); }
+  .opt input { margin-right: 6px; accent-color: var(--gate); }
+  .opt .rec { font-size: 10px; font-weight: 700; color: var(--gate); margin-left: 4px; }
+  .opt small { display: block; color: var(--text-muted); margin-top: 3px; }
+  .opt:has(input:checked) { border-color: var(--gate); background: var(--surface-1); box-shadow: 0 0 0 1px var(--gate) inset; }
+  .decided { color: var(--good); border-color: var(--good); }
+  .export { display: flex; gap: 8px; align-items: center; margin: 8px 0 14px; flex-wrap: wrap; }
+  #export-out { width: 100%; min-height: 0; display: none; margin-top: 8px; font: 12px ui-monospace, Menlo, monospace;
+    background: var(--surface-1); color: var(--text-primary); border: 1px solid var(--border); border-radius: 8px; padding: 10px; }
+
+  /* Phases */
+  .phases { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  @media (max-width: 900px) { .phases { grid-template-columns: 1fr 1fr; } }
+  .phase h3 { display: flex; justify-content: space-between; }
+  .phase ul { margin: 6px 0 0; padding-left: 18px; font-size: 12.5px; color: var(--text-secondary); }
+  .phase .exit { margin-top: 8px; font-size: 11.5px; color: var(--text-muted); border-top: 1px dashed var(--border); padding-top: 6px; }
+  ul.tight { margin: 4px 0 0; padding-left: 18px; font-size: 13px; color: var(--text-secondary); }
+  ul.tight li { margin: 3px 0; }
+</style>
+</head>
+<body>
+<main>
+  <span class="pill status">ADR-0001 · phase 1 implemented · phases 2–4 proposed · 2026-11-18</span>
+  <h1>From ask to release: humans decide, agents do the work</h1>
+  <p class="lead">A delivery workflow for Precursor where every request becomes an issue, an agent specifies it,
+    another builds it, a different one reviews it, and a human makes the call at a few
+    gates, set by risk. It runs the same from the Claude app, the Copilot app, or GitHub-hosted runners, because
+    the shared contract is <b>GitHub state plus shared prompt files</b>, not the tool that runs them.</p>
+  <nav class="toc">
+    <a href="#principles">Principles</a><a href="#layers">Rules · skills · tools</a><a href="#flow">Flow</a><a href="#states">State machine</a>
+    <a href="#roster">Agent roster</a><a href="#review">Review debate</a><a href="#risk">Risk &amp; merge</a>
+    <a href="#split">Human / agent split</a><a href="#guardrails">Guardrails</a><a href="#decisions">Decisions</a>
+    <a href="#rollout">Rollout</a><a href="#inventory">Exists vs to build</a>
+  </nav>
+
+  <h2 id="principles">Principles</h2>
+  <p class="lead">Five rules. Every later choice follows from them.</p>
+  <div class="grid g5">
+    <div class="card principle"><b>1 · GitHub is the bus</b><p>Workflow state lives in issue/PR labels, assignees and linked PRs. Any agent, local or hosted, reads and moves the same state with <code>gh</code>. Nothing depends on one tool's memory.</p></div>
+    <div class="card principle"><b>2 · Runner-agnostic roles</b><p>Each role is one skill file, written once (today's <code>ship-change</code> and <code>release</code> prompts are the start). Claude, Copilot and hosted Actions all load the same file.</p></div>
+    <div class="card principle"><b>3 · Separation of duties</b><p>The run that writes a PR never reviews or approves it. A separate, read-only run reviews it against the same written rules.</p></div>
+    <div class="card principle"><b>4 · Gates scale with risk</b><p>Docs and minor dependency bumps merge on green. Features need a human click. Auth, telemetry, migrations and workflows get a human review of the diff.</p></div>
+    <div class="card principle"><b>5 · Bounded &amp; reversible</b><p>Review loops have a round limit, agents have concurrency and budget caps, two kill switches stop agents and releases, and an agent can open a revert PR at any time.</p></div>
+  </div>
+
+  <h2 id="layers">Rules, skills, tools, agents</h2>
+  <p class="lead">The contributor setup has four layers: rules that are always loaded, skills loaded when a task needs them, tools, and an agent, with a human who decides. Each cell shows what is in the repo today, then (→) what this proposal adds.</p>
+  <div class="layers">
+    <div></div>
+    <div class="colt" style="color:var(--gate)">Development cycle<small>contributors &amp; their agents</small></div>
+
+    <div class="lh">Rules<small>always loaded</small></div>
+    <div class="layer"><div class="now"><code>CLAUDE.md</code>, <code>copilot-instructions.md</code>, <code>ARCHITECTURE.md</code>, <code>CONTRIBUTING.md</code>; quality ratchet limits</div>
+      <div class="next"><code>AGENTS.md</code> as the one entry point that every tool reads; ADRs in <code>docs/adr/</code>, starting with this proposal</div></div>
+
+    <div class="lh">Skills<small>on demand, by function</small></div>
+    <div class="layer"><div class="now">2 prompts: <code>ship-change</code>, <code>release</code></div>
+      <div class="next">~10 skills by function: triage · spec · ship-change · review · respond-review · docs · changelog · release · ops · diagnose-ci</div></div>
+
+    <div class="lh">Methods<small>optional</small></div>
+    <div class="layer"><div class="now">PR template checklists, docs-impact table</div>
+      <div class="next">Spec template, risk classes R0–R2, review debate protocol. Heavier spec methods stay optional.</div></div>
+
+    <div class="lh">Tools<small>what agents act with</small></div>
+    <div class="layer"><div class="now"><code>make check</code> (lint, mypy, tests, ratchet, API types, build); 5 workflows: CI, nightly, release, relock, pages; Dependabot</div>
+      <div class="next">Risk labeler, <code>agent-*.yml</code> workflows, <code>AGENTS_PAUSED</code> / <code>RELEASE_HOLD</code></div></div>
+
+    <div class="lh">Agents<small>who runs it</small></div>
+    <div class="layer"><div class="now">Claude Code and Copilot, run locally: change → PR → human merge</div>
+      <div class="next">+ hosted agents on GitHub only (Copilot, GitHub Models): issue → spec → PR → agent review → merge by risk class</div></div>
+  </div>
+
+  <h2 id="flow">The flow, lane by lane</h2>
+  <p class="lead">Columns are stages; rows are who acts. Purple outlines are <b>human gates</b>. Hover a card for its details. The release column already exists (<code>release.yml</code>, nightly, CI-gated). Today, merging is the decision to ship.</p>
+  <div class="legend">
+    <span><i class="sw human"></i>Human</span><span><i class="sw agent"></i>Agent (local app: Claude / Copilot)</span>
+    <span><i class="sw agent" style="background:repeating-linear-gradient(45deg,var(--agent) 0 3px,transparent 3px 5px)"></i>Agent (GitHub-hosted)</span>
+    <span><i class="sw auto"></i>Deterministic automation</span><span><i class="sw gate"></i>Human gate</span>
+    <span><span class="exists">EXISTS</span> already in repo</span>
+  </div>
+  <div class="lanes-wrap"><div class="lanes" id="lanes"></div></div>
+  <p class="loopnote">↻ <b>Ops loops back to Intake:</b> failed runs, flaky tests, Dependabot majors and sanitised telemetry error reports become new issues, triaged like any other ask.</p>
+
+  <h2 id="states">State machine: labels are the source of truth</h2>
+  <p class="lead">One <code>status:*</code> label at a time on the issue. Agents only start work from the state that is theirs. A GitHub Project board can show the same data as a view, but it never holds the state.</p>
+  <div class="card">
+    <div class="states" id="states-list"></div>
+    <div class="side">
+      <b>Side exits:</b> <code>status:needs-info</code> (triage asked a question; returns to triage when the author answers) ·
+      <code>status:needs-human</code> (deadlock, R2, or an agent hit a limit) · <code>wontfix</code> / <code>duplicate</code> (closed with reason).
+      <br><b>Orthogonal labels:</b> <code>risk:r0|r1|r2</code> · <code>agent:build</code> / <code>agent:docs</code> (opt-in triggers for hosted runs) ·
+      <code>runner:local|hosted</code> (who has claimed it) · <code>type:*</code>, <code>surface:*</code> (from the issue form).
+      <br><b>Claiming:</b> an agent assigns the issue and sets <code>runner:*</code> before it starts. A second agent that finds it claimed backs off, which keeps local and hosted runs from colliding.
+    </div>
+  </div>
+
+  <h2 id="roster">Agent roster</h2>
+  <p class="lead">Eight roles. Each is a prompt file plus a trigger. “Both” means the same prompt runs from a local app session or a hosted workflow.</p>
+  <table id="roster-table">
+    <thead><tr><th>Role</th><th>Trigger</th><th>Runs on</th><th>Reads</th><th>Writes</th><th>Token scope</th></tr></thead>
+    <tbody></tbody>
+  </table>
+  <p class="muted" style="font-size:12px">Each role is written once (format: see D13). Claude and Copilot load it locally; <code>.github/workflows/agent-&lt;role&gt;.yml</code> passes the same file to the hosted engine.</p>
+
+  <h2 id="review">Review debate: contributor ↔ reviewer</h2>
+  <div class="grid g2">
+    <div class="card">
+      <div class="loop">
+        <div class="actor"><b>Contributor agent</b><small>author model (e.g. Claude)</small></div>
+        <div class="mid"><span>⇄</span>≤ 3 rounds</div>
+        <div class="actor"><b>Reviewer agent</b><small>separate read-only run (GitHub Models)</small></div>
+      </div>
+      <div class="exits">
+        <div><b style="color:var(--good)">Converged</b><br>Reviewer approves → <code>status:ready</code></div>
+        <div><b style="color:var(--warn)">Disagreement</b><br>3 rounds or a <code>blocker</code> is disputed → <code>needs-human</code></div>
+        <div><b style="color:var(--crit)">Out of scope</b><br>Reviewer files a follow-up issue rather than growing the PR</div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Rules of engagement</h3>
+      <ul class="tight">
+        <li>Reviewer findings carry a severity: <code>blocker</code>, <code>should</code> or <code>nit</code>. Only blockers hold the merge.</li>
+        <li>For each finding, the contributor either <b>fixes</b> it (commit linked in the reply) or <b>argues</b> against it with evidence (a test, a doc, an <code>ARCHITECTURE.md</code> rule). It never stays silent and never resolves the reviewer's thread itself.</li>
+        <li>The reviewer re-checks only what changed and resolves its own threads.</li>
+        <li>The reviewer checks the repo's own rules: reuse map, ratchet limits, generated API types, docs-impact checklist, no lockfile edits.</li>
+        <li>On escalation, the human reads a <b>one-comment summary</b> (the dispute, both positions, and a recommendation), not the whole thread.</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2 id="risk">Risk classes and merge authority</h2>
+  <p class="lead">The triage agent proposes the risk class from the issue, and a path-based labeler sets it from the diff. When the two differ, the higher class wins.</p>
+  <table>
+    <thead><tr><th>Class</th><th>What falls in it</th><th>Spec gate</th><th>Review</th><th>Merge</th></tr></thead>
+    <tbody>
+      <tr><td class="r0"><b>R0</b> routine</td><td><code>website/</code>, <code>docs/</code>, tests-only, typos, Dependabot minor/patch, changelog fragments</td><td>Skipped</td><td>1 agent reviewer</td><td><b>Auto-merge</b> on green CI + agent approval</td></tr>
+      <tr><td class="r1"><b>R1</b> standard</td><td>Features and fixes in <code>precursor/</code> and <code>frontend/</code> outside the R2 paths</td><td>Human approves spec</td><td>1 agent reviewer (separate run)</td><td><b>Human click</b> after reading the PR summary and review verdict</td></tr>
+      <tr><td class="r2"><b>R2</b> sensitive</td><td>Auth/tokens, <code>services/telemetry/</code>, Alembic migrations, <code>.github/workflows/</code>, release, MCP permissions, major dependencies, a raise of <code>quality_baseline.json</code></td><td>Human approves spec</td><td>Agent reviewer + <b>human diff review</b></td><td>Human, with a CODEOWNERS review request</td></tr>
+    </tbody>
+  </table>
+
+  <h2 id="split">Human / agent share of effort, per stage</h2>
+  <div class="card chart-card">
+    <div class="chart-toolbar">
+      <div>
+        <h3 style="margin:0">Proposed split of effort per stage, once P3 is in place</h3>
+        <div class="legend" style="margin:6px 0 0">
+          <span><i class="sw human"></i>Human</span><span><i class="sw agent"></i>Agent</span>
+        </div>
+      </div>
+      <button id="toggle-table" type="button">Show table</button>
+    </div>
+    <div id="chart"></div>
+    <table id="chart-table"><thead><tr><th>Stage</th><th>Human (proposed)</th><th>Agent (proposed)</th><th>What the human still does</th></tr></thead><tbody></tbody></table>
+    <p class="muted" style="font-size:12px;margin:8px 0 0"><b>Merge</b> is its own stage because, with nightly releases, it is where the ship decision is made. These are targets to check against the P1–P4 metrics, not commitments.</p>
+  </div>
+
+  <h2 id="guardrails">Guardrails</h2>
+  <div class="grid g2">
+    <div class="card"><h3>Untrusted input</h3><ul class="tight">
+      <li>Issue and PR text from anyone other than a maintainer is <b>data</b>. Hosted agents with write access run only after a maintainer sets <code>status:accepted</code> or an <code>agent:*</code> label.</li>
+      <li>Never use <code>pull_request_target</code> with a checkout of the PR head. Review jobs on fork PRs are read-only and post comments through a separate, minimal job.</li>
+      <li>Agents don't follow links or run commands they find in issue bodies.</li></ul></div>
+    <div class="card"><h3>What agents may never do</h3><ul class="tight">
+      <li>Push to <code>main</code>, create tags, publish, or approve their own PR.</li>
+      <li>Edit <code>uv.lock</code> / <code>package-lock.json</code> (the Relock workflow owns them), raise <code>quality_baseline.json</code>, or hand-edit <code>apiTypes.ts</code>.</li>
+      <li>Change <code>.github/workflows/</code> unless the issue is R2, and with a human-approved spec.</li></ul></div>
+    <div class="card"><h3>Limits &amp; kill switches</h3><ul class="tight">
+      <li><code>AGENTS_PAUSED</code> repo variable: every hosted agent workflow exits early.</li>
+      <li><code>RELEASE_HOLD</code> repo variable: <code>release.yml</code> skips publishing and reports why.</li>
+      <li>At most N open agent PRs (start at 5), at most 3 review rounds, and a turn/time budget per hosted run.</li></ul></div>
+    <div class="card"><h3>Traceability</h3><ul class="tight">
+      <li>Every agent comment and commit trailer names the <b>role · runner · model</b> (e.g. <code>reviewer · hosted · gpt-x</code>).</li>
+      <li>The PR body links its issue, spec comment and risk class, and holds the docs-impact assessment already required by <code>copilot-instructions.md</code>.</li>
+      <li>Weekly metrics: lead time (issue→release), review rounds, % escalated, % auto-merged, reverts, agent PRs closed without merging.</li></ul></div>
+  </div>
+
+  <h2 id="decisions">Decisions to take</h2>
+  <p class="lead">Each decision has a recommended option. Your picks are saved in this browser. Export them as Markdown to paste into an issue or ADR.</p>
+  <div class="export">
+    <button class="btn" id="accept-recs" type="button">Pre-select all recommendations</button>
+    <button class="btn" id="export" type="button">Export decisions as Markdown</button>
+    <button class="btn" id="reset" type="button">Reset</button>
+    <span class="muted" id="progress" style="font-size:12px"></span>
+    <textarea id="export-out" rows="14" readonly></textarea>
+  </div>
+  <div id="decisions-list"></div>
+
+  <h2 id="rollout">Rollout: earn autonomy in stages</h2>
+  <p class="lead">Each phase widens what agents do on their own only after the previous phase's metrics hold.</p>
+  <div class="phases">
+    <div class="card phase"><h3>P1 · Observe <span class="pill">~2 wks</span></h3><ul>
+      <li>Labels, risk labeler, CODEOWNERS</li><li>Triage agent (comments + labels only)</li><li>Reviewer agent comments on every PR (advisory)</li><li>Docs-impact check comment</li><li>Kill-switch variables</li></ul>
+      <div class="exit">Exit when: triage labels are accepted ≥ 80% unchanged, and review findings are rarely noise.</div></div>
+    <div class="card phase"><h3>P2 · Specify &amp; build <span class="pill">~3 wks</span></h3><ul>
+      <li>Spec agent + <code>status:*</code> machine</li><li>Contributor runs from Claude / Copilot apps, starting at <code>spec-approved</code></li><li>Changelog fragments + changelog agent</li><li>Claiming protocol (<code>runner:*</code>)</li></ul>
+      <div class="exit">Exit when: specs need ≤ 1 human edit on average, and no CHANGELOG conflicts remain.</div></div>
+    <div class="card phase"><h3>P3 · Hosted &amp; debate <span class="pill">~3 wks</span></h3><ul>
+      <li>Hosted contributor on the <code>agent:build</code> label (R0/R1)</li><li>Review debate loop with escalation</li><li>Auto-merge for R0</li><li>Concurrency and budget caps</li></ul>
+      <div class="exit">Exit when: revert rate ≤ the pre-agent baseline, and ≤ 20% of PRs escalate.</div></div>
+    <div class="card phase"><h3>P4 · Close the loop <span class="pill">ongoing</span></h3><ul>
+      <li>Ops agent: failed runs, flaky tests, telemetry reports → issues</li><li>Release-notes agent</li><li>Weekly metrics digest</li><li>Revisit the R0 scope with the data</li></ul>
+      <div class="exit">Steady state: humans spend their time on intake, spec approval, merges and arbitration.</div></div>
+  </div>
+
+  <h2 id="inventory">What exists vs what to build</h2>
+  <div class="grid g2">
+    <div class="card"><h3 style="color:var(--good)">Already in the repo</h3><ul class="tight">
+      <li>Issue forms adding <code>needs-triage</code> (<code>.github/ISSUE_TEMPLATE/</code>)</li>
+      <li>PR template with verification + reuse checklist</li>
+      <li><code>ship-change</code> and <code>release</code> agent prompts (<code>.github/prompts/</code>)</li>
+      <li>Agent rules: <code>CLAUDE.md</code>, <code>copilot-instructions.md</code>, <code>ARCHITECTURE.md</code></li>
+      <li>CI with quality ratchet, API-types freshness, sharded tests</li>
+      <li>Autonomous, CI-gated nightly release to PyPI (<code>release.yml</code>) + nightly build</li>
+      <li>Relock workflow (agents never resolve lockfiles), Dependabot</li>
+      <li>Opt-in, sanitised telemetry error reports (a source for the Ops agent)</li></ul></div>
+    <div class="card"><h3 style="color:var(--agent)">To build</h3><ul class="tight">
+      <li><code>AGENTS.md</code>, <code>docs/adr/</code> (ADR-0001: this workflow), role skills</li>
+      <li>Label set (<code>status:*</code>, <code>risk:*</code>, <code>agent:*</code>, <code>runner:*</code>) + <code>actions/labeler</code> path rules</li>
+      <li><code>CODEOWNERS</code> and a <code>main</code> ruleset (R1/R2 human review)</li>
+      <li>Hosted <code>agent-*.yml</code> workflows that load the same skills</li>
+      <li><code>changelog.d/</code> fragments + assembly step</li>
+      <li><code>AGENTS_PAUSED</code> / <code>RELEASE_HOLD</code> checks in workflows</li>
+      <li>Spec comment template</li>
+      <li>Website page <code>contributing/workflow.md</code> updated with the result</li></ul></div>
+  </div>
+</main>
+<div id="tip" role="tooltip"></div>
+
+<script>
+const STAGES = [
+  ["Intake", "any ask"], ["Triage", "shape & accept"], ["Spec", "what & how"], ["Build", "PR + CI"],
+  ["Review", "agent ⇄ agent"], ["Merge", "ship decision"], ["Release", "nightly"], ["Ops", "watch & learn"],
+];
+const LANES = [
+  ["human", "Human", "maintainer"],
+  ["local", "Agent · local app", "Claude / Copilot app"],
+  ["hosted", "Agent · GitHub-hosted", "Actions runners"],
+  ["auto", "Automation", "deterministic CI"],
+];
+// [lane, stageIndex, cls, title, body, flags]  flags: gate label, "exists"
+const STEPS = [
+  ["human", 0, "human", "States the need", "Issue form, or “file this” in any Claude / Copilot session."],
+  ["local", 0, "agent", "File-issue helper", "Turns a conversation into a structured issue (problem, outcome, surface), searching for duplicates first."],
+  ["auto", 0, "auto", "Issue forms", "Add <code>needs-triage</code> + type label.", {exists: true}],
+  ["human", 1, "human", "Accept & prioritise", "Sets <code>status:accepted</code>, or overrides the risk class. Maintainers' own R0 asks can be auto-accepted.", {gate: "G1"}],
+  ["hosted", 1, "hosted", "Triage agent", "Dedupes, labels type/surface, proposes <code>risk:r0–r2</code>, asks clarifying questions (<code>needs-info</code>), suggests a priority."],
+  ["hosted", 2, "hosted", "Spec agent", "Posts a structured spec comment: acceptance criteria, reuse-map hits from ARCHITECTURE.md, files to touch, test plan, docs impact, risk. Splits large asks into sub-issues."],
+  ["local", 2, "agent", "…or spec locally", "Same prompt from the Claude / Copilot app, for specs that need a design conversation."],
+  ["human", 2, "human", "Approve spec", "Reacts or labels <code>status:spec-approved</code>. Skipped for R0.", {gate: "G2"}],
+  ["local", 3, "agent", "Contributor agent", "Claims the issue (<code>runner:local</code>), follows <code>ship-change</code>, runs <code>make check</code>, opens a PR with <code>Closes #N</code>.", {exists: true}],
+  ["hosted", 3, "hosted", "…or hosted contributor", "On the <code>agent:build</code> label (R0/R1): Copilot coding agent (GitHub-hosted), with the same skill."],
+  ["hosted", 3, "hosted", "Docs & changelog agent", "Runs the docs-impact checklist; pushes doc edits and a <code>changelog.d/</code> fragment to the PR."],
+  ["auto", 3, "auto", "CI", "Lockfiles, ratchet, lint, mypy, tests, API types, frontend build.", {exists: true}],
+  ["hosted", 4, "hosted", "Reviewer agent", "A separate, read-only run. Severity-tagged findings against repo rules, plus a verdict."],
+  ["local", 4, "agent", "Contributor responds", "Fixes or argues each finding; ≤ 3 rounds. Can run locally or hosted."],
+  ["human", 4, "human", "Arbitrate", "Only on <code>needs-human</code>: reads the one-comment dispute summary and decides."],
+  ["human", 5, "human", "Merge decision", "R1: one click after the summary. R2: CODEOWNERS diff review. R0: none.", {gate: "G3"}],
+  ["auto", 5, "auto", "Auto-merge (R0)", "GitHub auto-merge when CI is green, the agent approved, and the PR is labelled <code>risk:r0</code>."],
+  ["auto", 6, "auto", "release.yml", "Nightly 01:17 UTC: CI gate on the exact SHA, build, smoke test, PyPI, GitHub Release.", {exists: true}],
+  ["hosted", 6, "hosted", "Release-notes agent", "Rewrites generated notes into a user-facing summary; assembles changelog fragments; comments “shipped in vX” on issues."],
+  ["human", 6, "human", "Hold switch", "<code>RELEASE_HOLD</code> pauses publishing. A bad release gets a new CalVer, never a moved tag.", {gate: "G4"}],
+  ["hosted", 7, "hosted", "Ops agent", "Triages failed runs, flaky tests, Dependabot majors and telemetry error reports into issues (back to Intake)."],
+  ["auto", 7, "auto", "Nightly build & Dependabot", "Rolling <code>nightly</code> prerelease; weekly dependency PRs.", {exists: true}],
+  ["human", 7, "human", "Weekly review", "10 minutes on agent metrics; adjusts R0 scope and caps."],
+];
+const lanesEl = document.getElementById("lanes");
+lanesEl.appendChild(Object.assign(document.createElement("div"), {}));
+STAGES.forEach(([n, s], i) => {
+  const d = document.createElement("div"); d.className = "colhead";
+  d.innerHTML = `${i + 1} · ${n}<small>${s}</small>`; lanesEl.appendChild(d);
+});
+LANES.forEach(([key, name, sub]) => {
+  const h = document.createElement("div"); h.className = `lanehead ${key}`;
+  h.innerHTML = `${name}<small>${sub}</small>`; lanesEl.appendChild(h);
+  STAGES.forEach((_, i) => {
+    const c = document.createElement("div"); c.className = "cell";
+    STEPS.filter(s => s[0] === key && s[1] === i).forEach(([, , cls, title, body, f = {}]) => {
+      const el = document.createElement("div");
+      el.className = `step ${cls}${f.gate ? " gate" : ""}`;
+      el.innerHTML = `${f.gate ? `<span class="tag">◆ ${f.gate}</span>` : ""}<b>${title}</b>${f.exists ? '<span class="exists">EXISTS</span>' : ""}`;
+      el.dataset.tip = `<b>${title}</b><br>${body}`;
+      c.appendChild(el);
+    });
+    lanesEl.appendChild(c);
+  });
+});
+
+const STATES = [
+  ["needs-triage", "issue form", false], ["status:accepted", "G1 · human", true], ["status:spec-draft", "spec agent", false],
+  ["status:spec-approved", "G2 · human (R1/R2)", true], ["status:in-progress", "claimed + runner:*", false],
+  ["status:in-review", "PR open, CI + reviewer", false], ["status:ready", "review converged", false],
+  ["merged", "G3 · human or auto (R0)", true], ["released", "release.yml comments vX", false],
+];
+const st = document.getElementById("states-list");
+STATES.forEach(([n, s, g], i) => {
+  if (i) st.insertAdjacentHTML("beforeend", '<span class="arrow">→</span>');
+  st.insertAdjacentHTML("beforeend", `<span class="state${g ? " g" : ""}">${n}<small>${s}</small></span>`);
+});
+
+const ROSTER = [
+  ["Triage", "issue opened / edited; <code>needs-info</code> answered", "Hosted", "issue, existing issues, ARCHITECTURE.md", "labels, one comment", "issues: write"],
+  ["Spec", "<code>status:accepted</code>", "Both", "issue, codebase, ARCHITECTURE.md, docs checklist", "spec comment, sub-issues, <code>spec-draft</code>", "issues: write"],
+  ["Contributor", "<code>spec-approved</code> (or R0 accepted) + claim", "Both", "spec, repo", "branch, PR, replies to review", "contents + PR write (branches only)"],
+  ["Reviewer", "PR ready for review / new push", "Hosted (or local)", "diff, spec, repo rules, CI result", "review with severity + verdict", "pull-requests: write"],
+  ["Docs", "PR labelled user-facing, or <code>agent:docs</code>", "Hosted", "diff, docs checklist, website/", "doc commits on the PR", "contents write (PR branch)"],
+  ["Changelog", "PR merged / pre-release", "Hosted", "merged PRs, <code>changelog.d/</code>", "CHANGELOG assembly PR", "contents + PR write"],
+  ["Release notes", "after release.yml succeeds", "Hosted", "release, PRs, issues", "release body, “shipped in” comments", "contents + issues write"],
+  ["Ops", "failed workflow_run, schedule", "Hosted", "run logs, telemetry reports, Dependabot", "issues (deduped)", "issues: write, actions: read"],
+];
+const rb = document.querySelector("#roster-table tbody");
+ROSTER.forEach(r => rb.insertAdjacentHTML("beforeend", `<tr>${r.map((c, i) => `<td>${i ? c : `<b>${c}</b>`}</td>`).join("")}</tr>`));
+
+// Chart: stacked bars, human at the baseline.
+const SPLIT = [
+  ["Intake", 85, "Owns the need; an agent turns the conversation into a clean, deduped issue."],
+  ["Triage", 30, "Accepts and prioritises; the agent labels, dedupes and asks questions."],
+  ["Spec", 40, "Edits and approves the spec the agent drafted."],
+  ["Code", 10, "Steers when the agent is stuck; the agent writes the PR."],
+  ["Tests", 10, "Spot-checks; tests ship in the PR and the ratchet enforces them."],
+  ["Doc", 10, "Reads the docs-impact note; the docs agent writes the pages."],
+  ["Review", 25, "Arbitrates disputes from a one-comment summary."],
+  ["Merge", 70, "Makes the ship decision for R1/R2; R0 merges itself."],
+  ["Release", 10, "Holds a release when needed; release.yml does the rest."],
+  ["Ops", 40, "Sets priorities; the agent turns signals into issues."],
+];
+const css = getComputedStyle(document.documentElement);
+const C = k => css.getPropertyValue(k).trim();
+const W = 980, H = 340, M = {t: 16, r: 10, b: 36, l: 40};
+const pw = W - M.l - M.r, ph = H - M.t - M.b, n = SPLIT.length, slot = pw / n, bw = Math.min(64, slot * 0.62);
+const y = v => M.t + ph - (v / 100) * ph;
+let svg = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Stacked bars of human versus agent share per stage">`;
+[0, 25, 50, 75, 100].forEach(v => {
+  svg += `<line x1="${M.l}" x2="${W - M.r}" y1="${y(v)}" y2="${y(v)}" stroke="${C("--border")}" stroke-width="1"/>`;
+  svg += `<text x="${M.l - 8}" y="${y(v) + 4}" text-anchor="end" font-size="11" fill="${C("--text-muted")}">${v}%</text>`;
+});
+SPLIT.forEach(([name, h, why], i) => {
+  const x = M.l + i * slot + (slot - bw) / 2, a = 100 - h, gap = 2;
+  const hTop = y(h), hH = M.t + ph - hTop;
+  const aTop = y(100), aH = hTop - aTop - gap;
+  const tip = `<b>${name}</b><br>Human ${h}% · Agent ${a}%<br><span style="color:${C("--text-secondary")}">${why}</span>`;
+  svg += `<g class="bar" data-tip="${tip.replace(/"/g, "&quot;")}">`;
+  svg += `<rect x="${M.l + i * slot}" y="${M.t}" width="${slot}" height="${ph}" fill="transparent"/>`;
+  if (hH > 0) svg += `<path d="M${x},${hTop + 4} q0,-4 4,-4 h${bw - 8} q4,0 4,4 V${M.t + ph} H${x} Z" fill="${C("--human")}"/>`;
+  if (aH > 0) svg += `<path d="M${x},${aTop + 4} q0,-4 4,-4 h${bw - 8} q4,0 4,4 V${aTop + aH} H${x} Z" fill="${C("--agent")}"/>`;
+  if (hH > 22) svg += `<text x="${x + bw / 2}" y="${hTop + hH / 2 + 4}" text-anchor="middle" font-size="12" font-weight="700" fill="#fff">${h}%</text>`;
+  if (aH > 22) svg += `<text x="${x + bw / 2}" y="${aTop + aH / 2 + 4}" text-anchor="middle" font-size="12" font-weight="700" fill="#fff">${a}%</text>`;
+  svg += `<text x="${x + bw / 2}" y="${H - 14}" text-anchor="middle" font-size="12" fill="${C("--text-secondary")}">${name}</text></g>`;
+});
+document.getElementById("chart").innerHTML = svg + "</svg>";
+const tb = document.querySelector("#chart-table tbody");
+SPLIT.forEach(([n, h, w]) => tb.insertAdjacentHTML("beforeend", `<tr><td>${n}</td><td>${h}%</td><td>${100 - h}%</td><td>${w}</td></tr>`));
+document.getElementById("toggle-table").onclick = e => {
+  const t = document.getElementById("chart-table"), show = t.style.display !== "table";
+  t.style.display = show ? "table" : "none"; e.target.textContent = show ? "Hide table" : "Show table";
+};
+
+// Tooltip for any [data-tip]
+const tipEl = document.getElementById("tip");
+document.addEventListener("mousemove", e => {
+  const t = e.target.closest("[data-tip]");
+  if (!t) { tipEl.style.opacity = 0; return; }
+  tipEl.innerHTML = t.dataset.tip; tipEl.style.opacity = 1;
+  const r = tipEl.getBoundingClientRect();
+  tipEl.style.left = Math.min(e.clientX + 14, innerWidth - r.width - 8) + "px";
+  tipEl.style.top = Math.min(e.clientY + 14, innerHeight - r.height - 8) + "px";
+});
+
+// Decisions
+const DECISIONS = [
+  ["D1", "Where do specs live?", "A spec must be readable by any runner and reviewable by a human in one place.", [
+    ["Structured comment on the issue", "Zero repo churn; works for every runner; easy to edit."],
+    ["File in <code>docs/specs/</code> in the PR", "Versioned with the code, but adds churn and conflicts."],
+    ["Issue comment for R0/R1, spec file for R2", "Light by default; durable record where it matters.", true]]],
+  ["D2", "What carries the workflow state?", "Every agent must read and write it with plain <code>gh</code>.", [
+    ["Labels only", "Simplest; fully scriptable; visible everywhere."],
+    ["GitHub Project fields only", "Nice board, but harder for agents to read and write; not visible on the issue."],
+    ["Labels as truth + Project board as a view", "Scriptable state, plus a human dashboard.", true]]],
+  ["D3", "Which engine runs the hosted agents?", "Simple roles (triage, docs, review) run without a laptop. Decided: GitHub only; local sessions use each contributor's own tooling.", [
+    ["GitHub only: Copilot + GitHub Models with the workflow token", "No secret, no external platform. Free-tier limits; the model has no tools in Actions.", true],
+    ["Add an external engine (e.g. an Anthropic API key)", "Agentic runs with tools, but an outside platform and a secret to manage."],
+    ["GitHub Agentic Workflows (<code>gh aw</code>)", "Markdown-defined and sandboxed; its Copilot engine needs a PAT secret."]]],
+  ["D4", "How independent is the reviewer?", "A run reviewing its own work tends to approve its own blind spots. Decided: vendor is not a criterion.", [
+    ["Same run self-reviews", "Cheapest; weakest signal."],
+    ["Separate read-only run, same rules; vendor not a criterion", "Independent of the author's session; simple to operate on GitHub only.", true],
+    ["Other vendor than the PR author", "More diverse, but needs a second engine."]]],
+  ["D5", "Review debate round limit", "Unbounded loops burn budget and hide disagreements.", [
+    ["2 rounds", "Escalates often."], ["3 rounds", "Enough to converge on most findings.", true], ["5 rounds", "Rarely escalates; slower and costlier."]]],
+  ["D6", "Who may merge?", "Merging into <code>main</code> is the ship decision (release is nightly and automatic).", [
+    ["Always a human", "Safest; the human stays the bottleneck."],
+    ["Tiered by risk (R0 auto, R1 click, R2 review)", "Humans spend their attention where risk is.", true],
+    ["Agents, after green CI + approval", "Fastest; too early for this repo."]]],
+  ["D7", "Changelog handling", "Parallel agent PRs that all edit <code>[Unreleased]</code> are a constant source of merge conflicts.", [
+    ["Keep editing <code>CHANGELOG.md</code> in each PR", "Status quo; conflicts grow with the number of agents."],
+    ["Fragments in <code>changelog.d/</code>, assembled by an agent", "No conflicts; one reviewable assembly PR.", true],
+    ["Drop it; rely on generated release notes", "Least work, but loses the curated history."]]],
+  ["D8", "Release cadence", "Releasing is already autonomous and CI-gated.", [
+    ["Keep nightly + <code>RELEASE_HOLD</code> switch + post-release watch", "Builds on what works; adds a brake.", true],
+    ["Human-dispatched only", "More control, slower feedback."],
+    ["Release on every merge", "Fastest; noisy versions; harder to hold."]]],
+  ["D9", "Where can asks enter?", "“Every ask becomes an issue” only holds if the entry points are easy.", [
+    ["GitHub issue forms only", "Simplest, but forces a context switch."],
+    ["+ “file as issue” from any Claude / Copilot session", "Captures asks where they happen; still lands as a form-shaped issue.", true]]],
+  ["D10", "What may start a hosted build agent?", "A hosted agent with write access must not act on untrusted text.", [
+    ["Only a maintainer-applied <code>agent:build</code> label", "Explicit, auditable opt-in per issue.", true],
+    ["Any issue reaching <code>spec-approved</code>", "More autonomous; spec approval becomes the only brake."]]],
+  ["D11", "One rules entry point?", "Today, Claude and Copilot rules live in two files that point at ARCHITECTURE.md. More tools mean more files that can drift apart.", [
+    ["Keep <code>CLAUDE.md</code> + <code>copilot-instructions.md</code>", "Works today; two files to keep aligned."],
+    ["<code>AGENTS.md</code> as the source; the others only import it", "One file that every agent reads; tool-specific notes stay small.", true]]],
+  ["D12", "Where are decisions recorded?", "Agents need the <i>why</i> behind the rules, not just the rules.", [
+    ["This canvas + an issue", "Lightweight, but agents won't load it."],
+    ["ADRs in <code>docs/adr/</code>, ADR-0001 = this workflow", "Short, numbered, linked from AGENTS.md, read by agents when relevant.", true]]],
+  ["D13", "How are roles packaged?", "Each role has to load the same way from Claude, Copilot and hosted runs.", [
+    ["Prompt files in <code>.github/prompts/</code>", "What exists today; Copilot-centric."],
+    ["Agent skills (<code>SKILL.md</code> folders)", "Loaded on demand by both tools. Check each tool's skill-folder support when implementing.", true]]],
+];
+const KEY = "precursor.agentic-workflow.decisions";
+const store = (() => { try { const t = window.localStorage; t.getItem(KEY); return t; } catch { return null; } })();
+const saved = JSON.parse(store?.getItem(KEY) || "{}");
+const persist = () => store?.setItem(KEY, JSON.stringify(saved));
+const list = document.getElementById("decisions-list");
+DECISIONS.forEach(([id, q, why, opts]) => {
+  const card = document.createElement("div"); card.className = "card decision";
+  card.innerHTML = `<header><h3>${id} · ${q}</h3><span class="pill" data-badge="${id}">open</span></header><div class="why">${why}</div>
+    <div class="opts">${opts.map(([label, note, rec], i) => `<label class="opt"><input type="radio" name="${id}" value="${i}"${saved[id] == i ? " checked" : ""}>${label}${rec ? '<span class="rec">RECOMMENDED</span>' : ""}<small>${note}</small></label>`).join("")}</div>`;
+  list.appendChild(card);
+});
+function refresh() {
+  let done = 0;
+  DECISIONS.forEach(([id]) => {
+    const b = document.querySelector(`[data-badge="${id}"]`), v = saved[id];
+    const on = v !== undefined; done += on;
+    b.textContent = on ? "decided" : "open"; b.classList.toggle("decided", on);
+  });
+  document.getElementById("progress").textContent = `${done} / ${DECISIONS.length} decided`;
+}
+list.addEventListener("change", e => { saved[e.target.name] = +e.target.value; persist(); refresh(); });
+document.getElementById("accept-recs").onclick = () => {
+  DECISIONS.forEach(([id, , , opts]) => { if (saved[id] === undefined) { const i = opts.findIndex(o => o[2]); saved[id] = i; document.querySelector(`input[name="${id}"][value="${i}"]`).checked = true; } });
+  persist(); refresh();
+};
+document.getElementById("reset").onclick = () => {
+  Object.keys(saved).forEach(k => delete saved[k]); store?.removeItem(KEY);
+  document.querySelectorAll("#decisions-list input").forEach(i => i.checked = false); refresh();
+};
+const strip = s => s.replace(/<code>(.*?)<\/code>/g, "`$1`").replace(/<[^>]+>/g, "");
+document.getElementById("export").onclick = () => {
+  const lines = ["## Agent-assisted workflow: decisions", ""];
+  DECISIONS.forEach(([id, q, , opts]) => {
+    const v = saved[id];
+    lines.push(`- **${id} · ${strip(q)}**: ${v === undefined ? "_open_" : strip(opts[v][0]) + (opts[v][2] ? " (recommended)" : " (differs from recommendation)")}`);
+  });
+  const out = document.getElementById("export-out");
+  out.value = lines.join("\n"); out.style.display = "block"; out.select();
+  navigator.clipboard?.writeText(out.value).catch(() => {});
+};
+refresh();
+</script>
+</body>
+</html>

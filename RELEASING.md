@@ -81,6 +81,14 @@ Release automation does **not** promote that section, rewrite the changelog,
 or require a release-preparation commit or approval PR. Existing dated
 changelog sections remain as historical records.
 
+### Holding releases
+
+Set the repository variable `RELEASE_HOLD` to `true` (**Settings → Secrets and
+variables → Actions → Variables**) to stop publishing: scheduled, manual and
+tag runs skip planning and report the hold in their summary. Nothing is lost:
+once the variable is removed, the next run releases every commit since the last
+stable release.
+
 ### Failures and retries
 
 The failed Actions run reports the failing step; use GitHub's workflow failure

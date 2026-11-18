@@ -1,0 +1,78 @@
+name: Agent · review
+
+# Advisory review of every same-repo PR (ADR-0001, P1), by a run separate
+# from the one that wrote the PR, following .github/skills/review.
+# GitHub only: GitHub Models, called with this job's GITHUB_TOKEN (models: read),
+# no secret. The model has no tools: it gets the diff as data and answers in
+# JSON; the apply job posts one comment, updated on each push.
+# Pause with AGENTS_PAUSED=true; pick the model with AGENT_MODEL.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions: {}
+
+concurrency:
+  group: agent-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    name: Review (read-only, GitHub Models)
+    # Fork and Dependabot PRs get a token without models access.
+    if: >-
+      vars.AGENTS_PAUSED != 'true' &&
+      !github.event.pull_request.draft &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.user.login != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    permissions:
+      contents: read
+      pull-requests: read
+      models: read
+    outputs:
+      result: ${{ steps.infer.outputs.result }}
+    steps:
+      # Base branch: the review rules and the script never come from the PR,
+      # so a PR cannot soften its own review. The diff is read through the API.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+      - id: infer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+          AGENT_MODEL: ${{ vars.AGENT_MODEL }}
+          PR: ${{ github.event.pull_request.number }}
+        # A PR that introduces or renames the agent tooling has nothing on its
+        # base to run: skip with a note rather than review it with its own code.
+        run: |
+          if [ ! -f scripts/agent_infer.py ] || [ ! -f .github/skills/review/SKILL.md ]; then
+            echo "The base branch has no review agent yet: skipped." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          python3 scripts/agent_infer.py review --repo "$GITHUB_REPOSITORY" \
+            --number "$PR" --skill .github/skills/review/SKILL.md
+
+  apply:
+    name: Post the review comment
+    needs: review
+    if: needs.review.outputs.result != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          AGENT_OUTPUT: ${{ needs.review.outputs.result }}
+          PR: ${{ github.event.pull_request.number }}
+        run: python3 scripts/agent_apply.py review --repo "$GITHUB_REPOSITORY" --number "$PR"

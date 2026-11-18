@@ -35,6 +35,8 @@ frontend/src/
     agent/           the agent cockpit (AgentView): timeline, panes, insights rail, start form
 tests/               pytest suite (backend); frontend unit tests sit next to the code (*.test.ts)
 scripts/             CI and maintenance scripts (stdlib-only where they run in hooks)
+  agent_*.py         deterministic steps of the agent workflows; agent_github.py holds gh calls,
+                     owned comments and neutralize() for agent text (ADR-0001)
 ```
 
 ## Backend building blocks

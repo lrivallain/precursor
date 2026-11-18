@@ -45,8 +45,16 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      # Kill switch (ADR-0001): RELEASE_HOLD=true leaves `publish` unset, so
+      # nothing is built, tagged or published until the variable is cleared.
+      - name: Release hold
+        if: vars.RELEASE_HOLD == 'true'
+        run: |
+          echo "RELEASE_HOLD is set: this run publishes nothing." >> "$GITHUB_STEP_SUMMARY"
+
       - name: Plan the release and require CI on its exact SHA
         id: plan
+        if: vars.RELEASE_HOLD != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           MANUAL_TAG: ${{ github.event_name == 'push' && github.ref_name || '' }}

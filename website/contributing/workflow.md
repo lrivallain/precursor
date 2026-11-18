@@ -16,6 +16,49 @@ title: Development workflow
 Merging into `main` is the ship decision: the next
 [nightly release](/contributing/releasing) picks it up.
 
+## Agents in the workflow
+
+Agents (Claude Code, GitHub Copilot, and hosted agents in GitHub Actions) do
+much of the work; humans decide at a few gates. The design and its rollout are
+in [ADR-0001](https://github.com/lrivallain/precursor/blob/main/docs/adr/0001-agent-assisted-delivery.md);
+the rules every agent follows are in
+[`AGENTS.md`](https://github.com/lrivallain/precursor/blob/main/AGENTS.md).
+
+**Labels carry the state** (`.github/labels.json`, synced by the Labels
+workflow): `status:*` for the stage, `risk:r0|r1|r2` for the gate, `surface:*`
+for the area, `agent:*` to opt an issue in to a hosted agent.
+
+**What runs today (phase 1):**
+
+| Workflow | When | What it does |
+| --- | --- | --- |
+| PR risk & docs impact | every PR | sets `risk:r0` (docs, website, tests), `risk:r1` (application code) or `risk:r2` (workflows, release, migrations, auth, telemetry, agent rules and skills, or a raise of the quality baseline) from the changed paths; comments when user-facing code changed without docs |
+| Agent · triage | new issue, or the author answering a `status:needs-info` question | proposes type, surface and risk labels, flags duplicates, asks up to 3 questions. A maintainer accepts with `status:accepted` |
+| Agent · review | every PR from a branch of this repository (not drafts, forks or Dependabot) | an advisory review on GitHub Models: one comment with `blocker` / `should` / `nit` findings, updated on each push. It never approves or blocks |
+
+The roles are skills in `.github/skills/` (`triage`, `review`), so you can run
+the same role locally: ask Claude Code or Copilot to "triage issue 123" or
+"review PR 456".
+
+**Safety.** Hosted agent jobs are read-only and answer in JSON; a separate
+step applies only allowlisted labels and posts the comment. R2 paths request
+the maintainer's review through `CODEOWNERS`.
+
+**Setup and switches** (repository settings):
+
+- No secret: hosted agents run on GitHub only. Triage and review call
+  [GitHub Models](https://docs.github.com/en/github-models) with the
+  workflow's own token (`models: read`); the model gets the issue or diff as
+  data and has no tools. Free-tier rate limits apply; a refused call posts
+  nothing and warns in the run summary. Sessions you run locally use your own
+  tools and accounts.
+- Variable `AGENT_MODEL` picks the GitHub Models model (default
+  `openai/gpt-4.1`); `AGENT_MAX_INPUT_CHARS` caps the payload (default 24000).
+- Optional: Copilot code review (**Settings → Rules → Rulesets → Automatically
+  request Copilot code review**) reads the same `review` skill.
+- Variable `AGENTS_PAUSED=true` stops every hosted agent.
+- Variable `RELEASE_HOLD=true` makes the nightly release publish nothing.
+
 ## Database migrations
 
 Alembic is the single source of truth for the schema; startup runs
