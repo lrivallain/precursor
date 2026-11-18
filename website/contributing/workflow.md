@@ -34,8 +34,7 @@ for the area, `agent:*` to opt an issue in to a hosted agent.
 | --- | --- | --- |
 | PR risk & docs impact | every PR | sets `risk:r0` (docs, website, tests), `risk:r1` (application code) or `risk:r2` (workflows, release, migrations, auth, telemetry, agent rules and skills, or a raise of the quality baseline) from the changed paths; comments when user-facing code changed without docs |
 | Agent · triage | new issue, or the author answering a `status:needs-info` question | proposes type, surface and risk labels, flags duplicates, asks up to 3 questions. A maintainer accepts with `status:accepted` |
-| Agent · review | PRs from same-repo branches not named `claude/*` | an advisory review on GitHub Models: one comment with `blocker` / `should` / `nit` findings, updated on each push. It never approves or blocks |
-| Copilot code review | PRs from `claude/*` branches | the other vendor reviews Claude's work, using the same `review` skill |
+| Agent · review | every PR from a branch of this repository (not drafts, forks or Dependabot) | an advisory review on GitHub Models: one comment with `blocker` / `should` / `nit` findings, updated on each push. It never approves or blocks |
 
 The roles are skills in `.github/skills/` (`triage`, `review`), so you can run
 the same role locally: ask Claude Code or Copilot to "triage issue 123" or
@@ -55,8 +54,8 @@ the maintainer's review through `CODEOWNERS`.
   tools and accounts.
 - Variable `AGENT_MODEL` picks the GitHub Models model (default
   `openai/gpt-4.1`); `AGENT_MAX_INPUT_CHARS` caps the payload (default 24000).
-- Copilot code review: **Settings → Rules → Rulesets → Automatically request
-  Copilot code review** for `main`.
+- Optional: Copilot code review (**Settings → Rules → Rulesets → Automatically
+  request Copilot code review**) reads the same `review` skill.
 - Variable `AGENTS_PAUSED=true` stops every hosted agent.
 - Variable `RELEASE_HOLD=true` makes the nightly release publish nothing.
 

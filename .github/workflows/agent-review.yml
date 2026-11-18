@@ -1,8 +1,7 @@
 name: Agent · review
 
-# Advisory cross-vendor review (ADR-0001, P1). PRs from claude/* branches are
-# reviewed by Copilot code review (enabled in the repository rules, reading
-# .github/skills/review); every other same-repo PR gets this review.
+# Advisory review of every same-repo PR (ADR-0001, P1), by a run separate
+# from the one that wrote the PR, following .github/skills/review.
 # GitHub only: GitHub Models, called with this job's GITHUB_TOKEN (models: read),
 # no secret. The model has no tools: it gets the diff as data and answers in
 # JSON; the apply job posts one comment, updated on each push.
@@ -21,13 +20,11 @@ concurrency:
 jobs:
   review:
     name: Review (read-only, GitHub Models)
-    # Fork and Dependabot PRs get a token without models access; Claude-authored
-    # PRs go to Copilot so the reviewer is never the author's vendor.
+    # Fork and Dependabot PRs get a token without models access.
     if: >-
       vars.AGENTS_PAUSED != 'true' &&
       !github.event.pull_request.draft &&
       github.event.pull_request.head.repo.full_name == github.repository &&
-      !startsWith(github.head_ref, 'claude/') &&
       github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 8

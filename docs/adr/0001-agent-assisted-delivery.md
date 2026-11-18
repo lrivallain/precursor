@@ -29,10 +29,10 @@ app or a GitHub-hosted runner.
    `.github/skills/<role>/`. Copilot (cloud agent, CLI, IDE and code review) reads
    that folder; Claude Code reads it through the `.claude/skills` symlink. Hosted
    workflows point the engine at the same file.
-4. **Separation of duties.** The agent that writes a PR never reviews it; the
-   reviewer is from another vendor. PRs from `claude/*` branches are reviewed
-   by Copilot code review; all other same-repo PRs by the hosted reviewer on
-   GitHub Models (`AGENT_MODEL`, default `openai/gpt-4.1`). Review loops stop
+4. **Separation of duties.** The run that writes a PR never reviews or
+   approves it: every same-repo PR gets a separate, read-only review run on
+   GitHub Models (`AGENT_MODEL`, default `openai/gpt-4.1`) following the
+   `review` skill. The reviewer's vendor doesn't matter. Review loops stop
    after 3 rounds and escalate to a human.
 5. **Autonomous runs use GitHub only.** Hosted agents run on GitHub: Copilot
    (code review now, the coding agent in phase 3) and GitHub Models, called
@@ -76,8 +76,8 @@ app or a GitHub-hosted runner.
 - GitHub Models' free rate limits apply (a few dozen requests a day on the
   larger models). A refused call (403 when Models is disabled, 429 when the
   limit is reached) posts nothing and leaves a warning in the run summary.
-- Copilot code review is enabled from the repository settings (Rules → Copilot
-  review), not from a file.
+- Copilot code review is optional. If it is enabled in the repository rules,
+  it reads the same `.github/skills/review` skill.
 - With a single maintainer, `CODEOWNERS` review is requested but cannot be made
   *required*: GitHub does not let authors approve their own PRs. Revisit when
   there is a second maintainer.

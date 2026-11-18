@@ -174,7 +174,7 @@
   <div class="grid g5">
     <div class="card principle"><b>1 · GitHub is the bus</b><p>Workflow state lives in issue/PR labels, assignees and linked PRs. Any agent, local or hosted, reads and moves the same state with <code>gh</code>. Nothing depends on one tool's memory.</p></div>
     <div class="card principle"><b>2 · Runner-agnostic roles</b><p>Each role is one skill file, written once (today's <code>ship-change</code> and <code>release</code> prompts are the start). Claude, Copilot and hosted Actions all load the same file.</p></div>
-    <div class="card principle"><b>3 · Separation of duties</b><p>The agent that writes a PR never approves it. The reviewer uses a different model or vendor from the author, so the two don't share blind spots.</p></div>
+    <div class="card principle"><b>3 · Separation of duties</b><p>The run that writes a PR never reviews or approves it. A separate, read-only run reviews it against the same written rules.</p></div>
     <div class="card principle"><b>4 · Gates scale with risk</b><p>Docs and minor dependency bumps merge on green. Features need a human click. Auth, telemetry, migrations and workflows get a human review of the diff.</p></div>
     <div class="card principle"><b>5 · Bounded &amp; reversible</b><p>Review loops have a round limit, agents have concurrency and budget caps, two kill switches stop agents and releases, and an agent can open a revert PR at any time.</p></div>
   </div>
@@ -244,7 +244,7 @@
       <div class="loop">
         <div class="actor"><b>Contributor agent</b><small>author model (e.g. Claude)</small></div>
         <div class="mid"><span>⇄</span>≤ 3 rounds</div>
-        <div class="actor"><b>Reviewer agent</b><small>other vendor (e.g. Copilot / GPT)</small></div>
+        <div class="actor"><b>Reviewer agent</b><small>separate read-only run (GitHub Models)</small></div>
       </div>
       <div class="exits">
         <div><b style="color:var(--good)">Converged</b><br>Reviewer approves → <code>status:ready</code></div>
@@ -270,8 +270,8 @@
     <thead><tr><th>Class</th><th>What falls in it</th><th>Spec gate</th><th>Review</th><th>Merge</th></tr></thead>
     <tbody>
       <tr><td class="r0"><b>R0</b> routine</td><td><code>website/</code>, <code>docs/</code>, tests-only, typos, Dependabot minor/patch, changelog fragments</td><td>Skipped</td><td>1 agent reviewer</td><td><b>Auto-merge</b> on green CI + agent approval</td></tr>
-      <tr><td class="r1"><b>R1</b> standard</td><td>Features and fixes in <code>precursor/</code> and <code>frontend/</code> outside the R2 paths</td><td>Human approves spec</td><td>1 cross-vendor agent reviewer</td><td><b>Human click</b> after reading the PR summary and review verdict</td></tr>
-      <tr><td class="r2"><b>R2</b> sensitive</td><td>Auth/tokens, <code>services/telemetry/</code>, Alembic migrations, <code>.github/workflows/</code>, release, MCP permissions, major dependencies, <code>quality_baseline.json</code></td><td>Human approves spec</td><td>2 agent reviewers (both vendors) + <b>human diff review</b></td><td>Human, as a CODEOWNERS-required review</td></tr>
+      <tr><td class="r1"><b>R1</b> standard</td><td>Features and fixes in <code>precursor/</code> and <code>frontend/</code> outside the R2 paths</td><td>Human approves spec</td><td>1 agent reviewer (separate run)</td><td><b>Human click</b> after reading the PR summary and review verdict</td></tr>
+      <tr><td class="r2"><b>R2</b> sensitive</td><td>Auth/tokens, <code>services/telemetry/</code>, Alembic migrations, <code>.github/workflows/</code>, release, MCP permissions, major dependencies, a raise of <code>quality_baseline.json</code></td><td>Human approves spec</td><td>Agent reviewer + <b>human diff review</b></td><td>Human, with a CODEOWNERS review request</td></tr>
     </tbody>
   </table>
 
@@ -388,7 +388,7 @@ const STEPS = [
   ["hosted", 3, "hosted", "…or hosted contributor", "On the <code>agent:build</code> label (R0/R1): Copilot coding agent (GitHub-hosted), with the same skill."],
   ["hosted", 3, "hosted", "Docs & changelog agent", "Runs the docs-impact checklist; pushes doc edits and a <code>changelog.d/</code> fragment to the PR."],
   ["auto", 3, "auto", "CI", "Lockfiles, ratchet, lint, mypy, tests, API types, frontend build.", {exists: true}],
-  ["hosted", 4, "hosted", "Reviewer agent", "From a different vendor than the author. Severity-tagged findings against repo rules, plus a verdict."],
+  ["hosted", 4, "hosted", "Reviewer agent", "A separate, read-only run. Severity-tagged findings against repo rules, plus a verdict."],
   ["local", 4, "agent", "Contributor responds", "Fixes or argues each finding; ≤ 3 rounds. Can run locally or hosted."],
   ["human", 4, "human", "Arbitrate", "Only on <code>needs-human</code>: reads the one-comment dispute summary and decides."],
   ["human", 5, "human", "Merge decision", "R1: one click after the summary. R2: CODEOWNERS diff review. R0: none.", {gate: "G3"}],
@@ -513,13 +513,13 @@ const DECISIONS = [
     ["GitHub Project fields only", "Nice board, but harder for agents to read and write; not visible on the issue."],
     ["Labels as truth + Project board as a view", "Scriptable state, plus a human dashboard.", true]]],
   ["D3", "Which engine runs the hosted agents?", "Simple roles (triage, docs, review) run without a laptop. Decided: GitHub only; local sessions use each contributor's own tooling.", [
-    ["GitHub only: Copilot + GitHub Models with the workflow token", "No secret, no external platform; cross-vendor through the model choice. Free-tier limits; the model has no tools in Actions.", true],
+    ["GitHub only: Copilot + GitHub Models with the workflow token", "No secret, no external platform. Free-tier limits; the model has no tools in Actions.", true],
     ["Add an external engine (e.g. an Anthropic API key)", "Agentic runs with tools, but an outside platform and a secret to manage."],
     ["GitHub Agentic Workflows (<code>gh aw</code>)", "Markdown-defined and sandboxed; its Copilot engine needs a PAT secret."]]],
-  ["D4", "How independent is the reviewer?", "Same-model review tends to approve its own blind spots.", [
-    ["Same agent self-reviews", "Cheapest; weakest signal."],
-    ["Same vendor, different model", "Some diversity."],
-    ["Other vendor than the PR author", "The most independent signal.", true]]],
+  ["D4", "How independent is the reviewer?", "A run reviewing its own work tends to approve its own blind spots. Decided: vendor is not a criterion.", [
+    ["Same run self-reviews", "Cheapest; weakest signal."],
+    ["Separate read-only run, same rules; vendor not a criterion", "Independent of the author's session; simple to operate on GitHub only.", true],
+    ["Other vendor than the PR author", "More diverse, but needs a second engine."]]],
   ["D5", "Review debate round limit", "Unbounded loops burn budget and hide disagreements.", [
     ["2 rounds", "Escalates often."], ["3 rounds", "Enough to converge on most findings.", true], ["5 rounds", "Rarely escalates; slower and costlier."]]],
   ["D6", "Who may merge?", "Merging into <code>main</code> is the ship decision (release is nightly and automatic).", [
