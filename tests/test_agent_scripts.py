@@ -184,3 +184,145 @@ def test_triage_comment_lists_duplicates() -> None:
     body = triage.triage_comment([{"number": 334, "state": "CLOSED"}])
     assert "- #334 (closed)" in body
     assert "triage · hosted · deterministic" in body
+
+
+# --- issue status transitions ----------------------------------------------
+
+status = _load("agent_issue_status")
+
+
+def test_a_new_status_replaces_the_others() -> None:
+    current = {"bug", "status:spec-draft", "needs-triage"}
+    assert status.on_labeled("status:spec-approved", current | {"status:spec-approved"}) == (
+        [],
+        ["status:spec-draft"],
+    )
+
+
+def test_accepting_clears_needs_triage() -> None:
+    add, remove = status.on_labeled("status:accepted", {"needs-triage", "status:accepted"})
+    assert add == [] and remove == ["needs-triage"]
+
+
+def test_other_labels_are_ignored() -> None:
+    assert status.on_labeled("bug", {"bug", "status:accepted"}) == ([], [])
+
+
+def test_assignment_starts_only_accepted_work() -> None:
+    assert status.on_assigned("someone", {"needs-triage"}) == ([], [])
+    assert status.on_assigned("someone", {"status:accepted"}) == (
+        ["status:in-progress"],
+        ["status:accepted"],
+    )
+    add, remove = status.on_assigned("Copilot", {"status:spec-approved"})
+    assert add == ["status:in-progress", "runner:hosted"]
+    assert remove == ["status:spec-approved"]
+
+
+def test_dropping_the_last_claim_frees_the_issue() -> None:
+    current = {"status:in-progress", "runner:local", "bug"}
+    assert status.on_unassigned(0, current) == (
+        ["status:accepted"],
+        ["status:in-progress", "runner:local"],
+    )
+    assert status.on_unassigned(1, current) == ([], [])
+    assert status.on_unassigned(0, {"status:in-review"}) == ([], [])
+
+
+@pytest.mark.parametrize(
+    ("action", "draft", "merged", "current", "expected"),
+    [
+        ("opened", True, False, {"status:accepted"}, (["status:in-progress"], ["status:accepted"])),
+        (
+            "opened",
+            False,
+            False,
+            {"status:in-progress"},
+            (["status:in-review"], ["status:in-progress"]),
+        ),
+        (
+            "ready_for_review",
+            False,
+            False,
+            {"status:in-progress"},
+            (["status:in-review"], ["status:in-progress"]),
+        ),
+        ("closed", False, False, {"status:in-review"}, (["status:accepted"], ["status:in-review"])),
+        ("closed", False, False, {"needs-triage"}, ([], [])),
+        ("closed", False, True, {"status:in-review", "bug"}, ([], ["status:in-review"])),
+        ("labeled", False, False, {"status:accepted"}, ([], [])),
+    ],
+)
+def test_linked_issue_follows_its_pull_request(
+    action: str, draft: bool, merged: bool, current: set[str], expected: tuple[list[str], list[str]]
+) -> None:
+    assert status.on_pull_request(action, draft, merged, current) == expected
+
+
+def test_every_status_the_rules_set_is_a_defined_label() -> None:
+    names = {
+        label["name"] for label in json.loads((REPO_ROOT / ".github" / "labels.json").read_text())
+    }
+    used = {status.ACCEPTED, status.SPEC_APPROVED, status.IN_PROGRESS, status.IN_REVIEW}
+    assert used | {status.RUNNER_HOSTED, status.NEEDS_TRIAGE} <= names
+
+
+# --- changelog fragments ---------------------------------------------------
+
+fragments = _load("changelog_fragments")
+
+SAMPLE = """# Changelog
+
+## [Unreleased]
+
+### Added
+
+- **Existing feature.** Text
+  wrapped.
+
+### Fixed
+
+- **Old fix.**
+
+## [2026.11.8] - 2026-11-17
+
+### Added
+
+- Released.
+"""
+
+
+def test_assemble_appends_under_existing_and_new_headings() -> None:
+    out = fragments.assemble(
+        SAMPLE,
+        [
+            ("added", "- **New thing.**\n"),
+            ("changed", "- **Now different.**"),
+            ("security", "- **Patched.**"),
+        ],
+    )
+    unreleased = out.split("## [2026.11.8]")[0]
+    assert unreleased.index("wrapped.\n- **New thing.**") > 0
+    assert unreleased.index("### Changed") < unreleased.index("### Fixed")
+    assert unreleased.rstrip().endswith("### Security\n\n- **Patched.**")
+    assert "\n\n\n" not in out
+    assert out.split("## [2026.11.8]")[1] == SAMPLE.split("## [2026.11.8]")[1]
+
+
+def test_assemble_leaves_the_real_changelog_intact_without_fragments() -> None:
+    real = (REPO_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert fragments.assemble(real, []) == real
+
+
+def test_problems_flag_bad_names_and_bodies(tmp_path: Path) -> None:
+    (tmp_path / "503.changed.md").write_text("- **Good.**\n")
+    (tmp_path / "503.tweaked.md").write_text("- Wrong section.\n")
+    (tmp_path / "504.fixed.md").write_text("Not a bullet.\n")
+    (tmp_path / "README.md").write_text("ignored")
+    found = fragments.problems(fragments.fragment_files(tmp_path))
+    assert len(found) == 2
+    assert found[0].startswith("503.tweaked.md") and found[1].startswith("504.fixed.md")
+
+
+def test_repository_fragments_are_valid() -> None:
+    assert fragments.problems(fragments.fragment_files()) == []

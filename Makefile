@@ -56,6 +56,7 @@ wheel: build docs  ## Build the distributable wheel + sdist (uv)
 # Quality gates — mirrors CI (.github/workflows/ci.yml).
 check: lockcheck ratchet  ## Run all backend + frontend quality gates
 	uv run python scripts/gen_api_types.py --check
+	python3 scripts/changelog_fragments.py check
 	uv run ruff check .
 	uv run ruff format --check .
 	uv run mypy precursor
@@ -78,6 +79,9 @@ ratchet-update:  ## Record improved complexity/size/duplication numbers
 # Frontend API types come from the backend's Pydantic schemas (OpenAPI).
 api-types:  ## Regenerate frontend/src/lib/generated/apiTypes.ts
 	uv run python scripts/gen_api_types.py
+
+changelog:  ## Fold changelog.d/ fragments into CHANGELOG.md [Unreleased]
+	python3 scripts/changelog_fragments.py assemble
 
 test:  ## Run the backend test suite (uv)
 	uv run pytest -q $(PYTEST_ARGS)

@@ -75,8 +75,9 @@ version counter is chosen automatically.
 ### Release notes and changelog
 
 GitHub Release notes, generated from merged PRs since the previous stable tag,
-are the **per-version history**. Contributors still add development notes to
-`CHANGELOG.md` under `[Unreleased]` and update relevant docs in their PR.
+are the **per-version history**. Contributors add a fragment in
+`changelog.d/` and update relevant docs in their PR; the `changelog` skill
+folds the fragments into `CHANGELOG.md` `[Unreleased]` (`make changelog`).
 Release automation does **not** promote that section, rewrite the changelog,
 or require a release-preparation commit or approval PR. Existing dated
 changelog sections remain as historical records.

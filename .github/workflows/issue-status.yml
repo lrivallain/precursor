@@ -1,0 +1,76 @@
+name: Issue status
+
+# Moves an issue's status:* label as work progresses (scripts/agent_issue_status.py,
+# ADR-0001 phase 2). Rules only: no model, no secret. pull_request_target gives
+# a write token on fork PRs too, so the PR job checks out the base branch and
+# reads the PR as data through the API; no PR code runs.
+
+on:
+  issues:
+    types: [labeled, assigned, unassigned]
+  pull_request_target:
+    types: [opened, reopened, ready_for_review, converted_to_draft, edited, closed]
+
+permissions: {}
+
+jobs:
+  issue:
+    name: Issue event
+    if: >-
+      github.event_name == 'issues' && !github.event.issue.pull_request &&
+      (github.event.action != 'labeled' || startsWith(github.event.label.name, 'status:'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    concurrency:
+      group: issue-status-${{ github.event.issue.number }}
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ github.event.issue.number }}
+          ACTION: ${{ github.event.action }}
+          LABEL: ${{ github.event.label.name }}
+          ASSIGNEE: ${{ github.event.assignee.login }}
+          REMAINING: ${{ toJSON(github.event.issue.assignees) }}
+        run: |
+          if [ "$ACTION" = "unassigned" ]; then
+            left=$(python3 -c 'import json,os; print(len(json.loads(os.environ["REMAINING"])))')
+            python3 scripts/agent_issue_status.py unassigned --repo "$GITHUB_REPOSITORY" --number "$ISSUE" --remaining "$left"
+          elif [ "$ACTION" = "assigned" ]; then
+            python3 scripts/agent_issue_status.py assigned --repo "$GITHUB_REPOSITORY" --number "$ISSUE" --assignee "$ASSIGNEE"
+          else
+            python3 scripts/agent_issue_status.py labeled --repo "$GITHUB_REPOSITORY" --number "$ISSUE" --label "$LABEL"
+          fi
+
+  pull-request:
+    name: Linked issues
+    if: github.event_name == 'pull_request_target'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    concurrency:
+      group: issue-status-pr-${{ github.event.pull_request.number }}
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          ACTION: ${{ github.event.action }}
+          DRAFT: ${{ github.event.pull_request.draft }}
+          MERGED: ${{ github.event.pull_request.merged }}
+        run: |
+          flags=()
+          [ "$DRAFT" = "true" ] && flags+=(--draft)
+          [ "$MERGED" = "true" ] && flags+=(--merged)
+          python3 scripts/agent_issue_status.py pull_request --repo "$GITHUB_REPOSITORY" \
+            --number "$PR" --action "$ACTION" "${flags[@]}"

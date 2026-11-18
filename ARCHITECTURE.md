@@ -36,7 +36,8 @@ frontend/src/
 tests/               pytest suite (backend); frontend unit tests sit next to the code (*.test.ts)
 scripts/             CI and maintenance scripts (stdlib-only where they run in hooks)
   agent_*.py         deterministic steps of the agent workflows; agent_github.py holds gh calls,
-                     owned comments and neutralize() for agent text (ADR-0001)
+                     and owned comments (ADR-0001)
+  changelog_fragments.py  checks changelog.d/ fragments and folds them into CHANGELOG.md
 ```
 
 ## Backend building blocks

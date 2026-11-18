@@ -7,8 +7,9 @@ Precursor uses **CalVer** (`YYYY.M.MICRO`); the version is derived from the
 latest git tag (`v<version>`) by hatch-vcs at build time. See
 [RELEASING.md](RELEASING.md).
 
-Contributors add notes under `[Unreleased]` with each change. Release
-preparation moves them into a version section, most significant first; the
+Contributors add a fragment in [`changelog.d/`](changelog.d/README.md) with each
+user-facing change; they are folded into `[Unreleased]` from time to time.
+Release preparation moves them into a version section, most significant first; the
 [GitHub Release notes](https://github.com/lrivallain/precursor/releases) remain
 the exact per-version history.
 

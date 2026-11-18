@@ -1,6 +1,6 @@
 # ADR-0001: Agent-assisted delivery workflow
 
-- **Status:** accepted, revised 2026-11-18 (hosted engine); phase 1 in place, phases 2 to 4 proposed
+- **Status:** accepted, revised 2026-11-18 (hosted engine); phases 1 and 2 in place, 3 and 4 proposed
 - **Date:** 2026-11-18
 - **Visual:** [`docs/agentic-workflow.canvas.html`](../agentic-workflow.canvas.html)
   (open it in a browser: flow, state machine, roster, risk classes)
@@ -56,8 +56,10 @@ app or a GitHub-hosted runner.
    nightly release skip publishing. `AGENTS_PAUSED=true` is reserved for the
    hosted agent workflows of later phases; Copilot code review is switched off
    in the ruleset.
-9. **Changelog fragments** (phase 2) replace direct edits to `[Unreleased]`, which
-   conflict as soon as several agents work in parallel.
+9. **Changelog fragments** replace direct edits to `[Unreleased]`, which
+   conflict as soon as several agents work in parallel: one
+   `changelog.d/<issue-or-slug>.<section>.md` per user-facing PR, checked in CI
+   and folded in by the `changelog` skill (`scripts/changelog_fragments.py`).
 10. **Decisions are recorded as ADRs** in `docs/adr/`, listed in `AGENTS.md`.
 
 ## Rollout
@@ -65,7 +67,7 @@ app or a GitHub-hosted runner.
 | Phase | Adds | Exit criterion |
 | --- | --- | --- |
 | **P1 Observe** (done) | labels, model-free issue triage, risk classifier, docs-impact note, `CODEOWNERS`, `triage` and `review` skills, Copilot code review, release hold | triage labels kept unchanged ≥ 80% of the time; review findings are rarely noise |
-| P2 Specify & build | spec skill and agent, `status:*` transitions, claiming with `runner:*`, changelog fragments | specs need ≤ 1 human edit on average |
+| **P2 Specify & build** (done) | `spec`, `ship-change`, `release` and `changelog` skills; `status:*` transitions on issue and PR events (`issue-status.yml`); claiming with assignee + `runner:*`; changelog fragments | specs need ≤ 1 human edit on average |
 | P3 Hosted & debate | Copilot coding agent on `agent:build`, contributor ↔ reviewer loop, R0 auto-merge, caps | revert rate ≤ baseline; ≤ 20% of PRs escalate |
 | P4 Close the loop | ops agent (failed runs, flaky tests, telemetry reports → issues), release-notes agent, metrics | steady state |
 

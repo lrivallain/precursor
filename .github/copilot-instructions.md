@@ -115,14 +115,16 @@ description so the assessment is visible.
   - `website/contributing/` — contribution, workflow, releasing.
   - `website/.vitepress/config.mts` — nav + sidebar registration.
   - `website/public/screenshots/` — product screenshots (see below).
-- **`CHANGELOG.md`** — keep the `[Unreleased]` section current for any
-  user-facing change.
+- **`changelog.d/`** — one fragment per user-facing change
+  (`<issue-or-slug>.<section>.md`, see `changelog.d/README.md`). Don't edit
+  `CHANGELOG.md` directly: the `changelog` skill folds fragments into
+  `[Unreleased]`.
 
 ### Decision checklist — what triggers a doc update
 
 | If your change… | …then update |
 | --- | --- |
-| Adds or changes a **user-facing feature** | the relevant `website/features/*.md` page (+ landing feature grid in `index.md` if it's a headline capability), and `CHANGELOG.md` `[Unreleased]` |
+| Adds or changes a **user-facing feature** | the relevant `website/features/*.md` page (+ landing feature grid in `index.md` if it's a headline capability), and a changelog fragment in `changelog.d/` |
 | Adds a **new sidebar section / cockpit** | a new `website/features/<section>.md` **and** its sidebar entry in `config.mts` **and** the landing grid — mirroring the in-app wiring (`Sidebar.tsx`, `sections.ts`, and the **command palette**) |
 | Adds/renames/removes a **setting or env var** | `website/guide/configuration.md` and `website/reference/configuration.md` (and `.env.example` if env-level) |
 | Adds/changes a **slash command** | the surface's feature page (e.g. `/reminder` on `features/scheduler.md`) and `frontend/src/lib/commands.ts` stays the source of truth |
@@ -138,7 +140,7 @@ description so the assessment is visible.
 2. Register it in the sidebar (`website/.vitepress/config.mts`) and, for a
    headline capability, add a card to the feature grid in `website/index.md`.
 3. Cross-link from related pages (e.g. a scheduler feature links to MCP guards).
-4. Add a `CHANGELOG.md` `[Unreleased]` entry.
+4. Add a changelog fragment in `changelog.d/` (see `changelog.d/README.md`).
 
 ### Screenshots
 

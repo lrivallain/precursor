@@ -64,8 +64,8 @@ build. Also:
   `make api-types` and commit `frontend/src/lib/generated/apiTypes.ts`. Never
   edit that file by hand.
 - **Model change**: add a [migration](/contributing/workflow#database-migrations).
-- **User-facing change**: update the docs and `CHANGELOG.md` `[Unreleased]` in
-  the same PR (see [Documentation](/contributing/workflow#documentation)).
+- **User-facing change**: update the docs and add a changelog fragment in
+  `changelog.d/` in the same PR (see [Documentation](/contributing/workflow#documentation)).
 
 ## Code style
 

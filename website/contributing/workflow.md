@@ -37,8 +37,12 @@ start yourself use your own tools and accounts.
 | PR risk & docs impact (Actions) | every PR | sets `risk:r0` (docs, website, tests), `risk:r1` (application code) or `risk:r2` (workflows, release, migrations, auth, telemetry, agent rules and skills, or a raise of the quality baseline) from the changed paths; comments when user-facing code changed without docs |
 | Issue triage (Actions) | new or edited issue | sets `surface:*` from the form's Surface field and comments when other issues share most of the title's words. No model; it never changes a label a person set |
 | Copilot code review | every PR, once enabled in the ruleset | reviews the diff with the `review` skill; advisory, the merge stays a human decision |
+| Issue status (Actions) | status label added, issue assigned or unassigned, PR opened / ready / closed | keeps one `status:*` label; `status:accepted` clears `needs-triage`; assigning an accepted issue moves it to `status:in-progress` (Copilot as assignee adds `runner:hosted`); a PR with `Closes #N` moves it to `status:in-review`, back to `status:accepted` if closed unmerged |
 | `triage` skill (your session) | issues labelled `needs-triage` | ask Claude Code or Copilot to "triage issue 123": it adds type and risk labels, a summary and questions to what the Issue triage workflow found; it labels and comments only once you agree. A maintainer accepts with `status:accepted` |
+| `spec` skill (your session) | `status:accepted` issues (not R0) | writes the spec as a comment and sets `status:spec-draft`; you approve with `status:spec-approved` |
+| `ship-change` skill (your session) | accepted or spec-approved issues | claims the issue (assignee + `runner:local`), builds, adds a changelog fragment, opens the PR with `Closes #N` |
 | `review` skill (your session) | any PR | "review PR 456" runs the same rules as Copilot code review |
+| `changelog` skill (your session) | from time to time on `main` | folds `changelog.d/` fragments into `CHANGELOG.md` (`make changelog`) |
 
 **Setup and switches** (repository settings):
 
@@ -118,8 +122,8 @@ Plugins live in their own repositories and register via
 ## Documentation
 
 Docs ship **in the same PR** as the change. The decision checklist (feature
-page, landing grid, configuration reference, API reference, `CHANGELOG.md`
-`[Unreleased]`, screenshots) is in
+page, landing grid, configuration reference, API reference, changelog
+fragment in `changelog.d/`, screenshots) is in
 [`.github/copilot-instructions.md`](https://github.com/lrivallain/precursor/blob/main/.github/copilot-instructions.md#documentation).
 
 | Where | What |

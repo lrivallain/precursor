@@ -41,7 +41,18 @@ The full design is [ADR-0001](docs/adr/0001-agent-assisted-delivery.md).
   stage, `risk:r0|r1|r2` for the gate, `surface:*` for the area. Read and set
   them with `gh`; don't keep workflow state anywhere else.
 - **Roles are skills** in `.github/skills/<role>/SKILL.md` (also visible to
-  Claude Code as `.claude/skills/`). Follow the skill when you take on a role.
+  Claude Code as `.claude/skills/`): `triage`, `spec`, `ship-change`, `review`,
+  `changelog`, `release`. Follow the skill when you take on a role.
+- **The path of an issue:** `needs-triage` → `status:accepted` (maintainer,
+  G1) → `status:spec-draft` → `status:spec-approved` (maintainer, G2; skipped
+  for R0 and small R1) → claimed → `status:in-progress` → PR with
+  `Closes #N` → `status:in-review` → merge (maintainer, G3). The Issue status
+  workflow moves the labels on assignments and PR events; you only set
+  `status:spec-draft` and the claim.
+- **Claim before you work:** assign yourself and add `runner:local`. An issue
+  that is assigned or carries `runner:*` belongs to someone else.
+- **Changelog:** add a fragment in `changelog.d/`, never edit `CHANGELOG.md`
+  in a PR.
 - **Risk** is set on every PR from the changed paths by
   `scripts/agent_pr_classify.py`. R2 paths (workflows, release, migrations,
   auth, telemetry, agent rules and skills, a raise of the quality baseline)

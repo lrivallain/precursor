@@ -60,3 +60,10 @@ def set_labels(repo: str, number: int, add: list[str], remove: list[str]) -> Non
     missing = [name for name in add if name not in current]
     if missing:
         gh_api(f"repos/{repo}/issues/{number}/labels", "POST", {"labels": missing})
+
+
+def gh_api_graphql(query: str, **variables: str | int) -> Any:
+    args = ["api", "graphql", "-f", f"query={query}"]
+    for key, value in variables.items():
+        args += ["-F" if isinstance(value, int) else "-f", f"{key}={value}"]
+    return json.loads(gh(*args))
