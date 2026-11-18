@@ -97,7 +97,7 @@ Providers, credentials, models and presets are set in **Settings → Model** and
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `PRECURSOR_GITHUB_CLI_USER` | *(empty)* | `gh` login that supplies the token (`gh auth token --user …`), for [several signed-in accounts](/guide/configuration#several-accounts-signed-in-to-gh). |
+| `PRECURSOR_GITHUB_CLI_USER` | *(empty)* | `gh` login that supplies the token (`gh auth token --user …`), for [several signed-in accounts](/guide/configuration#several-accounts-signed-in-to-gh). The account picked in **Settings → GitHub** wins over it. |
 
 Prompt budgeting (**Settings → Model → Prompt budgeting**):
 

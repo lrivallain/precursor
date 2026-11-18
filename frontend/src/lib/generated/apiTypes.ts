@@ -1324,6 +1324,18 @@ export interface GitFileStatus {
   browse_path: string | null;
 }
 
+export interface GitHubCliAccount {
+  login: string;
+  active: boolean;
+}
+
+/** The logins signed in to the GitHub CLI, for the Settings account picker. */
+export interface GitHubCliAccounts {
+  accounts: GitHubCliAccount[];
+  selected: string;
+  env_pinned: string;
+}
+
 export interface GitHubIdentity {
   login: string;
   name: string | null;
@@ -2184,6 +2196,7 @@ export interface SettingsPayload {
   model_fallbacks?: ModelCategoriesInput | null;
   llm_providers?: Record<string, Record<string, string>> | null;
   github_repo?: string | null;
+  github_cli_account?: string | null;
   issue_context_ttl_minutes?: number | null;
   show_chat_stats?: boolean | null;
   show_quick_actions?: boolean | null;
@@ -2277,6 +2290,7 @@ export interface SettingsRead {
   mcp_servers: Record<string, Record<string, unknown>>;
   api_keys_present: Record<string, boolean>;
   github_token_source: "env" | "gh-cli" | "settings" | "none";
+  github_cli_account: string;
   issue_associations_enabled: boolean;
   llm_provider: string;
   model_fallbacks: ModelCategories;
@@ -4570,6 +4584,9 @@ export interface Operations {
   };
   "GET /api/me/copilot": {
     response: CopilotQuota | null;
+  };
+  "GET /api/me/github-accounts": {
+    response: GitHubCliAccounts;
   };
   "GET /api/memories": {
     response: MemoryRead[];

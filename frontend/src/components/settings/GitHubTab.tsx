@@ -1,3 +1,4 @@
+import { GitHubAccountPicker } from "./GitHubAccountPicker";
 import { GitHubStatusBanner } from "./GitHubStatusBanner";
 import type { Settings } from "../../lib/types";
 import type { GitHubSettings } from "./useGitHubSettings";
@@ -12,11 +13,20 @@ export function GitHubTab({ s, settings }: { s: GitHubSettings; settings: Settin
     setTtlMinutes,
     issueAssociationsEnabled,
     setIssueAssociationsEnabled,
+    cliAccount,
+    setCliAccount,
+    cliAccounts,
     me,
   } = s;
   return (
     <section>
       <GitHubStatusBanner me={me} />
+      <GitHubAccountPicker
+        value={cliAccount}
+        onChange={setCliAccount}
+        accounts={cliAccounts}
+        patSaved={!!settings?.api_keys_present?.github_token}
+      />
 
       <div className="mb-4 p-3 rounded border border-border bg-surface">
         <label className="flex items-start gap-2 cursor-pointer">

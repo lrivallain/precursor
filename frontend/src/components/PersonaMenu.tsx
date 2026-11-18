@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
   Archive,
   Info,
@@ -8,6 +8,7 @@ import {
   User,
 } from "lucide-react";
 import { api } from "../lib/api";
+import { githubIdentityChanges } from "../lib/githubAccounts";
 import type { CopilotQuota, Me } from "../lib/types";
 import { AboutModal } from "./AboutModal";
 
@@ -24,6 +25,11 @@ export function PersonaMenu({ collapsed = false, onOpenSettings, onOpenArchive }
   const [quota, setQuota] = useState<CopilotQuota | null>(null);
   const [quotaLoading, setQuotaLoading] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
+  // Re-read the identity when Settings switches the GitHub account or token.
+  const identityVersion = useSyncExternalStore(
+    githubIdentityChanges.subscribe,
+    githubIdentityChanges.getVersion,
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -38,7 +44,7 @@ export function PersonaMenu({ collapsed = false, onOpenSettings, onOpenArchive }
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [identityVersion]);
 
   // Close on outside click / Escape while the popover is open.
   useEffect(() => {

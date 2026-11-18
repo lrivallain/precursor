@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 
 import httpx
@@ -9,10 +10,13 @@ from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from precursor.backend.config import get_settings
 from precursor.backend.db import get_session
 from precursor.backend.schemas.settings import GitHubTokenSource
 from precursor.backend.services.github_auth import (
     github_token_source,
+    list_gh_accounts,
+    resolve_github_cli_account,
     resolve_github_token,
 )
 from precursor.backend.services.github_client import GitHubClient
@@ -60,6 +64,22 @@ class Me(BaseModel):
     # Display-only name from an authenticating reverse proxy's X-Forwarded-User
     # header; never used for access decisions.
     proxy_user: str | None = None
+
+
+class GitHubCliAccount(BaseModel):
+    login: str
+    # The account `gh` itself would use (`gh auth switch`).
+    active: bool = False
+
+
+class GitHubCliAccounts(BaseModel):
+    """The logins signed in to the GitHub CLI, for the Settings account picker."""
+
+    accounts: list[GitHubCliAccount]
+    # The login picked in Settings ("" = not picked).
+    selected: str = ""
+    # PRECURSOR_GITHUB_CLI_USER, used when nothing is picked ("" = unset).
+    env_pinned: str = ""
 
 
 _PROXY_USER_MAX = 120
@@ -156,3 +176,13 @@ async def get_copilot_quota(
     if not token:
         return None
     return await _fetch_copilot_quota(token)
+
+
+@router.get("/github-accounts", response_model=GitHubCliAccounts)
+async def get_github_accounts(session: AsyncSession = Depends(get_session)) -> GitHubCliAccounts:
+    accounts = await asyncio.to_thread(list_gh_accounts)
+    return GitHubCliAccounts(
+        accounts=[GitHubCliAccount(login=a.login, active=a.active) for a in accounts],
+        selected=await resolve_github_cli_account(session),
+        env_pinned=get_settings().github_cli_user.strip(),
+    )

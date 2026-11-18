@@ -36,6 +36,9 @@ class SettingsPayload(BaseModel):
     # echoed back. An empty-string value clears that field.
     llm_providers: dict[str, dict[str, str]] | None = None
     github_repo: str | None = None
+    # `gh` login whose token Precursor uses when several are signed in; "" goes
+    # back to PRECURSOR_GITHUB_CLI_USER, then the CLI's active account.
+    github_cli_account: str | None = None
     issue_context_ttl_minutes: int | None = None
     # When true, the per-conversation stats sidebar is rendered in the UI.
     # Token usage is collected and persisted regardless.
@@ -190,6 +193,7 @@ class SettingsRead(BaseModel):
     # Where the effective GitHub token comes from. Lets the UI hide the token
     # input when the user is already signed in via `gh auth login`.
     github_token_source: GitHubTokenSource = "none"
+    github_cli_account: str = ""
     issue_associations_enabled: bool = True
     # Active LLM provider id + per-provider public config (secrets redacted) and
     # a per-provider secret-presence map.

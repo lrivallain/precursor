@@ -61,7 +61,7 @@ app (command palette → **Documentation**, About dialog).
 | `settings` | `/api/settings` | runtime settings, provider and GitHub config ([model settings](#model-settings)); `POST /openai-proxy/key` rotates the relay key |
 | `llm` | `/api/llm` | provider catalogue; `GET /models?provider=` lists a provider's models with `context_window`, `max_output_tokens`, `supported_reasoning_efforts`, `vision`, `catalog_provider` |
 | `openai` | `/api/openai/v1` | [OpenAI-compatible endpoint](/features/openai-endpoint): `GET /models`, `GET /models/{id}`, `POST /chat/completions`. Needs `Authorization: Bearer <openai_proxy_key>`; `404` when off, `503` when the provider can't be relayed. |
-| `me` | `/api/me` | GitHub identity (plus `proxy_user` from `X-Forwarded-User`, display only); `GET /copilot` for AI-credit usage; `null` without a token |
+| `me` | `/api/me` | GitHub identity (plus `proxy_user` from `X-Forwarded-User`, display only); `GET /copilot` for AI-credit usage (`null` without a token); `GET /github-accounts` lists the `gh` logins for the Settings account picker |
 | `github` | `/api/github`, `/api/topics/{id}/issue` | issue/label/comment operations for topic linking |
 | `github/projects` | `/api/github/projects` | [Kanban](/features/kanban) columns and cards; only with the `precursor-kanban` [plugin](/features/plugins) |
 | `mcp` | `/api/mcp` | server registry, toggles, OAuth. User servers take `auth` (`none` \| `azure_cli`), `auth_tenant`, `auth_resource`; `POST /servers/detect-auth` `{url}` probes protected-resource metadata; `GET /auth/diagnostics` is the [sign-in trace](/features/mcp#when-a-sign-in-prompt-needs-explaining) (no token values) |

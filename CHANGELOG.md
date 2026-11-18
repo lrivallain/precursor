@@ -16,6 +16,11 @@ the exact per-version history.
 
 ### Added
 
+- **Pick the GitHub account in Settings.** With several accounts signed in to
+  the `gh` CLI, **Settings → GitHub** lists them and the one you pick signs
+  Precursor's GitHub calls, the persona and the GitHub Copilot models, without
+  `gh auth switch`. It wins over `PRECURSOR_GITHUB_CLI_USER`; a saved personal
+  access token still wins over both.
 - **Canvases: visuals drawn right in the conversation.** The assistant can
   illustrate a reply with an interactive HTML page (simulations, sliders,
   step-throughs), an editable draw.io diagram, a Mermaid flow or an SVG, shown
