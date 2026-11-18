@@ -160,7 +160,7 @@
   <h1>From ask to release: humans decide, agents do the work</h1>
   <p class="lead">A delivery workflow for Precursor where every request becomes an issue, an agent specifies it,
     another builds it, a different one reviews it, and a human makes the call at a few
-    gates, set by risk. It runs the same from the Claude app, the Copilot app, or GitHub-hosted runners, because
+    gates, set by risk. It runs the same from the Claude app, the Copilot app, or Copilot on GitHub, because
     the shared contract is <b>GitHub state plus shared prompt files</b>, not the tool that runs them.</p>
   <nav class="toc">
     <a href="#principles">Principles</a><a href="#layers">Rules · skills · tools</a><a href="#flow">Flow</a><a href="#states">State machine</a>
@@ -199,18 +199,18 @@
 
     <div class="lh">Tools<small>what agents act with</small></div>
     <div class="layer"><div class="now"><code>make check</code> (lint, mypy, tests, ratchet, API types, build); 5 workflows: CI, nightly, release, relock, pages; Dependabot</div>
-      <div class="next">Risk labeler, <code>agent-*.yml</code> workflows, <code>AGENTS_PAUSED</code> / <code>RELEASE_HOLD</code></div></div>
+      <div class="next">Risk labeler, Copilot code review ruleset, <code>RELEASE_HOLD</code></div></div>
 
     <div class="lh">Agents<small>who runs it</small></div>
     <div class="layer"><div class="now">Claude Code and Copilot, run locally: change → PR → human merge</div>
-      <div class="next">+ hosted agents on GitHub only (Copilot, GitHub Models): issue → spec → PR → agent review → merge by risk class</div></div>
+      <div class="next">+ Copilot, GitHub-native (code review, coding agent), no secret: issue → spec → PR → agent review → merge by risk class</div></div>
   </div>
 
   <h2 id="flow">The flow, lane by lane</h2>
   <p class="lead">Columns are stages; rows are who acts. Purple outlines are <b>human gates</b>. Hover a card for its details. The release column already exists (<code>release.yml</code>, nightly, CI-gated). Today, merging is the decision to ship.</p>
   <div class="legend">
     <span><i class="sw human"></i>Human</span><span><i class="sw agent"></i>Agent (local app: Claude / Copilot)</span>
-    <span><i class="sw agent" style="background:repeating-linear-gradient(45deg,var(--agent) 0 3px,transparent 3px 5px)"></i>Agent (GitHub-hosted)</span>
+    <span><i class="sw agent" style="background:repeating-linear-gradient(45deg,var(--agent) 0 3px,transparent 3px 5px)"></i>Copilot, GitHub-native</span>
     <span><i class="sw auto"></i>Deterministic automation</span><span><i class="sw gate"></i>Human gate</span>
     <span><span class="exists">EXISTS</span> already in repo</span>
   </div>
@@ -244,7 +244,7 @@
       <div class="loop">
         <div class="actor"><b>Contributor agent</b><small>author model (e.g. Claude)</small></div>
         <div class="mid"><span>⇄</span>≤ 3 rounds</div>
-        <div class="actor"><b>Reviewer agent</b><small>separate read-only run (GitHub Models)</small></div>
+        <div class="actor"><b>Reviewer agent</b><small>Copilot code review, or another session</small></div>
       </div>
       <div class="exits">
         <div><b style="color:var(--good)">Converged</b><br>Reviewer approves → <code>status:ready</code></div>
@@ -302,7 +302,7 @@
       <li>Edit <code>uv.lock</code> / <code>package-lock.json</code> (the Relock workflow owns them), raise <code>quality_baseline.json</code>, or hand-edit <code>apiTypes.ts</code>.</li>
       <li>Change <code>.github/workflows/</code> unless the issue is R2, and with a human-approved spec.</li></ul></div>
     <div class="card"><h3>Limits &amp; kill switches</h3><ul class="tight">
-      <li><code>AGENTS_PAUSED</code> repo variable: every hosted agent workflow exits early.</li>
+      <li>Copilot code review: switched off in the <code>main</code> ruleset.</li>
       <li><code>RELEASE_HOLD</code> repo variable: <code>release.yml</code> skips publishing and reports why.</li>
       <li>At most N open agent PRs (start at 5), at most 3 review rounds, and a turn/time budget per hosted run.</li></ul></div>
     <div class="card"><h3>Traceability</h3><ul class="tight">
@@ -356,7 +356,7 @@
       <li><code>CODEOWNERS</code> and a <code>main</code> ruleset (R1/R2 human review)</li>
       <li>Hosted <code>agent-*.yml</code> workflows that load the same skills</li>
       <li><code>changelog.d/</code> fragments + assembly step</li>
-      <li><code>AGENTS_PAUSED</code> / <code>RELEASE_HOLD</code> checks in workflows</li>
+      <li><code>RELEASE_HOLD</code> check in <code>release.yml</code> (done)</li>
       <li>Spec comment template</li>
       <li>Website page <code>contributing/workflow.md</code> updated with the result</li></ul></div>
   </div>
@@ -371,7 +371,7 @@ const STAGES = [
 const LANES = [
   ["human", "Human", "maintainer"],
   ["local", "Agent · local app", "Claude / Copilot app"],
-  ["hosted", "Agent · GitHub-hosted", "Actions runners"],
+  ["hosted", "Copilot · GitHub-native", "no secret"],
   ["auto", "Automation", "deterministic CI"],
 ];
 // [lane, stageIndex, cls, title, body, flags]  flags: gate label, "exists"
@@ -379,24 +379,24 @@ const STEPS = [
   ["human", 0, "human", "States the need", "Issue form, or “file this” in any Claude / Copilot session."],
   ["local", 0, "agent", "File-issue helper", "Turns a conversation into a structured issue (problem, outcome, surface), searching for duplicates first."],
   ["auto", 0, "auto", "Issue forms", "Add <code>needs-triage</code> + type label.", {exists: true}],
+  ["auto", 1, "auto", "Issue triage (Actions)", "Model-free: <code>surface:*</code> from the form, possible duplicates by title words. No secret.", {exists: true}],
   ["human", 1, "human", "Accept & prioritise", "Sets <code>status:accepted</code>, or overrides the risk class. Maintainers' own R0 asks can be auto-accepted.", {gate: "G1"}],
-  ["hosted", 1, "hosted", "Triage agent", "Dedupes, labels type/surface, proposes <code>risk:r0–r2</code>, asks clarifying questions (<code>needs-info</code>), suggests a priority."],
-  ["hosted", 2, "hosted", "Spec agent", "Posts a structured spec comment: acceptance criteria, reuse-map hits from ARCHITECTURE.md, files to touch, test plan, docs impact, risk. Splits large asks into sub-issues."],
-  ["local", 2, "agent", "…or spec locally", "Same prompt from the Claude / Copilot app, for specs that need a design conversation."],
-  ["human", 2, "human", "Approve spec", "Reacts or labels <code>status:spec-approved</code>. Skipped for R0.", {gate: "G2"}],
+  ["local", 1, "agent", "Triage skill", "Run from a contributor's session on <code>needs-triage</code> issues. Dedupes, labels type/surface, proposes <code>risk:r0–r2</code>, asks clarifying questions (<code>needs-info</code>), suggests a priority; labels and comments once the human agrees."],
+  ["local", 2, "agent", "Spec skill", "Posts a structured spec comment: acceptance criteria, reuse-map hits from ARCHITECTURE.md, files to touch, test plan, docs impact, risk. Splits large asks into sub-issues."],
+    ["human", 2, "human", "Approve spec", "Reacts or labels <code>status:spec-approved</code>. Skipped for R0.", {gate: "G2"}],
   ["local", 3, "agent", "Contributor agent", "Claims the issue (<code>runner:local</code>), follows <code>ship-change</code>, runs <code>make check</code>, opens a PR with <code>Closes #N</code>.", {exists: true}],
-  ["hosted", 3, "hosted", "…or hosted contributor", "On the <code>agent:build</code> label (R0/R1): Copilot coding agent (GitHub-hosted), with the same skill."],
-  ["hosted", 3, "hosted", "Docs & changelog agent", "Runs the docs-impact checklist; pushes doc edits and a <code>changelog.d/</code> fragment to the PR."],
+  ["hosted", 3, "hosted", "…or Copilot coding agent", "Assigned to an issue labelled <code>agent:build</code> (R0/R1): GitHub-native, no secret, same skills."],
+  ["local", 3, "agent", "Docs & changelog", "The contributor session runs the docs-impact checklist and adds a <code>changelog.d/</code> fragment to its PR."],
   ["auto", 3, "auto", "CI", "Lockfiles, ratchet, lint, mypy, tests, API types, frontend build.", {exists: true}],
-  ["hosted", 4, "hosted", "Reviewer agent", "A separate, read-only run. Severity-tagged findings against repo rules, plus a verdict."],
-  ["local", 4, "agent", "Contributor responds", "Fixes or argues each finding; ≤ 3 rounds. Can run locally or hosted."],
+  ["hosted", 4, "hosted", "Copilot code review", "GitHub-native, no secret, enabled in the <code>main</code> ruleset. Reads the <code>review</code> skill; severity-tagged findings."],
+  ["local", 4, "agent", "Contributor responds", "Fixes or argues each finding; ≤ 3 rounds."],
   ["human", 4, "human", "Arbitrate", "Only on <code>needs-human</code>: reads the one-comment dispute summary and decides."],
   ["human", 5, "human", "Merge decision", "R1: one click after the summary. R2: CODEOWNERS diff review. R0: none.", {gate: "G3"}],
   ["auto", 5, "auto", "Auto-merge (R0)", "GitHub auto-merge when CI is green, the agent approved, and the PR is labelled <code>risk:r0</code>."],
   ["auto", 6, "auto", "release.yml", "Nightly 01:17 UTC: CI gate on the exact SHA, build, smoke test, PyPI, GitHub Release.", {exists: true}],
-  ["hosted", 6, "hosted", "Release-notes agent", "Rewrites generated notes into a user-facing summary; assembles changelog fragments; comments “shipped in vX” on issues."],
+  ["auto", 6, "auto", "Release notes", "Generated from merged PRs; changelog fragments assembled by a script; “shipped in vX” comments on linked issues."],
   ["human", 6, "human", "Hold switch", "<code>RELEASE_HOLD</code> pauses publishing. A bad release gets a new CalVer, never a moved tag.", {gate: "G4"}],
-  ["hosted", 7, "hosted", "Ops agent", "Triages failed runs, flaky tests, Dependabot majors and telemetry error reports into issues (back to Intake)."],
+  ["auto", 7, "auto", "Ops issues", "A workflow opens deduped issues for failed runs on <code>main</code>; they enter Intake with <code>needs-triage</code>."],
   ["auto", 7, "auto", "Nightly build & Dependabot", "Rolling <code>nightly</code> prerelease; weekly dependency PRs.", {exists: true}],
   ["human", 7, "human", "Weekly review", "10 minutes on agent metrics; adjusts R0 scope and caps."],
 ];
@@ -435,14 +435,14 @@ STATES.forEach(([n, s, g], i) => {
 });
 
 const ROSTER = [
-  ["Triage", "issue opened / edited; <code>needs-info</code> answered", "Hosted", "issue, existing issues, ARCHITECTURE.md", "labels, one comment", "issues: write"],
-  ["Spec", "<code>status:accepted</code>", "Both", "issue, codebase, ARCHITECTURE.md, docs checklist", "spec comment, sub-issues, <code>spec-draft</code>", "issues: write"],
-  ["Contributor", "<code>spec-approved</code> (or R0 accepted) + claim", "Both", "spec, repo", "branch, PR, replies to review", "contents + PR write (branches only)"],
-  ["Reviewer", "PR ready for review / new push", "Hosted (or local)", "diff, spec, repo rules, CI result", "review with severity + verdict", "pull-requests: write"],
-  ["Docs", "PR labelled user-facing, or <code>agent:docs</code>", "Hosted", "diff, docs checklist, website/", "doc commits on the PR", "contents write (PR branch)"],
-  ["Changelog", "PR merged / pre-release", "Hosted", "merged PRs, <code>changelog.d/</code>", "CHANGELOG assembly PR", "contents + PR write"],
-  ["Release notes", "after release.yml succeeds", "Hosted", "release, PRs, issues", "release body, “shipped in” comments", "contents + issues write"],
-  ["Ops", "failed workflow_run, schedule", "Hosted", "run logs, telemetry reports, Dependabot", "issues (deduped)", "issues: write, actions: read"],
+  ["Triage", "<code>needs-triage</code> issue, when a contributor runs it", "Local", "issue, existing issues, ARCHITECTURE.md", "labels, one comment (after agreement)", "the contributor's own"],
+  ["Spec", "<code>status:accepted</code>", "Local", "issue, codebase, ARCHITECTURE.md, docs checklist", "spec comment, sub-issues, <code>spec-draft</code>", "issues: write"],
+  ["Contributor", "<code>spec-approved</code> (or R0 accepted) + claim", "Local or Copilot coding agent", "spec, repo", "branch, PR, replies to review", "own (local) / Copilot coding agent"],
+  ["Reviewer", "PR ready for review / new push", "Copilot code review (or local)", "diff, spec, repo rules, CI result", "review with severity + verdict", "pull-requests: write"],
+  ["Docs", "PR labelled user-facing, or <code>agent:docs</code>", "Local or Copilot coding agent", "diff, docs checklist, website/", "doc commits on the PR", "contents write (PR branch)"],
+  ["Changelog", "pre-release", "Actions (script)", "merged PRs, <code>changelog.d/</code>", "CHANGELOG assembly PR", "contents + PR write"],
+  ["Release notes", "after release.yml succeeds", "Actions (generated)", "release, PRs, issues", "release body, “shipped in” comments", "contents + issues write"],
+  ["Ops", "failed workflow_run, schedule", "Actions (script)", "run logs, telemetry reports, Dependabot", "issues (deduped)", "issues: write, actions: read"],
 ];
 const rb = document.querySelector("#roster-table tbody");
 ROSTER.forEach(r => rb.insertAdjacentHTML("beforeend", `<tr>${r.map((c, i) => `<td>${i ? c : `<b>${c}</b>`}</td>`).join("")}</tr>`));
@@ -512,8 +512,8 @@ const DECISIONS = [
     ["Labels only", "Simplest; fully scriptable; visible everywhere."],
     ["GitHub Project fields only", "Nice board, but harder for agents to read and write; not visible on the issue."],
     ["Labels as truth + Project board as a view", "Scriptable state, plus a human dashboard.", true]]],
-  ["D3", "Which engine runs the hosted agents?", "Simple roles (triage, docs, review) run without a laptop. Decided: GitHub only; local sessions use each contributor's own tooling.", [
-    ["GitHub only: Copilot + GitHub Models with the workflow token", "No secret, no external platform. Free-tier limits; the model has no tools in Actions.", true],
+  ["D3", "Which engine runs the hosted agents?", "Decided: native Copilot only, no secret. GitHub Models (first choice) was retired on 2026-07-30; triage runs in contributors' sessions with their own tooling.", [
+    ["Native Copilot only (code review, coding agent), no secret", "No secret, no external platform; model-driven triage runs in contributors' sessions. Decided after GitHub Models was retired. Free-tier limits; the model has no tools in Actions.", true],
     ["Add an external engine (e.g. an Anthropic API key)", "Agentic runs with tools, but an outside platform and a secret to manage."],
     ["GitHub Agentic Workflows (<code>gh aw</code>)", "Markdown-defined and sandboxed; its Copilot engine needs a PAT secret."]]],
   ["D4", "How independent is the reviewer?", "A run reviewing its own work tends to approve its own blind spots. Decided: vendor is not a criterion.", [
