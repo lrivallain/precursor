@@ -19,12 +19,12 @@ import re
 import threading
 import traceback
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from types import TracebackType
 from typing import Any
 
 import precursor
+from precursor.backend.clock import utcnow
 from precursor.backend.services.telemetry.appinsights import Target, envelope
 
 _PACKAGE_ROOT = Path(precursor.__file__).resolve().parent
@@ -90,7 +90,7 @@ class _Collector:
         self.enabled = False
 
     def _roll(self) -> None:
-        today = datetime.now(UTC).date().isoformat()
+        today = utcnow().date().isoformat()
         if today != self._day:
             self._day = today
             self._seen.clear()

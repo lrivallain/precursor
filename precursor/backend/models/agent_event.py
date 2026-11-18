@@ -11,11 +11,12 @@ Append-only; rows are removed when the agent is deleted.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 
 from sqlalchemy import DateTime, ForeignKey, Integer, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
+from precursor.backend.clock import utcnow
 from precursor.backend.models.base import Base
 
 
@@ -46,7 +47,7 @@ class AgentEventRecord(Base):
     # any raw insert.
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(UTC),
+        default=lambda: utcnow(),
         server_default=func.now(),
         nullable=False,
     )

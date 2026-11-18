@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import platform
 import sys
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from importlib.metadata import entry_points
 from typing import Any
 
@@ -17,6 +17,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor import __version__
+from precursor.backend.clock import utcnow
 from precursor.backend.models import AgentRun, Chat, Message, MessageRole, Topic
 from precursor.backend.services import updates
 from precursor.backend.services.app_settings import (
@@ -56,7 +57,7 @@ async def _count(session: AsyncSession, stmt: Any) -> int:
 
 
 async def _usage(session: AsyncSession) -> dict[str, str]:
-    since = datetime.now(UTC) - timedelta(days=1)
+    since = utcnow() - timedelta(days=1)
     count = func.count()
     return {
         "messages_24h": bucket(

@@ -6,12 +6,11 @@ live session lifecycle lives in ``routers/live.py``.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from precursor.backend.clock import utcnow
 from precursor.backend.db import get_session
 from precursor.backend.lookups import get_or_404
 from precursor.backend.models import MeetingSegment, MeetingSession
@@ -57,7 +56,7 @@ async def append_segment(
     ms = await _get_session_or_404(session_id, session)
     # First persisted phrase marks when recording actually began.
     if ms.started_at is None:
-        ms.started_at = datetime.now(UTC)
+        ms.started_at = utcnow()
 
     segment = MeetingSegment(
         session_id=session_id,

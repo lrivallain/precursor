@@ -25,6 +25,7 @@ from typing import Any, Literal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from precursor.backend.clock import utcnow
 from precursor.backend.config import CANVAS_WORKSPACE_SLUG, get_settings
 from precursor.backend.models import Chat, Topic, Workspace
 from precursor.backend.services import workspace_fs as fs
@@ -90,7 +91,7 @@ async def ensure_canvas_workspace(session: AsyncSession) -> Workspace:
         await session.execute(select(Workspace).where(Workspace.slug == CANVAS_WORKSPACE_SLUG))
     ).scalar_one_or_none()
     if ws is None:
-        now = datetime.now(UTC)
+        now = utcnow()
         ws = Workspace(
             name=WORKSPACE_NAME,
             slug=CANVAS_WORKSPACE_SLUG,

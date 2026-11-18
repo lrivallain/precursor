@@ -11,9 +11,9 @@ import asyncio
 import logging
 import time
 from collections import deque
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from precursor.backend.clock import utcnow
 from precursor.backend.models import AgentRun, AgentSession
 from precursor.backend.schemas.agent import AgentEvent
 from precursor.backend.services.agents import timeline
@@ -193,7 +193,7 @@ class EventHandler:
         # look like this one transitioning.
         before_status = run.status
         normalised = normalize_event(event)
-        normalised.at = datetime.now(UTC)
+        normalised.at = utcnow()
         # Stamp the producing run so the timeline can be split per execution.
         normalised.agent_run_id = run_id
         live = m._live.get(run_id)
@@ -219,7 +219,7 @@ class EventHandler:
             await m._announce_auth_required(agent_id, [auth_server])
 
         data = getattr(event, "data", event)
-        patch: dict[str, Any] = {"last_activity_at": datetime.now(UTC)}
+        patch: dict[str, Any] = {"last_activity_at": utcnow()}
         if await self._apply(run, agent, live, data, patch):
             await self._settle(run_id, agent_id, before_status, patch)
 
@@ -262,7 +262,7 @@ class EventHandler:
                 await m._on_idle(agent, fresh, patch)
         elif name in ("AbortData",):
             patch["status"] = "cancelled"
-            patch["finished_at"] = datetime.now(UTC)
+            patch["finished_at"] = utcnow()
         elif name in ("ErrorData", "SessionErrorData"):
             return await self._on_error(run.id, agent.id, live, data, patch)
         return True
@@ -306,7 +306,7 @@ class EventHandler:
             return False
         patch["status"] = "failed"
         patch["error"] = message[:2000]
-        patch["finished_at"] = datetime.now(UTC)
+        patch["finished_at"] = utcnow()
         # Auto-recovery: if a retry budget remains, arm a backoff re-run the
         # scheduler will pick up. Keeps a flaky turn from parking the fleet.
         # The budget is cumulative governance and lives on the definition.
@@ -366,7 +366,7 @@ class EventHandler:
         now = time.monotonic()
         if now - stream.touched >= _STREAM_ACTIVITY_INTERVAL_SECONDS:
             stream.touched = now
-            await m._patch_run(run_id, last_activity_at=datetime.now(UTC))
+            await m._patch_run(run_id, last_activity_at=utcnow())
         # A change held back by the throttle goes out with a later frame; byte
         # counters interleave with every token, so it never waits for long.
         stream.dirty = stream.dirty or update.changed

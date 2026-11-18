@@ -11,7 +11,8 @@ from datetime import datetime
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
-from precursor.backend.models.base import Base, _utcnow
+from precursor.backend.clock import utcnow
+from precursor.backend.models.base import Base
 
 
 class IssueContextCache(Base):
@@ -30,5 +31,5 @@ class IssueContextCache(Base):
     summary: Mapped[str] = mapped_column(Text, nullable=False)
     model: Mapped[str] = mapped_column(String(128), nullable=False)
     fetched_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=_utcnow
+        DateTime(timezone=True), nullable=False, default=utcnow
     )

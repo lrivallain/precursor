@@ -9,7 +9,7 @@ a file renamed or deleted outside the app reads as missing, nothing follows it.
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any, Literal
 
 from fastapi import HTTPException, status
@@ -17,6 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from precursor.backend.clock import utcnow
 from precursor.backend.db import SessionLocal
 from precursor.backend.lookups import get_or_404
 from precursor.backend.models import (
@@ -120,7 +121,7 @@ async def attach(
         )
     ).scalar_one_or_none()
     if existing is not None:
-        existing.updated_at = datetime.now(UTC)
+        existing.updated_at = utcnow()
         await session.commit()
         await session.refresh(existing)
         return existing

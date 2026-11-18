@@ -14,11 +14,12 @@ import hashlib
 import logging
 import os
 import sys
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
 
+from precursor.backend.clock import utcnow
 from precursor.backend.db import SessionLocal
 from precursor.backend.models import AgentSession, AppSetting
 from precursor.backend.schemas.agent import AgentEvent
@@ -219,7 +220,7 @@ class MCPConfigBuilder:
                 # Unknown lifetime → assume a conservative TTL so we still rebuild
                 # the session periodically rather than letting a stale header rot.
                 if expires_at is None:
-                    expires_at = datetime.now(UTC) + _OAUTH_FALLBACK_TTL
+                    expires_at = utcnow() + _OAUTH_FALLBACK_TTL
                 oauth_expires_at = (
                     expires_at if oauth_expires_at is None else min(oauth_expires_at, expires_at)
                 )
@@ -371,7 +372,7 @@ def oauth_stale(live: _LiveSession) -> bool:
     expires_at = live.oauth_expires_at
     if expires_at is None:
         return False
-    return datetime.now(UTC) >= expires_at - _OAUTH_REFRESH_MARGIN
+    return utcnow() >= expires_at - _OAUTH_REFRESH_MARGIN
 
 
 async def auth_server_from_failed_tool(event: AgentEvent) -> str | None:

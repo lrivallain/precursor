@@ -14,7 +14,6 @@ import json
 import logging
 import re
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
@@ -22,6 +21,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
+from precursor.backend.clock import utcnow
 from precursor.backend.db import SessionLocal, get_session
 from precursor.backend.lookups import get_or_404
 from precursor.backend.models import (
@@ -286,7 +286,7 @@ async def create_session_endpoint(
 ) -> MeetingSession:
     topic = await _validate_topic(payload.topic_id, session)
 
-    title = (payload.title or "").strip() or (f"Live session — {datetime.now(UTC):%Y-%m-%d %H:%M}")
+    title = (payload.title or "").strip() or (f"Live session — {utcnow():%Y-%m-%d %H:%M}")
     slug = await _allocate_slug(session, slugify(payload.slug or title))
 
     ms = MeetingSession(
@@ -348,7 +348,7 @@ async def update_session_endpoint(
         ms.features_json = json.dumps(cleaned, ensure_ascii=False)
     # Transitioning to "ended" stamps ended_at once.
     if data.get("status") == "ended" and ms.ended_at is None:
-        ms.ended_at = datetime.now(UTC)
+        ms.ended_at = utcnow()
 
     for key, value in data.items():
         setattr(ms, key, value)
@@ -379,7 +379,7 @@ async def archive_session_endpoint(
     """Archive a session: hide it from the Live list, keep it restorable."""
     ms = await _get_session_or_404(session_id, session)
     if ms.archived_at is None:
-        ms.archived_at = datetime.now(UTC)
+        ms.archived_at = utcnow()
         await session.commit()
         await session.refresh(ms)
     await publish_meeting_changed(ms.id)
@@ -1027,7 +1027,7 @@ async def post_summary_to_topic(
     # Persist the posted recap and stamp when/where it landed so a reopened
     # session shows the recap and that it already reached the topic. Store the
     # user's full text (not the attachment-stripped body) to match the tab.
-    posted_at = datetime.now(UTC)
+    posted_at = utcnow()
     ms.summary = payload.summary.strip()
     ms.summary_posted_at = posted_at
     ms.summary_posted_topic_id = ms.topic_id

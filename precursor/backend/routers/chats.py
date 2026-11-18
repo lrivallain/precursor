@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from precursor.backend.clock import utcnow
 from precursor.backend.db import get_session
 from precursor.backend.models import Chat, Message, MessageRole, Topic
 from precursor.backend.schemas import (
@@ -257,7 +258,7 @@ async def mark_chat_read(
     chat = await session.get(Chat, chat_id)
     if not chat:
         raise HTTPException(status_code=404, detail="Chat not found")
-    chat.last_read_at = datetime.now(UTC)
+    chat.last_read_at = utcnow()
     await session.commit()
     # Let other tabs clear this chat's badge/counter in real time.
     await publish_read_changed(chat_id=chat_id)
@@ -278,7 +279,7 @@ async def mark_chat_unread(
         .order_by(Message.created_at.desc())
         .limit(1)
     )
-    chat.last_read_at = (latest or datetime.now(UTC)) - timedelta(microseconds=1)
+    chat.last_read_at = (latest or utcnow()) - timedelta(microseconds=1)
     await session.commit()
     await publish_read_changed(chat_id=chat_id)
 
@@ -292,7 +293,7 @@ async def archive_chat(
     chat = await session.get(Chat, chat_id)
     if not chat:
         raise HTTPException(status_code=404, detail="Chat not found")
-    chat.archived_at = datetime.now(UTC)
+    chat.archived_at = utcnow()
     await session.commit()
     if chat.parent_topic_id is not None:
         await publish_topic_changed(chat.parent_topic_id)

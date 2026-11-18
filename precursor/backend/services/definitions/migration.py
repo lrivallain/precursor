@@ -25,7 +25,6 @@ import asyncio
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -34,6 +33,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from precursor.backend.clock import utcnow
 from precursor.backend.config import get_settings
 from precursor.backend.models import AgentSession, AppSetting, Role, Workflow, WorkflowStep
 from precursor.backend.schemas.definitions import (
@@ -365,7 +365,7 @@ async def adopt_files_if_fresh(session: AsyncSession) -> bool:
         return False
     await overlay.persist_source(session, "files")
     await overlay.persist_finalized(
-        session, {"at": datetime.now(UTC).isoformat(timespec="seconds"), "fresh": True}
+        session, {"at": utcnow().isoformat(timespec="seconds"), "fresh": True}
     )
     return True
 
@@ -557,7 +557,7 @@ def _snapshot_sync(action: str) -> str | None:
         return None
     folder = Path(settings.data_dir).resolve() / "definitions-migration"
     folder.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    stamp = utcnow().strftime("%Y%m%dT%H%M%SZ")
     dest = folder / f"precursor-{stamp}-before-{action}.db"
     _vacuum_into(src, dest)
     return str(dest)
@@ -668,7 +668,7 @@ async def migrate(session: AsyncSession, *, acknowledge: bool = False) -> Migrat
         session,
         MIGRATED_SETTING_KEY,
         {
-            "at": datetime.now(UTC).isoformat(timespec="seconds"),
+            "at": utcnow().isoformat(timespec="seconds"),
             "snapshot": snapshot,
             "created": result.created,
             "regenerated": result.regenerated,
@@ -1022,7 +1022,7 @@ async def finalize(session: AsyncSession, *, confirm: bool) -> FinalizeResult:
         .execution_options(synchronize_session=False)
     )
     await session.commit()
-    record = {"at": datetime.now(UTC).isoformat(timespec="seconds"), "snapshot": snapshot, **counts}
+    record = {"at": utcnow().isoformat(timespec="seconds"), "snapshot": snapshot, **counts}
     await overlay.persist_source(session, "files")
     await overlay.persist_finalized(session, record)
     session.expire_all()

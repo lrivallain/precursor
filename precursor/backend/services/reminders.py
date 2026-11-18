@@ -24,6 +24,7 @@ from typing import Literal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from precursor.backend.clock import utcnow
 from precursor.backend.models import Chat, Message, MessageRole, Reminder, Topic
 from precursor.backend.services.events import (
     publish_message_changed,
@@ -34,10 +35,6 @@ from precursor.backend.services.events import (
 logger = logging.getLogger(__name__)
 
 ContainerKind = Literal["topic", "chat"]
-
-
-def _now() -> datetime:
-    return datetime.now(UTC)
 
 
 def _container_ids(container: ContainerKind, container_id: int) -> tuple[int | None, int | None]:
@@ -165,7 +162,7 @@ async def fire_due(session: AsyncSession) -> list[Reminder]:
     flips the reminder to ``"fired"``, and returns the reminders that fired so
     the caller can publish change events.
     """
-    now = _now()
+    now = utcnow()
     result = await session.execute(
         select(Reminder).where(
             Reminder.status == "scheduled",

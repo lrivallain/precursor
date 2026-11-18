@@ -13,9 +13,9 @@ from __future__ import annotations
 
 import contextlib
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from precursor.backend.clock import utcnow
 from precursor.backend.db import SessionLocal
 from precursor.backend.services import roles as roles_service
 
@@ -34,7 +34,7 @@ async def cmd_rename(manager: AgentManager, agent_id: int, argument: str) -> Non
 async def cmd_archive(manager: AgentManager, agent_id: int, argument: str) -> None:
     agent = await manager._load(agent_id)
     if agent is not None and agent.archived_at is None:
-        await manager._patch(agent_id, archived_at=datetime.now(UTC))
+        await manager._patch(agent_id, archived_at=utcnow())
         await manager._publish(agent_id)
 
 

@@ -12,10 +12,11 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from typing import Any
 from urllib.parse import quote
 
+from precursor.backend.clock import utcnow
 from precursor.backend.services.mcp.client import get_mcp_client_manager
 
 logger = logging.getLogger(__name__)
@@ -185,7 +186,7 @@ async def fetch_agenda(
         start = _sanitize_iso(start_iso)
         end = _sanitize_iso(end_iso)
         if not start or not end:
-            day = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+            day = utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
             start = f"{day:%Y-%m-%dT%H:%M:%SZ}"
             end = f"{day + timedelta(days=1):%Y-%m-%dT%H:%M:%SZ}"
         path = (

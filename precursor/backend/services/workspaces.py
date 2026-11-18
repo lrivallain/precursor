@@ -7,13 +7,13 @@ without pulling in the LLM stack.
 from __future__ import annotations
 
 import shutil
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from precursor.backend.clock import utcnow
 from precursor.backend.config import (
     CANVAS_WORKSPACE_SLUG,
     DEFINITIONS_WORKSPACE_SLUG,
@@ -114,7 +114,7 @@ async def create_workspace(
         except git.GitError as exc:
             raise WorkspaceError(str(exc)) from exc
 
-    ws.cloned_at = datetime.now(UTC)
+    ws.cloned_at = utcnow()
     ws.last_synced_at = ws.cloned_at
     await session.commit()
     await session.refresh(ws)

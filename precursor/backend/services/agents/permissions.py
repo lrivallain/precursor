@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
 
+from precursor.backend.clock import utcnow
 from precursor.backend.db import SessionLocal
 from precursor.backend.models import AgentRun, AgentSession
 from precursor.backend.services.agents import runtime
@@ -254,7 +255,7 @@ class PermissionBroker:
                     or info.get("url")
                     or info.get("tool")
                     or info.get("server"),
-                    "at": datetime.now(UTC),
+                    "at": utcnow(),
                 }
             )
         fut.set_result(self._manager._decision(decision))

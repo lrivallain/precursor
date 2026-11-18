@@ -15,6 +15,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from precursor.backend.clock import utcnow
 from precursor.backend.db import get_session
 from precursor.backend.lookups import get_or_404
 from precursor.backend.models import Topic, TopicSummary
@@ -197,7 +198,7 @@ async def generate_summary(
     # The topic may have been deleted while the provider was running.
     if await session.get(Topic, topic_id, populate_existing=True) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
-    now = summary_service.utcnow()
+    now = utcnow()
     changes: dict[str, Any] = {"visible": True, **summary_service.CLEAR_SUGGESTION}
     if review and text != existing:
         changes.update(pending_content=text, pending_model=model, pending_generated_at=now)

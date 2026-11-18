@@ -32,6 +32,7 @@ import anyio
 from fastapi import HTTPException
 from sqlalchemy import delete, select
 
+from precursor.backend.clock import utcnow
 from precursor.backend.config import get_settings
 from precursor.backend.db import SessionLocal
 from precursor.backend.models import Message, MessageRole, Topic
@@ -716,14 +717,13 @@ async def _handle_clear(topic_id: int, argument: str) -> None:
 
 
 async def _handle_archive(topic_id: int, argument: str) -> None:
-    from datetime import UTC, datetime
 
     async with SessionLocal() as session:
         topic = await session.get(Topic, topic_id)
         if topic is None:
             return
         if topic.archived_at is None:
-            topic.archived_at = datetime.now(UTC)
+            topic.archived_at = utcnow()
             await session.commit()
     await publish_topic_changed(topic_id)
 

@@ -250,7 +250,7 @@ def inspect_file(raw: str, *, produced: bool, asked: int | None, claimed: bool =
         if produced or claimed or path.parent.is_dir():
             ev.fail(f"File not found: {raw}", CAP_MISSING)
         return ev
-    when = datetime.fromtimestamp(info.st_mtime).strftime("%Y-%m-%d %H:%M")
+    when = datetime.fromtimestamp(info.st_mtime).astimezone().strftime("%Y-%m-%d %H:%M")
     ev.checks.append(Check(f"File exists: {raw} ({_size(info.st_size)}, modified {when})", True))
     if info.st_size == 0:
         ev.fail(f"{path.name} is empty", CAP_MISSING)

@@ -4,11 +4,11 @@ reject a step, and answer a step's tool-permission request.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import func, select
 
+from precursor.backend.clock import utcnow
 from precursor.backend.models.workflow import (
     WORKFLOW_STEP_REJECT_POLICIES,
     Workflow,
@@ -179,7 +179,7 @@ async def resolve_step_permission(
                         f"Permission {'granted' if decision != 'deny' else 'denied'} by a human; "
                         "the step continued from where it stopped."
                     ),
-                    started_at=datetime.now(UTC),
+                    started_at=utcnow(),
                     token_baseline_in=(
                         (agent_run.total_input_tokens or 0) if agent_run is not None else 0
                     ),
@@ -385,7 +385,7 @@ async def reject_step(
 
     if policy == "stop":
         workflow.status = "cancelled"
-        workflow.finished_at = datetime.now(UTC)
+        workflow.finished_at = utcnow()
         workflow.current_step_id = None
         workflow.result_summary = f"Stopped at '{_step_label(current)}': {note}"[:2000]
         await _finalize_step_by_position(
@@ -423,7 +423,7 @@ async def reject_step(
 
     if target_idx is None:
         workflow.status = "failed"
-        workflow.finished_at = datetime.now(UTC)
+        workflow.finished_at = utcnow()
         workflow.current_step_id = None
         workflow.error = (
             f"Rejected at '{_step_label(current)}' with no earlier step to redo: {note}"[:2000]
@@ -439,7 +439,7 @@ async def reject_step(
     current.attempt_count = (current.attempt_count or 0) + 1
     if current.attempt_count > (workflow.max_loops or 3):
         workflow.status = "failed"
-        workflow.finished_at = datetime.now(UTC)
+        workflow.finished_at = utcnow()
         workflow.current_step_id = None
         workflow.error = (
             f"Rejected at '{_step_label(current)}' after {workflow.max_loops} attempts: {note}"
@@ -473,7 +473,7 @@ async def cancel_workflow(
     current = next((s for s in steps if s.id == workflow.current_step_id), None)
 
     workflow.status = "cancelled"
-    workflow.finished_at = datetime.now(UTC)
+    workflow.finished_at = utcnow()
     workflow.current_step_id = None
     cancelled_run_id: int | None = None
     if current is not None and current.agent_id is not None:

@@ -11,11 +11,12 @@ import asyncio
 import contextlib
 import logging
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, timedelta
 from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 
+from precursor.backend.clock import utcnow
 from precursor.backend.db import SessionLocal
 from precursor.backend.models import (
     AgentRun,
@@ -102,7 +103,7 @@ class Watchdog:
         m = self._manager
         if not m._live:
             return
-        cutoff = datetime.now(UTC) - timedelta(seconds=_IDLE_SESSION_TTL_SECONDS)
+        cutoff = utcnow() - timedelta(seconds=_IDLE_SESSION_TTL_SECONDS)
         async with SessionLocal() as session:
             rows = (
                 await session.execute(
@@ -147,7 +148,7 @@ class Watchdog:
         m = self._manager
         async with SessionLocal() as session:
             timeout = await resolve_agents_watchdog_timeout(session)
-            cutoff = datetime.now(UTC) - timedelta(seconds=timeout)
+            cutoff = utcnow() - timedelta(seconds=timeout)
             rows = (
                 await session.execute(
                     select(AgentRun, AgentSession.topic_id, AgentSession.chat_id)

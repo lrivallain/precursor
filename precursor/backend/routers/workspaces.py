@@ -9,13 +9,13 @@ from __future__ import annotations
 
 import logging
 import shutil
-from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from precursor.backend.clock import utcnow
 from precursor.backend.config import CANVAS_WORKSPACE_SLUG, get_settings
 from precursor.backend.db import get_session
 from precursor.backend.lookups import get_or_404
@@ -406,7 +406,7 @@ async def git_pull(
     except git.GitError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     if ok:
-        ws.last_synced_at = datetime.now(UTC)
+        ws.last_synced_at = utcnow()
         await session.commit()
         # Files mode: a pull into the definitions folder applies at once (new
         # files, changed steps); anything that widens permissions waits for
@@ -432,7 +432,7 @@ async def _push(ws: Workspace, root: Path, branch: str, session: AsyncSession) -
     pushed, detail = await git.push(root, branch, token)
     st = await git.status(root, ws.subdir)
     if pushed:
-        ws.last_synced_at = datetime.now(UTC)
+        ws.last_synced_at = utcnow()
         await session.commit()
     return GitActionResult(
         ok=pushed,

@@ -12,11 +12,12 @@ import contextlib
 import inspect
 import logging
 import time
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import delete, select
 
+from precursor.backend.clock import utcnow
 from precursor.backend.db import SessionLocal
 from precursor.backend.models import (
     AgentEventRecord,
@@ -281,7 +282,7 @@ class SessionPool:
         """
         m = self._manager
         await m._transcript.ensure_loaded(agent_id)
-        event.at = datetime.now(UTC)
+        event.at = utcnow()
         m._events.setdefault(agent_id, []).append(event)
         await timeline.archive_event(agent_id, event)
         agent = await m._load(agent_id)

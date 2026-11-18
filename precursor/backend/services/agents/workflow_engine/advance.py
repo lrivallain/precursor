@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import TYPE_CHECKING
 
+from precursor.backend.clock import utcnow
 from precursor.backend.models.agent_run import AgentRun
 from precursor.backend.models.agent_session import AgentSession
 from precursor.backend.models.workflow import (
@@ -122,7 +123,7 @@ async def start_workflow(
         await _publish(workflow)
         return workflow
 
-    now = datetime.now(UTC)
+    now = utcnow()
     workflow.status = "running"
     workflow.current_step_id = first.id
     workflow.run_count = (workflow.run_count or 0) + 1
@@ -175,7 +176,7 @@ async def advance_for_run(session: AsyncSession, manager: AgentManager, agent_ru
     ever a response to a turn that had already started, so it may not act on an
     attempt that began after it did.
     """
-    entered_at = datetime.now(UTC)
+    entered_at = utcnow()
     agent_run = await session.get(AgentRun, agent_run_id)
     if agent_run is None:
         return
@@ -292,7 +293,7 @@ async def _divert(
 
     if agent_status in STEP_CANCELLED_STATUSES:
         workflow.status = "cancelled"
-        workflow.finished_at = datetime.now(UTC)
+        workflow.finished_at = utcnow()
         workflow.current_step_id = None
         await _finalize_run_step(session, workflow, agent_id, status="cancelled")
         await _finalize_run(session, workflow, status="cancelled")
@@ -354,7 +355,7 @@ async def _fail_gate_run(
 ) -> None:
     """End the run on a gate that cannot loop back any more."""
     workflow.status = "failed"
-    workflow.finished_at = datetime.now(UTC)
+    workflow.finished_at = utcnow()
     workflow.current_step_id = None
     workflow.error = error[:2000]
     await _finalize_run_step(

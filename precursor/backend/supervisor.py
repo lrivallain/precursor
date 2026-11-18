@@ -26,11 +26,11 @@ import socket
 import subprocess
 import time
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from precursor.backend import winproc
+from precursor.backend.clock import utcnow
 from precursor.backend.config import Settings, get_settings
 
 logger = logging.getLogger(__name__)
@@ -500,9 +500,7 @@ def start(
     _trim_capture(capture)
     handle = capture.open("ab")
     try:
-        handle.write(
-            f"\n--- precursor service start {datetime.now(UTC).isoformat()} ---\n".encode()
-        )
+        handle.write(f"\n--- precursor service start {utcnow().isoformat()} ---\n".encode())
         handle.flush()
         proc = winproc.spawn_detached(
             _child_command(port, host, log_level=log_level),
@@ -543,7 +541,7 @@ def start(
         port=port,
         url=f"http://{connect_host}:{port}/",
         version=__version__,
-        started_at=datetime.now(UTC).isoformat(),
+        started_at=utcnow().isoformat(),
         log_file=str(log_file),
     )
     _write_state(state)
@@ -780,7 +778,7 @@ def run_foreground(
             port=resolved,
             url=f"http://{connect_host}:{resolved}/",
             version=__version__,
-            started_at=datetime.now(UTC).isoformat(),
+            started_at=utcnow().isoformat(),
             log_file=str(_log_path()),
         )
     )

@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
 
+from precursor.backend.clock import utcnow
 from precursor.backend.db import SessionLocal
 from precursor.backend.services.background_poll import BackgroundPoll
 from precursor.backend.services.telemetry import appinsights, errors, heartbeat, prefs
@@ -45,7 +45,7 @@ class TelemetryTicker(BackgroundPoll):
                 errors.build(target, report, heartbeat.build_tags(install_id))
                 for report in errors.collector.drain()
             ]
-            today = datetime.now(UTC).date().isoformat()
+            today = utcnow().date().isoformat()
             send_heartbeat = await prefs.last_heartbeat(session) != today
             if send_heartbeat:
                 envelopes.append(await heartbeat.build(session, target, install_id))

@@ -15,12 +15,12 @@ lives where it was pointed.
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
 from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from precursor.backend.clock import utcnow
 from precursor.backend.config import DEFINITIONS_WORKSPACE_SLUG, get_settings
 from precursor.backend.models import Workspace
 from precursor.backend.services.definitions.loader import kind_for
@@ -46,7 +46,7 @@ async def ensure_definitions_workspace(session: AsyncSession) -> Workspace | Non
     ).scalar_one_or_none()
     root = Path(settings.definitions_dir)
     if ws is None:
-        now = datetime.now(UTC)
+        now = utcnow()
         ws = Workspace(
             name=WORKSPACE_NAME,
             slug=DEFINITIONS_WORKSPACE_SLUG,

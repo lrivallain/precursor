@@ -5,11 +5,12 @@ reading the events of one step attempt.
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import func, select
 
+from precursor.backend.clock import utcnow
 from precursor.backend.models.agent_event import AgentEventRecord
 from precursor.backend.models.agent_run import AgentRun
 from precursor.backend.models.agent_session import AgentSession
@@ -149,7 +150,7 @@ async def replay_step(
         replay=True,
         status="running",
         input_context=context,
-        started_at=datetime.now(UTC),
+        started_at=utcnow(),
         token_baseline_in=0,
         token_baseline_out=0,
     )

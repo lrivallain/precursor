@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 
+from precursor.backend.clock import utcnow
 from precursor.backend.db import SessionLocal
 from precursor.backend.services.iq.retrieve import Hit, retrieve
 
@@ -66,7 +66,7 @@ async def ask(
     if not found.hits:
         return AskResult(question=question, answer=_NO_MATCH)
 
-    today = datetime.now(UTC).date().isoformat()
+    today = utcnow().date().isoformat()
     async with SessionLocal() as session:
         model = await resolve_iq_ask_model(session)
         provider_id = await resolve_iq_ask_provider(session)

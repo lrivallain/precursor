@@ -23,12 +23,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy import select, update
 from sqlalchemy.engine import CursorResult
 
+from precursor.backend.clock import utcnow
 from precursor.backend.config import Settings, get_settings
 from precursor.backend.db import SessionLocal
 from precursor.backend.models import AgentSchedule, AgentSession, TopicSchedule
@@ -44,10 +45,6 @@ if TYPE_CHECKING:  # circular at runtime: the manager imports the scheduler
     from precursor.backend.services.agents.manager import AgentManager
 
 logger = logging.getLogger(__name__)
-
-
-def _now() -> datetime:
-    return datetime.now(UTC)
 
 
 # Agent statuses that mean a turn is in flight or awaiting a human; a scheduled
@@ -141,7 +138,7 @@ class Scheduler:
         if not manager.ready:
             return
 
-        now = _now()
+        now = utcnow()
         async with SessionLocal() as session:
             due_retries = (
                 (
@@ -198,7 +195,7 @@ class Scheduler:
         from precursor.backend.models import Workflow
         from precursor.backend.services.agents import workflow as workflow_svc
 
-        now = _now()
+        now = utcnow()
         async with SessionLocal() as session:
             rows = (
                 (
@@ -233,7 +230,7 @@ class Scheduler:
                     logger.exception("Failed to start scheduled workflow %s", workflow_id)
 
     async def _enqueue_due(self) -> None:
-        now = _now()
+        now = utcnow()
         async with SessionLocal() as session:
             topic_rows = (
                 await session.execute(
@@ -294,7 +291,7 @@ class Scheduler:
 
     async def _claim(self, model: type[TopicSchedule | AgentSchedule], schedule_id: int) -> bool:
         """Atomically mark a schedule running. Returns True if we won the claim."""
-        now = _now()
+        now = utcnow()
         async with SessionLocal() as session:
             timeout = await resolve_scheduled_run_timeout_seconds(session)
             lease_until = now + timedelta(seconds=timeout + 30)
@@ -314,7 +311,7 @@ class Scheduler:
 
     async def _reclaim_orphans(self) -> None:
         """Reset rows stuck in 'running' with an expired lease (crash recovery)."""
-        now = _now()
+        now = utcnow()
         async with SessionLocal() as session:
             for model in (TopicSchedule, AgentSchedule):
                 await session.execute(
@@ -384,7 +381,7 @@ class Scheduler:
             status, error = "error", str(exc)
             logger.exception("Scheduled run for topic %s failed", topic_id)
 
-        now = _now()
+        now = utcnow()
         async with SessionLocal() as session:
             await session.execute(
                 update(TopicSchedule)
@@ -425,7 +422,7 @@ class Scheduler:
             status, error = "error", str(exc)
             logger.exception("Scheduled agent run for %s failed", agent_session_id)
 
-        now = _now()
+        now = utcnow()
         async with SessionLocal() as session:
             await session.execute(
                 update(AgentSchedule)

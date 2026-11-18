@@ -56,11 +56,12 @@ import logging
 import os
 from collections import deque
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Any, ClassVar
 
 from sqlalchemy import select
 
+from precursor.backend.clock import utcnow
 from precursor.backend.config import get_settings
 from precursor.backend.db import SessionLocal
 from precursor.backend.models import (
@@ -686,7 +687,7 @@ class AgentManager:
         settings = get_settings()
         base = max(1, settings.agents_retry_backoff_seconds)
         delay = base * (2**retry_count)
-        return datetime.now(UTC) + timedelta(seconds=delay)
+        return utcnow() + timedelta(seconds=delay)
 
     async def _advance_workflows(self, run_id: int) -> None:
         """Advance the workflow this run belongs to, if any.

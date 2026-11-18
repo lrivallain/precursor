@@ -11,13 +11,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from precursor.backend.clock import utcnow
 from precursor.backend.config import Settings, get_settings
 from precursor.backend.db import get_session
 from precursor.backend.models import AppSetting
@@ -628,7 +628,7 @@ async def workiq_auth_diagnostics(
     settings = get_settings()
     manager = get_mcp_client_manager()
     enabled = await _load_enabled(session)
-    now = datetime.now(UTC)
+    now = utcnow()
 
     credentials: list[dict[str, Any]] = []
     for profile in await active_profiles():

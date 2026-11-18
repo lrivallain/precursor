@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import UTC, datetime
 from typing import Any
 
 import yaml
@@ -30,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from precursor import __version__
+from precursor.backend.clock import utcnow
 from precursor.backend.models import AgentSession, Workflow, WorkflowStep
 from precursor.backend.models.agent_schedule import AgentSchedule
 from precursor.backend.models.recurrence import RecurrenceMixin
@@ -170,7 +170,7 @@ def _header(kind: str) -> dict[str, Any]:
         "format": TRANSFER_FORMAT_VERSION,
         "kind": kind,
         "exported_by": f"Precursor {__version__}",
-        "exported_at": datetime.now(UTC).isoformat(timespec="seconds"),
+        "exported_at": utcnow().isoformat(timespec="seconds"),
     }
 
 

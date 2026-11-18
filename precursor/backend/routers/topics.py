@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from precursor.backend.clock import utcnow
 from precursor.backend.db import get_session
 from precursor.backend.lookups import get_or_404
 from precursor.backend.models import Message, MessageRole, Topic, TopicSchedule
@@ -380,7 +381,7 @@ async def mark_topic_read(
 ) -> None:
     """Stamp the topic's last_read_at to now, clearing the unread badge."""
     topic = await get_or_404(session, Topic, topic_id, "Topic not found")
-    topic.last_read_at = datetime.now(UTC)
+    topic.last_read_at = utcnow()
     await session.commit()
     # Let other tabs clear this topic's badge/counter in real time.
     await publish_read_changed(topic_id=topic_id)
@@ -399,7 +400,7 @@ async def mark_topic_unread(
         .order_by(Message.created_at.desc())
         .limit(1)
     )
-    topic.last_read_at = (latest or datetime.now(UTC)) - timedelta(microseconds=1)
+    topic.last_read_at = (latest or utcnow()) - timedelta(microseconds=1)
     await session.commit()
     await publish_read_changed(topic_id=topic_id)
 
@@ -413,7 +414,7 @@ async def archive_topic(
     """Archive a topic; ``side_chats_too`` archives its open side chats with it."""
     topic = await get_or_404(session, Topic, topic_id, "Topic not found")
     if topic.archived_at is None:
-        topic.archived_at = datetime.now(UTC)
+        topic.archived_at = utcnow()
         archived_chats = (
             await side_chats.archive_with_topic(session, topic_id, topic.archived_at)
             if side_chats_too
@@ -451,10 +452,6 @@ async def unarchive_topic(
 # prompt to send each run + the cadence (see services/scheduler.py). A topic is
 # "scheduled" simply when it has an enabled schedule — there is no special topic
 # kind. These endpoints mirror the agent schedule surface.
-
-
-def _now() -> datetime:
-    return datetime.now(UTC)
 
 
 async def _require_topic(session: AsyncSession, topic_id: int) -> Topic:
@@ -506,7 +503,7 @@ async def create_topic_schedule(
     # Seeds the primary columns + extra_rules from the resolved rule set, so a
     # legacy flat payload and a multi-rule one land the same way.
     schedule.set_recurrence_rules(payload.resolved_rules() or [])
-    schedule.next_run_at = schedule.next_run_after(_now()) if payload.enabled else None
+    schedule.next_run_at = schedule.next_run_after(utcnow()) if payload.enabled else None
     session.add(schedule)
     await session.commit()
     await session.refresh(schedule)
@@ -538,12 +535,12 @@ async def update_topic_schedule(
     if rules is not None:
         schedule.set_recurrence_rules(rules)
         if schedule.enabled:
-            schedule.next_run_at = schedule.next_run_after(_now())
+            schedule.next_run_at = schedule.next_run_after(utcnow())
 
     if "enabled" in data and data["enabled"] is not None:
         schedule.enabled = data["enabled"]
         if schedule.enabled and schedule.next_run_at is None:
-            schedule.next_run_at = schedule.next_run_after(_now())
+            schedule.next_run_at = schedule.next_run_after(utcnow())
         if not schedule.enabled:
             schedule.next_run_at = None
 
@@ -566,7 +563,7 @@ async def run_topic_schedule_now(
         .where(TopicSchedule.topic_id == topic_id)
         .values(
             enabled=True,
-            next_run_at=_now(),
+            next_run_at=utcnow(),
             status="idle",
             lease_until=None,
             last_error=None,
