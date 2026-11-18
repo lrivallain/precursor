@@ -1,4 +1,4 @@
-import { Palette, MessageSquare, Cpu, Plug, Puzzle, Radio, Sparkles, Drama, Brain, SlidersHorizontal, Workflow as WorkflowIcon, FileCode2, Mic, BarChart3, Bot, HardDriveDownload, Layers, ListOrdered, RefreshCw } from "lucide-react";
+import { Palette, MessageSquare, Cpu, Plug, Puzzle, Radio, Sparkles, Drama, Brain, SlidersHorizontal, Workflow as WorkflowIcon, FileCode2, Mic, BarChart3, Bot, HardDriveDownload, Layers, ListOrdered, RefreshCw, ShieldCheck } from "lucide-react";
 import { GithubIcon as Github } from "../icons/GithubIcon";
 import { type FontChoice } from "../../lib/font";
 
@@ -38,6 +38,7 @@ export type CoreCategory =
   | "stats"
   | "backup"
   | "updates"
+  | "privacy"
   | "system";
 
 export type SettingsGroup = "App" | "Integrations" | "Extensions" | "Plugins" | "Advanced";
@@ -91,6 +92,7 @@ export const CATEGORIES: ReadonlyArray<CategoryDef> = [
   { id: "stats", label: "Usage stats", icon: BarChart3, group: "Advanced" },
   { id: "backup", label: "Backup", icon: HardDriveDownload, group: "Advanced" },
   { id: "updates", label: "Updates", icon: RefreshCw, group: "Advanced" },
+  { id: "privacy", label: "Privacy", icon: ShieldCheck, group: "Advanced" },
   { id: "system", label: "System", icon: SlidersHorizontal, group: "Advanced" },
 ];
 

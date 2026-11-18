@@ -17,6 +17,15 @@ DEFINITIONS_WORKSPACE_SLUG = "definitions"
 # Slug of the built-in workspace that holds conversation canvases, one folder
 # per conversation (its public id). Reserved the same way.
 CANVAS_WORKSPACE_SLUG = "canvas"
+# The project's Application Insights connection string: write-only, public by
+# design (it can add rows, never read them). The ingestion transformation on the
+# Azure side drops anything that is not a Precursor envelope (docs/telemetry-azure.md).
+DEFAULT_TELEMETRY_CONNECTION_STRING = (
+    "InstrumentationKey=5eb50624-a7ff-4150-8c48-176df85e9f3f;"
+    "IngestionEndpoint=https://swedencentral-0.in.applicationinsights.azure.com/;"
+    "LiveEndpoint=https://swedencentral.livediagnostics.monitor.azure.com/;"
+    "ApplicationId=cbfeff28-5ef1-423e-ad3a-7f91143597c7"
+)
 
 
 def is_source_checkout() -> bool:
@@ -420,6 +429,15 @@ class Settings(BaseSettings):
     # notifies ("prompt" is the old name for it). Only a default, like
     # update_channel.
     update_notify: str = "off"
+
+    # Anonymous usage data (services/telemetry/). Opt-in: nothing is sent until
+    # the user says yes in the app. The connection string is the project's
+    # Application Insights resource; it can only write, so shipping it in the
+    # wheel is expected. Empty disables telemetry for this build, and so does
+    # PRECURSOR_TELEMETRY=off (or DO_NOT_TRACK=1), whatever the user chose.
+    telemetry: str = ""
+    telemetry_connection_string: str = DEFAULT_TELEMETRY_CONNECTION_STRING
+    telemetry_poll_seconds: int = 900
 
     @cached_property
     def logs_dir(self) -> str:

@@ -81,6 +81,7 @@ app (command palette → **Documentation**, About dialog).
 | `transfer` | `/api/transfer` | [YAML export/import](/features/transfer): `GET /workflows/{id}`, `GET /agents/{id}`, `POST /preview`, `POST /import` (`replace` / `create` / `link` per agent) |
 | `definitions` | `/api/definitions` | **WIP** [definition files](/features/definitions) ([details](#definitions)) |
 | `plugins` | `/api/plugins` | [details](#plugins) |
+| `telemetry` | `/api/telemetry` | [anonymous usage data](/features/telemetry): `GET` returns whether it can be sent, the user's answer and a preview of the heartbeat; the choice is saved with `PUT /api/settings` (`telemetry_enabled`, `telemetry_errors_enabled`) |
 | `drawio` | `/api/drawio` | [draw.io editor](/features/workspaces#editing-diagrams): `GET /status`, `POST /install`; the editor itself is served at `/drawio/*` |
 
 **Health and version**: `GET /api/health` (liveness + version), `GET /api/version`,
