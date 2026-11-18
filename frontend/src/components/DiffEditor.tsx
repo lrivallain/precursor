@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { EDITOR_FONT, languageFor, monaco, wrapsLines } from "../lib/monaco";
+import { EDITOR_FONT, languageFor, monaco } from "../lib/monaco";
 
 /**
  * Monaco's diff editor, read-only: `original` (e.g. HEAD) against `modified`
@@ -37,8 +37,8 @@ export function DiffEditor({
       // caller forces inline on phones).
       useInlineViewWhenSpaceIsLimited: false,
       minimap: { enabled: false },
-      // Prose is compared wrapped, as it is edited.
-      wordWrap: wrapsLines(path) ? "on" : "off",
+      // Long lines wrap whatever the language: the panes are narrow.
+      wordWrap: "on",
       diffWordWrap: "inherit",
       scrollBeyondLastLine: false,
       renderOverviewRuler: true,

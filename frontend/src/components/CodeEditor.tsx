@@ -9,7 +9,6 @@ import {
   markConflicted,
   monaco,
   refreshConflictLenses,
-  wrapsLines,
 } from "../lib/monaco";
 import { isDefinitionFile } from "./DefinitionFileIssues";
 import type { LineChange } from "../lib/diffGutter";
@@ -122,7 +121,7 @@ export function CodeEditor({
       minimap: { enabled: false },
       overviewRulerBorder: false,
       scrollBeyondLastLine: false,
-      wordWrap: wrapsLines(path) ? "on" : "off",
+      wordWrap: "on",
       // Hovers and suggestions escape the pane instead of being clipped by it.
       fixedOverflowWidgets: true,
       renderLineHighlight: "line",

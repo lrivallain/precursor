@@ -259,11 +259,6 @@ export function languageFor(path: string): string {
   return LANGUAGES.find(([suffix]) => lower.endsWith(suffix))?.[1] ?? "plaintext";
 }
 
-/** Prose is easier to edit wrapped; code keeps its lines. */
-export function wrapsLines(path: string): boolean {
-  return ["markdown", "restructuredtext", "plaintext"].includes(languageFor(path));
-}
-
 // --- Theme -------------------------------------------------------------------
 
 const THEME = "precursor";
