@@ -357,9 +357,10 @@ changes, server defaults, and any data migrations by hand.
 
 Precursor uses **CalVer** (`YYYY.M.MICRO`). The version is derived from git
 tags by hatch-vcs — **never edit a version literal**; there isn't one. Green changes on
-`main` are released automatically every night; see [RELEASING.md](RELEASING.md). Keep the `[Unreleased]`
-section of [CHANGELOG.md](CHANGELOG.md) up to date in your PR when the change is
-user-facing.
+`main` are released automatically every night; see [RELEASING.md](RELEASING.md). When the change is
+user-facing, add a fragment in [`changelog.d/`](changelog.d/README.md) rather
+than editing [CHANGELOG.md](CHANGELOG.md): parallel PRs then never conflict on
+it.
 
 ## Workflow
 

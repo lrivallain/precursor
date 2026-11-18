@@ -41,8 +41,9 @@ Each scheduled run:
 
 Missed or failed runs lose nothing: the next run takes every commit since the
 last successful release. GitHub Release notes, generated from merged PRs, are
-the per-version history; `CHANGELOG.md` `[Unreleased]` is still kept current in
-PRs but isn't promoted by the release.
+the per-version history; PRs add changelog fragments in `changelog.d/`, folded
+into `CHANGELOG.md` `[Unreleased]` from time to time and not promoted by the
+release.
 
 ```bash
 gh workflow run release.yml --ref main -f dry_run=true   # plan + CI gate only

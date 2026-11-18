@@ -156,7 +156,7 @@
 </head>
 <body>
 <main>
-  <span class="pill status">ADR-0001 · phase 1 implemented · phases 2–4 proposed · 2026-11-18</span>
+  <span class="pill status">ADR-0001 · phases 1–2 implemented · phases 3–4 proposed · 2026-11-18</span>
   <h1>From ask to release: humans decide, agents do the work</h1>
   <p class="lead">A delivery workflow for Precursor where every request becomes an issue, an agent specifies it,
     another builds it, a different one reviews it, and a human makes the call at a few
@@ -190,8 +190,8 @@
       <div class="next"><code>AGENTS.md</code> as the one entry point that every tool reads; ADRs in <code>docs/adr/</code>, starting with this proposal</div></div>
 
     <div class="lh">Skills<small>on demand, by function</small></div>
-    <div class="layer"><div class="now">2 prompts: <code>ship-change</code>, <code>release</code></div>
-      <div class="next">~10 skills by function: triage · spec · ship-change · review · respond-review · docs · changelog · release · ops · diagnose-ci</div></div>
+    <div class="layer"><div class="now">6 skills: triage · spec · ship-change · review · changelog · release</div>
+      <div class="next">Later: respond-review · docs · diagnose-ci</div></div>
 
     <div class="lh">Methods<small>optional</small></div>
     <div class="layer"><div class="now">PR template checklists, docs-impact table</div>
@@ -325,10 +325,10 @@
   <h2 id="rollout">Rollout: earn autonomy in stages</h2>
   <p class="lead">Each phase widens what agents do on their own only after the previous phase's metrics hold.</p>
   <div class="phases">
-    <div class="card phase"><h3>P1 · Observe <span class="pill">~2 wks</span></h3><ul>
+    <div class="card phase"><h3>P1 · Observe <span class="pill">done</span></h3><ul>
       <li>Labels, risk labeler, CODEOWNERS</li><li>Triage agent (comments + labels only)</li><li>Reviewer agent comments on every PR (advisory)</li><li>Docs-impact check comment</li><li>Kill-switch variables</li></ul>
       <div class="exit">Exit when: triage labels are accepted ≥ 80% unchanged, and review findings are rarely noise.</div></div>
-    <div class="card phase"><h3>P2 · Specify &amp; build <span class="pill">~3 wks</span></h3><ul>
+    <div class="card phase"><h3>P2 · Specify &amp; build <span class="pill">done</span></h3><ul>
       <li>Spec agent + <code>status:*</code> machine</li><li>Contributor runs from Claude / Copilot apps, starting at <code>spec-approved</code></li><li>Changelog fragments + changelog agent</li><li>Claiming protocol (<code>runner:*</code>)</li></ul>
       <div class="exit">Exit when: specs need ≤ 1 human edit on average, and no CHANGELOG conflicts remain.</div></div>
     <div class="card phase"><h3>P3 · Hosted &amp; debate <span class="pill">~3 wks</span></h3><ul>
@@ -344,7 +344,7 @@
     <div class="card"><h3 style="color:var(--good)">Already in the repo</h3><ul class="tight">
       <li>Issue forms adding <code>needs-triage</code> (<code>.github/ISSUE_TEMPLATE/</code>)</li>
       <li>PR template with verification + reuse checklist</li>
-      <li><code>ship-change</code> and <code>release</code> agent prompts (<code>.github/prompts/</code>)</li>
+      <li>Skills: <code>triage</code>, <code>spec</code>, <code>ship-change</code>, <code>review</code>, <code>changelog</code>, <code>release</code></li>
       <li>Agent rules: <code>CLAUDE.md</code>, <code>copilot-instructions.md</code>, <code>ARCHITECTURE.md</code></li>
       <li>CI with quality ratchet, API-types freshness, sharded tests</li>
       <li>Autonomous, CI-gated nightly release to PyPI (<code>release.yml</code>) + nightly build</li>
@@ -355,9 +355,9 @@
       <li>Label set (<code>status:*</code>, <code>risk:*</code>, <code>agent:*</code>, <code>runner:*</code>) + <code>actions/labeler</code> path rules</li>
       <li><code>CODEOWNERS</code> and a <code>main</code> ruleset (R1/R2 human review)</li>
       <li>Hosted <code>agent-*.yml</code> workflows that load the same skills</li>
-      <li><code>changelog.d/</code> fragments + assembly step</li>
+      <li><code>changelog.d/</code> fragments + assembly step (done)</li>
       <li><code>RELEASE_HOLD</code> check in <code>release.yml</code> (done)</li>
-      <li>Spec comment template</li>
+      <li>Spec comment template (done)</li>
       <li>Website page <code>contributing/workflow.md</code> updated with the result</li></ul></div>
   </div>
 </main>
@@ -526,7 +526,7 @@ const DECISIONS = [
     ["Always a human", "Safest; the human stays the bottleneck."],
     ["Tiered by risk (R0 auto, R1 click, R2 review)", "Humans spend their attention where risk is.", true],
     ["Agents, after green CI + approval", "Fastest; too early for this repo."]]],
-  ["D7", "Changelog handling", "Parallel agent PRs that all edit <code>[Unreleased]</code> are a constant source of merge conflicts.", [
+  ["D7", "Changelog handling", "Parallel agent PRs that all edit <code>[Unreleased]</code> are a constant source of merge conflicts. Decided and in place: fragments.", [
     ["Keep editing <code>CHANGELOG.md</code> in each PR", "Status quo; conflicts grow with the number of agents."],
     ["Fragments in <code>changelog.d/</code>, assembled by an agent", "No conflicts; one reviewable assembly PR.", true],
     ["Drop it; rely on generated release notes", "Least work, but loses the curated history."]]],
@@ -546,7 +546,7 @@ const DECISIONS = [
   ["D12", "Where are decisions recorded?", "Agents need the <i>why</i> behind the rules, not just the rules.", [
     ["This canvas + an issue", "Lightweight, but agents won't load it."],
     ["ADRs in <code>docs/adr/</code>, ADR-0001 = this workflow", "Short, numbered, linked from AGENTS.md, read by agents when relevant.", true]]],
-  ["D13", "How are roles packaged?", "Each role has to load the same way from Claude, Copilot and hosted runs.", [
+  ["D13", "How are roles packaged?", "Each role has to load the same way from Claude and Copilot. Decided and in place: skills.", [
     ["Prompt files in <code>.github/prompts/</code>", "What exists today; Copilot-centric."],
     ["Agent skills (<code>SKILL.md</code> folders)", "Loaded on demand by both tools. Check each tool's skill-folder support when implementing.", true]]],
 ];

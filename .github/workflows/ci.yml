@@ -65,6 +65,11 @@ jobs:
       - name: API types up to date
         run: uv run --no-sync python scripts/gen_api_types.py --check
 
+      # changelog.d/ fragments (ADR-0001); stdlib only. Lives here because this
+      # job runs on every PR, Markdown-only ones included.
+      - name: Changelog fragments
+        run: python3 scripts/changelog_fragments.py check
+
   # The backend suite is CPU-bound and spread evenly over ~3,000 tests, so the
   # way to cut its wall time is more runners, not more workers per runner.
   # Lint and types run beside the test shards instead of before them.

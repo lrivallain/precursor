@@ -1,6 +1,6 @@
 ---
-mode: agent
-description: Run the autonomous CalVer release pipeline or preview its candidate.
+name: release
+description: Run Precursor's autonomous CalVer release pipeline now, or preview its candidate. Use when asked to release, publish a version, or check what the next release would contain.
 ---
 
 # Release Precursor
@@ -11,6 +11,10 @@ hatch-vcs; there is no version literal or changelog-promotion commit to make.
 Full reference: `RELEASING.md`.
 
 ## Steps
+
+0. If the repository variable `RELEASE_HOLD` is `true`
+   (`gh variable get RELEASE_HOLD`), releases are paused on purpose: say so and
+   stop unless the user asks you to clear it.
 
 1. Preview with `gh workflow run release.yml --ref main -f dry_run=true` and
    inspect that run's summary. It identifies the exact candidate and requires
