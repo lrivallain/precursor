@@ -37,6 +37,11 @@ def _text(value: Any, limit: int = 1500) -> str:
     return github.neutralize(str(value or "").strip(), limit)
 
 
+def _signature(role: str, data: dict[str, Any]) -> str:
+    engine = _text(data.get("engine"), 80).replace("`", "") or "unknown"
+    return f"`{role} · hosted · {engine}`"
+
+
 def triage_labels(data: dict[str, Any]) -> tuple[list[str], list[str]]:
     """Labels to add and to remove, keeping only allowlisted values."""
     add: list[str] = []
@@ -54,7 +59,7 @@ def triage_labels(data: dict[str, Any]) -> tuple[list[str], list[str]]:
 def render_triage(data: dict[str, Any]) -> str:
     proposed = ", ".join(f"`{label}`" for label in triage_labels(data)[0]) or "none"
     lines = [
-        "### Triage · `triage · hosted · claude`",
+        f"### Triage · {_signature('triage', data)}",
         "",
         _text(data.get("summary")),
         "",
@@ -89,7 +94,7 @@ def render_review(data: dict[str, Any]) -> str:
     findings = [f for f in data.get("findings") or [] if f.get("severity") in SEVERITIES]
     findings.sort(key=lambda f: SEVERITIES.index(f["severity"]))
     lines = [
-        f"### Review · `review · hosted · claude` · {verdict}",
+        f"### Review · {_signature('review', data)} · {verdict}",
         "",
         _text(data.get("summary"), 2000),
     ]
@@ -97,6 +102,8 @@ def render_review(data: dict[str, Any]) -> str:
         lines += ["", *[_finding(f) for f in findings[:MAX_FINDINGS]]]
         if len(findings) > MAX_FINDINGS:
             lines.append(f"- …and {len(findings) - MAX_FINDINGS} more")
+    if data.get("truncated") is True:
+        lines += ["", "_The diff was too large for one request: this review is partial._"]
     lines += [
         "",
         "_Advisory (phase 1 of ADR-0001): it neither approves nor blocks. Updated on every push._",

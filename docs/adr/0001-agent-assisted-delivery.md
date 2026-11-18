@@ -30,24 +30,32 @@ app or a GitHub-hosted runner.
    that folder; Claude Code reads it through the `.claude/skills` symlink. Hosted
    workflows point the engine at the same file.
 4. **Separation of duties.** The agent that writes a PR never reviews it; the
-   reviewer is from the other vendor. PRs from `claude/*` branches are reviewed
-   by Copilot code review; all other same-repo PRs by the hosted Claude
-   reviewer. Review loops stop after 3 rounds and escalate to a human.
-5. **Gates scale with risk.** `scripts/agent_pr_classify.py` sets `risk:r0|r1|r2`
+   reviewer is from another vendor. PRs from `claude/*` branches are reviewed
+   by Copilot code review; all other same-repo PRs by the hosted reviewer on
+   GitHub Models (`AGENT_MODEL`, default `openai/gpt-4.1`). Review loops stop
+   after 3 rounds and escalate to a human.
+5. **Autonomous runs use GitHub only.** Hosted agents run on GitHub: Copilot
+   (code review now, the coding agent in phase 3) and GitHub Models, called
+   with the workflow's own `GITHUB_TOKEN` (`models: read`). No external
+   platform, no API key, no secret. Sessions a contributor runs from their own
+   machine (Claude Code, Copilot or anything else) use that contributor's own
+   tooling and accounts; the project asks nothing of them beyond the shared
+   rules and skills.
+6. **Gates scale with risk.** `scripts/agent_pr_classify.py` sets `risk:r0|r1|r2`
    from the changed paths (the highest file wins):
    - **R0** (docs, website, tests, issue templates): may auto-merge (phase 3).
    - **R1** (application code): a human approves the spec and merges.
    - **R2** (workflows, release, migrations, auth, telemetry, agent rules and
      skills, a raise of the quality baseline): a human reviews the diff.
-6. **Untrusted text never gets write access.** Hosted agent jobs are read-only
+7. **Untrusted text never gets write access.** Hosted agent jobs are read-only
    and return JSON validated against a schema. A separate deterministic job
    applies allowlisted labels and posts comments with @-mentions neutralised.
    Workflows that need write access on fork PRs check out the base branch only.
-7. **Kill switches.** The repository variable `AGENTS_PAUSED=true` stops every
+8. **Kill switches.** The repository variable `AGENTS_PAUSED=true` stops every
    hosted agent; `RELEASE_HOLD=true` makes the nightly release skip publishing.
-8. **Changelog fragments** (phase 2) replace direct edits to `[Unreleased]`, which
+9. **Changelog fragments** (phase 2) replace direct edits to `[Unreleased]`, which
    conflict as soon as several agents work in parallel.
-9. **Decisions are recorded as ADRs** in `docs/adr/`, listed in `AGENTS.md`.
+10. **Decisions are recorded as ADRs** in `docs/adr/`, listed in `AGENTS.md`.
 
 ## Rollout
 
@@ -60,9 +68,15 @@ app or a GitHub-hosted runner.
 
 ## Consequences
 
-- Hosted agents need a repository secret, `ANTHROPIC_API_KEY` or
-  `CLAUDE_CODE_OAUTH_TOKEN`. Without one, their workflows skip with a note.
-  Copilot code review is enabled from the repository settings (Rules → Copilot
+- Hosted agents need no secret. On GitHub Models the model has **no tools**:
+  the workflow fetches the issue or diff and passes it as data, which also
+  keeps injected text away from any capability. Reviews only see the diff
+  (cut to `AGENT_MAX_INPUT_CHARS`, 24,000 by default, to fit GitHub Models'
+  per-request input limit) and say when they are partial.
+- GitHub Models' free rate limits apply (a few dozen requests a day on the
+  larger models). A refused call (403 when Models is disabled, 429 when the
+  limit is reached) posts nothing and leaves a warning in the run summary.
+- Copilot code review is enabled from the repository settings (Rules → Copilot
   review), not from a file.
 - With a single maintainer, `CODEOWNERS` review is requested but cannot be made
   *required*: GitHub does not let authors approve their own PRs. Revisit when

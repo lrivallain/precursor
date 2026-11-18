@@ -47,7 +47,9 @@ The full design is [ADR-0001](docs/adr/0001-agent-assisted-delivery.md).
   auth, telemetry, agent rules and skills, a raise of the quality baseline) always get a
   human review of the diff.
 - **Sign your work.** Agent comments start with the role, the runner and the
-  engine, e.g. `review · hosted · claude`.
+  engine, e.g. `review · hosted · github-models · openai/gpt-4.1`.
+- **Hosted runs use GitHub only** (Copilot, GitHub Models with the workflow
+  token). Local sessions use each contributor's own tools and accounts.
 
 ## Never
 

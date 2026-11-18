@@ -34,7 +34,7 @@ for the area, `agent:*` to opt an issue in to a hosted agent.
 | --- | --- | --- |
 | PR risk & docs impact | every PR | sets `risk:r0` (docs, website, tests), `risk:r1` (application code) or `risk:r2` (workflows, release, migrations, auth, telemetry, agent rules and skills, or a raise of the quality baseline) from the changed paths; comments when user-facing code changed without docs |
 | Agent · triage | new issue, or the author answering a `status:needs-info` question | proposes type, surface and risk labels, flags duplicates, asks up to 3 questions. A maintainer accepts with `status:accepted` |
-| Agent · review | PRs from same-repo branches not named `claude/*` | an advisory Claude review: one comment with `blocker` / `should` / `nit` findings, updated on each push. It never approves or blocks |
+| Agent · review | PRs from same-repo branches not named `claude/*` | an advisory review on GitHub Models: one comment with `blocker` / `should` / `nit` findings, updated on each push. It never approves or blocks |
 | Copilot code review | PRs from `claude/*` branches | the other vendor reviews Claude's work, using the same `review` skill |
 
 The roles are skills in `.github/skills/` (`triage`, `review`), so you can run
@@ -47,8 +47,14 @@ the maintainer's review through `CODEOWNERS`.
 
 **Setup and switches** (repository settings):
 
-- Secret `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` for the hosted
-  Claude agents. Without one they skip and say so in the run summary.
+- No secret: hosted agents run on GitHub only. Triage and review call
+  [GitHub Models](https://docs.github.com/en/github-models) with the
+  workflow's own token (`models: read`); the model gets the issue or diff as
+  data and has no tools. Free-tier rate limits apply; a refused call posts
+  nothing and warns in the run summary. Sessions you run locally use your own
+  tools and accounts.
+- Variable `AGENT_MODEL` picks the GitHub Models model (default
+  `openai/gpt-4.1`); `AGENT_MAX_INPUT_CHARS` caps the payload (default 24000).
 - Copilot code review: **Settings → Rules → Rulesets → Automatically request
   Copilot code review** for `main`.
 - Variable `AGENTS_PAUSED=true` stops every hosted agent.
