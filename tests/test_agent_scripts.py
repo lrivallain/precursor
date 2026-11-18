@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -111,3 +112,75 @@ def test_labels_file_defines_every_label_the_workflow_uses() -> None:
     assert {"needs-triage", "status:needs-info", "status:accepted"} <= names
     for label in labels:
         assert len(label["color"]) == 6 and label["description"]
+
+
+# --- model-free issue triage -----------------------------------------------
+
+triage = _load("agent_issue_triage")
+
+FORM_BODY = """### Problem
+
+The panel flickers.
+
+### Surface
+
+Frontend (SPA)
+
+### Logs
+
+_No response_
+"""
+
+
+def test_surface_label_reads_the_issue_form_field() -> None:
+    assert triage.surface_label(FORM_BODY) == "surface:frontend"
+    assert triage.surface_label(FORM_BODY.replace("Frontend (SPA)", "Docs / DX")) == "surface:docs"
+    assert triage.surface_label(FORM_BODY.replace("Frontend (SPA)", "Other / unsure")) is None
+    assert triage.surface_label("Free text, no form.") is None
+
+
+def test_form_field_treats_no_response_as_empty() -> None:
+    assert triage.form_field(FORM_BODY, "Logs") is None
+    assert triage.form_field(FORM_BODY, "Problem") == "The panel flickers."
+
+
+def test_every_form_surface_option_is_mapped() -> None:
+    templates = REPO_ROOT / ".github" / "ISSUE_TEMPLATE"
+    for form in ("bug_report.yml", "feature_request.yml"):
+        text = (templates / form).read_text(encoding="utf-8")
+        block = text.split("id: surface", 1)[1].split("validations:", 1)[0]
+        options = re.findall(r"^\s+- (.+)$", block, re.M)
+        assert options, form
+        for option in options:
+            if option != "Other / unsure":
+                assert option.lower() in triage.SURFACES, (form, option)
+
+
+def test_duplicates_need_most_of_the_title_words() -> None:
+    candidates = [
+        {
+            "number": 334,
+            "title": "Refactor: split services/agents/manager.py (3.5k lines)",
+            "state": "CLOSED",
+        },
+        {"number": 12, "title": "Agents tab layout", "state": "OPEN"},
+        {
+            "number": 480,
+            "title": "refactor(agents): split workflow.py and manager.py",
+            "state": "OPEN",
+        },
+    ]
+    found = triage.duplicates("refactor(agents): split workflow.py and manager.py", 480, candidates)
+    assert [i["number"] for i in found] == [334]
+
+
+def test_duplicates_ignore_short_or_generic_titles() -> None:
+    candidates = [{"number": 1, "title": "Add support for a new feature", "state": "OPEN"}]
+    assert triage.duplicates("Add new feature support", 2, candidates) == []
+    assert triage.duplicates("Crash", 2, [{"number": 1, "title": "Crash", "state": "OPEN"}]) == []
+
+
+def test_triage_comment_lists_duplicates() -> None:
+    body = triage.triage_comment([{"number": 334, "state": "CLOSED"}])
+    assert "- #334 (closed)" in body
+    assert "triage · hosted · deterministic" in body

@@ -1,0 +1,33 @@
+name: Issue triage
+
+# Model-free triage (ADR-0001): sets surface:* from the issue form's "Surface"
+# field and flags possible duplicates by title words. No model, no secret; the
+# issue text is only parsed. Risk, questions and acceptance stay with the
+# `triage` skill and the maintainer. Labels a person set are never changed.
+
+on:
+  issues:
+    types: [opened, edited, reopened]
+
+permissions: {}
+
+concurrency:
+  group: issue-triage-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  triage:
+    name: Triage
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ github.event.issue.number }}
+        run: python3 scripts/agent_issue_triage.py --repo "$GITHUB_REPOSITORY" --issue "$ISSUE"

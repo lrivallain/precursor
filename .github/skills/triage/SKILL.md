@@ -14,7 +14,10 @@ them; describe the request instead.
 
 ## Steps
 
-1. Read the issue and its comments: `gh issue view <n> --comments`.
+1. Read the issue and its comments: `gh issue view <n> --comments`. The
+   Issue triage workflow may already have set a `surface:*` label from the
+   form and listed possible duplicates: start from those, correct them if
+   wrong.
 2. Look for duplicates among open and recently closed issues:
    `gh search issues --repo <owner/repo> "<key words>" --limit 10`
    (or `gh issue list --search ...`). Report a duplicate only when it asks for

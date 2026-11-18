@@ -35,8 +35,9 @@ start yourself use your own tools and accounts.
 | What | When | What it does |
 | --- | --- | --- |
 | PR risk & docs impact (Actions) | every PR | sets `risk:r0` (docs, website, tests), `risk:r1` (application code) or `risk:r2` (workflows, release, migrations, auth, telemetry, agent rules and skills, or a raise of the quality baseline) from the changed paths; comments when user-facing code changed without docs |
+| Issue triage (Actions) | new or edited issue | sets `surface:*` from the form's Surface field and comments when other issues share most of the title's words. No model; it never changes a label a person set |
 | Copilot code review | every PR, once enabled in the ruleset | reviews the diff with the `review` skill; advisory, the merge stays a human decision |
-| `triage` skill (your session) | issues labelled `needs-triage` | ask Claude Code or Copilot to "triage issue 123": it proposes type, surface and risk labels, flags duplicates and asks questions; it labels and comments only once you agree. A maintainer accepts with `status:accepted` |
+| `triage` skill (your session) | issues labelled `needs-triage` | ask Claude Code or Copilot to "triage issue 123": it adds type and risk labels, a summary and questions to what the Issue triage workflow found; it labels and comments only once you agree. A maintainer accepts with `status:accepted` |
 | `review` skill (your session) | any PR | "review PR 456" runs the same rules as Copilot code review |
 
 **Setup and switches** (repository settings):

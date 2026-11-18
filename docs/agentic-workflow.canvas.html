@@ -379,6 +379,7 @@ const STEPS = [
   ["human", 0, "human", "States the need", "Issue form, or “file this” in any Claude / Copilot session."],
   ["local", 0, "agent", "File-issue helper", "Turns a conversation into a structured issue (problem, outcome, surface), searching for duplicates first."],
   ["auto", 0, "auto", "Issue forms", "Add <code>needs-triage</code> + type label.", {exists: true}],
+  ["auto", 1, "auto", "Issue triage (Actions)", "Model-free: <code>surface:*</code> from the form, possible duplicates by title words. No secret.", {exists: true}],
   ["human", 1, "human", "Accept & prioritise", "Sets <code>status:accepted</code>, or overrides the risk class. Maintainers' own R0 asks can be auto-accepted.", {gate: "G1"}],
   ["local", 1, "agent", "Triage skill", "Run from a contributor's session on <code>needs-triage</code> issues. Dedupes, labels type/surface, proposes <code>risk:r0–r2</code>, asks clarifying questions (<code>needs-info</code>), suggests a priority; labels and comments once the human agrees."],
   ["local", 2, "agent", "Spec skill", "Posts a structured spec comment: acceptance criteria, reuse-map hits from ARCHITECTURE.md, files to touch, test plan, docs impact, risk. Splits large asks into sub-issues."],

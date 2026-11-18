@@ -40,8 +40,9 @@ app or a GitHub-hosted runner.
    else that needs a model, triage included, runs in sessions a contributor
    starts from their own machine (Claude Code, Copilot or anything else) with
    their own tooling and accounts; the project asks nothing of them beyond the
-   shared rules and skills. Deterministic automation (labels, risk, docs
-   impact, release) needs no model and stays in Actions.
+   shared rules and skills. Deterministic automation needs no model and stays
+   in Actions: labels, the first pass of triage (surface from the issue form,
+   possible duplicates by title words), risk, docs impact and release.
 6. **Gates scale with risk.** `scripts/agent_pr_classify.py` sets `risk:r0|r1|r2`
    from the changed paths (the highest file wins):
    - **R0** (docs, website, tests, issue templates): may auto-merge (phase 3).
@@ -63,7 +64,7 @@ app or a GitHub-hosted runner.
 
 | Phase | Adds | Exit criterion |
 | --- | --- | --- |
-| **P1 Observe** (done) | labels, risk classifier, docs-impact note, `CODEOWNERS`, `triage` and `review` skills, Copilot code review, release hold | triage labels kept unchanged ≥ 80% of the time; review findings are rarely noise |
+| **P1 Observe** (done) | labels, model-free issue triage, risk classifier, docs-impact note, `CODEOWNERS`, `triage` and `review` skills, Copilot code review, release hold | triage labels kept unchanged ≥ 80% of the time; review findings are rarely noise |
 | P2 Specify & build | spec skill and agent, `status:*` transitions, claiming with `runner:*`, changelog fragments | specs need ≤ 1 human edit on average |
 | P3 Hosted & debate | Copilot coding agent on `agent:build`, contributor ↔ reviewer loop, R0 auto-merge, caps | revert rate ≤ baseline; ≤ 20% of PRs escalate |
 | P4 Close the loop | ops agent (failed runs, flaky tests, telemetry reports → issues), release-notes agent, metrics | steady state |
@@ -75,8 +76,12 @@ app or a GitHub-hosted runner.
   (the endpoint now answers `200 OK` with no completion), which the first live
   test (#503) revealed. Without a secret, no Actions job can call a model, so
   hosted triage was dropped and review moved to Copilot code review.
-- Triage is no longer automatic: an issue waits with `needs-triage` until a
-  contributor's session (or the maintainer) runs the `triage` skill.
+- Triage is split. `issue-triage.yml` does the model-free part on every new
+  issue; type, risk, questions and the summary wait, with `needs-triage`, until
+  a contributor's session (or the maintainer) runs the `triage` skill.
+  Copilot Automations would do the rest natively but are not available on
+  public repositories, and `gh aw` runs without a PAT only for organizations
+  with centralized Copilot billing.
 - Copilot code review uses the account's Copilot plan and its review quota.
 - With a single maintainer, `CODEOWNERS` review is requested but cannot be made
   *required*: GitHub does not let authors approve their own PRs. Revisit when
