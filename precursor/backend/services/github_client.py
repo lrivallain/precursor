@@ -38,11 +38,16 @@ class GitHubInsufficientScopeError(Exception):
         primary = scopes[0]
         # The read-write ``project`` scope is a superset of ``read:project``, so
         # recommending it alone unblocks both reading boards and moving cards.
+        # `gh auth refresh` only touches the CLI's *active* account, which may
+        # not be the one picked in Settings, hence the explicit switch. No
+        # restart: the CLI token cache expires on its own (github_auth.py).
         super().__init__(
             f"GitHub token is missing the '{primary}' scope required for "
-            "Projects. Grant it with `gh auth refresh -h github.com -s project` "
-            "(or add a token with the 'project' scope in Settings), then "
-            "restart Precursor."
+            "Projects. Grant it to the account Precursor uses (Settings → "
+            "GitHub): `gh auth switch -h github.com -u <login>`, then "
+            "`gh auth refresh -h github.com -s project`. Or pick a signed-in "
+            "account that has it, or save a token with the 'project' scope in "
+            "Settings."
         )
         self.required_scopes = scopes
 
