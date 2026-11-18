@@ -1,6 +1,6 @@
 ---
 name: triage
-description: Triage a Precursor GitHub issue - classify its type, surface and risk, look for duplicates, and list the questions the author must answer. Use when asked to triage an issue, or when an issue carries needs-triage.
+description: Triage a Precursor GitHub issue from a local session - classify its type, surface and risk, look for duplicates, and list the questions the author must answer. Use when asked to triage an issue, or when an issue carries needs-triage.
 ---
 
 # Triage an issue
@@ -39,7 +39,12 @@ them; describe the request instead.
 
 ## Output
 
-When you run in a workflow, answer only with the JSON the schema asks for
-(`type`, `surface`, `risk`, `duplicate_of` (0 if none), `needs_info`,
-`questions`, `summary`); a separate step applies it. When you run in a local
-session, show the same fields to the user and apply labels only if they ask.
+Show the user the proposed type, surface and risk labels, a possible
+duplicate, your questions and the summary. Then, only if they agree:
+
+- set the labels: `gh issue edit <n> --add-label "bug,surface:backend,risk:r1"`
+  (add `status:needs-info` when you have questions);
+- post one comment that starts with `### Triage · \`triage · local · <your engine>\``,
+  then the summary, the labels set, the possible duplicate and the questions.
+
+Never set `status:accepted`: that is the maintainer's decision.

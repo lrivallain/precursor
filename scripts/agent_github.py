@@ -1,34 +1,18 @@
-"""GitHub helpers shared by the agent workflows (stdlib only, runs on bare runners).
-
-Agent output is untrusted text: it may echo an issue that was written to steer
-an agent. Everything posted from it goes through ``neutralize`` first, and only
-the deterministic scripts calling these helpers hold a write token.
-"""
+"""GitHub helpers shared by the agent workflows (stdlib only, runs on bare runners)."""
 
 from __future__ import annotations
 
 import json
-import re
 import subprocess
 from typing import Any
 from urllib.parse import quote
 
 BOT_LOGIN = "github-actions[bot]"
-MAX_COMMENT = 6000
-_MENTION = re.compile(r"(?<![\w`/])@(?=[A-Za-z0-9])")
-_HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
 
 
 def marker(key: str) -> str:
     """The hidden tag that marks the one comment a workflow owns on a thread."""
     return f"<!-- precursor-agent:{key} -->"
-
-
-def neutralize(text: str, limit: int = MAX_COMMENT) -> str:
-    """No pings, no hidden markers, bounded length."""
-    text = _HTML_COMMENT.sub("", text)
-    text = _MENTION.sub("@\u200b", text)
-    return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
 def gh(*args: str, stdin: str | None = None) -> str:

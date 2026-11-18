@@ -44,12 +44,14 @@ The full design is [ADR-0001](docs/adr/0001-agent-assisted-delivery.md).
   Claude Code as `.claude/skills/`). Follow the skill when you take on a role.
 - **Risk** is set on every PR from the changed paths by
   `scripts/agent_pr_classify.py`. R2 paths (workflows, release, migrations,
-  auth, telemetry, agent rules and skills, a raise of the quality baseline) always get a
-  human review of the diff.
-- **Sign your work.** Agent comments start with the role, the runner and the
-  engine, e.g. `review · hosted · github-models · openai/gpt-4.1`.
-- **Hosted runs use GitHub only** (Copilot, GitHub Models with the workflow
-  token). Local sessions use each contributor's own tools and accounts.
+  auth, telemetry, agent rules and skills, a raise of the quality baseline)
+  always get a human review of the diff.
+- **Sign your work.** Agent comments start with the role, where it ran and the
+  engine, e.g. `### Triage · \`triage · local · claude-code\``.
+- **No secrets, no external platform for autonomous runs.** Hosted work is
+  limited to GitHub's native Copilot features (code review, later the coding
+  agent). Anything else runs in a contributor's own session, with their own
+  tools and accounts.
 
 ## Never
 
