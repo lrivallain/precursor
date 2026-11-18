@@ -47,9 +47,15 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           AGENT_MODEL: ${{ vars.AGENT_MODEL }}
           PR: ${{ github.event.pull_request.number }}
-        run: >-
-          python3 scripts/agent_infer.py review --repo "$GITHUB_REPOSITORY"
-          --number "$PR" --skill .github/skills/review/SKILL.md
+        # A PR that introduces or renames the agent tooling has nothing on its
+        # base to run: skip with a note rather than review it with its own code.
+        run: |
+          if [ ! -f scripts/agent_infer.py ] || [ ! -f .github/skills/review/SKILL.md ]; then
+            echo "The base branch has no review agent yet: skipped." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          python3 scripts/agent_infer.py review --repo "$GITHUB_REPOSITORY" \
+            --number "$PR" --skill .github/skills/review/SKILL.md
 
   apply:
     name: Post the review comment
