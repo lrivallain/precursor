@@ -44,6 +44,13 @@ the exact per-version history.
 - **Mermaid and SVG previews in Files.** `.mmd` and `.svg` files render in the
   workspace preview and are editable as text.
 
+### Fixed
+
+- **Projects scope hint follows the picked GitHub account.** When a token lacks
+  `read:project`, the message now says to `gh auth switch` to the account
+  picked in Settings → GitHub before `gh auth refresh` (which only changes the
+  active account), and no longer asks for a restart.
+
 ## [2026.11.8] - 2026-11-17
 
 ### Added

@@ -35,7 +35,10 @@ up yet.
 It needs a GitHub token with Projects access (`read:project`, or a fine-grained
 token with Projects read; moving cards needs write access), from **Settings →
 GitHub** or `gh auth login` — see
-[Configuration](/guide/configuration#github-authentication). **Issue
+[Configuration](/guide/configuration#github-authentication). With several
+`gh` logins, the scope must be on the account picked in **Settings → GitHub**:
+`gh auth refresh` only changes the active one, so run
+`gh auth switch -h github.com -u <login>` first. **Issue
 associations** (Settings → GitHub) is the master switch: off, the board's
 endpoints return 403.
 

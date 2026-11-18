@@ -49,3 +49,12 @@ def test_graphql_raises_typed_scope_error() -> None:
             await client.aclose()
 
     asyncio.run(_run())
+
+
+def test_scope_error_hint_targets_the_picked_account() -> None:
+    """`gh auth refresh` acts on the active account only, so the hint switches first."""
+    message = str(GitHubInsufficientScopeError(["read:project"]))
+    assert "'read:project'" in message
+    assert "gh auth switch -h github.com -u <login>" in message
+    assert message.index("gh auth switch") < message.index("gh auth refresh")
+    assert "restart" not in message
