@@ -1,0 +1,104 @@
+name: Agent · triage
+
+# Proposes labels and asks clarifying questions on new issues (ADR-0001, P1).
+# The agent job is read-only and answers in JSON; the apply job is the only one
+# with a write token and accepts allowlisted labels only (scripts/agent_apply.py).
+# Pause every agent with the repository variable AGENTS_PAUSED=true.
+
+on:
+  issues:
+    types: [opened, reopened]
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: Issue number to (re)triage
+        required: true
+        type: number
+
+permissions: {}
+
+concurrency:
+  group: agent-triage-${{ github.event.issue.number || inputs.issue }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: Check switches and credentials
+    # A comment re-runs triage only when the author answers a needs-info question.
+    if: >-
+      vars.AGENTS_PAUSED != 'true' && (
+        github.event_name != 'issue_comment' || (
+          !github.event.issue.pull_request &&
+          contains(github.event.issue.labels.*.name, 'status:needs-info') &&
+          github.event.comment.user.login == github.event.issue.user.login))
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      ready: ${{ steps.check.outputs.ready }}
+    steps:
+      - id: check
+        env:
+          HAS_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' || secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+        run: |
+          if [ "$HAS_KEY" = "true" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN secret: triage skipped." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  triage:
+    name: Triage (read-only agent)
+    needs: gate
+    if: needs.gate.outputs.ready == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: read
+    outputs:
+      result: ${{ steps.agent.outputs.structured_output }}
+    steps:
+      # Default branch: the skill and the rules come from main, never from the issue.
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - id: agent
+        uses: anthropics/claude-code-action@v1
+        env:
+          GH_TOKEN: ${{ github.token }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ github.token }}
+          # Anyone may open an issue; the token above is read-only, so the
+          # worst an injected issue can do is skew the JSON that apply validates.
+          allowed_non_write_users: "*"
+          prompt: |
+            Use the triage skill in .github/skills/triage/SKILL.md on issue
+            #${{ github.event.issue.number || inputs.issue }} of ${{ github.repository }}.
+          claude_args: |
+            --max-turns 15
+            --allowedTools "Read,Grep,Glob,Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh search issues:*)"
+            --json-schema '{"type":"object","properties":{"type":{"type":"string","enum":["bug","enhancement","question","documentation","dev-experience"]},"surface":{"type":"array","items":{"type":"string","enum":["backend","frontend","github","mcp","plugins","docs"]}},"risk":{"type":"string","enum":["r0","r1","r2"]},"duplicate_of":{"type":"integer"},"needs_info":{"type":"boolean"},"questions":{"type":"array","items":{"type":"string"},"maxItems":3},"summary":{"type":"string"}},"required":["type","surface","risk","duplicate_of","needs_info","questions","summary"]}'
+
+  apply:
+    name: Apply labels and comment
+    needs: triage
+    if: needs.triage.outputs.result != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          AGENT_OUTPUT: ${{ needs.triage.outputs.result }}
+          ISSUE: ${{ github.event.issue.number || inputs.issue }}
+        run: python3 scripts/agent_apply.py triage --repo "$GITHUB_REPOSITORY" --number "$ISSUE"

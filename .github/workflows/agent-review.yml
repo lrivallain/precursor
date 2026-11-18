@@ -1,0 +1,108 @@
+name: Agent · review
+
+# Advisory cross-vendor review (ADR-0001, P1). PRs from claude/* branches are
+# reviewed by Copilot code review (enabled in the repository rules, reading
+# .github/skills/review); every other same-repo PR gets this Claude review.
+# The agent job is read-only and answers in JSON; the apply job posts it as
+# one comment, updated on each push. Pause with AGENTS_PAUSED=true.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions: {}
+
+concurrency:
+  group: agent-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: Check switches and credentials
+    # Fork PRs get no secrets; Claude-authored PRs go to the other vendor.
+    if: >-
+      vars.AGENTS_PAUSED != 'true' &&
+      !github.event.pull_request.draft &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      !startsWith(github.head_ref, 'claude/') &&
+      github.event.pull_request.user.login != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      ready: ${{ steps.check.outputs.ready }}
+    steps:
+      - id: check
+        env:
+          HAS_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' || secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+        run: |
+          if [ "$HAS_KEY" = "true" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN secret: review skipped." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  review:
+    name: Review (read-only agent)
+    needs: gate
+    if: needs.gate.outputs.ready == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+    outputs:
+      result: ${{ steps.agent.outputs.structured_output }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # The review rules come from the base branch, so a PR cannot soften its own review.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .agent-base
+          persist-credentials: false
+          sparse-checkout: |
+            .github/skills
+            AGENTS.md
+
+      - id: agent
+        uses: anthropics/claude-code-action@v1
+        env:
+          GH_TOKEN: ${{ github.token }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ github.token }}
+          prompt: |
+            Use the review skill in .agent-base/.github/skills/review/SKILL.md
+            (rules: .agent-base/AGENTS.md) on pull request
+            #${{ github.event.pull_request.number }} of ${{ github.repository }}.
+            The PR's code is checked out in the working directory.
+          claude_args: |
+            --max-turns 30
+            --allowedTools "Read,Grep,Glob,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh issue view:*)"
+            --json-schema '{"type":"object","properties":{"verdict":{"type":"string","enum":["looks-good","concerns","blocking"]},"summary":{"type":"string"},"findings":{"type":"array","items":{"type":"object","properties":{"severity":{"type":"string","enum":["blocker","should","nit"]},"path":{"type":"string"},"line":{"type":"integer"},"title":{"type":"string"},"detail":{"type":"string"}},"required":["severity","path","title","detail"]}}},"required":["verdict","summary","findings"]}'
+
+  apply:
+    name: Post the review comment
+    needs: review
+    if: needs.review.outputs.result != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      # Base branch: the posting script never comes from the PR.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          AGENT_OUTPUT: ${{ needs.review.outputs.result }}
+          PR: ${{ github.event.pull_request.number }}
+        run: python3 scripts/agent_apply.py review --repo "$GITHUB_REPOSITORY" --number "$PR"

@@ -52,6 +52,10 @@ gh workflow run release.yml --ref main                   # release now
 Manual `v<version>` tags run the same gated pipeline; prefer the workflow so the
 counter is chosen for you.
 
+To pause releases, set the repository variable `RELEASE_HOLD=true`
+(**Settings → Secrets and variables → Actions → Variables**). Runs then
+publish nothing and say so in their summary; delete the variable to resume.
+
 ::: warning Recovery
 Runs are serialized and resumable: a reserved tag is finished before newer
 changes ship, and retries reuse the draft's artifacts. Never delete or move a

@@ -370,6 +370,10 @@ user-facing.
 4. Open a PR using the template; reference the issue with `Closes #N` when
    applicable.
 
+Agents work on this repository too: their rules are in [`AGENTS.md`](AGENTS.md)
+and the delivery workflow (labels, risk classes, hosted triage and review) in
+[ADR-0001](docs/adr/0001-agent-assisted-delivery.md).
+
 ## Code style
 
 - **Python**: ruff config in `pyproject.toml` (line length 100, target 3.12).

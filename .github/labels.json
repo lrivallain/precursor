@@ -1,0 +1,112 @@
+[
+  {
+    "name": "needs-triage",
+    "color": "ededed",
+    "description": "New issue, waiting for triage"
+  },
+  {
+    "name": "status:needs-info",
+    "color": "6250d6",
+    "description": "Triage asked the author a question"
+  },
+  {
+    "name": "status:accepted",
+    "color": "6250d6",
+    "description": "G1: a maintainer accepted the issue"
+  },
+  {
+    "name": "status:spec-draft",
+    "color": "6250d6",
+    "description": "A spec is being written on the issue"
+  },
+  {
+    "name": "status:spec-approved",
+    "color": "6250d6",
+    "description": "G2: a maintainer approved the spec"
+  },
+  {
+    "name": "status:in-progress",
+    "color": "6250d6",
+    "description": "Claimed by an agent or a person (see runner:*)"
+  },
+  {
+    "name": "status:in-review",
+    "color": "6250d6",
+    "description": "PR open: CI and review running"
+  },
+  {
+    "name": "status:ready",
+    "color": "6250d6",
+    "description": "Review converged; waiting for the merge decision"
+  },
+  {
+    "name": "status:needs-human",
+    "color": "6250d6",
+    "description": "Agents disagree or hit a limit; a maintainer decides"
+  },
+  {
+    "name": "risk:r0",
+    "color": "0ca30c",
+    "description": "Routine: docs, website, tests, templates"
+  },
+  {
+    "name": "risk:r1",
+    "color": "eda100",
+    "description": "Standard: application code"
+  },
+  {
+    "name": "risk:r2",
+    "color": "e34948",
+    "description": "Sensitive: workflows, release, migrations, auth, telemetry, agent rules"
+  },
+  {
+    "name": "agent:build",
+    "color": "eb6834",
+    "description": "Maintainer opt-in: a hosted agent may implement this"
+  },
+  {
+    "name": "agent:docs",
+    "color": "eb6834",
+    "description": "Maintainer opt-in: a hosted agent may write the docs"
+  },
+  {
+    "name": "runner:local",
+    "color": "f6c3ad",
+    "description": "Claimed by an agent in a local app (Claude / Copilot)"
+  },
+  {
+    "name": "runner:hosted",
+    "color": "f6c3ad",
+    "description": "Claimed by a GitHub-hosted agent"
+  },
+  {
+    "name": "surface:backend",
+    "color": "9ec5f4",
+    "description": "Backend (API, streaming, services)"
+  },
+  {
+    "name": "surface:frontend",
+    "color": "9ec5f4",
+    "description": "Frontend (SPA)"
+  },
+  {
+    "name": "surface:github",
+    "color": "9ec5f4",
+    "description": "GitHub integration"
+  },
+  {
+    "name": "surface:mcp",
+    "color": "9ec5f4",
+    "description": "MCP client and servers"
+  },
+  {
+    "name": "surface:plugins",
+    "color": "9ec5f4",
+    "description": "Plugins"
+  },
+  {
+    "name": "surface:docs",
+    "color": "9ec5f4",
+    "description": "Docs and developer experience"
+  }
+]
