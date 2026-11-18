@@ -26,6 +26,7 @@ from typing import Any
 from sqlalchemy import or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from precursor.backend.clock import utcnow
 from precursor.backend.db import SessionLocal
 from precursor.backend.models import (
     AgentSession,
@@ -464,7 +465,7 @@ async def retrieve(
         live_containers = await _containers(session, wanted)
         result.pending = await indexer.status_pending(session)
 
-    now = datetime.now(UTC)
+    now = utcnow()
     best: dict[tuple[str, int], tuple[float, IQChunk, bool]] = {}
     for cid, score in fused.items():
         chunk = chunks.get(cid)

@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from precursor.backend.clock import utcnow
 from precursor.backend.config import Settings, get_settings
 from precursor.backend.db import SessionLocal, get_session
 from precursor.backend.lookups import get_or_404
@@ -70,7 +71,7 @@ def _is_fresh(cache: IssueContextCache, ttl_minutes: int) -> bool:
     fetched = cache.fetched_at
     if fetched.tzinfo is None:
         fetched = fetched.replace(tzinfo=UTC)
-    return datetime.now(UTC) - fetched < timedelta(minutes=ttl_minutes)
+    return utcnow() - fetched < timedelta(minutes=ttl_minutes)
 
 
 @router.post("", response_model=IssueSummary)
@@ -175,7 +176,7 @@ async def refresh_issue_context(
     )
     summary_text, model = result.text, result.model
 
-    now = datetime.now(UTC)
+    now = utcnow()
     labels_json = json.dumps(issue.get("labels", []))
 
     # Persist the refreshed context in a fresh session so the write commits

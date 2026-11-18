@@ -8,9 +8,9 @@ runtime.
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from precursor.backend.clock import utcnow
 from precursor.backend.db import SessionLocal
 from precursor.backend.models import (
     AgentRun,
@@ -107,7 +107,7 @@ class RunStore:
                 mcp_servers=agent.mcp_servers,
                 approval_policy=agent.approval_policy,
                 role=agent.role,
-                started_at=datetime.now(UTC),
+                started_at=utcnow(),
             )
             if (source := definition_overlay.provenance(agent)) is not None:
                 run.definition_path, run.definition_hash = source

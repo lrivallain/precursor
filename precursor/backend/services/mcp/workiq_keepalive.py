@@ -35,11 +35,12 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 from mcp.shared.auth import OAuthToken
 
+from precursor.backend.clock import utcnow
 from precursor.backend.config import Settings, get_settings
 from precursor.backend.services.events import publish_mcp_auth_required
 from precursor.backend.services.mcp import auth_trace
@@ -144,7 +145,7 @@ class WorkIQKeepAlive:
         idle_after = self._settings.workiq_keepalive_idle_after_seconds
         idle_seconds = round(seconds_since_use(profile.auth_family))
         expiry = await _stored_token_expiry(tokens, profile)
-        ttl = None if expiry is None else round((expiry - datetime.now(UTC)).total_seconds())
+        ttl = None if expiry is None else round((expiry - utcnow()).total_seconds())
         lead = renewal_lead_seconds(tokens)
         # One line per credential per tick, at DEBUG: the whole reason a session
         # was (or wasn't) kept warm, so a lapse can be read backwards from the
@@ -217,7 +218,7 @@ class WorkIQKeepAlive:
             # Already surfaced this lapse — don't re-probe a dead token each tick.
             return
         expiry = await _stored_token_expiry(tokens, profile)
-        if expiry is None or expiry > datetime.now(UTC):
+        if expiry is None or expiry > utcnow():
             # Unknown expiry (legacy token) or still valid → leave it untouched.
             return
         # Access token has demonstrably expired → probe once to learn whether it
@@ -271,7 +272,7 @@ class WorkIQKeepAlive:
             await self._on_refresh_noop(profile, renewed_expiry)
 
     def _due_for_refresh(self, expiry: datetime, lead: float) -> bool:
-        return (expiry - datetime.now(UTC)).total_seconds() <= lead
+        return (expiry - utcnow()).total_seconds() <= lead
 
     async def _on_refresh_failed(self, profile: WorkIQOAuthProfile) -> None:
         # Feed the client manager's short-circuit verdict either way (even if the

@@ -19,13 +19,14 @@ import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import DateTime, Select, delete, func, literal, or_, select, text, true, update
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from precursor.backend.clock import utcnow
 from precursor.backend.config import get_settings
 from precursor.backend.db import SessionLocal
 from precursor.backend.models import AppSetting, IQChunk, IQDirty
@@ -61,10 +62,6 @@ _EMBED_BACKOFF_SECONDS = 300
 _drain_lock = asyncio.Lock()
 _embed_backoff_until = 0.0
 _lexical_cache: dict[str, str] = {}
-
-
-def _utcnow() -> datetime:
-    return datetime.now(UTC)
 
 
 def _dialect(session: AsyncSession) -> str:
@@ -104,7 +101,7 @@ async def _enqueue_select(session: AsyncSession, kind: str, ids: Select[Any]) ->
     src = select(
         literal(kind),
         sub.c[0],
-        literal(_utcnow(), type_=DateTime(timezone=True)),
+        literal(utcnow(), type_=DateTime(timezone=True)),
     ).where(true())
     stmt = (
         _dirty_insert(_dialect(session))
@@ -125,7 +122,7 @@ async def ensure_index_version() -> bool:
     async with SessionLocal() as session:
         if await _get_json(session, _VERSION_KEY) == IQ_INDEX_VERSION:
             return False
-        started = _utcnow()
+        started = utcnow()
         await enqueue_all(session)
         await _set_json(session, _VERSION_KEY, IQ_INDEX_VERSION)
         # A full queue covers what the first reconcile sweep would re-queue.
@@ -196,7 +193,7 @@ async def _apply(session: AsyncSession, kind: str, sid: int, doc: SourceDoc | No
         .all()
     )
     specs = chunks_for(doc) if doc is not None else []
-    now = _utcnow()
+    now = utcnow()
     for i, spec in enumerate(specs):
         digest = _hash(spec.field, spec.role, spec.heading, spec.text)
         assert doc is not None
@@ -329,7 +326,7 @@ class ReconcileResult:
 
 async def reconcile() -> ReconcileResult:
     """Re-queue rows changed since the last sweep and delete orphaned chunks."""
-    started = _utcnow()
+    started = utcnow()
     async with SessionLocal() as session:
         raw = await _get_json(session, _RECONCILED_KEY)
         since: datetime | None = None
@@ -408,7 +405,7 @@ async def embed_pending(*, batch: int = 64, max_batches: int = 4) -> int:
             if len(result.vectors) != len(rows):
                 logger.warning("Precursor IQ: embeddings response size mismatch; skipping")
                 break
-            now = _utcnow()
+            now = utcnow()
             for (cid, _, _, digest), vector in zip(rows, result.vectors, strict=True):
                 # Guarded on the hash: a chunk rewritten meanwhile must not get
                 # the old text's vector stamped with the current model.

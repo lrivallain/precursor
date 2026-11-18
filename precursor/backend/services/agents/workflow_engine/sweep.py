@@ -5,11 +5,12 @@ workflow's step timeout.
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC
 from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 
+from precursor.backend.clock import utcnow
 from precursor.backend.models.workflow import (
     Workflow,
     WorkflowRunStep,
@@ -44,7 +45,7 @@ async def sweep_stalled_steps(session: AsyncSession, manager: AgentManager) -> i
     stop the run exactly like any other failure. Opt-in per workflow (null
     timeout = no watchdog). Returns how many runs it intervened in.
     """
-    now = datetime.now(UTC)
+    now = utcnow()
     if definition_overlay.files_mode():
         # The timeout is declared by each workflow's (pinned) file, not the
         # column: load the rows so they're projected, and read it from there.

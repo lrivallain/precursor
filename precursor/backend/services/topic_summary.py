@@ -19,7 +19,6 @@ import difflib
 import hashlib
 import json
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import delete, select, update
@@ -452,7 +451,3 @@ def sanitize_summary(raw: str) -> str:
         if lines[-1].strip() == "```":
             text = "\n".join(lines[1:-1]).strip()
     return text
-
-
-def utcnow() -> datetime:
-    return datetime.now(UTC)

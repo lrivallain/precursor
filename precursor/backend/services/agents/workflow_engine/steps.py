@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import func, select
 
+from precursor.backend.clock import utcnow
 from precursor.backend.models.agent_run import AgentRun
 from precursor.backend.models.agent_session import AgentSession
 from precursor.backend.models.workflow import (
@@ -62,7 +63,7 @@ async def _begin_run(
         run_number=workflow.run_count or 1,
         status="running",
         trigger=trigger if trigger in WORKFLOW_RUN_TRIGGERS else "manual",
-        started_at=datetime.now(UTC),
+        started_at=utcnow(),
         input=(run_input.strip()[:8000] or None) if run_input else None,
     )
     if snapshot is not None:
@@ -137,7 +138,7 @@ async def _supersede_open_run_steps(session: AsyncSession, run_id: int, position
     )
     for row in rows:
         row.status = "superseded"
-        row.finished_at = row.started_at or datetime.now(UTC)
+        row.finished_at = row.started_at or utcnow()
 
 
 async def _snapshot_step_overrides(run: AgentRun, workflow: Workflow, step: WorkflowStep) -> None:
@@ -205,7 +206,7 @@ async def _open_agent_run(
         mcp_servers=agent.mcp_servers,
         approval_policy=agent.approval_policy,
         role=agent.role,
-        started_at=datetime.now(UTC),
+        started_at=utcnow(),
     )
     if step is not None:
         await _snapshot_step_overrides(run, workflow, step)
@@ -262,7 +263,7 @@ async def _launch_step(
             attempt=attempt,
             status="running",
             input_context=context,
-            started_at=datetime.now(UTC),
+            started_at=utcnow(),
             # The run starts at zero, so its own counters *are* the attempt's
             # spend — no baseline arithmetic against a shared cumulative total,
             # and no cross-attribution when two workflows share an agent.
@@ -290,7 +291,7 @@ async def _close_run_step(
     attempt is accounted for exactly like the turn it re-runs.
     """
     run_step.status = status
-    run_step.finished_at = datetime.now(UTC)
+    run_step.finished_at = utcnow()
     if output_summary is not None:
         run_step.output_summary = _cap_output_summary(output_summary)
     if gate_verdict is not None:
@@ -385,7 +386,7 @@ async def _finalize_run(
         return
     run.status = status
     if status in ("completed", "failed", "cancelled"):
-        run.finished_at = datetime.now(UTC)
+        run.finished_at = utcnow()
         # The run is over: its pinned file version goes (a retry restores it
         # from the run's snapshot), and steps read the file as it is again.
         definition_overlay.release_pin(workflow.export_id, run_id)
@@ -431,7 +432,7 @@ async def _open_approval_trace(
             attempt=int(prior.scalar() or 0) + 1,
             status="awaiting_approval",
             input_context=step.instructions,
-            started_at=datetime.now(UTC),
+            started_at=utcnow(),
         )
     )
 
@@ -467,7 +468,7 @@ async def _finalize_step_by_position(
     if run_step is None:
         return
     run_step.status = status
-    run_step.finished_at = datetime.now(UTC)
+    run_step.finished_at = utcnow()
     if output_summary is not None:
         run_step.output_summary = _cap_output_summary(output_summary)
 
@@ -574,7 +575,7 @@ async def _complete_run(
 ) -> None:
     """Finish the pipeline: stamp the workflow and run with the final deliverable."""
     workflow.status = "completed"
-    workflow.finished_at = datetime.now(UTC)
+    workflow.finished_at = utcnow()
     workflow.current_step_id = None
     # The final step's *run* holds the deliverable; the agent row only mirrors
     # whichever execution touched it last, which for a shared agent may be
@@ -660,7 +661,7 @@ async def _apply_failure_policy(
         return
 
     workflow.status = "failed"
-    workflow.finished_at = datetime.now(UTC)
+    workflow.finished_at = utcnow()
     workflow.current_step_id = None
     workflow.error = reason[:2000]
     await _finalize_run_step(session, workflow, agent_id, status="failed", output_summary=reason)

@@ -8,7 +8,7 @@ are streamed via the shared event bus (``agent.changed``) and read back through
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
 from precursor.backend import supervisor
+from precursor.backend.clock import utcnow
 from precursor.backend.config import get_settings
 from precursor.backend.db import get_session
 from precursor.backend.lookups import get_or_404
@@ -575,7 +576,7 @@ async def fire_agent_webhook(
     if trigger is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Unknown or disabled trigger")
     agent = await get_or_404(session, AgentSession, trigger.agent_id, "Agent session not found")
-    trigger.last_fired_at = datetime.now(UTC)
+    trigger.last_fired_at = utcnow()
     await session.commit()
     await session.refresh(agent)
     mgr = get_agent_manager()
@@ -898,7 +899,7 @@ async def mark_agent_read(agent_id: str, session: AsyncSession = Depends(get_ses
     published, so marking read never echoes back as an ``agent.changed`` update.
     """
     agent = await _get_or_404(session, agent_id)
-    agent.last_read_at = datetime.now(UTC)
+    agent.last_read_at = utcnow()
     await session.commit()
     # Let other tabs clear this agent's badge/counter in real time.
     await publish_read_changed(agent_session_id=agent.id)
@@ -914,7 +915,7 @@ async def mark_agent_unread(agent_id: str, session: AsyncSession = Depends(get_s
         .order_by(AgentEventRecord.created_at.desc())
         .limit(1)
     )
-    agent.last_read_at = (latest or datetime.now(UTC)) - timedelta(microseconds=1)
+    agent.last_read_at = (latest or utcnow()) - timedelta(microseconds=1)
     await session.commit()
     await publish_read_changed(agent_session_id=agent.id)
 
@@ -1160,7 +1161,7 @@ async def archive_agent(
     """Hide the session from the active list (kept for history). Mirrors topics."""
     agent = await _get_or_404(session, agent_id)
     if agent.archived_at is None:
-        agent.archived_at = datetime.now(UTC)
+        agent.archived_at = utcnow()
         await session.commit()
         await session.refresh(agent)
         await publish_agent_changed(
@@ -1202,10 +1203,6 @@ async def delete_agent(agent_id: str, session: AsyncSession = Depends(get_sessio
 # The schedule replays the agent's own ``task_prompt`` — there is no separate
 # prompt — optionally from a fresh context (``clear_context``). The background
 # scheduler executes due rows.
-
-
-def _now() -> datetime:
-    return datetime.now(UTC)
 
 
 async def _get_schedule_or_404(session: AsyncSession, agent_id: int) -> AgentSchedule:
@@ -1252,7 +1249,7 @@ async def create_agent_schedule(
     # Seeds the primary columns + extra_rules from the resolved rule set, so a
     # legacy flat payload and a multi-rule one land the same way.
     schedule.set_recurrence_rules(payload.resolved_rules() or [])
-    schedule.next_run_at = schedule.next_run_after(_now()) if payload.enabled else None
+    schedule.next_run_at = schedule.next_run_after(utcnow()) if payload.enabled else None
     session.add(schedule)
     await session.commit()
     await session.refresh(schedule)
@@ -1283,12 +1280,12 @@ async def update_agent_schedule(
     if rules is not None:
         schedule.set_recurrence_rules(rules)
         if schedule.enabled:
-            schedule.next_run_at = schedule.next_run_after(_now())
+            schedule.next_run_at = schedule.next_run_after(utcnow())
 
     if "enabled" in data and data["enabled"] is not None:
         schedule.enabled = data["enabled"]
         if schedule.enabled and schedule.next_run_at is None:
-            schedule.next_run_at = schedule.next_run_after(_now())
+            schedule.next_run_at = schedule.next_run_after(utcnow())
         if not schedule.enabled:
             schedule.next_run_at = None
 
@@ -1314,7 +1311,7 @@ async def run_agent_schedule_now(
         .where(AgentSchedule.agent_session_id == agent.id)
         .values(
             enabled=True,
-            next_run_at=_now(),
+            next_run_at=utcnow(),
             status="idle",
             lease_until=None,
             last_error=None,

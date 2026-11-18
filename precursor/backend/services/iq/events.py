@@ -12,13 +12,13 @@ reconcile sweep in ``indexer`` catches those.
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import DateTime, bindparam, event, inspect, text
 from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 
+from precursor.backend.clock import utcnow
 from precursor.backend.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -65,7 +65,7 @@ def _after_flush(session: Session, _flush_context: Any) -> None:
     conn = session.connection()
     if not _ready(conn):
         return
-    now = datetime.now(UTC)
+    now = utcnow()
     # A savepoint keeps a queue hiccup from poisoning the writer's transaction
     # (Postgres aborts the whole transaction on any failed statement).
     try:

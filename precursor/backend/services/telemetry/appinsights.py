@@ -10,10 +10,11 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import Any
 
 import httpx
+
+from precursor.backend.clock import utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +51,7 @@ def parse_connection_string(raw: str) -> Target | None:
 
 
 def _now() -> str:
-    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+    return utcnow().strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
 
 def envelope(

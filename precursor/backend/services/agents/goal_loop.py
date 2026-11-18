@@ -10,9 +10,10 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, timedelta
 from typing import TYPE_CHECKING, Any
 
+from precursor.backend.clock import utcnow
 from precursor.backend.db import SessionLocal
 from precursor.backend.models import (
     AgentRun,
@@ -131,7 +132,7 @@ class GoalLoop:
             patch["active_prompt"] = None
             patch["progress"] = 100
             patch["step_count"] = 0
-            patch["finished_at"] = datetime.now(UTC)
+            patch["finished_at"] = utcnow()
             if live is not None:
                 live.stall_count = 0
             # Auto-capture the outcome as a result artifact so downstream agents
@@ -275,7 +276,7 @@ class GoalLoop:
         answer = (live.pending_answer or run.result_summary or "").strip() or "Agent task finished."
         live.pending_answer = None
         answer, suggestions = split_suggestions(answer)
-        now = datetime.now(UTC)
+        now = utcnow()
         # Keep the posted messages strictly newer than any last_read_at we pin,
         # so the unread badge lights up reliably (mirrors the reminder ticker).
         read_threshold = now - timedelta(seconds=1)

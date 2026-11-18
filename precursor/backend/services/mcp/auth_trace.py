@@ -43,8 +43,9 @@ import time
 import uuid
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from typing import Any, Final
+
+from precursor.backend.clock import utcnow
 
 logger = logging.getLogger("precursor.mcp.auth")
 
@@ -168,7 +169,7 @@ def record(server: str, phase: str, *, level: int = logging.INFO, **detail: Any)
     _seq += 1
     entry = AuthTraceRecord(
         seq=_seq,
-        at=datetime.now(UTC).isoformat(),
+        at=utcnow().isoformat(),
         credential=credential,
         server=server,
         phase=phase,

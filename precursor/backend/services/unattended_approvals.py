@@ -18,6 +18,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from precursor.backend.clock import utcnow
 from precursor.backend.db import SessionLocal
 from precursor.backend.models import Topic
 from precursor.backend.models.tool_approval import APPROVAL_DENIED, APPROVAL_PENDING, ToolApproval
@@ -65,7 +66,7 @@ async def announce_parked(topic_id: int, only_ids: Iterable[int] | None = None) 
     wanted = None if only_ids is None else set(only_ids)
     async with SessionLocal() as session:
         minutes = await timeout_minutes(session, topic_id)
-        deadline = datetime.now(UTC) + timedelta(minutes=minutes) if minutes > 0 else None
+        deadline = utcnow() + timedelta(minutes=minutes) if minutes > 0 else None
         rows = (
             (
                 await session.execute(
@@ -99,7 +100,7 @@ async def expire_overdue(now: datetime | None = None) -> list[int]:
     A topic that is mid-turn is left for the next pass: its parked rows can't be
     settled while a stream is writing the same transcript.
     """
-    moment = now or datetime.now(UTC)
+    moment = now or utcnow()
     async with SessionLocal() as session:
         rows = (
             (

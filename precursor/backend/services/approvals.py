@@ -24,7 +24,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from fastapi import HTTPException, status
@@ -32,6 +32,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute
 
+from precursor.backend.clock import utcnow
 from precursor.backend.models import Chat, Message, MessageRole, Step, StepPlan, Topic
 from precursor.backend.models.approval_rule import (
     RULE_ALLOW,
@@ -442,7 +443,7 @@ async def decide(
     # "Always allow" only makes sense for a real tool; an intent is per-action.
     row.scope = scope if standing else APPROVAL_SCOPE_ONCE
     row.feedback = (feedback or "").strip() or None
-    row.decided_at = datetime.now(UTC)
+    row.decided_at = utcnow()
     await session.commit()
     await session.refresh(row)
     if standing:
@@ -513,7 +514,7 @@ async def abandon_open(session: AsyncSession, kind: ContainerKind, container_id:
     for row in rows:
         if row.status == APPROVAL_PENDING:
             row.status = APPROVAL_CANCELLED
-            row.decided_at = datetime.now(UTC)
+            row.decided_at = utcnow()
         meta = {
             "tool_call_id": row.tool_call_id,
             "name": row.tool_name,

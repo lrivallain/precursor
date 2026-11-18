@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Any, cast
 
 from sqlalchemy import delete, func, select, update
@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute
 from sqlalchemy.sql import ColumnElement
 
+from precursor.backend.clock import utcnow
 from precursor.backend.services.sweep_result import SweepResult
 
 SessionFactory = Callable[[], AbstractAsyncContextManager[AsyncSession]]
@@ -28,7 +29,7 @@ SessionFactory = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 
 def cutoff(retention_days: int) -> datetime:
     """The instant before which rows are expired for a ``retention_days`` window."""
-    return datetime.now(UTC) - timedelta(days=retention_days)
+    return utcnow() - timedelta(days=retention_days)
 
 
 def rowcount(result: Result[Any]) -> int:

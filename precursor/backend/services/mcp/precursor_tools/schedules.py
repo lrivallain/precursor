@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import ValidationError
 from sqlalchemy import func, or_, select
 
+from precursor.backend.clock import utcnow
 from precursor.backend.db import SessionLocal
 from precursor.backend.models import (
     Collection,
@@ -27,7 +28,6 @@ if TYPE_CHECKING:
 from precursor.backend.services.mcp.precursor_tools._core import (
     _GATED,
     _MAX_ROWS,
-    _now,
     _reminder_dict,
     _schedule_dict,
     _section_enabled,
@@ -151,7 +151,7 @@ async def create_schedule(
             status="idle",
         )
         schedule.set_recurrence_rules([rule.to_timing() for rule in rules])
-        schedule.next_run_at = schedule.next_run_after(_now()) if enabled else None
+        schedule.next_run_at = schedule.next_run_after(utcnow()) if enabled else None
         session.add(schedule)
         await session.commit()
         await session.refresh(schedule)
@@ -171,7 +171,7 @@ async def set_schedule_enabled(topic_id: int, enabled: bool) -> dict[str, Any]:
         if s is None:
             return {"error": f"No schedule for topic {topic_id}"}
         s.enabled = enabled
-        s.next_run_at = s.next_run_after(_now()) if enabled else None
+        s.next_run_at = s.next_run_after(utcnow()) if enabled else None
         await session.commit()
         await session.refresh(s)
         result = _schedule_dict(s)
@@ -196,7 +196,7 @@ async def run_schedule_now(topic_id: int) -> dict[str, Any]:
         if s.status == "running":
             return {"error": "Run already in progress"}
         s.enabled = True
-        s.next_run_at = _now()
+        s.next_run_at = utcnow()
         s.status = "idle"
         s.lease_until = None
         s.last_error = None

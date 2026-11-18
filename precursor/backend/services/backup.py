@@ -39,6 +39,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from precursor.backend.clock import utcnow
 from precursor.backend.config import get_settings
 from precursor.backend.db import SessionLocal
 from precursor.backend.services.app_settings import _get_db_value
@@ -259,7 +260,7 @@ def _run_backup_sync(
     if db_file is not None and db_file.exists():
         snap_dir = dest_dir / "db"
         snap_dir.mkdir(parents=True, exist_ok=True)
-        stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+        stamp = utcnow().strftime("%Y%m%d-%H%M%S")
         snapshot = snap_dir / f"precursor-{stamp}.db"
         _vacuum_into(db_file, snapshot)
         _prune_snapshots(snap_dir, retention)
@@ -272,7 +273,7 @@ def _run_backup_sync(
     if definitions_dir is not None and definitions_dir.is_dir():
         defs_out = dest_dir / "definitions"
         defs_out.mkdir(parents=True, exist_ok=True)
-        stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+        stamp = utcnow().strftime("%Y%m%d-%H%M%S")
         archive = defs_out / f"definitions-{stamp}.zip"
         definitions_files = _archive_definitions(definitions_dir, archive)
         _prune_definitions(defs_out, retention)
@@ -300,7 +301,7 @@ async def _record_state(status: str, error: str | None) -> None:
     """Persist last-run state so the UI can show whether backups succeed."""
     from precursor.backend.models import AppSetting
 
-    now = datetime.now(UTC).isoformat()
+    now = utcnow().isoformat()
     payload = {
         _LAST_RUN_KEY: now,
         _LAST_STATUS_KEY: status,
@@ -376,5 +377,5 @@ async def backup_due(session: AsyncSession, interval_seconds: int) -> bool:
         return True
     if last.tzinfo is None:
         last = last.replace(tzinfo=UTC)
-    elapsed = (datetime.now(UTC) - last).total_seconds()
+    elapsed = (utcnow() - last).total_seconds()
     return elapsed >= interval_seconds

@@ -15,13 +15,13 @@ import posixpath
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from fnmatch import fnmatchcase
 from typing import Any, Literal
 
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from precursor.backend.clock import utcnow
 from precursor.backend.models.approval_rule import (
     RULE_ASK,
     RULE_SCOPE_GLOBAL,
@@ -241,5 +241,5 @@ async def touch_rule(rule_id: int) -> None:
         row = await ws.get(ApprovalRule, rule_id)
         if row is not None:
             row.hit_count = (row.hit_count or 0) + 1
-            row.last_used_at = datetime.now(UTC)
+            row.last_used_at = utcnow()
             await ws.commit()

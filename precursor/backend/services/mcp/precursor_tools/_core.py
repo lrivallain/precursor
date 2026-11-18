@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, TypeVar
 from urllib.parse import quote
 
@@ -97,10 +97,6 @@ _GATED = (
 
 # Sections that always honour their toggle, even for Precursor's own agents.
 _STRICT_SECTIONS = frozenset({"workspaces", "workspaces_write"})
-
-
-def _now() -> datetime:
-    return datetime.now(UTC)
 
 
 def _iso(dt: datetime | None) -> str | None:

@@ -10,7 +10,6 @@ referenced agents stay plain, reusable rows any workflow may point at.
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
@@ -18,6 +17,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from precursor.backend.clock import utcnow
 from precursor.backend.db import get_session
 from precursor.backend.models import (
     AgentRun,
@@ -75,10 +75,6 @@ router = APIRouter(prefix="/api/workflows", tags=["workflows"])
 def _cap_default(enabled: bool) -> bool | None:
     """Seed a step's capability override from the configured default."""
     return None if enabled else False
-
-
-def _now() -> datetime:
-    return datetime.now(UTC)
 
 
 # Step-attempt statuses that mean "this position resolved and the run moved on",
@@ -905,7 +901,7 @@ async def archive_workflow(
     workflow_id: int, session: AsyncSession = Depends(get_session)
 ) -> WorkflowRead:
     workflow = await _load(session, workflow_id)
-    workflow.archived_at = _now()
+    workflow.archived_at = utcnow()
     await session.commit()
     await publish_workflow_changed(workflow_id)
     return await _read_one(session, await _load(session, workflow_id))
@@ -943,7 +939,7 @@ async def update_schedule(
         workflow.schedule_enabled = payload.schedule_enabled
 
     if workflow.schedule_enabled and workflow.interval_seconds is not None:
-        workflow.next_run_at = workflow.next_run_after(_now())
+        workflow.next_run_at = workflow.next_run_after(utcnow())
     elif not workflow.schedule_enabled:
         workflow.next_run_at = None
     await session.commit()

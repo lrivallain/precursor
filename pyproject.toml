@@ -202,7 +202,8 @@ line-length = 100
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "DTZ"]
+# DTZ: every datetime is timezone-aware; take "now" from precursor.backend.clock.utcnow().
 # E501: line length handled by the formatter.
 # B008: FastAPI's `Depends()` / `Query()` defaults are the framework idiom.
 ignore = ["E501", "B008"]

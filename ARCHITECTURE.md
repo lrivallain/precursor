@@ -14,6 +14,7 @@ quality ratchet (below) will flag it.
 ```
 precursor/backend/
   main.py            app factory + lifespan (starts/stops background components)
+  clock.py           utcnow(): the one source of "now" (aware UTC)
   config.py          env settings (get_settings); per-user settings live in the DB
   db.py              engine, SessionLocal, get_session
   lookups.py         get_or_404
@@ -44,6 +45,7 @@ scripts/             CI and maintenance scripts (stdlib-only where they run in h
 
 | Need | Reuse | Where |
 | --- | --- | --- |
+| The current time (timezone-aware UTC); ruff's `DTZ` rules reject naive datetimes | `utcnow()` | `clock.py` |
 | Fetch a row by id or return 404 | `get_or_404(session, Model, id, "X not found")` | `lookups.py` |
 | Same, as a route dependency | `get_topic_or_404`, `get_chat_or_404` | `routers/deps.py` |
 | DB session in a route | `Depends(get_session)` | `db.py` |
