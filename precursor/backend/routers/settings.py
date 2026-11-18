@@ -53,7 +53,7 @@ from precursor.backend.services.app_settings import (
     resolve_workiq_tenant_id,
 )
 from precursor.backend.services.backup import resolve_backup_status, run_backup
-from precursor.backend.services.github_auth import github_token_source
+from precursor.backend.services.github_auth import github_token_source, resolve_github_cli_account
 from precursor.backend.services.llm.registry import with_implied_values
 from precursor.backend.services.mcp.precursor_server import (
     http_endpoint_url,
@@ -201,6 +201,7 @@ async def _llm_block(session: AsyncSession, data: dict[str, Any]) -> dict[str, A
     public = with_implied_values(data.get("llm_providers"), public)
     return {
         "github_token_source": await github_token_source(session),
+        "github_cli_account": await resolve_github_cli_account(session),
         "llm_provider": await resolve_llm_provider(session),
         "llm_model_category": await resolve_model_category(session),
         "llm_category_preset": await preview_llm_category_preset(session),

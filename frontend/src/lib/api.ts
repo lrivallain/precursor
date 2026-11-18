@@ -1259,10 +1259,10 @@ export const api = {
   },
 
   me: {
-    // Current user
     get: () => call("GET /api/me"),
     // Copilot AI-credit usage for the persona menu (null when unavailable).
     copilot: () => call("GET /api/me/copilot"),
+    githubAccounts: () => call("GET /api/me/github-accounts"),
   },
 
   meetings: {

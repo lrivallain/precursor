@@ -257,7 +257,8 @@ free port, so development never collides with the installed instance.
 ## Pinning the GitHub account
 
 With several accounts in the GitHub CLI, `gh auth token` follows whichever is
-active. Pin one for the login item:
+active. Pick one in **Settings → GitHub → GitHub account**, or pin a default
+for the login item:
 
 ```bash
 PRECURSOR_GITHUB_CLI_USER=your_login

@@ -131,11 +131,20 @@ grants nothing; the proxy stays in charge of authentication.
 ### Several accounts signed in to `gh`
 
 `gh auth token` returns the *active* account, which can change under an
-instance [started at login](/features/background-app). Pin the login in `.env`:
+instance [started at login](/features/background-app). When several logins are
+signed in, **Settings → GitHub** shows a **GitHub account** picker: the account
+picked there signs every GitHub call, the persona and the GitHub Copilot models.
+Agents mode keeps the Copilot CLI's own sign-in.
+
+To pin a default without the UI, set the login in `.env`; a pick in Settings
+wins over it, and **Default** goes back to it:
 
 ```bash
 PRECURSOR_GITHUB_CLI_USER=your_login
 ```
+
+A personal access token saved in **Settings → GitHub** takes precedence over
+any `gh` account.
 
 ### Which repository issues go to
 

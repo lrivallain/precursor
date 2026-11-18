@@ -132,6 +132,15 @@ async def _merge_llm_providers(session: AsyncSession, data: Settings) -> None:
     invalidate_model_catalog()
 
 
+async def _cli_account_switch(session: AsyncSession, data: Settings) -> None:
+    # Another account means another token, so another entitlement and catalogue.
+    if data.get("github_cli_account") is None:
+        return
+    data["github_cli_account"] = data["github_cli_account"].strip()
+    invalidate_gh_cli_token()
+    invalidate_model_catalog()
+
+
 async def _provider_switch(session: AsyncSession, data: Settings) -> None:
     # Switching provider changes which catalogue is authoritative.
     if "llm_provider" in data:
@@ -163,6 +172,7 @@ _NORMALISERS: tuple[Callable[[AsyncSession, Settings], Awaitable[None]], ...] = 
     _check_iq_providers,
     _merge_api_keys,
     _merge_llm_providers,
+    _cli_account_switch,
     _provider_switch,
     _store_update_prefs,
 )
