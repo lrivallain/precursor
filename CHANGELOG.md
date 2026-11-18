@@ -16,6 +16,13 @@ the exact per-version history.
 
 ### Added
 
+- **Anonymous usage data, opt-in.** A one-time banner asks whether to send a
+  daily heartbeat (version, OS, install type, which features are on, usage in
+  rough buckets) to the project's Application Insights; error reports (the
+  exception type and Precursor's own frames, never the message) are a second
+  switch. Both are off until you say yes, can be changed in **Settings →
+  Privacy**, which previews the exact body, and are disabled by
+  `PRECURSOR_TELEMETRY=off`, `DO_NOT_TRACK=1` and in CI.
 - **Pick the GitHub account in Settings.** With several accounts signed in to
   the `gh` CLI, **Settings → GitHub** lists them and the one you pick signs
   Precursor's GitHub calls, the persona and the GitHub Copilot models, without

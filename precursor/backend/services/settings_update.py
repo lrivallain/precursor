@@ -204,6 +204,13 @@ async def _apply_agent_overrides(session: AsyncSession) -> None:
     await get_agent_manager().apply_session_overrides()
 
 
+async def _nudge_telemetry(session: AsyncSession) -> None:
+    # Sends the first heartbeat now, or forgets the install id on a "no".
+    from precursor.backend.services.telemetry.ticker import get_telemetry_ticker
+
+    await get_telemetry_ticker().nudge()
+
+
 async def _nudge_backup(session: AsyncSession) -> None:
     # The first backup runs now rather than up to a day later; the nudge only
     # runs one if it is actually due.
@@ -288,6 +295,11 @@ _REACTIONS: tuple[_Reaction, ...] = (
         _any_key("backup_enabled", "backup_dir"),
         _nudge_backup,
         "Backup nudge failed after settings update",
+    ),
+    _Reaction(
+        _any_key("telemetry_enabled", "telemetry_errors_enabled"),
+        _nudge_telemetry,
+        "Telemetry nudge failed after settings update",
     ),
     _Reaction(_iq_changed, _nudge_iq, "Precursor IQ nudge failed after settings update"),
     _Reaction(

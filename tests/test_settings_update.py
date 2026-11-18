@@ -17,6 +17,7 @@ from precursor.backend.services.agents.manager import get_agent_manager
 from precursor.backend.services.iq import ticker as iq_ticker
 from precursor.backend.services.mcp import agent365
 from precursor.backend.services.mcp import client as mcp_client
+from precursor.backend.services.telemetry import ticker as telemetry_ticker
 
 
 @pytest.fixture(autouse=True)
@@ -69,6 +70,9 @@ def recorder(monkeypatch: pytest.MonkeyPatch) -> _Recorder:
     monkeypatch.setattr(manager, "apply_session_overrides", rec.hook("agents.overrides"))
     monkeypatch.setattr(backup_ticker.get_backup_ticker(), "nudge", rec.hook("backup.nudge"))
     monkeypatch.setattr(iq_ticker.get_iq_ticker(), "nudge", rec.hook("iq.nudge"))
+    monkeypatch.setattr(
+        telemetry_ticker.get_telemetry_ticker(), "nudge", rec.hook("telemetry.nudge")
+    )
     monkeypatch.setattr(agent365, "configure_agent365_servers", rec.hook("agent365"))
     monkeypatch.setattr(mcp_client, "configure_playwright_server", rec.hook("playwright"))
     mcp = mcp_client.get_mcp_client_manager()
@@ -89,6 +93,8 @@ def recorder(monkeypatch: pytest.MonkeyPatch) -> _Recorder:
         ({"backup_dir": ""}, ["backup.nudge"]),
         ({"iq_embeddings_enabled": True}, ["iq.nudge"]),
         ({"iq_embeddings_enabled": False}, []),
+        ({"telemetry_enabled": True}, ["telemetry.nudge"]),
+        ({"telemetry_errors_enabled": False}, ["telemetry.nudge"]),
         ({"iq_embedding_model": "m"}, ["iq.nudge"]),
         ({"workiq_tenant_id": "tenant"}, ["agent365"]),
         ({"mcp_expose": {"topics": True}}, ["mcp.retire"]),

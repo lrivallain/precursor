@@ -1005,9 +1005,9 @@ export type ModelCategory = string;
 export type ModelCategoryDef = Api.ModelCategoryDef;
 export type ModelCategories = Api.ModelCategories;
 
-// Typed from the API: Azure AI Speech (the key is never echoed) and the tray's update prefs.
-type PickedFields = "azure_speech_endpoint" | "azure_speech_language" | "azure_speech_auth" | "azure_speech_tenant"
-  | "azure_speech_resource_id" | "update_channel" | "update_checks_enabled" | "update_notifications_enabled" | "github_cli_account";
+// Typed from the API: Azure AI Speech (the key is never echoed), the tray's update prefs, usage data, the gh account.
+type PickedFields = "azure_speech_endpoint" | "azure_speech_language" | "azure_speech_auth" | "azure_speech_tenant" | "azure_speech_resource_id"
+  | "update_channel" | "update_checks_enabled" | "update_notifications_enabled" | "telemetry_enabled" | "telemetry_errors_enabled" | "github_cli_account";
 
 export interface Settings extends Pick<Api.SettingsRead, PickedFields | "stt_azure_ready"> {
   theme: "light" | "dark" | "system";

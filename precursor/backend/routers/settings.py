@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import Any
 
@@ -11,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.config import get_settings
 from precursor.backend.db import get_session
-from precursor.backend.models import AppSetting
 from precursor.backend.schemas import SettingsPayload, SettingsRead
 from precursor.backend.schemas.model_fallback import normalize_stored_categories
 from precursor.backend.services import cmd_runner, update_prefs, updates
@@ -71,6 +69,7 @@ from precursor.backend.services.openai_proxy import (
     proxy_base_url,
     rotate_proxy_key,
 )
+from precursor.backend.services.setting_rows import store_setting
 from precursor.backend.services.settings_update import (
     apply_saved_settings,
     normalise_settings_update,
@@ -80,6 +79,7 @@ from precursor.backend.services.speech_settings import (
     resolve_azure_speech_language,
     resolve_speech_config,
 )
+from precursor.backend.services.telemetry import prefs as telemetry_prefs
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -98,15 +98,6 @@ def _clamp_max_tool_rounds(value: Any) -> int:
     if n > MAX_TOOL_ROUNDS_CEILING:
         return MAX_TOOL_ROUNDS_CEILING
     return n
-
-
-async def _upsert(session: AsyncSession, key: str, value: Any) -> None:
-    existing = await session.get(AppSetting, key)
-    encoded = json.dumps(value)
-    if existing is None:
-        session.add(AppSetting(key=key, value=encoded))
-    else:
-        existing.value = encoded
 
 
 def _as_read(
@@ -261,6 +252,14 @@ def _updates_block() -> dict[str, Any]:
     }
 
 
+async def _telemetry_block(session: AsyncSession) -> dict[str, Any]:
+    choice = await telemetry_prefs.load_choice(session)
+    return {
+        "telemetry_enabled": choice.enabled,
+        "telemetry_errors_enabled": choice.errors_enabled,
+    }
+
+
 async def _settings_response(session: AsyncSession) -> SettingsRead:
     data = await _load_all(session)
     system = await resolve_system_settings(session)
@@ -273,6 +272,7 @@ async def _settings_response(session: AsyncSession) -> SettingsRead:
     system.update(await _agents_block(session))
     system.update(await resolve_backup_status(session))
     system.update(_updates_block())
+    system.update(await _telemetry_block(session))
     return _as_read(
         data, system, cmd_runner.docker_available()[0], await resolve_llm_model(session)
     )
@@ -291,7 +291,7 @@ async def update_settings(
     data = payload.model_dump(exclude_unset=True)
     await normalise_settings_update(session, data)
     for key, value in data.items():
-        await _upsert(session, key, value)
+        await store_setting(session, key, value)
     # First switch-on mints the key, so the endpoint is usable straight away.
     if data.get("openai_proxy_enabled"):
         await ensure_proxy_key(session)

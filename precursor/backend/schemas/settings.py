@@ -111,6 +111,10 @@ class SettingsPayload(BaseModel):
     update_channel: UpdateChannel | None = None
     update_checks_enabled: bool | None = None
     update_notifications_enabled: bool | None = None
+    # Anonymous usage data (services/telemetry/): the daily heartbeat, and error
+    # reports on top of it. Saving either records that the user has answered.
+    telemetry_enabled: bool | None = None
+    telemetry_errors_enabled: bool | None = None
     # --- System settings (env default + DB override) ---
     # Prompt budgeting.
     llm_max_input_tokens: int | None = None
@@ -258,6 +262,8 @@ class SettingsRead(BaseModel):
     update_channel: UpdateChannel = "stable"
     update_checks_enabled: bool = True
     update_notifications_enabled: bool = False
+    telemetry_enabled: bool = False
+    telemetry_errors_enabled: bool = False
     # --- System settings (effective: env default with DB override applied) ---
     llm_max_input_tokens: int = 600_000
     llm_max_tool_result_tokens: int = 20_000

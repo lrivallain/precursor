@@ -71,6 +71,7 @@ from precursor.backend.routers import (
     steps,
     stt,
     summary,
+    telemetry,
     topic_summary,
     topics,
     transfer,
@@ -219,6 +220,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from precursor.backend.services.mcp.workiq_keepalive import get_workiq_keepalive
     from precursor.backend.services.reminder_ticker import get_reminder_ticker
     from precursor.backend.services.scheduler import get_scheduler
+    from precursor.backend.services.telemetry.ticker import get_telemetry_ticker
     from precursor.backend.services.tool_result_ticker import get_tool_result_ticker
 
     # Started in order, stopped in the same order. The IQ indexer is shut down
@@ -232,6 +234,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         get_backup_ticker(),
         get_approval_expiry_ticker(),
         get_iq_ticker(),
+        get_telemetry_ticker(),
     ]
     services: list[_Lifecycle] = [get_workiq_keepalive(), get_mcp_warmup(), get_agent_manager()]
     for component in (*pollers, *services):
@@ -469,6 +472,7 @@ def create_app() -> FastAPI:
         search.router,
         iq.router,
         refine.router,
+        telemetry.router,
     ):
         app.include_router(r)
 

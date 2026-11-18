@@ -2233,6 +2233,8 @@ export interface SettingsPayload {
   update_channel?: ("stable" | "nightly") | null;
   update_checks_enabled?: boolean | null;
   update_notifications_enabled?: boolean | null;
+  telemetry_enabled?: boolean | null;
+  telemetry_errors_enabled?: boolean | null;
   llm_max_input_tokens?: number | null;
   llm_max_tool_result_tokens?: number | null;
   llm_tool_result_keep_turns?: number | null;
@@ -2331,6 +2333,8 @@ export interface SettingsRead {
   update_channel: "stable" | "nightly";
   update_checks_enabled: boolean;
   update_notifications_enabled: boolean;
+  telemetry_enabled: boolean;
+  telemetry_errors_enabled: boolean;
   llm_max_input_tokens: number;
   llm_max_tool_result_tokens: number;
   llm_tool_result_keep_turns: number;
@@ -2735,6 +2739,15 @@ export interface TableStat {
   name: string;
   row_count: number;
   size_bytes: number | null;
+}
+
+export interface TelemetryStatus {
+  available: boolean;
+  unavailable_reason: string | null;
+  decided: boolean;
+  enabled: boolean;
+  errors_enabled: boolean;
+  preview: string;
 }
 
 /** The user's answer to one pending approval. */
@@ -5085,6 +5098,9 @@ export interface Operations {
   };
   "GET /api/stt/token": {
     response: SpeechToken;
+  };
+  "GET /api/telemetry": {
+    response: TelemetryStatus;
   };
   "GET /api/topics": {
     query?: {

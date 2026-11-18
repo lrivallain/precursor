@@ -66,6 +66,17 @@ Used by the [background app](/features/background-app) (supervisor, tray, update
 | `PRECURSOR_UPDATE_CHECK_TTL_SECONDS` | `900` | Cache lifetime of an update-check result. |
 | `PRECURSOR_UPDATE_NOTIFY` | `off` | `notify` posts a system notification when a background check finds a build. **Settings → Updates** wins. |
 
+## Anonymous usage data
+
+See [Anonymous usage data](/features/telemetry). Nothing is sent until the user
+opts in from the app; these only turn it off or redirect it.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `PRECURSOR_TELEMETRY` | *(empty)* | `off` sends nothing, whatever the user chose. `DO_NOT_TRACK=1` and `CI=true` do the same. |
+| `PRECURSOR_TELEMETRY_CONNECTION_STRING` | the project's (Sweden Central) | Application Insights connection string the data goes to. Empty disables telemetry. |
+| `PRECURSOR_TELEMETRY_POLL_SECONDS` | `900` | How often queued error reports are sent and the daily heartbeat is checked. |
+
 ### Installer variables
 
 Read by `install.sh` / `install.ps1` (see [Installation](/guide/installation)):

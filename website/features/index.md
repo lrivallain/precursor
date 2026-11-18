@@ -52,6 +52,7 @@ reloads and both navigation styles). Agents and Workflows open on an
 | Feature | What it does |
 | --- | --- |
 | [Background app](/features/background-app) | Login item, menu-bar icon, in-place updates. |
+| [Anonymous usage data](/features/telemetry) | Opt-in daily heartbeat and error reports, previewed before you agree. |
 | [Storage & retention](/features/storage) | Retention sweeps, cleanup cockpit, database compaction. |
 | [Plugins](/features/plugins) | Packages that add sections, tools, settings and routes; see the [catalogue](/plugins/). |
 | [Phone & tablet layout](/features/mobile) | Drawer sidebar and touch layout below 768 px. |

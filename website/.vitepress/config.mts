@@ -143,6 +143,7 @@ export default withMermaid(
             { text: "Keyboard shortcuts", link: "/features/keyboard-shortcuts" },
             { text: "Accessibility", link: "/features/accessibility" },
             { text: "Background app", link: "/features/background-app" },
+            { text: "Anonymous usage data", link: "/features/telemetry" },
             { text: "Plugins", link: "/features/plugins" },
           ],
         },
