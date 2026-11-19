@@ -49,8 +49,7 @@ The full design is [ADR-0001](docs/adr/0001-agent-assisted-delivery.md).
   `Closes #N` → `status:in-review` → merge (maintainer, G3). The Issue status
   workflow moves the labels on assignments and PR events; you only set
   `status:spec-draft` and the claim.
-- **Claim before you work:** assign yourself and add `runner:local`. An issue
-  that is assigned or carries `runner:*` belongs to someone else.
+- **Claim before you work:** see [Working on an issue](#working-on-an-issue).
 - **Changelog:** add a fragment in `changelog.d/`, never edit `CHANGELOG.md`
   in a PR.
 - **Risk** is set on every PR from the changed paths by
@@ -63,6 +62,28 @@ The full design is [ADR-0001](docs/adr/0001-agent-assisted-delivery.md).
   limited to GitHub's native Copilot features (code review, later the coding
   agent). Anything else runs in a contributor's own session, with their own
   tools and accounts.
+
+## Working on an issue
+
+Whoever works on an issue, person or agent, assigns it to themselves **before
+writing any code**, so two people never build the same thing.
+
+1. **Check it is free and cleared.** `gh issue view <n> --json labels,assignees`:
+   - no assignee and no `runner:*` label, otherwise someone else has it: stop
+     and say so;
+   - `status:accepted` or `status:spec-approved`, otherwise the maintainer has
+     not cleared it yet: stop and say so.
+2. **Claim it:** `gh issue edit <n> --add-assignee @me --add-label runner:local`.
+   The Issue status workflow then moves it to `status:in-progress`. Without
+   write access to the repository, comment "I'm working on this" instead and
+   wait for a maintainer to assign you.
+3. **Link the PR** with `Closes #<n>` in its description.
+4. **Release it if you stop** before opening a PR:
+   `gh issue edit <n> --remove-assignee @me --remove-label runner:local`.
+   The issue goes back to `status:accepted` for the next person.
+
+An agent working for someone claims the issue in that person's name (`@me` is
+whoever `gh` is signed in as).
 
 ## Never
 
