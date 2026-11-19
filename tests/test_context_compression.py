@@ -363,7 +363,7 @@ def test_chunks_split_an_oversized_transcript() -> None:
 
 
 async def test_agent_compact_command_calls_the_sdk(monkeypatch) -> None:
-    from copilot.generated.rpc import Trigger
+    from copilot.rpc import Trigger
 
     from precursor.backend.services.agents.manager import AgentManager
 
@@ -406,7 +406,7 @@ async def test_agent_compact_command_calls_the_sdk(monkeypatch) -> None:
 
 
 def test_compaction_events_are_normalised_for_the_timeline() -> None:
-    from copilot.generated.session_events import CompactionTrigger, SessionCompactionCompleteData
+    from copilot.session_events import CompactionTrigger, SessionCompactionCompleteData
 
     from precursor.backend.services.agents.event_normalizer import normalize_event
 

@@ -213,7 +213,7 @@ async def _archived_texts(agent_id: int) -> list[str | None]:
 
 
 def test_prompt_events_carry_their_sdk_id() -> None:
-    from copilot.generated.session_events import UserMessageData
+    from copilot.session_events import UserMessageData
 
     sdk_id = uuid.uuid4()
     envelope = SimpleNamespace(id=sdk_id, data=UserMessageData(content="hello"))

@@ -46,6 +46,7 @@ from precursor.backend.schemas.agent import (
     AgentRewindResult,
     AgentRewindSkippedFile,
 )
+from precursor.backend.services.agents import runtime
 from precursor.backend.services.agents.directives import (
     RESULT_SUMMARY_CAP,
     strip_control_directives,
@@ -116,8 +117,8 @@ def _value(member: Any) -> Any:
 
 def _rpc() -> Any:
     try:
-        from copilot.generated import rpc
-    except ImportError as exc:  # pragma: no cover - depends on the installed SDK
+        rpc = runtime.load_rpc()
+    except (ImportError, RuntimeError) as exc:  # pragma: no cover - depends on the installed SDK
         raise RewindError(
             "Rewind needs github-copilot-sdk 1.0.11 or newer.", status_code=501
         ) from exc

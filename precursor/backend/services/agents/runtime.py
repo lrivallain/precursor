@@ -30,7 +30,7 @@ import os
 import shutil
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 from precursor.backend.config import get_settings
 
@@ -174,11 +174,25 @@ def load_sdk() -> Any:
 
 @lru_cache(maxsize=1)
 def load_rpc() -> Any:
-    """Return ``copilot.generated.rpc`` (permission-decision constructors).
+    """Return the SDK's RPC types module (permission decisions, history requests).
 
-    The ``PermissionDecision*`` classes are *not* re-exported on the top-level
-    ``copilot`` module — they live in this generated RPC module. Centralised here
-    so the manager has one place to reach them.
+    These classes are *not* re-exported on the top-level ``copilot`` module.
+    ``copilot.rpc`` is the public home in 1.0.11+ and the only one in 2.0, where
+    ``copilot.generated`` became private; older 1.x only had the generated path.
     """
     load_sdk()
-    return importlib.import_module("copilot.generated.rpc")
+    try:
+        return importlib.import_module("copilot.rpc")
+    except ImportError:
+        return importlib.import_module("copilot.generated.rpc")
+
+
+# 1.x calls the CLI-backed mode "copilot-cli"; 2.0 renamed it "coding-agent" and
+# made ``mode`` a required argument of ``CopilotClient``.
+_CLIENT_MODES = ("coding-agent", "copilot-cli")
+
+
+def client_mode(sdk: Any) -> str:
+    """The ``CopilotClient`` mode that runs the full coding agent on this SDK."""
+    supported = get_args(getattr(sdk, "CopilotClientMode", None))
+    return next((m for m in _CLIENT_MODES if m in supported), _CLIENT_MODES[-1])
