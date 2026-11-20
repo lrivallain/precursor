@@ -78,7 +78,8 @@ export function useCanvasFrame(
  * Hide a canvas page's own vertical scrollbar while its frame is sized to the
  * content. Otherwise a frame a few pixels short shows the scrollbar, the page
  * rewraps narrower and taller, the frame grows, the scrollbar goes, the page
- * rewraps shorter, and the frame flickers between the two heights.
+ * rewraps shorter, and the frame flickers between the two heights. The page's
+ * own `overflow-y` is put back when the override ends.
  */
 export function useFrameScrollbarHidden(
   frame: RefObject<HTMLIFrameElement | null>,
@@ -86,13 +87,21 @@ export function useFrameScrollbarHidden(
 ): void {
   useEffect(() => {
     const el = frame.current;
-    if (!el) return;
+    if (!hidden || !el) return;
+    let restore: (() => void) | null = null;
     const apply = () => {
-      const root = el.contentDocument?.documentElement;
-      if (root) root.style.overflowY = hidden ? "hidden" : "";
+      const style = el.contentDocument?.documentElement.style;
+      if (!style) return;
+      const value = style.getPropertyValue("overflow-y");
+      const priority = style.getPropertyPriority("overflow-y");
+      style.setProperty("overflow-y", "hidden", "important");
+      restore = () => style.setProperty("overflow-y", value, priority);
     };
     apply();
     el.addEventListener("load", apply);
-    return () => el.removeEventListener("load", apply);
+    return () => {
+      el.removeEventListener("load", apply);
+      restore?.();
+    };
   }, [frame, hidden]);
 }

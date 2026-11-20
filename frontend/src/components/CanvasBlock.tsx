@@ -181,10 +181,15 @@ function CanvasBody(props: CanvasViewProps) {
 function HtmlCanvas({ canvas, version, expanded }: CanvasViewProps) {
   const ref = useRef<HTMLIFrameElement>(null);
   const [height, setHeight] = useState(DEFAULT_FRAME_HEIGHT);
+  // The load the last height came from; a page without the SDK never reports one.
+  const [measured, setMeasured] = useState<number | null>(null);
 
-  useCanvasFrame(ref, canvas, setHeight);
-  // Past the cap the page needs its own scrollbar, and full screen too.
-  useFrameScrollbarHidden(ref, !expanded && height < MAX_FRAME_HEIGHT);
+  useCanvasFrame(ref, canvas, (next) => {
+    setHeight(next);
+    setMeasured(version);
+  });
+  // Unmeasured, past the cap or full screen, the page needs its own scrollbar.
+  useFrameScrollbarHidden(ref, measured === version && !expanded && height < MAX_FRAME_HEIGHT);
 
   return (
     <iframe
