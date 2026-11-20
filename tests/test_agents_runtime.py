@@ -23,6 +23,7 @@ import stat
 import sys
 import types
 from pathlib import Path
+from typing import Literal
 
 import pytest
 
@@ -199,3 +200,54 @@ def test_runtime_env_omits_the_pin_when_unresolved(monkeypatch) -> None:
     monkeypatch.setattr(runtime, "runtime_binary_path", lambda: None)
 
     assert "COPILOT_CLI_PATH" not in manager._runtime_env()
+
+
+# --- Seams that must work on both SDK 1.x and 2.0 (issue #509) -------------
+
+
+@pytest.mark.parametrize(
+    ("modes", "expected"),
+    [
+        (("coding-agent", "empty"), "coding-agent"),  # 2.0 renamed the mode
+        (("copilot-cli", "empty"), "copilot-cli"),  # 1.x
+    ],
+)
+def test_client_mode_follows_the_installed_sdk(modes, expected) -> None:
+    sdk = types.SimpleNamespace(CopilotClientMode=Literal[modes])  # type: ignore[valid-type]
+
+    assert runtime.client_mode(sdk) == expected
+
+
+def test_client_mode_defaults_to_the_v1_name() -> None:
+    """An SDK that predates ``CopilotClientMode`` only knows the CLI mode."""
+    assert runtime.client_mode(types.SimpleNamespace()) == "copilot-cli"
+
+
+@pytest.fixture
+def _fresh_rpc_cache():
+    runtime.load_rpc.cache_clear()
+    runtime._import_sdk.cache_clear()
+    yield
+    runtime.load_rpc.cache_clear()
+    runtime._import_sdk.cache_clear()
+
+
+@pytest.mark.usefixtures("_fresh_rpc_cache")
+def test_load_rpc_prefers_the_public_module(monkeypatch) -> None:
+    """``copilot.generated`` is private in 2.0; ``copilot.rpc`` is its public home."""
+    _fake_sdk(monkeypatch)
+    public = types.ModuleType("copilot.rpc")
+    monkeypatch.setitem(sys.modules, "copilot.rpc", public)
+    monkeypatch.setitem(sys.modules, "copilot.generated.rpc", types.ModuleType("generated"))
+
+    assert runtime.load_rpc() is public
+
+
+@pytest.mark.usefixtures("_fresh_rpc_cache")
+def test_load_rpc_falls_back_on_older_sdks(monkeypatch) -> None:
+    _fake_sdk(monkeypatch)
+    generated = types.ModuleType("copilot.generated.rpc")
+    monkeypatch.setitem(sys.modules, "copilot.rpc", None)
+    monkeypatch.setitem(sys.modules, "copilot.generated.rpc", generated)
+
+    assert runtime.load_rpc() is generated

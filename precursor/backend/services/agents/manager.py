@@ -282,6 +282,7 @@ class AgentManager:
         try:
             sdk = runtime.load_sdk()
             self._client = sdk.CopilotClient(
+                mode=runtime.client_mode(sdk),
                 base_directory=runtime.agents_home_dir(),
                 env=_runtime_env(),
                 log_level=get_settings().log_level,
