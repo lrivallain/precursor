@@ -101,3 +101,14 @@ def test_disk_path_leaves_an_ambiguous_segment_as_given(tmp_path: Path) -> None:
 
     assert fs.disk_path(tmp_path, "NOTES/a.md") == "NOTES/a.md"
     assert fs.disk_path(tmp_path, "Notes/a.md") == "Notes/a.md"
+
+
+def test_list_tree_skips_os_junk_files(tmp_path: Path) -> None:
+    (tmp_path / "notes").mkdir()
+    for name in (".DS_Store", "._a.md", "Thumbs.db", "desktop.ini", "a.md", ".env"):
+        (tmp_path / name).write_text("x", encoding="utf-8")
+        (tmp_path / "notes" / name).write_text("x", encoding="utf-8")
+
+    paths = [node.path for node in fs.list_tree(tmp_path)]
+
+    assert paths == ["notes", ".env", "a.md", "notes/.env", "notes/a.md"]

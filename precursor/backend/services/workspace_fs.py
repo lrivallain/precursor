@@ -20,6 +20,9 @@ class UnsafePathError(ValueError):
 
 # Files we never surface or let the user edit through the API.
 _HIDDEN_TOP = {".git"}
+# Metadata the OS drops into folders (Finder, Explorer); never user content,
+# so the tree leaves it out. Still readable by path, so nothing breaks.
+_OS_JUNK_NAMES = {".DS_Store", "Thumbs.db", "desktop.ini"}
 # Extensions considered text-editable in the UI. Everything else is treated
 # as opaque (listed but not opened for editing).
 TEXT_SUFFIXES = {
@@ -108,10 +111,16 @@ def is_text_file(path: Path) -> bool:
     return path.suffix.lower() in TEXT_SUFFIXES or path.name in TEXT_SUFFIXES
 
 
+def is_os_junk(name: str) -> bool:
+    """True for OS metadata files (``.DS_Store``, AppleDouble ``._*``, ...)."""
+    return name in _OS_JUNK_NAMES or name.startswith("._")
+
+
 def list_tree(root: Path) -> list[FileNode]:
     """Return a flat, sorted list of all files/dirs under ``root``.
 
-    Directories come before files at each level; ``.git`` is skipped.
+    Directories come before files at each level; ``.git`` and OS junk files
+    (see ``is_os_junk``) are skipped.
     Paths are POSIX-style and relative to ``root``.
     """
     root = root.resolve()
@@ -122,7 +131,7 @@ def list_tree(root: Path) -> list[FileNode]:
     for current, dirnames, filenames in root.walk():
         # Prune hidden/system dirs in place so os.walk doesn't descend them.
         dirnames[:] = sorted(d for d in dirnames if d not in _HIDDEN_TOP)
-        filenames = sorted(filenames)
+        filenames = sorted(f for f in filenames if not is_os_junk(f))
         for d in dirnames:
             full = current / d
             nodes.append(
