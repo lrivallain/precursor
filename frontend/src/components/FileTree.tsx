@@ -300,6 +300,7 @@ export function FileTree({
                 isDropHere ? "bg-accent/15 ring-1 ring-inset ring-accent/50" : "hover:bg-surface"
               }`}
               style={indent}
+              data-tooltip={node.label ?? undefined}
               onClick={() => toggle(node.path)}
               {...dragProps(node.path)}
               {...dropProps(node.path)}

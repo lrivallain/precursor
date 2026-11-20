@@ -1149,6 +1149,7 @@ export interface FileNode {
   path: string;
   name: string;
   type: "file" | "dir";
+  label: string | null;
 }
 
 /** Rename/move a file or folder. ``new_path`` is a full relative path. */

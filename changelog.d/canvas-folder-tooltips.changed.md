@@ -1,0 +1,1 @@
+- **Canvas folders show their conversation's name.** In the Canvas workspace's file tree, hovering a conversation folder (named after an id) shows the title of its topic or chat, so a canvas is easier to find.

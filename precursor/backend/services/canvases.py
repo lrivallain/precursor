@@ -20,7 +20,7 @@ import shutil
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,6 +30,9 @@ from precursor.backend.config import CANVAS_WORKSPACE_SLUG, get_settings
 from precursor.backend.models import Chat, Topic, Workspace
 from precursor.backend.services import workspace_fs as fs
 from precursor.backend.services.slugs import slugify
+
+if TYPE_CHECKING:
+    from precursor.backend.schemas.workspace import FileNode
 
 logger = logging.getLogger(__name__)
 
@@ -262,6 +265,31 @@ async def conversation_exists(session: AsyncSession, conversation_id: str) -> bo
         return True
     topic = await session.execute(select(Topic.id).where(Topic.public_id == conversation_id))
     return topic.first() is not None
+
+
+async def label_conversation_folders(session: AsyncSession, nodes: list[FileNode]) -> None:
+    """Label each top-level conversation folder with its conversation's title.
+
+    The folders are named after an id, which tells the user nothing; the label
+    (``Topic: <title>`` / ``Chat: <title>``) is shown when hovering one.
+    """
+    folders = {n.path: n for n in nodes if n.type == "dir" and _CONVERSATION_ID_RE.match(n.path)}
+    for public_id, label in (await conversation_labels(session, list(folders))).items():
+        folders[public_id].label = label
+
+
+async def conversation_labels(session: AsyncSession, ids: list[str]) -> dict[str, str]:
+    """``public_id`` → ``Topic: <title>`` / ``Chat: <title>`` for the ids that exist."""
+    if not ids:
+        return {}
+    labels: dict[str, str] = {}
+    for model, kind in ((Topic, "Topic"), (Chat, "Chat")):
+        rows = await session.execute(
+            select(model.public_id, model.title).where(model.public_id.in_(ids))
+        )
+        for public_id, title in rows:
+            labels[public_id] = f"{kind}: {title}"
+    return labels
 
 
 def canvas_prompt(conversation_id: str) -> str:

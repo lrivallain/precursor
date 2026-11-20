@@ -24,7 +24,8 @@ Each canvas has a header to **reload** it, **download** it, open it in the
 ## How it works
 
 - Canvases are files in a built-in workspace named **Canvas**, one folder per
-  conversation (named after its id), several canvases per conversation. In
+  conversation (named after its id; hover a folder to see its topic or chat's
+  title), several canvases per conversation. In
   **Files** it is listed right after **Definitions**, with its own colour, and
   can't be removed. Browse, edit or preview canvases there; `.mmd` and `.svg`
   files get a rendered preview too.

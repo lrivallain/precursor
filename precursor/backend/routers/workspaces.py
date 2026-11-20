@@ -42,6 +42,7 @@ from precursor.backend.schemas import (
     WorkspaceCreate,
     WorkspaceRead,
 )
+from precursor.backend.services import canvases
 from precursor.backend.services import workspace_fs as fs
 from precursor.backend.services import workspace_git as git
 from precursor.backend.services.definitions import anchors as definition_anchors
@@ -168,7 +169,10 @@ async def list_files(
     workspace_id: int, session: AsyncSession = Depends(get_session)
 ) -> list[FileNode]:
     ws = await _get_workspace(workspace_id, session)
-    return fs.list_tree(browse_root(ws))
+    nodes = fs.list_tree(browse_root(ws))
+    if ws.slug == CANVAS_WORKSPACE_SLUG:
+        await canvases.label_conversation_folders(session, nodes)
+    return nodes
 
 
 @router.get("/{workspace_id}/file", response_model=FileContent)
