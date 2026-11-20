@@ -1,0 +1,1 @@
+- **OS junk files are hidden from the workspace file tree.** `.DS_Store`, AppleDouble `._*` files, `Thumbs.db` and `desktop.ini` no longer show up in the Files section. They are not deleted, and git still sees them unless the workspace's `.gitignore` excludes them.
