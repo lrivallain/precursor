@@ -15,11 +15,12 @@ import {
   CANVAS_WORKSPACE_SLUG,
   canvasFileName,
   canvasRawUrl,
+  MAX_FRAME_HEIGHT,
   type CanvasKind,
   type CanvasRef,
 } from "../lib/canvas";
 import { fetchCanvasSource, saveCanvasSource } from "../lib/canvasApi";
-import { useCanvasFrame } from "../lib/useCanvasFrame";
+import { useCanvasFrame, useFrameScrollbarHidden } from "../lib/useCanvasFrame";
 import { openWorkspaceFile, workspaceFileUrl } from "../lib/workspaceLink";
 import { DrawioEditor } from "./DrawioEditor";
 import { MermaidBlock } from "./MermaidBlock";
@@ -182,6 +183,8 @@ function HtmlCanvas({ canvas, version, expanded }: CanvasViewProps) {
   const [height, setHeight] = useState(DEFAULT_FRAME_HEIGHT);
 
   useCanvasFrame(ref, canvas, setHeight);
+  // Past the cap the page needs its own scrollbar, and full screen too.
+  useFrameScrollbarHidden(ref, !expanded && height < MAX_FRAME_HEIGHT);
 
   return (
     <iframe
