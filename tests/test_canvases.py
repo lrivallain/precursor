@@ -222,3 +222,18 @@ def test_canvas_workspace_is_flagged_and_listed_after_definitions() -> None:
     assert listed[canvas_at]["slug"] == "canvas"
     # Only the definitions workspace may come before it.
     assert all(defs for defs, _ in flags[:canvas_at])
+
+
+async def test_files_label_conversation_folders_with_their_title() -> None:
+    chat = await _chat()
+    canvases.write_canvas(chat.public_id, "sim", "html", "<p>x</p>")
+    orphan = str(uuid.uuid4())
+    canvases.write_canvas(orphan, "gone", "svg", "<svg/>")
+    with TestClient(create_app()) as client:
+        ws = client.get("/api/canvas/workspace").json()
+        nodes = client.get(f"/api/workspaces/{ws['id']}/files").json()
+    by_path = {n["path"]: n for n in nodes}
+    assert by_path[chat.public_id]["label"] == "Chat: Canvas chat"
+    # A folder whose conversation is gone, and the files, keep no label.
+    assert by_path[orphan]["label"] is None
+    assert by_path[f"{chat.public_id}/sim.canvas.html"]["label"] is None

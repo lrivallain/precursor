@@ -47,6 +47,9 @@ class FileNode(BaseModel):
     path: str
     name: str
     type: Literal["file", "dir"]
+    # A display name for the folder, when it stands for something (a canvas
+    # folder is named after its conversation's id; this is its title).
+    label: str | None = None
 
 
 class FileContent(BaseModel):

@@ -1631,11 +1631,7 @@ export type Workspace = Omit<Api.WorkspaceRead, "kind"> & { kind: WorkspaceKind 
 
 export type WorkspaceCreate = Api.WorkspaceCreate;
 
-export interface WorkspaceFileNode {
-  path: string;
-  name: string;
-  type: "file" | "dir";
-}
+export type WorkspaceFileNode = Api.FileNode;
 
 export interface WorkspaceFileContent {
   path: string;
