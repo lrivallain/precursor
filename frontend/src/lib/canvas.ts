@@ -94,3 +94,28 @@ export function fillComposer(text: string, near?: Element | null): boolean {
   box.focus();
   return true;
 }
+
+type InlineStyle = Pick<CSSStyleDeclaration, "getPropertyValue" | "getPropertyPriority" | "setProperty">;
+
+/**
+ * Force `overflow-y: hidden` on a page's root, keeping the page's own value to
+ * put back. Applying again (the same page, or the next one loaded in the frame)
+ * first restores the last page, so the saved value is never the override.
+ */
+export function overflowOverride(): { apply(style: InlineStyle): void; restore(): void } {
+  let restore: (() => void) | null = null;
+  const undo = () => {
+    restore?.();
+    restore = null;
+  };
+  return {
+    apply(style) {
+      undo();
+      const value = style.getPropertyValue("overflow-y");
+      const priority = style.getPropertyPriority("overflow-y");
+      style.setProperty("overflow-y", "hidden", "important");
+      restore = () => style.setProperty("overflow-y", value, priority);
+    },
+    restore: undo,
+  };
+}

@@ -3,6 +3,7 @@ import {
   MAX_FRAME_HEIGHT,
   MIN_FRAME_HEIGHT,
   canvasKind,
+  overflowOverride,
   canvasRawUrl,
   parseCanvasRef,
   readCanvasMessage,
@@ -65,5 +66,51 @@ describe("readCanvasMessage", () => {
     expect(readCanvasMessage("hi")).toBeNull();
     expect(readCanvasMessage({ type: "precursor:canvas-ask", text: "  " })).toBeNull();
     expect(readCanvasMessage({ type: "other", height: 3 })).toBeNull();
+  });
+});
+
+function fakeStyle(value = "", priority = "") {
+  const style = {
+    value,
+    priority,
+    getPropertyValue: () => style.value,
+    getPropertyPriority: () => style.priority,
+    setProperty: (_name: string, v: string | null, p?: string) => {
+      style.value = v ?? "";
+      style.priority = p ?? "";
+    },
+  };
+  return style;
+}
+
+describe("overflowOverride", () => {
+  it("hides the scrollbar and puts the page's own value back", () => {
+    const style = fakeStyle("scroll", "important");
+    const override = overflowOverride();
+    override.apply(style);
+    expect([style.value, style.priority]).toEqual(["hidden", "important"]);
+    override.restore();
+    expect([style.value, style.priority]).toEqual(["scroll", "important"]);
+  });
+
+  it("keeps the original value when applied twice to the same page", () => {
+    // The height can be reported before the frame's load event re-applies.
+    const style = fakeStyle("auto");
+    const override = overflowOverride();
+    override.apply(style);
+    override.apply(style);
+    override.restore();
+    expect([style.value, style.priority]).toEqual(["auto", ""]);
+  });
+
+  it("restores the page it was last applied to", () => {
+    const first = fakeStyle("auto");
+    const second = fakeStyle("");
+    const override = overflowOverride();
+    override.apply(first);
+    override.apply(second);
+    expect(first.value).toBe("auto");
+    override.restore();
+    expect(second.value).toBe("");
   });
 });

@@ -1,6 +1,12 @@
 import { useEffect, useRef, type RefObject } from "react";
 import { call } from "./apiClient";
-import { CANVAS_WORKSPACE_SLUG, fillComposer, readCanvasMessage, type CanvasRef } from "./canvas";
+import {
+  CANVAS_WORKSPACE_SLUG,
+  fillComposer,
+  overflowOverride,
+  readCanvasMessage,
+  type CanvasRef,
+} from "./canvas";
 import type { WsDiscussionRef } from "./routes";
 import { openWorkspaceFile } from "./workspaceLink";
 
@@ -88,20 +94,16 @@ export function useFrameScrollbarHidden(
   useEffect(() => {
     const el = frame.current;
     if (!hidden || !el) return;
-    let restore: (() => void) | null = null;
+    const override = overflowOverride();
     const apply = () => {
       const style = el.contentDocument?.documentElement.style;
-      if (!style) return;
-      const value = style.getPropertyValue("overflow-y");
-      const priority = style.getPropertyPriority("overflow-y");
-      style.setProperty("overflow-y", "hidden", "important");
-      restore = () => style.setProperty("overflow-y", value, priority);
+      if (style) override.apply(style);
     };
     apply();
     el.addEventListener("load", apply);
     return () => {
       el.removeEventListener("load", apply);
-      restore?.();
+      override.restore();
     };
   }, [frame, hidden]);
 }
