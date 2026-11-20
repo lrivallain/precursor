@@ -1,6 +1,12 @@
 import { useEffect, useRef, type RefObject } from "react";
 import { call } from "./apiClient";
-import { CANVAS_WORKSPACE_SLUG, fillComposer, readCanvasMessage, type CanvasRef } from "./canvas";
+import {
+  CANVAS_WORKSPACE_SLUG,
+  fillComposer,
+  overflowOverride,
+  readCanvasMessage,
+  type CanvasRef,
+} from "./canvas";
 import type { WsDiscussionRef } from "./routes";
 import { openWorkspaceFile } from "./workspaceLink";
 
@@ -72,4 +78,22 @@ export function useCanvasFrame(
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
   }, [frame]);
+}
+
+/**
+ * Hide a canvas page's own vertical scrollbar while its frame is sized to the
+ * content. Otherwise a frame a few pixels short shows the scrollbar, the page
+ * rewraps narrower and taller, the frame grows, the scrollbar goes, the page
+ * rewraps shorter, and the frame flickers between the two heights. Pass the
+ * document that reported the height (null to leave it alone): a page the
+ * frame navigates to keeps its scrollbar until it reports its own. The page's
+ * own `overflow-y` is put back when the override ends.
+ */
+export function useFrameScrollbarHidden(doc: Document | null): void {
+  useEffect(() => {
+    if (!doc) return;
+    const override = overflowOverride();
+    override.apply(doc.documentElement.style);
+    return override.restore;
+  }, [doc]);
 }

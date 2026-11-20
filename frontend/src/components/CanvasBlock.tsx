@@ -15,11 +15,12 @@ import {
   CANVAS_WORKSPACE_SLUG,
   canvasFileName,
   canvasRawUrl,
+  MAX_FRAME_HEIGHT,
   type CanvasKind,
   type CanvasRef,
 } from "../lib/canvas";
 import { fetchCanvasSource, saveCanvasSource } from "../lib/canvasApi";
-import { useCanvasFrame } from "../lib/useCanvasFrame";
+import { useCanvasFrame, useFrameScrollbarHidden } from "../lib/useCanvasFrame";
 import { openWorkspaceFile, workspaceFileUrl } from "../lib/workspaceLink";
 import { DrawioEditor } from "./DrawioEditor";
 import { MermaidBlock } from "./MermaidBlock";
@@ -180,8 +181,15 @@ function CanvasBody(props: CanvasViewProps) {
 function HtmlCanvas({ canvas, version, expanded }: CanvasViewProps) {
   const ref = useRef<HTMLIFrameElement>(null);
   const [height, setHeight] = useState(DEFAULT_FRAME_HEIGHT);
+  // The document the height came from; a page without the SDK never reports one.
+  const [measured, setMeasured] = useState<Document | null>(null);
 
-  useCanvasFrame(ref, canvas, setHeight);
+  useCanvasFrame(ref, canvas, (next) => {
+    setHeight(next);
+    setMeasured(ref.current?.contentDocument ?? null);
+  });
+  // Unmeasured, past the cap or full screen, the page needs its own scrollbar.
+  useFrameScrollbarHidden(!expanded && height < MAX_FRAME_HEIGHT ? measured : null);
 
   return (
     <iframe
