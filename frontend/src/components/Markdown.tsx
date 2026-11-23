@@ -254,6 +254,86 @@ function CodeBlock({ children, ...props }: { children?: ReactNode }) {
 }
 
 /**
+ * Renderers that don't depend on the props, defined once: an inline function
+ * is a new component type on every render, so React would remount its subtree
+ * on each streamed token (reloading a canvas iframe, re-running Mermaid).
+ */
+const STABLE_COMPONENTS: Components = {
+  pre({ children: preChildren, ...props }) {
+    const canvas = parseCanvasRef(fenceFromPre(preChildren, "canvas") ?? "");
+    if (canvas) return <CanvasBlock canvas={canvas} />;
+    const mermaid = fenceFromPre(preChildren, "mermaid");
+    if (mermaid) return <MermaidBlock code={mermaid} />;
+    const svg = svgFromPre(preChildren);
+    if (svg) return <SvgBlock code={svg} />;
+    return <CodeBlock {...props}>{preChildren}</CodeBlock>;
+  },
+  a({ href, children: linkChildren, ...props }) {
+    const messageHref = inAppMessageHref(href);
+    const external = isExternalHref(href) && !messageHref;
+    const chatSlug = inAppChatSlug(href);
+    const stepPlanId = inAppStepPlanId(href);
+    return (
+      <a
+        href={href}
+        {...props}
+        {...(external
+          ? { target: "_blank", rel: "noopener noreferrer" }
+          : {})}
+        {...(chatSlug
+          ? {
+              onClick: (e: React.MouseEvent<HTMLAnchorElement>) => {
+                if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+                e.preventDefault();
+                void openChatBySlug(chatSlug).catch(() => {
+                  window.location.assign(href ?? "/chats");
+                });
+              },
+            }
+          : {})}
+        {...(stepPlanId != null
+          ? {
+              onClick: (e: React.MouseEvent<HTMLAnchorElement>) => {
+                if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+                e.preventDefault();
+                openStepPlan(stepPlanId);
+              },
+            }
+          : {})}
+        {...(messageHref
+          ? {
+              onClick: (e: React.MouseEvent<HTMLAnchorElement>) => {
+                if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+                e.preventDefault();
+                navigate(messageHref);
+                window.dispatchEvent(new PopStateEvent("popstate"));
+                window.dispatchEvent(new Event("precursor:message-jump"));
+              },
+            }
+          : {})}
+      >
+        {linkChildren}
+      </a>
+    );
+  },
+  blockquote({ children: quoteChildren, ...props }) {
+    const text = flattenText(quoteChildren);
+    if (!WARNING_MARKER.test(text)) {
+      return <blockquote {...props}>{quoteChildren}</blockquote>;
+    }
+    const body = stripWarningMarker(quoteChildren);
+    return (
+      <div data-callout="warning" className="my-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-amber-900 dark:text-amber-200">
+        <div className="flex items-start gap-2">
+          <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+          <div className="min-w-0 [&>:last-child]:mb-0">{body}</div>
+        </div>
+      </div>
+    );
+  },
+};
+
+/**
  * Single markdown renderer shared across the app so plugin config and styling
  * stay consistent. GFM (tables, task lists, strikethrough, autolinks) plus
  * syntax highlighting. Visual styling lives in the `.markdown` CSS class.
@@ -300,81 +380,7 @@ export const Markdown = memo(function Markdown({
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={rehypePlugins}
-        components={{
-          li: onTaskChange ? TaskListItem : "li",
-          pre({ children: preChildren, ...props }) {
-            const canvas = parseCanvasRef(fenceFromPre(preChildren, "canvas") ?? "");
-            if (canvas) return <CanvasBlock canvas={canvas} />;
-            const mermaid = fenceFromPre(preChildren, "mermaid");
-            if (mermaid) return <MermaidBlock code={mermaid} />;
-            const svg = svgFromPre(preChildren);
-            if (svg) return <SvgBlock code={svg} />;
-            return <CodeBlock {...props}>{preChildren}</CodeBlock>;
-          },
-          a({ href, children: linkChildren, ...props }) {
-            const messageHref = inAppMessageHref(href);
-            const external = isExternalHref(href) && !messageHref;
-            const chatSlug = inAppChatSlug(href);
-            const stepPlanId = inAppStepPlanId(href);
-            return (
-              <a
-                href={href}
-                {...props}
-                {...(external
-                  ? { target: "_blank", rel: "noopener noreferrer" }
-                  : {})}
-                {...(chatSlug
-                  ? {
-                      onClick: (e: React.MouseEvent<HTMLAnchorElement>) => {
-                        if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
-                        e.preventDefault();
-                        void openChatBySlug(chatSlug).catch(() => {
-                          window.location.assign(href ?? "/chats");
-                        });
-                      },
-                    }
-                  : {})}
-                {...(stepPlanId != null
-                  ? {
-                      onClick: (e: React.MouseEvent<HTMLAnchorElement>) => {
-                        if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
-                        e.preventDefault();
-                        openStepPlan(stepPlanId);
-                      },
-                    }
-                  : {})}
-                {...(messageHref
-                  ? {
-                      onClick: (e: React.MouseEvent<HTMLAnchorElement>) => {
-                        if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
-                        e.preventDefault();
-                        navigate(messageHref);
-                        window.dispatchEvent(new PopStateEvent("popstate"));
-                        window.dispatchEvent(new Event("precursor:message-jump"));
-                      },
-                    }
-                  : {})}
-              >
-                {linkChildren}
-              </a>
-            );
-          },
-          blockquote({ children: quoteChildren, ...props }) {
-            const text = flattenText(quoteChildren);
-            if (!WARNING_MARKER.test(text)) {
-              return <blockquote {...props}>{quoteChildren}</blockquote>;
-            }
-            const body = stripWarningMarker(quoteChildren);
-            return (
-              <div data-callout="warning" className="my-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-amber-900 dark:text-amber-200">
-                <div className="flex items-start gap-2">
-                  <AlertTriangle size={16} className="mt-0.5 shrink-0" />
-                  <div className="min-w-0 [&>:last-child]:mb-0">{body}</div>
-                </div>
-              </div>
-            );
-          },
-        }}
+        components={{ ...STABLE_COMPONENTS, li: onTaskChange ? TaskListItem : "li" }}
       >
         {rendered || "\u200B"}
       </ReactMarkdown>
