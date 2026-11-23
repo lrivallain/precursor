@@ -1,0 +1,1 @@
+- **Canvases stop reloading while a reply streams.** Interactive canvases and Mermaid diagrams in a conversation are no longer rebuilt on every streamed token.
