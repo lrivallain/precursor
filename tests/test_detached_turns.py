@@ -47,6 +47,7 @@ async def test_turn_runs_on_after_the_client_disconnects() -> None:
     try:
         async with get_bus().subscribe() as bus:
             stream = turn_lifecycle.lifecycle_stream("chat", 9001, inner())
+            assert (await anext(stream))["event"] == "turn"
             assert await anext(stream) == {"event": "delta", "data": "a"}
             assert turn_lifecycle.running_turns() == [("chat", 9001)]
             # The page reloads: the response stream is closed.
@@ -81,6 +82,7 @@ async def test_cancel_running_turns_stops_the_turn() -> None:
             cleaned_up.set()
 
     stream = turn_lifecycle.lifecycle_stream("topic", 9002, inner())
+    assert (await anext(stream))["event"] == "turn"
     assert await anext(stream) == {"event": "delta", "data": "a"}
     assert await turn_lifecycle.cancel_running_turns("topic", 9002) is True
     assert cleaned_up.is_set()
@@ -95,4 +97,6 @@ async def test_attached_client_receives_every_event_then_the_stream_ends() -> No
             yield {"event": "delta", "data": str(i)}
 
     events = [e async for e in turn_lifecycle.lifecycle_stream("chat", 9003, inner())]
-    assert [e["data"] for e in events] == ["0", "1", "2"]
+    # The turn names itself first, so the client can address messages to it.
+    assert events[0]["event"] == "turn"
+    assert [e["data"] for e in events[1:]] == ["0", "1", "2"]

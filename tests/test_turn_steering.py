@@ -42,10 +42,11 @@ NOTES = MCPToolDef(server="notes", name="write", description="Write a note", inp
 
 
 def test_queue_takes_messages_until_the_turn_closes_it() -> None:
-    assert turn_steering.enqueue("chat", 801, "early") is None
+    assert turn_steering.enqueue("chat", 801, "no-such-turn", "early") is None
 
     queue = turn_steering.open_queue("chat", 801)
-    first = turn_steering.enqueue("chat", 801, "go left")
+    tid = queue.turn_id
+    first = turn_steering.enqueue("chat", 801, tid, "go left")
     assert first is not None and first.content == "go left"
     assert queue.take() == [first]
     assert queue.take() == []
@@ -54,26 +55,29 @@ def test_queue_takes_messages_until_the_turn_closes_it() -> None:
     # The turn's last look finds nothing: from then on messages are refused.
     assert queue.take(final=True) == []
     assert queue.closed
-    assert turn_steering.enqueue("chat", 801, "late") is None
-
-    turn_steering.close_queue("chat", 801, queue)
-    assert turn_steering.queue_for("chat", 801) is None
+    assert turn_steering.enqueue("chat", 801, tid, "late") is None
+    turn_steering.close_queue(queue)
 
 
 def test_closing_drops_what_the_turn_never_took() -> None:
     queue = turn_steering.open_queue("topic", 802)
-    assert turn_steering.enqueue("topic", 802, "unread") is not None
-    turn_steering.close_queue("topic", 802, queue)
+    assert turn_steering.enqueue("topic", 802, queue.turn_id, "unread") is not None
+    turn_steering.close_queue(queue)
     assert queue.items == [] and queue.closed
-    assert turn_steering.enqueue("topic", 802, "after") is None
+    assert turn_steering.enqueue("topic", 802, queue.turn_id, "after") is None
 
 
-def test_closing_a_stale_queue_leaves_the_new_turns_alone() -> None:
-    old = turn_steering.open_queue("topic", 803)
-    new = turn_steering.open_queue("topic", 803)
-    turn_steering.close_queue("topic", 803, old)
-    assert turn_steering.queue_for("topic", 803) is new
-    turn_steering.close_queue("topic", 803, new)
+def test_each_turn_in_a_conversation_gets_its_own_messages() -> None:
+    first = turn_steering.open_queue("topic", 803)
+    second = turn_steering.open_queue("topic", 803)
+    assert turn_steering.enqueue("topic", 803, first.turn_id, "for the first") is not None
+    assert [i.content for i in first.take()] == ["for the first"]
+    assert second.take() == []
+    # A turn id only reaches its own conversation.
+    assert turn_steering.enqueue("chat", 803, second.turn_id, "wrong place") is None
+    turn_steering.close_queue(first)
+    assert turn_steering.enqueue("topic", 803, second.turn_id, "still open") is not None
+    turn_steering.close_queue(second)
 
 
 # -- the tool loop -------------------------------------------------------------
@@ -109,7 +113,9 @@ def _stub_tools(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(turn_engine, "execute_tool_call", execute)
 
 
-async def _loop(provider: _Provider, steer: turn_steering.SteerQueue | None) -> list[Any]:
+async def _loop(
+    provider: _Provider, steer: turn_steering.SteerQueue | None, rounds: int = 4
+) -> list[Any]:
     active = SimpleNamespace(tools=[NOTES], tool_to_server={"notes__write": ("notes", "write")})
     return [
         ev
@@ -120,7 +126,7 @@ async def _loop(provider: _Provider, steer: turn_steering.SteerQueue | None) -> 
             reasoning_effort="low",
             system_prompt="sys",
             history=[ChatMessage(role="user", content="hi")],
-            max_tool_rounds=4,
+            max_tool_rounds=rounds,
             max_input_tokens=100_000,
             max_tool_result_tokens=10_000,
             steer=steer,
@@ -137,7 +143,7 @@ def _send_on_round(queue: turn_steering.SteerQueue, round_no: int, content: str)
 
 
 async def test_a_message_sent_during_a_tool_round_joins_the_next_round() -> None:
-    queue = turn_steering.SteerQueue()
+    queue = turn_steering.SteerQueue("topic", 1)
     call = ToolCallRequest("c1", "notes__write", "{}")
     provider = _Provider([call], "Done", on_round=_send_on_round(queue, 1, "go left"))
     events = await _loop(provider, queue)
@@ -156,7 +162,7 @@ async def test_a_message_sent_during_a_tool_round_joins_the_next_round() -> None
 
 
 async def test_a_message_sent_during_the_answer_makes_the_turn_carry_on() -> None:
-    queue = turn_steering.SteerQueue()
+    queue = turn_steering.SteerQueue("topic", 1)
     provider = _Provider("First", "Second", on_round=_send_on_round(queue, 1, "and also"))
     events = await _loop(provider, queue)
 
@@ -170,6 +176,18 @@ async def test_a_message_sent_during_the_answer_makes_the_turn_carry_on() -> Non
         ("user", "and also"),
     ]
     assert queue.closed
+
+
+async def test_with_no_round_left_a_message_stays_unread() -> None:
+    queue = turn_steering.SteerQueue("topic", 1)
+    call = ToolCallRequest("c1", "notes__write", "{}")
+    provider = _Provider([call], "Done", on_round=_send_on_round(queue, 2, "too late"))
+    events = await _loop(provider, queue, rounds=2)
+
+    assert not any(isinstance(ev, SteeredTurn) for ev in events)
+    assert isinstance(events[-1], AssistantFinalTurn)
+    assert queue.closed
+    assert [i.content for i in queue.items] == ["too late"]
 
 
 async def test_without_a_queue_the_loop_ends_on_the_answer() -> None:
@@ -195,7 +213,12 @@ class _SteeringProvider:
     async def stream_chat_with_tools(self, *, messages: Any, **_kwargs: Any) -> AsyncIterator[Any]:
         self.calls += 1
         if self.calls == 1:
-            assert turn_steering.enqueue("topic", self.topic_id, "make it shorter") is not None
+            queue = turn_steering.current_queue()
+            assert queue is not None
+            assert (
+                turn_steering.enqueue("topic", self.topic_id, queue.turn_id, "make it shorter")
+                is not None
+            )
         yield TextDeltaEvent(content=f"answer to: {messages[-1].content}")
         yield UsageEvent(prompt_tokens=1, completion_tokens=1, total_tokens=2)
         yield TurnDoneEvent(finish_reason="stop")
@@ -218,16 +241,14 @@ def _frames(body: str) -> list[tuple[str, Any]]:
 def test_steer_endpoint_refuses_when_no_turn_runs() -> None:
     with TestClient(create_app()) as client:
         tid = client.post("/api/topics", json={"title": "Idle"}).json()["id"]
-        res = client.post(f"/api/topics/{tid}/messages/steer", json={"content": "hello"})
+        body = {"content": "hello", "turn_id": "not-running"}
+        res = client.post(f"/api/topics/{tid}/messages/steer", json=body)
         assert res.status_code == 200
         assert res.json() == {"queued": False, "steer_id": None}
         cid = client.post("/api/chats", json={"title": "Idle"}).json()["id"]
-        res = client.post(f"/api/chats/{cid}/messages/steer", json={"content": "hello"})
+        res = client.post(f"/api/chats/{cid}/messages/steer", json=body)
         assert res.json() == {"queued": False, "steer_id": None}
-        assert (
-            client.post("/api/chats/999999/messages/steer", json={"content": "x"}).status_code
-            == 404
-        )
+        assert client.post("/api/chats/999999/messages/steer", json=body).status_code == 404
 
 
 def test_a_steered_message_is_answered_in_the_same_turn(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -263,4 +284,6 @@ def test_a_steered_message_is_answered_in_the_same_turn(monkeypatch: pytest.Monk
             ("user", "make it shorter"),
             ("assistant", "answer to: make it shorter"),
         ]
-        assert turn_steering.queue_for("topic", tid) is None
+        turn_ids = [data["turn_id"] for event, data in frames if event == "turn"]
+        assert len(turn_ids) == 1 and frames[0][0] == "turn"
+        assert turn_steering.enqueue("topic", tid, turn_ids[0], "after") is None

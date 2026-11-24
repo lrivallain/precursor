@@ -8,6 +8,7 @@ and holds the queue of messages the user sends while it runs
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import AsyncIterator
 from typing import Literal
@@ -67,8 +68,10 @@ def lifecycle_stream(
     that window, reloaded, has the same client id and would otherwise ignore the
     message.changed / stream.ended that bring the result in.
 
-    Messages the user sends meanwhile wait in the turn's steering queue, open
-    from the moment the turn is started until it ends.
+    Messages the user sends meanwhile wait in the turn's own steering queue,
+    open from the moment the turn is started until it ends. The first event
+    names the turn (``turn`` with its ``turn_id``), so the client addresses its
+    messages to this turn and no other.
     """
     key = (kind, container_id)
 
@@ -77,8 +80,9 @@ def lifecycle_stream(
         listener: dict[str, bool],
         steer: turn_steering.SteerQueue,
     ) -> None:
-        # The task runs in its own context copy: this binding is the turn's own.
+        # The task runs in its own context copy: these bindings are the turn's own.
         bind_client_detached(listener)
+        turn_steering.bind_current(steer)
         if kind == "topic":
             await publish_stream_started(container_id)
         else:
@@ -95,7 +99,7 @@ def lifecycle_stream(
                 if aclose is not None:
                     await aclose()
         finally:
-            turn_steering.close_queue(kind, container_id, steer)
+            turn_steering.close_queue(steer)
             if kind == "topic":
                 await publish_stream_ended(container_id)
             else:
@@ -119,6 +123,7 @@ def lifecycle_stream(
         _RUNNING_TURNS.setdefault(key, set()).add(task)
         task.add_done_callback(forget)
         try:
+            yield {"event": "turn", "data": json.dumps({"turn_id": steer.turn_id})}
             while True:
                 evt = await queue.get()
                 if evt is _END_OF_TURN:

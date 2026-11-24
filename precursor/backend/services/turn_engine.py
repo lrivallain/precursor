@@ -122,6 +122,7 @@ from precursor.backend.services.turn_events import (
 from precursor.backend.services.turn_events import (
     TurnEvent as TurnEvent,
 )
+from precursor.backend.services.turn_events import take_steering
 from precursor.backend.services.turn_steering import SteerItem, SteerQueue
 from precursor.backend.services.usage_stats import record_usage
 from precursor.backend.services.workspaces import WORKSPACE_READ_TOOLS, WORKSPACE_WRITE_TOOLS
@@ -945,17 +946,6 @@ async def _stream_round(
             reply.usage = event
 
 
-def _take_steering(
-    steer: SteerQueue | None, messages: list[ChatMessage], *, final: bool = False
-) -> SteeredTurn | None:
-    """Hand the messages the user sent meanwhile to the model's next round."""
-    items = steer.take(final=final) if steer is not None else []
-    if not items:
-        return None
-    messages.extend(ChatMessage(role="user", content=item.content) for item in items)
-    return SteeredTurn(items)
-
-
 def _require_in_context(trimmed: list[ChatMessage], required: ChatMessage | None) -> None:
     if required is not None and not any(message is required for message in trimmed):
         raise HTTPException(
@@ -1170,7 +1160,7 @@ async def run_tool_loop(
         last_round = wrap_up is not None and _round == max_tool_rounds - 1
         if last_round:
             messages.append(ChatMessage(role="user", content=wrap_up or ""))
-        elif _round and (steered := _take_steering(steer, messages)):
+        elif _round and (steered := take_steering(steer, messages)):
             yield steered
         trimmed = trim_messages(
             messages,
@@ -1213,7 +1203,8 @@ async def run_tool_loop(
                     provider_content=reply.provider_content,
                 )
             )
-            if not (steered := _take_steering(steer, messages, final=True)):
+            last = _round + 1 >= max_tool_rounds
+            if not (steered := take_steering(steer, messages, final=True, no_round_left=last)):
                 return
             yield steered
             continue
@@ -1650,7 +1641,7 @@ async def run_message_stream(
         for event in _unavailable_server_events(active):
             yield event
 
-        steer = turn_steering.queue_for(kind, container_id)
+        steer = turn_steering.current_queue()
         try:
             relay = _StreamRelay(
                 kind, container_id, model, source_message_id, turn_started=time.monotonic()

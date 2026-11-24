@@ -35,8 +35,8 @@ describe("SteerSender", () => {
 
   it("waits for the turn to start, then sends one message at a time, in order", async () => {
     const sent: string[] = [];
-    const sender = new SteerSender(async (content) => {
-      sent.push(content);
+    const sender = new SteerSender(async (turnId, content) => {
+      sent.push(`${turnId}:${content}`);
       return { queued: true, steer_id: `id-${content}` };
     });
     const a = item("a");
@@ -45,23 +45,23 @@ describe("SteerSender", () => {
     sender.send(b);
     await Promise.resolve();
     expect(sent).toEqual([]);
-    sender.start();
+    sender.start("t1");
     await flush();
     await sender.settled();
-    expect(sent).toEqual(["a", "b"]);
+    expect(sent).toEqual(["t1:a", "t1:b"]);
     expect([a.steerId, b.steerId]).toEqual(["id-a", "id-b"]);
   });
 
   it("holds every later message back once one is refused", async () => {
     const sent: string[] = [];
-    const sender = new SteerSender(async (content) => {
+    const sender = new SteerSender(async (_turnId, content) => {
       sent.push(content);
       return { queued: false, steer_id: null };
     });
     const later = item("b");
     sender.send(item("a"));
     sender.send(later);
-    sender.start();
+    sender.start("t1");
     await flush();
     await sender.settled();
     expect(sent).toEqual(["a"]);
@@ -70,7 +70,7 @@ describe("SteerSender", () => {
 
   it("sends nothing once the request has ended", async () => {
     const sent: string[] = [];
-    const sender = new SteerSender(async (content) => {
+    const sender = new SteerSender(async (_turnId, content) => {
       sent.push(content);
       return { queued: true, steer_id: "x" };
     });

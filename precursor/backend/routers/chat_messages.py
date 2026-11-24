@@ -193,7 +193,7 @@ async def stop_turn(chat_id: int) -> None:
 @router.post("/steer", response_model=SteerRead, dependencies=[Depends(get_chat_or_404)])
 async def steer_turn(chat_id: int, payload: SteerRequest) -> SteerRead:
     """Hand a message to the turn running in this chat, at its next model round."""
-    item = enqueue_steer("chat", chat_id, payload.content)
+    item = enqueue_steer("chat", chat_id, payload.turn_id, payload.content)
     return SteerRead(queued=item is not None, steer_id=item.id if item else None)
 
 

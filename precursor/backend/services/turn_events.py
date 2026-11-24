@@ -11,8 +11,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from precursor.backend.services import approvals as approval_service
-from precursor.backend.services.llm.base import UsageEvent
-from precursor.backend.services.turn_steering import SteerItem
+from precursor.backend.services.llm.base import ChatMessage, UsageEvent
+from precursor.backend.services.turn_steering import SteerItem, SteerQueue
 
 
 @dataclass(slots=True)
@@ -127,3 +127,25 @@ TurnEvent = (
     | RoundCapReached
     | SteeredTurn
 )
+
+
+def take_steering(
+    steer: SteerQueue | None,
+    messages: list[ChatMessage],
+    *,
+    final: bool = False,
+    no_round_left: bool = False,
+) -> SteeredTurn | None:
+    """Hand the messages the user sent meanwhile to the model's next round.
+
+    With ``no_round_left`` there is no round to give them: the queue closes
+    and they stay unread, for the client to send as the next turn.
+    """
+    if steer is not None and no_round_left:
+        steer.close()
+        return None
+    items = steer.take(final=final) if steer is not None else []
+    if not items:
+        return None
+    messages.extend(ChatMessage(role="user", content=item.content) for item in items)
+    return SteeredTurn(items)

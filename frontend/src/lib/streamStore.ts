@@ -59,6 +59,11 @@ interface Session {
   queued: QueuedSteer[];
   // Sends the queue to the server, in order, for the current request.
   sender: SteerSender;
+  // The turn reported an error: what it never read goes back to the composer
+  // rather than out as a new prompt.
+  turnFailed: boolean;
+  // Sent with the request again when a late message goes out as the next turn.
+  workspaceContext?: WorkspaceTurnContext;
   // What the turn never took because it stopped, failed or parked on approvals,
   // for the composer to give back (takeUnsent).
   unsent: string;
@@ -68,7 +73,7 @@ const EMPTY_APPROVALS: ToolApproval[] = [];
 const EMPTY_QUEUE: QueuedSteer[] = [];
 
 function steerSender(kind: ConvKind, id: number): SteerSender {
-  return new SteerSender((content) => postSteer(kind, id, content));
+  return new SteerSender((turnId, content) => postSteer(kind, id, turnId, content));
 }
 
 type DriveCall = (opts: {
@@ -294,8 +299,11 @@ class StreamStore extends VersionedStore {
   ): Promise<void> {
     const { kind, id } = parseKey(key);
     const optimistic = optimisticPrompt(kind, id, content, attachments);
-    return this.drive(key, [optimistic], (opts) =>
-      kind === "topic" ? streamChat(id, body, opts) : streamChatSession(id, body, opts),
+    return this.drive(
+      key,
+      [optimistic],
+      (opts) => (kind === "topic" ? streamChat(id, body, opts) : streamChatSession(id, body, opts)),
+      { workspaceContext: body.workspace_context ?? undefined },
     );
   }
 
@@ -314,7 +322,10 @@ class StreamStore extends VersionedStore {
     key: string,
     initial: Message[],
     call: DriveCall,
-    { quietConflict = false }: { quietConflict?: boolean } = {},
+    {
+      quietConflict = false,
+      workspaceContext,
+    }: { quietConflict?: boolean; workspaceContext?: WorkspaceTurnContext } = {},
   ): Promise<void> {
     if (this.sessions.get(key)?.streaming) return;
     const { kind, id } = parseKey(key);
@@ -333,6 +344,8 @@ class StreamStore extends VersionedStore {
       requestError: null,
       queued: [],
       sender: steerSender(kind, id),
+      turnFailed: false,
+      workspaceContext,
       unsent: "",
     };
     this.sessions.set(key, session);
@@ -387,26 +400,28 @@ class StreamStore extends VersionedStore {
     await session.sender.settled();
     session.sender = steerSender(session.kind, session.id);
     const content = joinUnsent(session.queued);
-    if (!content || this.approvals(session.key).length > 0) return null;
+    if (!content || session.turnFailed || this.approvals(session.key).length > 0) return null;
     session.queued = [];
-    const { kind, id } = session;
+    const { kind, id, workspaceContext } = session;
+    const body = { content, ...(workspaceContext ? { workspace_context: workspaceContext } : {}) };
     session.messages = [...session.messages, optimisticPrompt(kind, id, content)];
     this.notify();
     return (opts) =>
-      kind === "topic"
-        ? streamChat(id, { content }, opts)
-        : streamChatSession(id, { content }, opts);
+      kind === "topic" ? streamChat(id, body, opts) : streamChatSession(id, body, opts);
   }
 
   private handleEvent(key: string, ev: { event: string; data: string }): void {
     const session = this.sessions.get(key);
     if (!session) return;
-    // The turn now runs server-side, its steering queue open.
-    session.sender.start();
     const fk = containerFields(session.kind, session.id);
     const payload = JSON.parse(ev.data) as Record<string, unknown>;
     const now = new Date().toISOString();
 
+    if (ev.event === "turn") {
+      // The turn runs server-side under this id, its steering queue open.
+      session.sender.start(payload.turn_id as string);
+      return;
+    }
     if (ev.event === "user_message") {
       // A message sent mid-turn, now handed to the model: no longer queued.
       if (typeof payload.steer_id === "string") {
@@ -615,6 +630,7 @@ class StreamStore extends VersionedStore {
         }
       }
     } else if (ev.event === "error") {
+      session.turnFailed = true;
       session.messages.push({
         id: -Date.now(),
         ...fk,

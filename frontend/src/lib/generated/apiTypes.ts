@@ -2467,7 +2467,7 @@ export interface SpeechToken {
 /**
  * Whether the running turn took the message.
  *
- * ``queued`` is false when no turn is running or the turn has already ended:
+ * ``queued`` is false when that turn is not running or has already ended:
  * send the message as a new turn instead. ``steer_id`` comes back on the
  * ``user_message`` stream event once the model has been given the message.
  */
@@ -2479,6 +2479,7 @@ export interface SteerRead {
 /** A message sent while the conversation's turn is still running. */
 export interface SteerRequest {
   content: string;
+  turn_id: string;
 }
 
 export interface StepArtifactRevert {

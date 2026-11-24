@@ -361,6 +361,8 @@ export function useConversation({
         !streamStore.isStreaming(streamKey)
       ) {
         const error = streamStore.requestError(streamKey);
+        // A turn that ended while this view was closed: give back what it never read.
+        restoreUnsent();
         streamStore.clear(streamKey);
         if (error) systemNote(`Error: ${error}`);
       }
