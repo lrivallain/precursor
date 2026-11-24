@@ -1,6 +1,13 @@
 import { VersionedStore, useStoreVersion } from "./externalStore";
 import { mcpAuthStore } from "./mcpAuth";
 import { resumeConversation, streamChat, streamChatSession, type ChatStreamBody } from "./sse";
+import {
+  joinUnsent,
+  postSteer,
+  SteerSender,
+  withoutEchoed,
+  type QueuedSteer,
+} from "./steering";
 import { parseToolMeta, STOPPED_TOOL_RESULT } from "./toolMeta";
 import type { Attachment, Message, ToolApproval, WorkspaceTurnContext } from "./types";
 
@@ -48,9 +55,60 @@ interface Session {
   // Usage of the most recent completed round.
   lastUsage: UsageReport | null;
   requestError: string | null;
+  // Messages sent while the turn runs, until the turn takes them (see steer()).
+  queued: QueuedSteer[];
+  // Sends the queue to the server, in order, for the current request.
+  sender: SteerSender;
+  // The turn reported an error: what it never read goes back to the composer
+  // rather than out as a new prompt.
+  turnFailed: boolean;
+  // Sent with the request again when a late message goes out as the next turn.
+  workspaceContext?: WorkspaceTurnContext;
+  // What the turn never took because it stopped, failed or parked on approvals,
+  // for the composer to give back (takeUnsent).
+  unsent: string;
+  // A late message sent as the next turn, until the server echoes it back.
+  fallback: string;
 }
 
 const EMPTY_APPROVALS: ToolApproval[] = [];
+const EMPTY_QUEUE: QueuedSteer[] = [];
+
+// Move what the turn never read (its queue, a fallback prompt not yet echoed)
+// to `unsent`, for the composer to take back.
+function collectUnsent(session: Session): void {
+  const parts = [session.unsent, session.fallback, joinUnsent(session.queued)];
+  session.unsent = parts.filter(Boolean).join("\n\n");
+  session.fallback = "";
+  session.queued = [];
+}
+
+function steerSender(kind: ConvKind, id: number): SteerSender {
+  return new SteerSender((turnId, content) => postSteer(kind, id, turnId, content));
+}
+
+type DriveCall = (opts: {
+  signal: AbortSignal;
+  onEvent: (ev: { event: string; data: string }) => void;
+}) => Promise<void>;
+
+// The prompt shown until the server's `user_message` echo gives it its real id.
+function optimisticPrompt(
+  kind: ConvKind,
+  id: number,
+  content: string,
+  attachments?: Attachment[],
+): Message {
+  return {
+    id: -Date.now(),
+    ...containerFields(kind, id),
+    role: "user",
+    content,
+    tool_calls: null,
+    created_at: new Date().toISOString(),
+    attachments: attachments && attachments.length ? attachments : [],
+  };
+}
 
 function hashString(s: string): number {
   let h = 0;
@@ -98,6 +156,35 @@ class StreamStore extends VersionedStore {
 
   requestError(key: string): string | null {
     return this.sessions.get(key)?.requestError ?? null;
+  }
+
+  queued(key: string): QueuedSteer[] {
+    return this.sessions.get(key)?.queued ?? EMPTY_QUEUE;
+  }
+
+  /**
+   * Send a message to the turn streaming in this window; the model gets it at
+   * its next round. False when no turn streams here: send it as a new turn.
+   */
+  steer(key: string, content: string): boolean {
+    const session = this.sessions.get(key);
+    if (!session?.streaming) return false;
+    const item: QueuedSteer = { content, steerId: null };
+    session.queued = [...session.queued, item];
+    // A refused message stays queued: the turn has ended, so it goes out as
+    // the next turn (see followUp()).
+    session.sender.send(item);
+    this.notify();
+    return true;
+  }
+
+  /** The messages the last turn never took, cleared once read. */
+  takeUnsent(key: string): string {
+    const session = this.sessions.get(key);
+    if (!session?.unsent) return "";
+    const text = session.unsent;
+    session.unsent = "";
+    return text;
   }
 
   /** Streaming conversation ids of a given kind (local + remote). */
@@ -159,8 +246,12 @@ class StreamStore extends VersionedStore {
         tool_calls: JSON.stringify({ ...meta, pending: false, stopped: true }),
       };
     });
+    // Set aside what the turn never read now: the caller clears the session
+    // once the stopped turn is saved, maybe before the request settles.
+    void session.sender.settled();
+    collectUnsent(session);
     session.abort.abort();
-    if (stopped.length) this.notify();
+    this.notify();
     return stopped;
   }
 
@@ -222,17 +313,12 @@ class StreamStore extends VersionedStore {
     attachments?: Attachment[],
   ): Promise<void> {
     const { kind, id } = parseKey(key);
-    const optimistic: Message = {
-      id: -Date.now(),
-      ...containerFields(kind, id),
-      role: "user",
-      content,
-      tool_calls: null,
-      created_at: new Date().toISOString(),
-      attachments: attachments && attachments.length ? attachments : [],
-    };
-    return this.drive(key, [optimistic], (opts) =>
-      kind === "topic" ? streamChat(id, body, opts) : streamChatSession(id, body, opts),
+    const optimistic = optimisticPrompt(kind, id, content, attachments);
+    return this.drive(
+      key,
+      [optimistic],
+      (opts) => (kind === "topic" ? streamChat(id, body, opts) : streamChatSession(id, body, opts)),
+      { workspaceContext: body.workspace_context ?? undefined },
     );
   }
 
@@ -250,11 +336,11 @@ class StreamStore extends VersionedStore {
   private async drive(
     key: string,
     initial: Message[],
-    call: (opts: {
-      signal: AbortSignal;
-      onEvent: (ev: { event: string; data: string }) => void;
-    }) => Promise<void>,
-    { quietConflict = false }: { quietConflict?: boolean } = {},
+    call: DriveCall,
+    {
+      quietConflict = false,
+      workspaceContext,
+    }: { quietConflict?: boolean; workspaceContext?: WorkspaceTurnContext } = {},
   ): Promise<void> {
     if (this.sessions.get(key)?.streaming) return;
     const { kind, id } = parseKey(key);
@@ -271,6 +357,12 @@ class StreamStore extends VersionedStore {
       pendingUsage: null,
       lastUsage: null,
       requestError: null,
+      queued: [],
+      sender: steerSender(kind, id),
+      turnFailed: false,
+      workspaceContext,
+      unsent: "",
+      fallback: "",
     };
     this.sessions.set(key, session);
     this.notify();
@@ -278,32 +370,61 @@ class StreamStore extends VersionedStore {
     // False when the user stopped the turn or the request failed.
     let ok = true;
     try {
-      await call({
-        signal: controller.signal,
-        onEvent: (ev) => this.handleEvent(key, ev),
-      });
+      let request = call;
+      for (;;) {
+        await request({
+          signal: controller.signal,
+          onEvent: (ev) => this.handleEvent(key, ev),
+        });
+        const followUp = await this.followUp(session);
+        if (!followUp) break;
+        request = followUp;
+      }
     } catch (err) {
       ok = false;
       // Another window already resumed this turn: nothing to report.
       const conflict = quietConflict && (err as { status?: number }).status === 409;
-      if ((err as Error).name !== "AbortError" && !conflict) {
+      // A stopped turn's session may already be replaced by a newer turn's.
+      const current = this.sessions.get(key) === session;
+      if ((err as Error).name !== "AbortError" && !conflict && current) {
         console.error(err);
         const message = err instanceof Error ? err.message : String(err);
-        const failed = this.sessions.get(key);
-        if (failed) failed.requestError = message;
+        session.requestError = message;
         this.handleEvent(key, {
           event: "error",
           data: JSON.stringify({ message }),
         });
       }
     } finally {
-      const cur = this.sessions.get(key);
-      if (cur) {
-        cur.streaming = false;
-        this.notify();
-      }
+      // Settle this turn's own session only: once Stop has cleared it, the
+      // key may hold a newer turn that is still running.
+      session.streaming = false;
+      void session.sender.settled();
+      collectUnsent(session);
+      if (this.sessions.get(key) === session) this.notify();
       this.onCompleteCb?.(key, ok);
     }
+  }
+
+  /**
+   * A message sent too late for the turn that just ended (the server refused
+   * it) goes out as the next turn, in the same stream. Not when the turn parked
+   * on approvals: a new prompt would abandon them.
+   */
+  private async followUp(session: Session): Promise<DriveCall | null> {
+    await session.sender.settled();
+    session.sender = steerSender(session.kind, session.id);
+    const content = joinUnsent(session.queued);
+    if (!content || session.turnFailed || session.abort.signal.aborted) return null;
+    if (this.approvals(session.key).length > 0) return null;
+    session.queued = [];
+    session.fallback = content;
+    const { kind, id, workspaceContext } = session;
+    const body = { content, ...(workspaceContext ? { workspace_context: workspaceContext } : {}) };
+    session.messages = [...session.messages, optimisticPrompt(kind, id, content)];
+    this.notify();
+    return (opts) =>
+      kind === "topic" ? streamChat(id, body, opts) : streamChatSession(id, body, opts);
   }
 
   private handleEvent(key: string, ev: { event: string; data: string }): void {
@@ -313,7 +434,18 @@ class StreamStore extends VersionedStore {
     const payload = JSON.parse(ev.data) as Record<string, unknown>;
     const now = new Date().toISOString();
 
+    if (ev.event === "turn") {
+      // The turn runs server-side under this id, its steering queue open.
+      session.sender.start(payload.turn_id as string);
+      return;
+    }
     if (ev.event === "user_message") {
+      // A message sent mid-turn, now handed to the model: no longer queued.
+      if (typeof payload.steer_id === "string") {
+        session.queued = withoutEchoed(session.queued, payload.steer_id, payload.content as string);
+      } else {
+        session.fallback = "";
+      }
       // Reconcile the optimistic user message inserted by start() — keep the
       // displayed content stable, just upgrade the id to the persisted one.
       const realId = payload.id as number;
@@ -517,6 +649,7 @@ class StreamStore extends VersionedStore {
         }
       }
     } else if (ev.event === "error") {
+      session.turnFailed = true;
       session.messages.push({
         id: -Date.now(),
         ...fk,

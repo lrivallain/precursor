@@ -35,6 +35,8 @@ Chats share the topic conversation experience. Specifics:
   `/memory-list`, `/memory-update`); long-term memory is injected too.
 - [Attachments](/features/attachments) and [MCP tools](/features/mcp).
 - [Failed turns](/features/topics#when-a-turn-fails) with **Retry**.
+- [Adding to a running turn](/features/topics#adding-to-a-running-turn): send a message
+  while the reply is still coming, and the model takes it into account at its next step.
 - `/compact` ([context compression](/features/context-compression)) and
   [timeline & rewind](/features/rewind).
 - Delete with undo, `/clear`, Stop: see

@@ -2464,6 +2464,24 @@ export interface SpeechToken {
   language: string;
 }
 
+/**
+ * Whether the running turn took the message.
+ *
+ * ``queued`` is false when that turn is not running or has already ended:
+ * send the message as a new turn instead. ``steer_id`` comes back on the
+ * ``user_message`` stream event once the model has been given the message.
+ */
+export interface SteerRead {
+  queued: boolean;
+  steer_id: string | null;
+}
+
+/** A message sent while the conversation's turn is still running. */
+export interface SteerRequest {
+  content: string;
+  turn_id: string;
+}
+
 export interface StepArtifactRevert {
   version: number;
 }
@@ -4025,6 +4043,13 @@ export interface Operations {
     body: RewindRequest;
     response: RewindResult;
   };
+  "POST /api/chats/{chat_id}/messages/steer": {
+    path: {
+      chat_id: number;
+    };
+    body: SteerRequest;
+    response: SteerRead;
+  };
   "POST /api/chats/{chat_id}/messages/stop": {
     path: {
       chat_id: number;
@@ -5374,6 +5399,13 @@ export interface Operations {
     };
     body: RewindRequest;
     response: RewindResult;
+  };
+  "POST /api/topics/{topic_id}/messages/steer": {
+    path: {
+      topic_id: number;
+    };
+    body: SteerRequest;
+    response: SteerRead;
   };
   "POST /api/topics/{topic_id}/messages/stop": {
     path: {

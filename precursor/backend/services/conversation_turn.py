@@ -82,13 +82,13 @@ from precursor.backend.services.turn_engine import (
     container_message_kwargs,
     execute_tool_call,
     hydrate_history,
-    lifecycle_stream,
     load_enabled_mcp_servers,
     persist_tool_result,
     prepare_retry_turn,
     publish_container_changed,
     run_message_stream,
 )
+from precursor.backend.services.turn_lifecycle import lifecycle_stream
 from precursor.backend.services.workspaces import WORKSPACE_READ_TOOLS, WORKSPACE_WRITE_TOOLS
 
 logger = logging.getLogger(__name__)

@@ -264,6 +264,7 @@ export function ChatSessionPanel({
               streaming={streaming}
               pendingContent={conv.pendingContent}
               pendingReasoning={conv.pendingReasoning}
+              queued={conv.queued}
               onPickSuggestion={conv.sendSuggestion}
               onStop={conv.stop}
               approvals={conv.approvals.approvals}
@@ -313,6 +314,7 @@ export function ChatSessionPanel({
               onSend={() => void conv.send()}
               onStop={conv.stop}
               streaming={streaming}
+              canSteer
               suggestions={composer.suggestions}
               userHistory={conv.userHistory}
               speech={composer.speech}

@@ -11,7 +11,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from precursor.backend.services import approvals as approval_service
-from precursor.backend.services.llm.base import UsageEvent
+from precursor.backend.services.context_budget import estimate_tokens, estimate_total_tokens
+from precursor.backend.services.llm.base import ChatMessage, UsageEvent
+from precursor.backend.services.turn_steering import SteerItem, SteerQueue
 
 
 @dataclass(slots=True)
@@ -108,6 +110,13 @@ class ApprovalsRequested:
     items: list[approval_service.PendingCall]
 
 
+@dataclass(slots=True)
+class SteeredTurn:
+    """Messages the user sent during the turn, now handed to the model."""
+
+    items: list[SteerItem]
+
+
 TurnEvent = (
     AssistantTextDelta
     | AssistantReasoningDelta
@@ -117,4 +126,47 @@ TurnEvent = (
     | ToolAuthRequired
     | ApprovalsRequested
     | RoundCapReached
+    | SteeredTurn
 )
+
+
+def take_steering(
+    steer: SteerQueue | None,
+    messages: list[ChatMessage],
+    *,
+    max_input_tokens: int,
+    final: bool = False,
+    no_round_left: bool = False,
+) -> SteeredTurn | None:
+    """Hand the messages the user sent meanwhile to the model's next round.
+
+    Only messages that fit the next request are taken, oldest first: with the
+    system messages and the user messages it already ends with (the prompt, or
+    messages taken after an answer), they must stay within ``max_input_tokens``,
+    as ``trim_messages`` counts it, so trimming never drops one the client was
+    told the model read. The rest wait for a later round. With ``no_round_left``, or at the turn's
+    ``final`` check when none fits, the queue closes and they stay unread, for
+    the client to send as the next turn or give back.
+    """
+    if steer is None:
+        return None
+    if no_round_left:
+        steer.close()
+        return None
+    items = steer.take(final=final)
+    room = max_input_tokens - estimate_total_tokens([m for m in messages if m.role == "system"])
+    for message in reversed(messages):
+        if message.role != "user":
+            break
+        room -= estimate_tokens(message)
+    for count, item in enumerate(items):
+        room -= estimate_tokens(ChatMessage(role="user", content=item.content))
+        if room < 0:
+            items, steer.items[:0] = items[:count], items[count:]
+            break
+    if not items:
+        if final:
+            steer.close()
+        return None
+    messages.extend(ChatMessage(role="user", content=item.content) for item in items)
+    return SteeredTurn(items)

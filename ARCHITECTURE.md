@@ -56,6 +56,7 @@ scripts/             CI and maintenance scripts (stdlib-only where they run in h
 | A background job that wakes every N seconds | subclass `BackgroundPoll`; expose `get_x = X.instance`; add it to the lifespan list in `main.py` | `services/background_poll.py` |
 | An age-limited cleanup sweep | `cutoff`, `replace_column`, `delete_rows`, `rowcount`, `SessionFactory` | `services/retention_sweep.py` |
 | Report what a sweep did | `SweepResult` | `services/sweep_result.py` |
+| Run a conversation turn in the background, stop it, or hand it a message sent while it runs | `lifecycle_stream`, `cancel_running_turns`; `turn_steering.enqueue` | `services/turn_lifecycle.py`, `services/turn_steering.py` |
 | Prepare a conversation turn (topic or chat) | `conversation_turn.py`; persist the reply with `persist_final_turn` (`turn_engine.py`) | `services/` |
 | A new AgentManager concern | a collaborator class in `services/agents/` holding a `manager` back-reference (only a `TYPE_CHECKING` import of the manager), with a same-named delegate on `AgentManager` | `services/agents/` (e.g. `turns.py`) |
 | A tool on the built-in MCP server | `@mcp.tool()` in the matching `precursor_tools/<group>.py`, gated with `_section_enabled`; new groups are added to `precursor_tools/__init__.py` | `services/mcp/precursor_tools/` |

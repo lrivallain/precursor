@@ -750,7 +750,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
             visibleMessages={visibleMessages}
             streaming={streaming}
             pendingContent={conv.pendingContent}
-            pendingReasoning={conv.pendingReasoning}
+            pendingReasoning={conv.pendingReasoning} queued={conv.queued}
             onPickSuggestion={conv.sendSuggestion}
             onStop={conv.stop}
             approvals={conv.approvals.approvals}
@@ -827,7 +827,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
             onChange={composer.setDraft}
             onSend={() => void conv.send()}
             onStop={conv.stop}
-            streaming={streaming}
+            streaming={streaming} canSteer
             suggestions={composer.suggestions}
             userHistory={conv.userHistory}
             speech={composer.speech}

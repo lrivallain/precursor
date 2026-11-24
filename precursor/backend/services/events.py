@@ -109,7 +109,7 @@ class Event(TypedDict, total=False):
 _current_client_id: ContextVar[str | None] = ContextVar("precursor_client_id", default=None)
 
 
-# Set by a background turn (``turn_engine.lifecycle_stream``) to a flag its
+# Set by a background turn (``turn_lifecycle.lifecycle_stream``) to a flag its
 # stream flips once the client that started it has gone. From then on the
 # turn's events carry no client id, so they reach every window — the reloaded
 # originating window included, which keeps its client id across reloads.

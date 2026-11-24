@@ -154,7 +154,11 @@ already-open target without a reload.
    to the provider. `services/turn_engine.run_tool_loop` runs a **tool loop**:
    stream text, collect tool calls, execute them, append `tool` results, call
    again — up to a configured max-rounds — until the model stops requesting
-   tools.
+   tools. The turn runs in a background task (`services/turn_lifecycle.py`)
+   that holds its own steering queue (`services/turn_steering.py`), named by the
+   stream's first `turn` event: a message posted to `…/messages/steer` with that
+   `turn_id` joins the next round, and one waiting when the model answers makes
+   the loop carry on (if a round is left).
 4. Each round is trimmed to a token budget (`services/context_budget.py`) so a
    few large tool results can't overflow the context window.
 5. Text deltas and tool-call events stream to the browser over SSE.

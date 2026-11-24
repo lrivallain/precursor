@@ -100,6 +100,21 @@ Select text in an assistant reply for a small toolbar:
 - [Attachments](/features/attachments): images (vision) and documents.
 - [MCP tools](/features/mcp), shown inline as they run.
 
+## Adding to a running turn
+
+You don't have to wait for a reply, or stop it, to change its course. While a turn
+runs, type in the composer and press **Enter** (or the **Send** button next to **Stop**):
+the message shows as a dimmed, dashed **queued** bubble under the reply, and the model reads it at its next
+step, after the tool call it is running, or as soon as it finishes writing its answer, in
+which case it carries on and answers you in the same turn. "Use the staging repo
+instead" or "keep it shorter" lands without throwing away the work done so far.
+
+- Only text is sent this way: slash commands and attachments wait for the turn to end.
+- A message the turn never read (you pressed **Stop**, it failed, or it paused for an
+  [approval](/features/approvals)) goes back into the composer.
+- It works in the window that started the turn; another window sees the message once
+  the model has it.
+
 ## Watching the model think
 
 While a reasoning model thinks, a pulsing **Thinking…** row previews its current step; click
@@ -141,7 +156,8 @@ The same formatted copy backs **Copy** on summaries, notes, workflow outputs and
 - **Rewind** to an earlier turn, or **Edit & resend** a prompt. See
   [timeline & rewind](/features/rewind).
 - **Stop** keeps what streamed, marked _(stopped)_; a running tool call settles as
-  **stopped**.
+  **stopped**. To change direction without stopping, [add to the running
+  turn](#adding-to-a-running-turn) instead.
 
 Chats and [workspace discussions](/features/workspaces#discussing-a-workspace) behave the same.
 

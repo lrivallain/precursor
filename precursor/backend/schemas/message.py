@@ -132,6 +132,26 @@ class StoppedTurn(BaseModel):
         return self
 
 
+class SteerRequest(BaseModel):
+    """A message sent while the conversation's turn is still running."""
+
+    content: str = Field(min_length=1, max_length=100_000)
+    # The running turn, as its stream's first ``turn`` event names it.
+    turn_id: str = Field(min_length=1, max_length=64)
+
+
+class SteerRead(BaseModel):
+    """Whether the running turn took the message.
+
+    ``queued`` is false when that turn is not running or has already ended:
+    send the message as a new turn instead. ``steer_id`` comes back on the
+    ``user_message`` stream event once the model has been given the message.
+    """
+
+    queued: bool
+    steer_id: str | None = None
+
+
 class MessageRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

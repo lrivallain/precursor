@@ -24,7 +24,7 @@ from precursor.backend.services.events import (
     Event,
     get_bus,
 )
-from precursor.backend.services.turn_engine import running_turns
+from precursor.backend.services.turn_lifecycle import running_turns
 
 router = APIRouter(prefix="/api", tags=["events"])
 

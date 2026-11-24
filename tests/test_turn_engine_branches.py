@@ -349,7 +349,6 @@ async def test_stream_relays_each_event_as_its_frame(stream: dict[str, Any]) -> 
         ToolResultTurn(call, "res", False, {"slug": "w", "path": "a"}),
         ToolAuthRequired(server="notes", message="sign in", tool="notes__write"),
         AssistantFinalTurn("Hello", USAGE, "", "m3", "fake"),
-        AssistantTextDelta("never relayed"),
     ]
     frames = await _frames("chat", user_echo={"id": 42, "content": "hi"})
     usage = {
@@ -411,7 +410,6 @@ async def test_stream_parks_on_approvals_with_the_last_assistant_turn(
     stream["events"] = [
         AssistantToolCallsTurn("", [call], [], None),
         ApprovalsRequested([]),
-        AssistantTextDelta("never relayed"),
     ]
     frames = await _frames()
     assert frames[-1] == ("approval_required", {"approvals": [{"row": "row"}]})

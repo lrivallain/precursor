@@ -105,6 +105,7 @@ Under `/api/topics/{id}/messages` and `/api/chats/{id}/messages`.
 | Route | Behaviour |
 | --- | --- |
 | `POST …/stream` | streams a turn ([SSE events](#streamed-turn-events)). Optional `model` override within the conversation's provider; `workspace_context: {workspace_id, path?}` tells the model which file is open (not stored); `retry_message_id` replays a user turn, deleting everything after it (`400` wrong container, `404` unknown). |
+| `POST …/steer` | `{content, turn_id}` hands a message to the running turn the stream's `turn` event named; the model reads it at its next round (after the round's tool results, or after its answer, which then carries on). Returns `{queued, steer_id}`; `queued: false` when that turn is not running, has ended or has no round left: send it with `…/stream` instead. Messages the turn never takes (stopped, failed, parked on approvals, round cap) are dropped. |
 | `POST …/stopped` | records a stopped turn: `content` (text so far), `tool_call_ids` (unreturned calls of the last round), optional `reasoning`; at least one of the first two (`422`). Returns created rows, oldest first; tool rows carry `"stopped": true`. |
 | `POST …/compact` | `{instructions?}` → a [compaction](/features/context-compression) `system` message (`kind: "compaction"`), `201`; deleting it undoes it; `409` while generating or nothing to compact |
 | `GET …/context` | estimate of the next turn: `tokens`, `by_role`, `saved_by_hygiene`, compaction fields, `system_tokens`, `system_tools_tokens`, `mcp_tools_tokens` |
@@ -377,7 +378,8 @@ Each `…/messages/stream` response is its own SSE stream:
 
 | Event | Payload |
 | --- | --- |
-| `user_message` | the persisted prompt, with `public_id` |
+| `turn` | first event: `{turn_id}`, the id `…/steer` addresses |
+| `user_message` | the persisted prompt, with `public_id`; also a message sent with `…/steer`, saved once the model takes it, with its `steer_id` |
 | `reasoning` | `{content}`, a chunk of the model's [thinking](/features/topics#watching-the-model-think), ahead of that round's deltas |
 | `delta` | answer text |
 | `tool_calls` | the round's calls; `assistant_id` and `public_id` of the assistant row |
@@ -386,7 +388,7 @@ Each `…/messages/stream` response is its own SSE stream:
 | `mcp_auth_required` | a tool call needs an interactive sign-in (`server`, `message`, `tool`) |
 | `system` | a notice, e.g. an MCP server was unavailable |
 | `approval_required` | ends a turn that needs [approval](/features/approvals), instead of `done` |
-| `done` | final message, `public_id`, `model` actually used |
+| `done` | final message, `public_id`, `model` actually used; a turn that takes a steered message after answering sends a second `done` |
 | `suggestions` | follow-up suggestions for the answer (`message_id`, `items`) |
 | `error` | the turn failed; an `Error: …` system message is also persisted |
 

@@ -27,7 +27,7 @@ type.
 
 | Keys | Action |
 | --- | --- |
-| **Enter** | Send the message. |
+| **Enter** | Send the message; while a reply streams in a topic or chat, [add it to the running turn](/features/topics#adding-to-a-running-turn). |
 | **Shift+Enter** (or **Option/Alt+Enter**) | Insert a newline. |
 | **↑** / **↓** | Recall earlier messages. |
 | **Esc** | Stop the reply that is streaming. |
