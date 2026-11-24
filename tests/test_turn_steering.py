@@ -114,7 +114,10 @@ def _stub_tools(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 async def _loop(
-    provider: _Provider, steer: turn_steering.SteerQueue | None, rounds: int = 4
+    provider: _Provider,
+    steer: turn_steering.SteerQueue | None,
+    rounds: int = 4,
+    max_input_tokens: int = 100_000,
 ) -> list[Any]:
     active = SimpleNamespace(tools=[NOTES], tool_to_server={"notes__write": ("notes", "write")})
     return [
@@ -127,7 +130,7 @@ async def _loop(
             system_prompt="sys",
             history=[ChatMessage(role="user", content="hi")],
             max_tool_rounds=rounds,
-            max_input_tokens=100_000,
+            max_input_tokens=max_input_tokens,
             max_tool_result_tokens=10_000,
             steer=steer,
         )
@@ -188,6 +191,34 @@ async def test_with_no_round_left_a_message_stays_unread() -> None:
     assert isinstance(events[-1], AssistantFinalTurn)
     assert queue.closed
     assert [i.content for i in queue.items] == ["too late"]
+
+
+async def test_a_message_waiting_before_the_first_call_reaches_it() -> None:
+    # A resumed turn runs its approved tools before the loop: a message sent
+    # meanwhile is read on the very first model call.
+    queue = turn_steering.SteerQueue("topic", 1)
+    queue.items.append(turn_steering.SteerItem(id="s0", content="skip the summary"))
+    provider = _Provider("Done")
+    events = await _loop(provider, queue)
+
+    assert isinstance(events[0], SteeredTurn)
+    assert provider.requests[0]["messages"][-1].content == "skip the summary"
+
+
+async def test_only_messages_that_fit_the_budget_are_taken() -> None:
+    # Half of a 400-token budget: the second message would not fit with the first.
+    queue = turn_steering.SteerQueue("topic", 1)
+    small = turn_steering.SteerItem(id="a", content="short note")
+    large = turn_steering.SteerItem(id="b", content="x" * 4_000)
+    queue.items.extend([small, large])
+    provider = _Provider("First", "Second")
+    events = await _loop(provider, queue, max_input_tokens=400)
+
+    taken = [i.id for ev in events if isinstance(ev, SteeredTurn) for i in ev.items]
+    assert taken == ["a"]
+    # The one that never fits stays unread, and the turn ends.
+    assert queue.closed and queue.items == [large]
+    assert [ev.text for ev in events if isinstance(ev, AssistantFinalTurn)] == ["First"]
 
 
 async def test_without_a_queue_the_loop_ends_on_the_answer() -> None:

@@ -1160,7 +1160,7 @@ async def run_tool_loop(
         last_round = wrap_up is not None and _round == max_tool_rounds - 1
         if last_round:
             messages.append(ChatMessage(role="user", content=wrap_up or ""))
-        elif _round and (steered := take_steering(steer, messages)):
+        elif steered := take_steering(steer, messages, max_tokens=max_input_tokens // 2):
             yield steered
         trimmed = trim_messages(
             messages,
@@ -1194,17 +1194,16 @@ async def run_tool_loop(
             )
         if not tool_calls:
             yield AssistantFinalTurn(assistant_text, reply.usage, reasoning, *answered_by)
-            # The answer stays in the context in case the user's message, sent
-            # while it was written, makes the turn carry on.
-            messages.append(
-                ChatMessage(
-                    role="assistant",
-                    content=assistant_text,
-                    provider_content=reply.provider_content,
-                )
+            # Kept in context: a message sent meanwhile may make the turn carry on.
+            answer = ChatMessage(
+                "assistant", assistant_text, provider_content=reply.provider_content
             )
+            messages.append(answer)
             last = _round + 1 >= max_tool_rounds
-            if not (steered := take_steering(steer, messages, final=True, no_round_left=last)):
+            steered = take_steering(
+                steer, messages, max_tokens=max_input_tokens // 2, final=True, no_round_left=last
+            )
+            if not steered:
                 return
             yield steered
             continue

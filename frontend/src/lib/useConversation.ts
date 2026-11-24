@@ -560,6 +560,7 @@ export function useConversation({
     const reasoning = streamStore.pendingReasoning(streamKey).trim();
     stoppingRef.current = true;
     const stoppedCalls = streamStore.stop(streamKey);
+    restoreUnsent();
     void (async () => {
       try {
         // The turn runs server-side independently of this stream: stop it

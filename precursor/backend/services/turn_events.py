@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from precursor.backend.services import approvals as approval_service
+from precursor.backend.services.context_budget import estimate_tokens
 from precursor.backend.services.llm.base import ChatMessage, UsageEvent
 from precursor.backend.services.turn_steering import SteerItem, SteerQueue
 
@@ -133,19 +134,33 @@ def take_steering(
     steer: SteerQueue | None,
     messages: list[ChatMessage],
     *,
+    max_tokens: int,
     final: bool = False,
     no_round_left: bool = False,
 ) -> SteeredTurn | None:
     """Hand the messages the user sent meanwhile to the model's next round.
 
-    With ``no_round_left`` there is no round to give them: the queue closes
-    and they stay unread, for the client to send as the next turn.
+    Only messages that fit ``max_tokens`` together are taken, oldest first, so
+    context trimming never drops one the client was told the model read; the
+    rest wait for a later round. With ``no_round_left``, or at the turn's
+    ``final`` check when none fits, the queue closes and they stay unread, for
+    the client to send as the next turn or give back.
     """
-    if steer is not None and no_round_left:
+    if steer is None:
+        return None
+    if no_round_left:
         steer.close()
         return None
-    items = steer.take(final=final) if steer is not None else []
+    items = steer.take(final=final)
+    used = 0
+    for count, item in enumerate(items):
+        used += estimate_tokens(ChatMessage(role="user", content=item.content))
+        if used > max_tokens:
+            items, steer.items[:0] = items[:count], items[count:]
+            break
     if not items:
+        if final:
+            steer.close()
         return None
     messages.extend(ChatMessage(role="user", content=item.content) for item in items)
     return SteeredTurn(items)

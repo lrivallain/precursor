@@ -67,10 +67,21 @@ interface Session {
   // What the turn never took because it stopped, failed or parked on approvals,
   // for the composer to give back (takeUnsent).
   unsent: string;
+  // A late message sent as the next turn, until the server echoes it back.
+  fallback: string;
 }
 
 const EMPTY_APPROVALS: ToolApproval[] = [];
 const EMPTY_QUEUE: QueuedSteer[] = [];
+
+// Move what the turn never read (its queue, a fallback prompt not yet echoed)
+// to `unsent`, for the composer to take back.
+function collectUnsent(session: Session): void {
+  const parts = [session.unsent, session.fallback, joinUnsent(session.queued)];
+  session.unsent = parts.filter(Boolean).join("\n\n");
+  session.fallback = "";
+  session.queued = [];
+}
 
 function steerSender(kind: ConvKind, id: number): SteerSender {
   return new SteerSender((turnId, content) => postSteer(kind, id, turnId, content));
@@ -235,8 +246,12 @@ class StreamStore extends VersionedStore {
         tool_calls: JSON.stringify({ ...meta, pending: false, stopped: true }),
       };
     });
+    // Set aside what the turn never read now: the caller clears the session
+    // once the stopped turn is saved, maybe before the request settles.
+    void session.sender.settled();
+    collectUnsent(session);
     session.abort.abort();
-    if (stopped.length) this.notify();
+    this.notify();
     return stopped;
   }
 
@@ -347,6 +362,7 @@ class StreamStore extends VersionedStore {
       turnFailed: false,
       workspaceContext,
       unsent: "",
+      fallback: "",
     };
     this.sessions.set(key, session);
     this.notify();
@@ -383,8 +399,7 @@ class StreamStore extends VersionedStore {
       if (cur) {
         cur.streaming = false;
         void cur.sender.settled();
-        cur.unsent = joinUnsent(cur.queued);
-        cur.queued = [];
+        collectUnsent(cur);
         this.notify();
       }
       this.onCompleteCb?.(key, ok);
@@ -400,8 +415,10 @@ class StreamStore extends VersionedStore {
     await session.sender.settled();
     session.sender = steerSender(session.kind, session.id);
     const content = joinUnsent(session.queued);
-    if (!content || session.turnFailed || this.approvals(session.key).length > 0) return null;
+    if (!content || session.turnFailed || session.abort.signal.aborted) return null;
+    if (this.approvals(session.key).length > 0) return null;
     session.queued = [];
+    session.fallback = content;
     const { kind, id, workspaceContext } = session;
     const body = { content, ...(workspaceContext ? { workspace_context: workspaceContext } : {}) };
     session.messages = [...session.messages, optimisticPrompt(kind, id, content)];
@@ -426,6 +443,8 @@ class StreamStore extends VersionedStore {
       // A message sent mid-turn, now handed to the model: no longer queued.
       if (typeof payload.steer_id === "string") {
         session.queued = withoutEchoed(session.queued, payload.steer_id, payload.content as string);
+      } else {
+        session.fallback = "";
       }
       // Reconcile the optimistic user message inserted by start() — keep the
       // displayed content stable, just upgrade the id to the persisted one.
