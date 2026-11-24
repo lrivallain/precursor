@@ -12,6 +12,7 @@ from typing import Any
 
 from precursor.backend.services import approvals as approval_service
 from precursor.backend.services.llm.base import UsageEvent
+from precursor.backend.services.turn_steering import SteerItem
 
 
 @dataclass(slots=True)
@@ -108,6 +109,13 @@ class ApprovalsRequested:
     items: list[approval_service.PendingCall]
 
 
+@dataclass(slots=True)
+class SteeredTurn:
+    """Messages the user sent during the turn, now handed to the model."""
+
+    items: list[SteerItem]
+
+
 TurnEvent = (
     AssistantTextDelta
     | AssistantReasoningDelta
@@ -117,4 +125,5 @@ TurnEvent = (
     | ToolAuthRequired
     | ApprovalsRequested
     | RoundCapReached
+    | SteeredTurn
 )

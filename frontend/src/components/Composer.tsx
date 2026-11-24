@@ -41,6 +41,8 @@ interface Props {
   onSend: () => void;
   onStop: () => void;
   streaming: boolean;
+  /** Let the user send while a turn streams: it goes to the running turn (topics and chats). */
+  canSteer?: boolean;
   /** Slash-command suggestions for the autocomplete picker. */
   suggestions: SlashCommand[];
   /** Prior user messages, newest last — for ↑/↓ history recall. */
@@ -66,6 +68,8 @@ interface Props {
   toolbarStart?: React.ReactNode;
 }
 
+const STEER_PLACEHOLDER = "Add to the running turn: the model reads it at its next step…";
+
 const DEFAULT_PLACEHOLDER =
   "Type a message or /command… (Shift/Option+Enter for newline, ↑/↓ for history)";
 
@@ -80,6 +84,7 @@ export function Composer({
   onSend,
   onStop,
   streaming,
+  canSteer = false,
   suggestions,
   userHistory,
   speech,
@@ -146,6 +151,8 @@ export function Composer({
 
   const hasPending = (attachments?.pending.length ?? 0) > 0;
   const sendDisabled = disabled || (!value.trim() && !hasPending);
+  // A turn is running and what is typed now goes to it.
+  const steering = streaming && canSteer;
 
   function triggerSend(): void {
     if (disabled) return;
@@ -354,7 +361,11 @@ export function Composer({
             }
           }}
           placeholder={
-            speech.listening && interimText ? "" : (placeholder ?? DEFAULT_PLACEHOLDER)
+            speech.listening && interimText
+              ? ""
+              : steering
+                ? STEER_PLACEHOLDER
+                : (placeholder ?? DEFAULT_PLACEHOLDER)
           }
           style={{ height }}
           disabled={disabled}
@@ -445,7 +456,7 @@ export function Composer({
                 )}
               </button>
             )}
-            {streaming ? (
+            {streaming && (
               <button
                 onClick={onStop}
                 className={`${btnPad} rounded-lg text-muted hover:text-text hover:bg-bg`}
@@ -454,13 +465,14 @@ export function Composer({
               >
                 <StopCircle size={18} />
               </button>
-            ) : (
+            )}
+            {(!streaming || (steering && value.trim())) && (
               <button
                 onClick={triggerSend}
                 disabled={sendDisabled}
                 className={`${btnPad} rounded-lg bg-accent text-white disabled:opacity-40 disabled:hover:bg-accent hover:bg-accent/90`}
-                aria-label="Send"
-                data-tooltip="Send (Enter)"
+                aria-label={steering ? "Send to the running turn" : "Send"}
+                data-tooltip={steering ? "Send to the running turn (Enter)" : "Send (Enter)"}
               >
                 <Send size={18} />
               </button>

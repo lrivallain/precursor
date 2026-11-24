@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { ApprovalCards } from "./ApprovalCards";
 import { CompactionMarker } from "./CompactContext";
 import { MessageBubble } from "./MessageBubble";
+import { QueuedMessages } from "./QueuedMessages";
 import { SideChatLinks } from "./SideChatsSection";
 import { ReasoningDisclosure } from "./ReasoningDisclosure";
 import { ReplyEditor } from "./ReplyEditor";
@@ -225,6 +226,8 @@ interface TranscriptTailProps {
   streaming: boolean;
   pendingContent: string;
   pendingReasoning: string;
+  /** Messages sent during the turn, not yet read by the model. */
+  queued?: string[];
   onPickSuggestion: (text: string) => void;
   onStop: () => void;
   /** Tool calls the turn is parked on. */
@@ -238,6 +241,7 @@ export function TranscriptTail({
   streaming,
   pendingContent,
   pendingReasoning,
+  queued = [],
   onPickSuggestion,
   onStop,
   approvals,
@@ -245,13 +249,16 @@ export function TranscriptTail({
 }: TranscriptTailProps) {
   if (streaming) {
     return (
-      <MessageBubble
-        role="assistant"
-        content={stripSuggestionBlock(pendingContent)}
-        reasoning={pendingReasoning}
-        pending
-        onStop={onStop}
-      />
+      <>
+        <MessageBubble
+          role="assistant"
+          content={stripSuggestionBlock(pendingContent)}
+          reasoning={pendingReasoning}
+          pending
+          onStop={onStop}
+        />
+        <QueuedMessages items={queued} />
+      </>
     );
   }
   if (approvals && approvals.length > 0 && onDecideApproval) {

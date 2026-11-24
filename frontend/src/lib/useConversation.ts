@@ -106,6 +106,8 @@ export interface Conversation {
   /** `messages` minus rows pending an undoable delete. */
   visibleMessages: Message[];
   streaming: boolean;
+  /** Messages sent while the turn runs, waiting for its next model round. */
+  queued: string[];
   pendingContent: string;
   /** The model's thinking for the in-flight round, streamed ahead of its reply. */
   pendingReasoning: string;
@@ -206,6 +208,7 @@ export function useConversation({
   const streaming = streamStore.isStreaming(streamKey);
   const pendingContent = streamStore.pendingContent(streamKey);
   const pendingReasoning = streamStore.pendingReasoning(streamKey);
+  const queued = streamStore.queued(streamKey);
   const buffered = streamStore.bufferedMessages(streamKey);
   const hasSession = streamStore.hasSession(streamKey);
   const messages = useMemo<Message[]>(
@@ -385,6 +388,7 @@ export function useConversation({
     const wasStreaming = prevStreamingRef.current;
     prevStreamingRef.current = streaming;
     if (!wasStreaming || streaming) return;
+    restoreUnsent();
     // A user-initiated Stop persists + reloads in stop(); don't double-fetch.
     if (stoppingRef.current) {
       stoppingRef.current = false;
@@ -439,11 +443,33 @@ export function useConversation({
     setPersisted((prev) => [...prev, localMessage("user", content)]);
   }
 
+  // While a turn runs, plain text goes to it: the model reads it at its next
+  // round. Commands and attachments wait for the turn to end.
+  function steerDraft(): void {
+    const { draft, setDraft, parseCommand } = composer;
+    const content = draft.trim();
+    if (!content || pendingAttachments.length > 0 || parseCommand(content)) return;
+    if (streamStore.steer(streamKey, content)) {
+      setDraft("");
+      pinToBottom();
+    }
+  }
+
+  // Give back to the composer what a stopped, failed or parked turn never read.
+  function restoreUnsent(): void {
+    const unsent = streamStore.takeUnsent(streamKey);
+    if (unsent) composer.setDraft((d) => (d.trim() ? `${unsent}\n\n${d}` : unsent));
+  }
+
   async function send(): Promise<void> {
+    if (streaming) {
+      steerDraft();
+      return;
+    }
     const { draft, setDraft, speech, parseCommand } = composer;
     const content = draft.trim();
     const hasAttachments = pendingAttachments.length > 0;
-    if ((!content && !hasAttachments) || streaming) return;
+    if (!content && !hasAttachments) return;
     // The new prompt must land after a pending rewind's cut; if the cut didn't
     // happen, keep the draft rather than send it onto the old history.
     if (!(await rewind.flush())) return;
@@ -691,6 +717,7 @@ export function useConversation({
     messages,
     visibleMessages,
     streaming,
+    queued: queued.map((q) => q.content),
     pendingContent,
     pendingReasoning,
     retryableId,

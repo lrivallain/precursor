@@ -36,6 +36,8 @@ from precursor.backend.schemas import (
     NotesRephraseResponse,
     RewindRequest,
     RewindResult,
+    SteerRead,
+    SteerRequest,
     StoppedTurn,
     SuggestNameResponse,
     TurnIndexRead,
@@ -69,8 +71,9 @@ from precursor.backend.services.llm.one_shot import complete_once
 from precursor.backend.services.turn_engine import (
     apply_chat_system_prompt,
     build_chat_system_context,
-    cancel_running_turns,
 )
+from precursor.backend.services.turn_lifecycle import cancel_running_turns
+from precursor.backend.services.turn_steering import enqueue as enqueue_steer
 
 logger = logging.getLogger(__name__)
 
@@ -185,6 +188,13 @@ async def stop_turn(chat_id: int) -> None:
     it), so stopping one is this explicit request rather than a disconnect.
     """
     await cancel_running_turns("chat", chat_id)
+
+
+@router.post("/steer", response_model=SteerRead, dependencies=[Depends(get_chat_or_404)])
+async def steer_turn(chat_id: int, payload: SteerRequest) -> SteerRead:
+    """Hand a message to the turn running in this chat, at its next model round."""
+    item = enqueue_steer("chat", chat_id, payload.content)
+    return SteerRead(queued=item is not None, steer_id=item.id if item else None)
 
 
 @router.post("/stopped", response_model=list[MessageRead])

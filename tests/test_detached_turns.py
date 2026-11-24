@@ -1,4 +1,4 @@
-"""Turns outlive the stream that started them (``turn_engine.lifecycle_stream``).
+"""Turns outlive the stream that started them (``turn_lifecycle.lifecycle_stream``).
 
 Reloading the page used to cancel the turn mid-flight: nothing after the user's
 prompt was ever saved. Now the turn runs in a background task and the stream
@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 
-from precursor.backend.services import turn_engine
+from precursor.backend.services import turn_lifecycle
 from precursor.backend.services.events import (
     get_bus,
     get_current_client_id,
@@ -46,18 +46,18 @@ async def test_turn_runs_on_after_the_client_disconnects() -> None:
     set_current_client_id("window-1")
     try:
         async with get_bus().subscribe() as bus:
-            stream = turn_engine.lifecycle_stream("chat", 9001, inner())
+            stream = turn_lifecycle.lifecycle_stream("chat", 9001, inner())
             assert await anext(stream) == {"event": "delta", "data": "a"}
-            assert turn_engine.running_turns() == [("chat", 9001)]
+            assert turn_lifecycle.running_turns() == [("chat", 9001)]
             # The page reloads: the response stream is closed.
             await stream.aclose()
             release.set()
             await asyncio.wait_for(finished.wait(), 5)
             for _ in range(50):
-                if not turn_engine.running_turns():
+                if not turn_lifecycle.running_turns():
                     break
                 await asyncio.sleep(0.01)
-            assert turn_engine.running_turns() == []
+            assert turn_lifecycle.running_turns() == []
             events = await _drain(bus)
     finally:
         set_current_client_id(None)
@@ -80,12 +80,12 @@ async def test_cancel_running_turns_stops_the_turn() -> None:
         finally:
             cleaned_up.set()
 
-    stream = turn_engine.lifecycle_stream("topic", 9002, inner())
+    stream = turn_lifecycle.lifecycle_stream("topic", 9002, inner())
     assert await anext(stream) == {"event": "delta", "data": "a"}
-    assert await turn_engine.cancel_running_turns("topic", 9002) is True
+    assert await turn_lifecycle.cancel_running_turns("topic", 9002) is True
     assert cleaned_up.is_set()
-    assert turn_engine.running_turns() == []
-    assert await turn_engine.cancel_running_turns("topic", 9002) is False
+    assert turn_lifecycle.running_turns() == []
+    assert await turn_lifecycle.cancel_running_turns("topic", 9002) is False
     await stream.aclose()
 
 
@@ -94,5 +94,5 @@ async def test_attached_client_receives_every_event_then_the_stream_ends() -> No
         for i in range(3):
             yield {"event": "delta", "data": str(i)}
 
-    events = [e async for e in turn_engine.lifecycle_stream("chat", 9003, inner())]
+    events = [e async for e in turn_lifecycle.lifecycle_stream("chat", 9003, inner())]
     assert [e["data"] for e in events] == ["0", "1", "2"]

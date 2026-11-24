@@ -35,7 +35,7 @@ from precursor.backend.models.tool_approval import APPROVAL_KIND_TOOL
 from precursor.backend.services import approval_rules as approval_rules_service
 from precursor.backend.services import approvals as approval_service
 from precursor.backend.services import memories as memory_service
-from precursor.backend.services import side_chats, step_plans
+from precursor.backend.services import side_chats, step_plans, turn_steering
 from precursor.backend.services import skills as skills_service
 from precursor.backend.services.app_settings import (
     DEFAULT_LLM_MAX_ATTACHMENT_CHARS,
@@ -50,14 +50,9 @@ from precursor.backend.services.attachment_extraction import (
 from precursor.backend.services.collections import resolve_topic_github_repo
 from precursor.backend.services.context_budget import strip_inline_binaries, trim_messages
 from precursor.backend.services.events import (
-    bind_client_detached,
     publish_approval_changed,
     publish_message_changed,
     publish_message_changed_chat,
-    publish_stream_ended,
-    publish_stream_ended_chat,
-    publish_stream_started,
-    publish_stream_started_chat,
 )
 from precursor.backend.services.github_auth import resolve_github_token
 from precursor.backend.services.github_client import GitHubClient
@@ -113,6 +108,9 @@ from precursor.backend.services.turn_events import (
     RoundCapReached as RoundCapReached,
 )
 from precursor.backend.services.turn_events import (
+    SteeredTurn as SteeredTurn,
+)
+from precursor.backend.services.turn_events import (
     ToolAuthRequired as ToolAuthRequired,
 )
 from precursor.backend.services.turn_events import (
@@ -124,6 +122,7 @@ from precursor.backend.services.turn_events import (
 from precursor.backend.services.turn_events import (
     TurnEvent as TurnEvent,
 )
+from precursor.backend.services.turn_steering import SteerItem, SteerQueue
 from precursor.backend.services.usage_stats import record_usage
 from precursor.backend.services.workspaces import WORKSPACE_READ_TOOLS, WORKSPACE_WRITE_TOOLS
 
@@ -946,6 +945,17 @@ async def _stream_round(
             reply.usage = event
 
 
+def _take_steering(
+    steer: SteerQueue | None, messages: list[ChatMessage], *, final: bool = False
+) -> SteeredTurn | None:
+    """Hand the messages the user sent meanwhile to the model's next round."""
+    items = steer.take(final=final) if steer is not None else []
+    if not items:
+        return None
+    messages.extend(ChatMessage(role="user", content=item.content) for item in items)
+    return SteeredTurn(items)
+
+
 def _require_in_context(trimmed: list[ChatMessage], required: ChatMessage | None) -> None:
     if required is not None and not any(message is required for message in trimmed):
         raise HTTPException(
@@ -1084,6 +1094,7 @@ async def run_tool_loop(
     source_message: tuple[ContainerKind, int, int] | None = None,
     required_history_message: ChatMessage | None = None,
     tool_policy: ToolLoadingPolicy | None = None,
+    steer: SteerQueue | None = None,
 ) -> AsyncIterator[TurnEvent]:
     """Drive the provider + MCP tool loop, yielding semantic turn events.
 
@@ -1116,6 +1127,9 @@ async def run_tool_loop(
     without its input if normal context trimming would discard that message.
     ``tool_policy`` turns on on-demand MCP tool loading (see
     ``services/tool_loading.py``); ``None`` advertises every tool up front.
+    ``steer`` holds the messages the user sends while the turn runs: each joins
+    the conversation at the next round, and one waiting when the model answers
+    makes the turn carry on instead of ending (``services/turn_steering.py``).
     """
     if extra_permissions and gate is not None and decline_note is None:
         raise ValueError("Gated extra tools require a decline handler.")
@@ -1156,6 +1170,8 @@ async def run_tool_loop(
         last_round = wrap_up is not None and _round == max_tool_rounds - 1
         if last_round:
             messages.append(ChatMessage(role="user", content=wrap_up or ""))
+        elif _round and (steered := _take_steering(steer, messages)):
+            yield steered
         trimmed = trim_messages(
             messages,
             max_input_tokens=max_input_tokens,
@@ -1188,7 +1204,19 @@ async def run_tool_loop(
             )
         if not tool_calls:
             yield AssistantFinalTurn(assistant_text, reply.usage, reasoning, *answered_by)
-            return
+            # The answer stays in the context in case the user's message, sent
+            # while it was written, makes the turn carry on.
+            messages.append(
+                ChatMessage(
+                    role="assistant",
+                    content=assistant_text,
+                    provider_content=reply.provider_content,
+                )
+            )
+            if not (steered := _take_steering(steer, messages, final=True)):
+                return
+            yield steered
+            continue
 
         _ground_plan_calls(tool_calls, tool_to_server, source_message)
         openai_tool_calls = [
@@ -1419,11 +1447,7 @@ def _sse(event: str, payload: Any) -> dict[str, str]:
 
 @dataclass(slots=True)
 class _StreamRelay:
-    """Persists a turn's events against its container and turns them into SSE.
-
-    ``finished`` is set once the turn has nothing more to say: it answered, or
-    it parked on the user's approval.
-    """
+    """Persists a turn's events against its container and turns them into SSE."""
 
     kind: ContainerKind
     container_id: int
@@ -1431,7 +1455,6 @@ class _StreamRelay:
     source_message_id: int | None
     turn_started: float
     last_assistant_id: int | None = None
-    finished: bool = False
 
     async def relay(self, ev: TurnEvent) -> AsyncIterator[dict[str, str]]:
         if isinstance(ev, AssistantTextDelta):
@@ -1459,11 +1482,34 @@ class _StreamRelay:
             cap_msg = f"Stopped after {ev.max_tool_rounds} tool rounds."
             await _persist_system_message(self.container_id, f"Error: {cap_msg}", kind=self.kind)
             yield _sse("error", {"message": cap_msg})
+        elif isinstance(ev, SteeredTurn):
+            for item in ev.items:
+                yield _sse("user_message", await self._steered(item))
+
+    async def _steered(self, item: SteerItem) -> dict[str, Any]:
+        # Saved as the model takes it, after the round's tool results, so the
+        # transcript replays in the order the model saw it.
+        async with SessionLocal() as ws:
+            msg = Message(
+                role=MessageRole.USER,
+                content=item.content,
+                **container_message_kwargs(self.kind, self.container_id),
+            )
+            ws.add(msg)
+            await ws.commit()
+            await ws.refresh(msg)
+        await publish_container_changed(self.kind, self.container_id)
+        return {
+            "id": msg.id,
+            "public_id": msg.public_id,
+            "content": msg.content,
+            "attachments": [],
+            "steer_id": item.id,
+        }
 
     async def _final(self, ev: AssistantFinalTurn) -> AsyncIterator[dict[str, str]]:
         # Split off any suggested follow-ups, persist the clean text, and
         # surface the chips separately.
-        self.finished = True
         elapsed_ms = int((time.monotonic() - self.turn_started) * 1000)
         actual_model = ev.model or self.model
         answer = await persist_final_turn(
@@ -1520,7 +1566,6 @@ class _StreamRelay:
         )
 
     async def _approvals(self, ev: ApprovalsRequested) -> dict[str, str]:
-        self.finished = True
         async with SessionLocal() as ws:
             rows = await approval_service.record_pending(
                 ws,
@@ -1605,6 +1650,7 @@ async def run_message_stream(
         for event in _unavailable_server_events(active):
             yield event
 
+        steer = turn_steering.queue_for(kind, container_id)
         try:
             relay = _StreamRelay(
                 kind, container_id, model, source_message_id, turn_started=time.monotonic()
@@ -1625,11 +1671,10 @@ async def run_message_stream(
                 if source_message_id is not None
                 else None,
                 tool_policy=tool_policy,
+                steer=steer,
             ):
                 async for sse in relay.relay(ev):
                     yield sse
-                if relay.finished:
-                    return
         except LLMError as exc:
             # Provider rejected the request for a reason worth showing the
             # user (too many tools, bad credentials, …) — surface it cleanly
@@ -1641,100 +1686,3 @@ async def run_message_stream(
             logger.exception("Chat stream failed")
             await _persist_system_message(container_id, f"Error: {exc}", kind=kind)
             yield _sse("error", {"message": str(exc)})
-
-
-# Turns running in the background, per container. A turn is not tied to the
-# request that started it: closing or reloading the page only stops the relay of
-# its events, while the turn itself runs on and persists its result. Stopping
-# one is explicit (``cancel_running_turns``).
-_RUNNING_TURNS: dict[tuple[str, int], set[asyncio.Task[None]]] = {}
-_END_OF_TURN: dict[str, str] = {"event": "__end__"}
-
-
-def running_turns() -> list[tuple[str, int]]:
-    """Containers with a turn still generating."""
-    return [key for key, tasks in _RUNNING_TURNS.items() if tasks]
-
-
-async def cancel_running_turns(kind: ContainerKind, container_id: int) -> bool:
-    """Stop the turns generating in a container; True when one was running.
-
-    Waits (briefly) for them to unwind, so the caller can persist what the user
-    kept without racing the turn's own final write.
-    """
-    tasks = [t for t in _RUNNING_TURNS.get((kind, container_id), ()) if not t.done()]
-    for task in tasks:
-        task.cancel()
-    if tasks:
-        await asyncio.wait(tasks, timeout=10)
-    return bool(tasks)
-
-
-def lifecycle_stream(
-    kind: ContainerKind,
-    container_id: int,
-    inner: AsyncIterator[dict[str, str]],
-) -> AsyncIterator[dict[str, str]]:
-    """Run a turn in the background and relay its events to the caller.
-
-    The turn is framed by stream.started / stream.ended publishing. It runs in a
-    task of its own, so a client that disconnects (a page reload, a closed tab)
-    no longer cancels it: the relay stops, the turn finishes and persists. From
-    then on its bus events go to every window, the originating one included —
-    that window, reloaded, has the same client id and would otherwise ignore the
-    message.changed / stream.ended that bring the result in.
-    """
-    key = (kind, container_id)
-
-    async def run(queue: asyncio.Queue[dict[str, str]], listener: dict[str, bool]) -> None:
-        # The task runs in its own context copy: this binding is the turn's own.
-        bind_client_detached(listener)
-        if kind == "topic":
-            await publish_stream_started(container_id)
-        else:
-            await publish_stream_started_chat(container_id)
-        try:
-            try:
-                async for evt in inner:
-                    if not listener["detached"]:
-                        queue.put_nowait(evt)
-            finally:
-                # Close the turn's generator here, in its own task, so its
-                # cleanup runs now rather than whenever it is collected.
-                aclose = getattr(inner, "aclose", None)
-                if aclose is not None:
-                    await aclose()
-        finally:
-            if kind == "topic":
-                await publish_stream_ended(container_id)
-            else:
-                await publish_stream_ended_chat(container_id)
-            queue.put_nowait(_END_OF_TURN)
-
-    def forget(task: asyncio.Task[None]) -> None:
-        tasks = _RUNNING_TURNS.get(key)
-        if tasks is not None:
-            tasks.discard(task)
-            if not tasks:
-                _RUNNING_TURNS.pop(key, None)
-        if not task.cancelled() and task.exception() is not None:
-            logger.error("Turn in %s %s failed", kind, container_id, exc_info=task.exception())
-
-    async def relay() -> AsyncIterator[dict[str, str]]:
-        queue: asyncio.Queue[dict[str, str]] = asyncio.Queue()
-        listener = {"detached": False}
-        task = asyncio.create_task(run(queue, listener), name=f"turn-{kind}-{container_id}")
-        _RUNNING_TURNS.setdefault(key, set()).add(task)
-        task.add_done_callback(forget)
-        try:
-            while True:
-                evt = await queue.get()
-                if evt is _END_OF_TURN:
-                    return
-                yield evt
-        finally:
-            # Detach only: the turn carries on without a listener, and its
-            # events from now on reach every window.
-            listener["detached"] = True
-
-    return relay()
