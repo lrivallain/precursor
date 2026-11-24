@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 from precursor.backend.main import create_app
 from precursor.backend.services import conversation_turn as conversation_turn_mod
 from precursor.backend.services import turn_engine, turn_steering
+from precursor.backend.services.context_budget import trim_messages
 from precursor.backend.services.llm.base import (
     ChatMessage,
     TextDeltaEvent,
@@ -219,6 +220,41 @@ async def test_only_messages_that_fit_the_budget_are_taken() -> None:
     # The one that never fits stays unread, and the turn ends.
     assert queue.closed and queue.items == [large]
     assert [ev.text for ev in events if isinstance(ev, AssistantFinalTurn)] == ["First"]
+
+
+async def test_reads_that_feed_one_request_share_its_budget() -> None:
+    # Two ~200-token messages arrive while the model answers. The budget (650,
+    # ~280 of it the system prompt) has room for one per request: the read after
+    # the answer and the one before the next call feed the same request, so
+    # they share it, and each message reaches the model.
+    queue = turn_steering.SteerQueue("topic", 1)
+
+    def send_two(n: int) -> None:
+        if n == 1:
+            for sid in ("m1", "m2"):
+                queue.items.append(turn_steering.SteerItem(id=sid, content=sid * 380))
+
+    provider = _Provider("First", "Second", "Third", on_round=send_two)
+    events = await _loop(provider, queue, max_input_tokens=650)
+
+    taken = [[i.id for i in ev.items] for ev in events if isinstance(ev, SteeredTurn)]
+    assert taken == [["m1"], ["m2"]]
+    sent = [
+        [
+            m.content[:2]
+            for m in trim_messages(
+                r["messages"], max_input_tokens=650, per_message_max_tokens=10_000
+            )
+            if m.role == "user"
+        ]
+        for r in provider.requests
+    ]
+    assert sent[1][-1] == "m1" and sent[2][-1] == "m2"
+    assert [ev.text for ev in events if isinstance(ev, AssistantFinalTurn)] == [
+        "First",
+        "Second",
+        "Third",
+    ]
 
 
 async def test_without_a_queue_the_loop_ends_on_the_answer() -> None:

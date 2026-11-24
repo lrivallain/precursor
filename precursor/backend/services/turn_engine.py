@@ -1160,7 +1160,7 @@ async def run_tool_loop(
         last_round = wrap_up is not None and _round == max_tool_rounds - 1
         if last_round:
             messages.append(ChatMessage(role="user", content=wrap_up or ""))
-        elif steered := take_steering(steer, messages, max_tokens=max_input_tokens // 2):
+        elif steered := take_steering(steer, messages, max_input_tokens=max_input_tokens):
             yield steered
         trimmed = trim_messages(
             messages,
@@ -1201,7 +1201,7 @@ async def run_tool_loop(
             messages.append(answer)
             last = _round + 1 >= max_tool_rounds
             steered = take_steering(
-                steer, messages, max_tokens=max_input_tokens // 2, final=True, no_round_left=last
+                steer, messages, max_input_tokens=max_input_tokens, final=True, no_round_left=last
             )
             if not steered:
                 return

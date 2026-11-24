@@ -384,24 +384,24 @@ class StreamStore extends VersionedStore {
       ok = false;
       // Another window already resumed this turn: nothing to report.
       const conflict = quietConflict && (err as { status?: number }).status === 409;
-      if ((err as Error).name !== "AbortError" && !conflict) {
+      // A stopped turn's session may already be replaced by a newer turn's.
+      const current = this.sessions.get(key) === session;
+      if ((err as Error).name !== "AbortError" && !conflict && current) {
         console.error(err);
         const message = err instanceof Error ? err.message : String(err);
-        const failed = this.sessions.get(key);
-        if (failed) failed.requestError = message;
+        session.requestError = message;
         this.handleEvent(key, {
           event: "error",
           data: JSON.stringify({ message }),
         });
       }
     } finally {
-      const cur = this.sessions.get(key);
-      if (cur) {
-        cur.streaming = false;
-        void cur.sender.settled();
-        collectUnsent(cur);
-        this.notify();
-      }
+      // Settle this turn's own session only: once Stop has cleared it, the
+      // key may hold a newer turn that is still running.
+      session.streaming = false;
+      void session.sender.settled();
+      collectUnsent(session);
+      if (this.sessions.get(key) === session) this.notify();
       this.onCompleteCb?.(key, ok);
     }
   }
