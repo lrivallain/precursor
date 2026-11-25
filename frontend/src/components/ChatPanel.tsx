@@ -3,7 +3,7 @@ import { ArrowRightCircle } from "lucide-react";
 import { AgentExchangeBadge } from "./MessageBubble";
 import { CommandDraftCard, type CommandDraftPayload } from "./CommandDraftCard";
 import { ConversationNotes, NotesConfirmModal } from "./ConversationNotes";
-import { TranscriptMessage, TranscriptTail, UndoDeleteToasts } from "./ConversationTranscript";
+import { ComposerNotices, TranscriptMessage, TranscriptTail } from "./ConversationTranscript";
 import { Composer } from "./Composer";
 import { ComposerApprovalControl } from "./ComposerApprovalControl";
 import { ComposerModelControls } from "./ComposerModelControls";
@@ -769,7 +769,7 @@ export function ChatPanel({ topic, onTopicUpdated, onArchived, onNavigateTopic, 
             streaming={streaming}
             scrollRef={conv.scrollRef}
           />
-          <UndoDeleteToasts deletion={conv.deletion} />
+          <ComposerNotices deletion={conv.deletion} conversation={{ kind: "topic", id: topic.id }} />
           <ConversationNotes
             notes={conv.notes}
             container="topic"

@@ -123,6 +123,15 @@ async def topic_context(agent: AgentSession) -> str | None:
     return "\n".join(lines)
 
 
+_WAKEUP_HINT = (
+    "## Waiting on something\n"
+    "When you must wait for something outside this session (a CI run, a deploy, a long "
+    "job) before you can go on, don't poll or sleep: call the `precursor` tool "
+    "`schedule_wakeup` with conversation_id `{agent_id}` (your own id), a delay and a "
+    "prompt for your future self, then end your turn. You will be woken up with that prompt."
+)
+
+
 async def system_preamble(agent: AgentSession, caps: _Caps | None = None) -> str | None:
     """Combined system-message append: role persona + operator custom prompt + memory + topic binding.
 
@@ -156,6 +165,7 @@ async def system_preamble(agent: AgentSession, caps: _Caps | None = None) -> str
         else ""
     )
     topic = await topic_context(agent)
+    wakeup = _WAKEUP_HINT.format(agent_id=agent.public_id) if caps.use_mcp else ""
     autonomy = _AUTONOMY_PROTOCOL if agent.autonomy_enabled else ""
     # Follow-up "suggest" chips are for a human replying turn-by-turn. An
     # autonomous agent drives itself via the control directives and runs
@@ -176,6 +186,7 @@ async def system_preamble(agent: AgentSession, caps: _Caps | None = None) -> str
             memory,
             state,
             topic,
+            wakeup,
             autonomy,
             skills,
             suggestions,

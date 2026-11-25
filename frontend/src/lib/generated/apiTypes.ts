@@ -3127,6 +3127,18 @@ export interface VersionInfo {
   build_date: string | null;
 }
 
+/** A paused conversation and when (and with what prompt) it wakes up. */
+export interface WakeupRead {
+  id: number;
+  kind: "topic" | "chat" | "agent";
+  target_id: number;
+  title: string;
+  wake_at: string;
+  prompt: string;
+  reason: string | null;
+  created_at: string;
+}
+
 /** Just enough of a step's agent to render its node + drive controls. */
 export interface WorkflowAgentSummary {
   id: number;
@@ -5585,6 +5597,21 @@ export interface Operations {
       force?: boolean;
     };
     response: UpdateCheck;
+  };
+  "GET /api/wakeups": {
+    response: WakeupRead[];
+  };
+  "DELETE /api/wakeups/{wakeup_id}": {
+    path: {
+      wakeup_id: number;
+    };
+    response: void;
+  };
+  "POST /api/wakeups/{wakeup_id}/wake": {
+    path: {
+      wakeup_id: number;
+    };
+    response: void;
   };
   "GET /api/workflows": {
     query?: {

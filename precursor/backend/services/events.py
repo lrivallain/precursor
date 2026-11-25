@@ -56,6 +56,7 @@ RELAYABLE_EVENT_TYPES: frozenset[str] = frozenset(
         "chat.changed",
         "message.changed",
         "reminder.changed",
+        "wakeup.changed",
         "read.changed",
         "agent.changed",
         "meeting.changed",
@@ -422,6 +423,16 @@ async def publish_reminder_changed(
     sidebar Reminders section reloads regardless.
     """
     await _bus.publish({"type": "reminder.changed", "topic_id": topic_id, "chat_id": chat_id})
+
+
+async def publish_wakeup_changed() -> None:
+    """Signal that the set of paused conversations changed (scheduled / woken / cancelled).
+
+    Sent to every window, the originating one included: a pause is decided by
+    the model on the server, so no window holds it as an optimistic update.
+    """
+    with broadcast_events():
+        await _bus.publish({"type": "wakeup.changed"})
 
 
 async def publish_agent_changed(

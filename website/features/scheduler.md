@@ -6,7 +6,8 @@ title: Scheduler & reminders
 
 Run [topics](/features/topics), [agents](/features/agents-mode) and
 [workflows](/features/workflows/running#triggers-and-scheduling) on a schedule, and set one-shot
-**reminders** on a conversation. The scheduler runs in-process and needs
+**reminders** on a conversation; the model itself can pause a conversation and
+[wake it up later](#self-wakeups). The scheduler runs in-process and needs
 `PRECURSOR_SCHEDULER_ENABLED` (on by default).
 
 <Screenshot src="/screenshots/scheduler.png" alt="A topic's settings panel with Run on a schedule enabled, showing the prompt to run each time and two recurrence rules — Monday at 09:00 and Friday at 17:00 — with an Add another schedule button beneath them" caption="The recurrence editor — the same control scheduled topics, agents and workflows share. A schedule can hold several rules and fires at whichever comes first." />
@@ -92,3 +93,30 @@ A one-shot **reminder** resurfaces a topic or chat at a set time. Type
   icon on the collapsed rail means one is set.
 - The `precursor` [MCP server](/features/mcp) can set, list and cancel
   reminders too.
+
+## Self wakeups
+
+A model waiting on something outside the conversation (a CI run, a deploy, a
+long job, a reply) can **pause** the conversation and wake itself up later,
+instead of polling or giving up. It schedules a wakeup with a delay (or a time)
+and a prompt written for its future self, then ends its turn. When the time
+comes, that prompt is sent back into the conversation as a new message,
+marked **⏰ Self wake-up**, and the model carries on with the whole history.
+
+- **Where:** topics and chats get the `schedule_wakeup` and `cancel_wakeup`
+  tools on every turn, with no MCP server to switch on. [Agents](/features/agents-mode)
+  get them from the `precursor` [MCP server](/features/mcp) and are told
+  their own id to pass. A wakeup belongs to the agent execution that paused:
+  if a new execution has taken over by then, it is dropped. A
+  [workflow](/features/workflows) step can't pause itself, since the workflow
+  would read it as finished.
+- **While paused:** an orange pause icon marks the conversation in the
+  sidebar (its tooltip says when it wakes up and what it waits for), and a
+  banner above the composer offers **Wake now** and **Cancel**.
+- **One per conversation**, between 10 seconds and 30 days away; scheduling
+  again replaces it. A woken-up turn can pause again if it still has to wait.
+- **Never mid-turn:** if a reply is still generating (or an agent is running
+  or waiting on an approval) when the time comes, the wakeup waits for it to
+  finish.
+- A woken-up turn runs unattended, like a scheduled one: tool calls your
+  [approval policy](/features/approvals) holds back are parked for you.

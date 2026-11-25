@@ -76,6 +76,7 @@ from precursor.backend.routers import (
     topics,
     transfer,
     version,
+    wakeups,
     workflows,
     workspaces,
 )
@@ -222,12 +223,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from precursor.backend.services.scheduler import get_scheduler
     from precursor.backend.services.telemetry.ticker import get_telemetry_ticker
     from precursor.backend.services.tool_result_ticker import get_tool_result_ticker
+    from precursor.backend.services.wakeup_ticker import get_wakeup_ticker
 
     # Started in order, stopped in the same order. The IQ indexer is shut down
     # between the two groups, once nothing polls it any more.
     pollers: list[_Lifecycle] = [
         get_scheduler(),
         get_reminder_ticker(),
+        get_wakeup_ticker(),
         get_tool_result_ticker(),
         get_live_transcript_ticker(),
         get_agent_event_ticker(),
@@ -453,6 +456,7 @@ def create_app() -> FastAPI:
         artifacts.router,
         canvas.router,
         reminders.router,
+        wakeups.router,
         agents.router,
         workflows.router,
         steps.router,

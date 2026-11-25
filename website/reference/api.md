@@ -69,6 +69,7 @@ app (command palette → **Documentation**, About dialog).
 | `roles` | `/api/roles/{name}` | [roles](/features/skills-memory), case-insensitive. `PATCH` edits the prompt only (renaming → `400`; `default` can't be renamed or deleted). Delete clears the role everywhere, including definition files and run snapshots; an unsafe file edit → `409`. Not transactional across files and DB: retry after an I/O failure. |
 | `…/schedule` | `/api/{topics\|agents}/{id}/schedule` | recurrence and **Run now**. `rules: [{interval_seconds, days_of_week, run_at_minute, timezone}]` replaces the [set](/features/scheduler#several-cadences-on-one-item); legacy flat fields patch the first rule. `next_run_at` is the earliest across rules. Topic schedules take `approval_timeout_minutes`. |
 | `reminders` | `/api/reminders` | one-shot [reminders](/features/scheduler) |
+| `wakeups` | `/api/wakeups` | [paused conversations](/features/scheduler#self-wakeups): `GET` lists them (`kind`: `topic` \| `chat` \| `agent`, `target_id`, `wake_at`, `prompt`, `reason`), `POST /{id}/wake` wakes one now, `DELETE /{id}` cancels it |
 | `agents` | `/api/agents` | [details](#agents) |
 | `workflows` | `/api/workflows` | definitions, steps, `/run` `/pause` `/resume` `/cancel` `/retry`, traces, replay, approvals, state, schedules, public `POST /hooks/{token}`; see the [workflows API](/features/workflows/reference#api-surface) |
 | `workspaces` | `/api/workspaces` | [details](#workspaces) |
@@ -408,6 +409,7 @@ when none) and never replayed to the model.
 | `stream.started` / `stream.ended` | a turn began / completed |
 | `read.changed` | a conversation was marked read |
 | `reminder.changed` | a [reminder](/features/scheduler) was created, fired or cleared |
+| `wakeup.changed` | a conversation was [paused](/features/scheduler#self-wakeups), woken up or its wakeup cancelled |
 | `agent.changed` | an [agent](/features/agents-mode)'s state or events moved |
 | `meeting.changed` | a [live session](/features/live-sessions) was created, renamed, ended or deleted |
 | `workflow.changed` | a [workflow](/features/workflows) step or status changed, or its definition was edited; carries run status and workflow name |
@@ -427,6 +429,6 @@ in-process bus. They publish through `POST /api/events/publish`, with the
 per-run token the app put in their environment, in `X-Precursor-Event-Token`
 (wrong or missing → `403`). Relayed events go to every window (empty
 `client_id`). Only data-refresh types are accepted (`topic.changed`,
-`message.changed`, `reminder.changed`, `read.changed`, `agent.changed`,
+`message.changed`, `reminder.changed`, `wakeup.changed`, `read.changed`, `agent.changed`,
 `meeting.changed`, `workflow.changed`); anything else, such as `mcp.auth_url`,
 is a `400`.

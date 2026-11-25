@@ -7,7 +7,7 @@
     "frontend/src/components/DefinitionsMigrationWizard.tsx": 1111,
     "frontend/src/components/LiveView.tsx": 1666,
     "frontend/src/components/PluginsSettings.tsx": 1083,
-    "frontend/src/components/Sidebar.tsx": 1517,
+    "frontend/src/components/Sidebar.tsx": 1514,
     "frontend/src/components/TopicSettingsPanel.tsx": 870,
     "frontend/src/components/WorkflowStepEditor.tsx": 817,
     "frontend/src/components/WorkflowView.tsx": 1665,
@@ -287,7 +287,7 @@
     "frontend/src/lib/workflows.ts::eslint(complexity)": 2
   },
   "duplication": {
-    "duplicated-lines": 2530
+    "duplicated-lines": 2528
   },
   "untyped-responses": {
     "DELETE /api/plugins/installed/{plugin_id}": 1,

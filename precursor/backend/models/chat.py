@@ -10,6 +10,7 @@ from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from precursor.backend.models.base import Base, TimestampMixin
+from precursor.backend.models.wakeup import Wakeup  # no cycle: it imports only the base
 
 if TYPE_CHECKING:
     from precursor.backend.models.approval_rule import ApprovalRule
@@ -125,6 +126,11 @@ class Chat(Base, TimestampMixin):
         back_populates="chat",
         cascade="all, delete-orphan",
         uselist=False,
+    )
+    # A pending self wakeup (services/wakeups.py). SQLite doesn't enforce the FK,
+    # so this cascade is what keeps a stale one from reaching a reused id.
+    wakeup: Mapped[Wakeup | None] = relationship(
+        "Wakeup", cascade="all, delete-orphan", uselist=False
     )
 
     # Optional persisted scratchpad text used by the /notes command.

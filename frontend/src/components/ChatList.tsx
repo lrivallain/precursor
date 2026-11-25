@@ -1,4 +1,5 @@
 import { ApprovalBadge } from "./ApprovalBadge";
+import { WakeupIcon } from "./WakeupIndicator";
 import { useEffect, useMemo, useState } from "react";
 import {
   AlarmClock,
@@ -202,6 +203,7 @@ export function ChatList({
               aria-label="Reminder waiting"
             />
           )}
+          <WakeupIcon kind="chat" id={chat.id} size={13} />
           {(chat.pending_approvals ?? 0) > 0 && (
             <ApprovalBadge count={chat.pending_approvals ?? 0} />
           )}

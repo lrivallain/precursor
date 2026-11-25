@@ -1,4 +1,5 @@
 import { ApprovalBadge } from "./ApprovalBadge";
+import { WakeupIcon } from "./WakeupIndicator";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ComponentType, ReactNode } from "react";
 import {
@@ -659,13 +660,8 @@ function TopicItem({
             data-tooltip={scheduleDisabled ? "Schedule paused" : "Runs on a schedule"}
           />
         )}
-        {node.pinned && (
-          <Pin
-            size={11}
-            className="text-muted shrink-0"
-            aria-label="Pinned"
-          />
-        )}
+        {node.pinned && <Pin size={11} className="text-muted shrink-0" aria-label="Pinned" />}
+        <WakeupIcon kind="topic" id={node.id} />
         {reminderTopicIds?.has(node.id) && (
           <AlarmClock
             size={12}
@@ -1457,6 +1453,7 @@ function PinnedItem({
         {hasReminder && (
           <AlarmClock size={12} className="text-accent shrink-0" aria-label="Reminder waiting" />
         )}
+        <WakeupIcon kind="topic" id={node.id} />
         {isStreaming ? (
           <StreamingDots />
         ) : (node.pending_approvals ?? 0) > 0 ? (

@@ -23,6 +23,7 @@ from precursor.backend.models import (
     MessageRole,
     Topic,
 )
+from precursor.backend.services import wakeups
 from precursor.backend.services.agents.directives import (
     _CONTINUE_NUDGE,
     RESULT_SUMMARY_CAP,
@@ -152,8 +153,10 @@ class GoalLoop:
             await m._notify_back(agent, run)
             return
 
-        # 3) Autonomous continuation — keep pursuing the objective if allowed.
-        if agent.autonomy_enabled:
+        # 3) Autonomous continuation — keep pursuing the objective if allowed. An
+        # agent that paused itself (a self wakeup) rests instead, like a plain one:
+        # its wakeup prompt resumes the mission.
+        if agent.autonomy_enabled and not await wakeups.is_paused("agent", agent.id):
             await self._continue(agent, run, live, progress, patch)
             return
 
