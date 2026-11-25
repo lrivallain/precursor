@@ -106,7 +106,10 @@ marked **⏰ Self wake-up**, and the model carries on with the whole history.
 - **Where:** topics and chats get the `schedule_wakeup` and `cancel_wakeup`
   tools on every turn, with no MCP server to switch on. [Agents](/features/agents-mode)
   get them from the `precursor` [MCP server](/features/mcp) and are told
-  their own id to pass.
+  their own id to pass. A wakeup belongs to the agent execution that paused:
+  if a new execution has taken over by then, it is dropped. A
+  [workflow](/features/workflows) step can't pause itself, since the workflow
+  would read it as finished.
 - **While paused:** an orange pause icon marks the conversation in the
   sidebar (its tooltip says when it wakes up and what it waits for), and a
   banner above the composer offers **Wake now** and **Cancel**.

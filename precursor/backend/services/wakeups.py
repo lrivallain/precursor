@@ -22,7 +22,7 @@ from sqlalchemy.orm import InstrumentedAttribute
 
 from precursor.backend.clock import utcnow
 from precursor.backend.db import SessionLocal
-from precursor.backend.models import AgentSession, Chat, Topic, Wakeup
+from precursor.backend.models import AgentRun, AgentSession, Chat, Topic, Wakeup
 from precursor.backend.schemas.wakeup import WakeupKind, WakeupRead
 from precursor.backend.services.events import publish_wakeup_changed
 
@@ -117,12 +117,15 @@ async def schedule(
         raise WakeupError("`prompt` must not be empty: it is what you will be woken up with.")
     if len(prompt) > MAX_PROMPT_CHARS:
         raise WakeupError(f"`prompt` is limited to {MAX_PROMPT_CHARS} characters.")
-    if await session.get(_MODELS[kind], target_id) is None:
+    target = await session.get(_MODELS[kind], target_id)
+    if target is None:
         raise WakeupError(f"No {kind} with id {target_id}.")
+    run_id = await _pausable_run(session, target) if kind == "agent" else None
     wakeup = await get_wakeup(session, kind, target_id)
     if wakeup is None:
         wakeup = Wakeup(**{_column(kind).key: target_id})
         session.add(wakeup)
+    wakeup.agent_run_id = run_id
     wakeup.wake_at = wake_at
     wakeup.prompt = prompt
     wakeup.reason = (reason or "").strip() or None
@@ -130,6 +133,19 @@ async def schedule(
     await session.refresh(wakeup)
     await publish_wakeup_changed()
     return wakeup
+
+
+async def _pausable_run(session: AsyncSession, agent: AgentSession) -> int:
+    """The agent execution a wakeup will resume: its current one, if it may pause."""
+    run = await session.get(AgentRun, agent.current_run_id) if agent.current_run_id else None
+    if run is None:
+        raise WakeupError("This agent has no execution to pause.")
+    if run.workflow_run_id is not None:
+        # A workflow reads a resting step as finished and would start the next one.
+        raise WakeupError(
+            "A workflow step can't pause itself: finish the step, or report that it is blocked."
+        )
+    return int(run.id)
 
 
 async def cancel(session: AsyncSession, kind: WakeupKind, target_id: int) -> bool:

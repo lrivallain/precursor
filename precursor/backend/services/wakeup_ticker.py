@@ -10,12 +10,13 @@ running turn.
 from __future__ import annotations
 
 import asyncio
+from typing import Literal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.config import Settings
 from precursor.backend.db import SessionLocal
-from precursor.backend.models import AgentSession, Wakeup
+from precursor.backend.models import AgentRun, AgentSession, Wakeup
 from precursor.backend.services import turn_lifecycle, wakeups
 from precursor.backend.services.background_poll import BackgroundPoll
 from precursor.backend.services.events import (
@@ -53,13 +54,16 @@ class WakeupTicker(BackgroundPoll):
     async def _scan_due(self) -> None:
         async with SessionLocal() as session:
             due = await wakeups.due(session)
-            woken = []
+            woken, consumed = [], False
             for wakeup in due:
-                if await _busy(session, wakeup):
+                verdict = await _verdict(session, wakeup)
+                if verdict == "wait":
                     continue
-                woken.append((wakeups.target_of(wakeup), wakeups.wake_message(wakeup)))
+                if verdict == "wake":
+                    woken.append((wakeups.target_of(wakeup), wakeups.wake_message(wakeup)))
                 await session.delete(wakeup)
-            if not woken:
+                consumed = True
+            if not consumed:
                 return
             await session.commit()
         await publish_wakeup_changed()
@@ -104,16 +108,22 @@ class WakeupTicker(BackgroundPoll):
             await asyncio.wait(turns, timeout=10)
 
 
-async def _busy(session: AsyncSession, wakeup: Wakeup) -> bool:
+async def _verdict(session: AsyncSession, wakeup: Wakeup) -> Literal["wake", "wait", "drop"]:
+    """Wake the conversation now, wait for it to be free, or drop a stale wakeup."""
     kind, target_id = wakeups.target_of(wakeup)
     if kind != "agent":
-        return is_streaming(kind, target_id)
+        return "wait" if is_streaming(kind, target_id) else "wake"
     from precursor.backend.services.agents.manager import get_agent_manager
 
     if not get_agent_manager().ready:
-        return True
+        return "wait"
     agent = await session.get(AgentSession, target_id)
-    return agent is not None and agent.status in _AGENT_BUSY
+    run = await session.get(AgentRun, wakeup.agent_run_id) if wakeup.agent_run_id else None
+    if agent is None or run is None or agent.current_run_id != run.id:
+        # Another execution took the agent over: the prompt belongs to the one
+        # that paused, not to a history it never saw.
+        return "drop"
+    return "wait" if run.status in _AGENT_BUSY else "wake"
 
 
 get_wakeup_ticker = WakeupTicker.instance

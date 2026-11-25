@@ -159,27 +159,51 @@ async def test_ticker_waits_while_a_turn_is_running(monkeypatch: pytest.MonkeyPa
         assert await wakeups.get_wakeup(session, "topic", topic_id) is not None
 
 
-async def test_ticker_sends_an_agent_its_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
-    async with SessionLocal() as session:
-        agent = AgentSession(title="Waiter", task_prompt="x", status="completed")
-        session.add(agent)
-        await session.commit()
-        agent_id, public_id = agent.id, agent.public_id
+async def _agent_with_run() -> tuple[int, int, str]:
+    """An agent with a current execution: (agent id, run id, public id)."""
+    from tests.test_agents import _current_run_id, _ensure_schema, _make_agent
 
+    await _ensure_schema()
+    agent_id = await _make_agent(task_prompt="x", status="completed")
+    run_id = await _current_run_id(agent_id)
+    assert run_id is not None
+    async with SessionLocal() as session:
+        agent = await session.get(AgentSession, agent_id)
+        assert agent is not None
+        return agent_id, run_id, agent.public_id
+
+
+@pytest.mark.parametrize("situation", ["current", "superseded", "busy"])
+async def test_ticker_wakes_only_the_agent_execution_that_paused(
+    monkeypatch: pytest.MonkeyPatch, situation: str
+) -> None:
+    from precursor.backend.models import AgentRun
+
+    agent_id, run_id, public_id = await _agent_with_run()
     async with SessionLocal() as session:
         assert await wakeups.resolve_public_id(session, public_id) == ("agent", agent_id)
         await wakeups.schedule(
             session, "agent", agent_id, wake_at=NOW + timedelta(days=1), prompt="Go on"
         )
     await _make_due("agent", agent_id)
+    async with SessionLocal() as session:
+        agent = await session.get(AgentSession, agent_id)
+        assert agent is not None
+        if situation == "superseded":
+            newer = AgentRun(agent_id=agent_id, trigger="manual", status="idle")
+            session.add(newer)
+            await session.flush()
+            agent.current_run_id = newer.id
+        elif situation == "busy":
+            run = await session.get(AgentRun, run_id)
+            assert run is not None
+            run.status = "running"
+        await session.commit()
 
     sent: list[tuple[int, str]] = []
 
     async def send_message(target: int, text: str) -> None:
         sent.append((target, text))
-
-    async def run(coro: Any) -> None:
-        await coro
 
     pending: list[Any] = []
     manager = SimpleNamespace(
@@ -190,9 +214,36 @@ async def test_ticker_sends_an_agent_its_prompt(monkeypatch: pytest.MonkeyPatch)
     )
     await WakeupTicker().run_once()
     for coro in pending:
-        await run(coro)
+        await coro
 
-    assert [(t, text.endswith("Go on")) for t, text in sent] == [(agent_id, True)]
+    async with SessionLocal() as session:
+        left = await wakeups.get_wakeup(session, "agent", agent_id)
+    if situation == "current":
+        assert [(t, text.endswith("Go on")) for t, text in sent] == [(agent_id, True)]
+        assert left is None
+    elif situation == "superseded":
+        # Another execution took over: the prompt is dropped, not sent into it.
+        assert sent == []
+        assert left is None
+    else:
+        assert sent == []
+        assert left is not None
+
+
+async def test_a_workflow_step_cannot_pause_itself() -> None:
+    """A workflow reads a resting step as finished, so it would move on without it."""
+    from precursor.backend.models import AgentRun
+
+    agent_id, run_id, _public_id = await _agent_with_run()
+    async with SessionLocal() as session:
+        run = await session.get(AgentRun, run_id)
+        assert run is not None
+        run.workflow_run_id = 424242
+        await session.commit()
+        with pytest.raises(wakeups.WakeupError, match="workflow step"):
+            await wakeups.schedule(
+                session, "agent", agent_id, wake_at=NOW + timedelta(days=1), prompt="Later"
+            )
 
 
 # -- the MCP tools (agents) ------------------------------------------------------
@@ -267,12 +318,18 @@ async def test_wakeup_changed_reaches_the_window_whose_turn_paused() -> None:
 
 
 async def _paused_target(kind: wakeups.WakeupKind) -> int:
+    if kind == "agent":
+        agent_id, _run_id, _public_id = await _agent_with_run()
+        async with SessionLocal() as session:
+            await wakeups.schedule(
+                session, "agent", agent_id, wake_at=NOW + timedelta(days=1), prompt="Stale"
+            )
+        return agent_id
     async with SessionLocal() as session:
         stamp = datetime.now(UTC).timestamp()
         row: Any = {
             "topic": lambda: Topic(title="Doomed", slug=f"doomed-{stamp}"),
             "chat": lambda: Chat(title="Doomed", slug=f"doomed-{stamp}"),
-            "agent": lambda: AgentSession(title="Doomed", task_prompt="x", status="idle"),
         }[kind]()
         session.add(row)
         await session.commit()

@@ -42,6 +42,11 @@ class Wakeup(Base, TimestampMixin):
     agent_session_id: Mapped[int | None] = mapped_column(
         ForeignKey("agent_sessions.id", ondelete="CASCADE"), nullable=True, unique=True
     )
+    # The agent execution that paused itself: the wakeup belongs to it, and is
+    # dropped if another execution has taken over the agent by then.
+    agent_run_id: Mapped[int | None] = mapped_column(
+        ForeignKey("agent_runs.id", ondelete="CASCADE"), nullable=True
+    )
     # Stored UTC. Indexed: the ticker selects rows with wake_at <= now.
     wake_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     # The message sent back into the conversation when it wakes up.
