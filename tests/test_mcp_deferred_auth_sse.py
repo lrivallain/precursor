@@ -165,7 +165,8 @@ async def test_stream_starts_the_turn_instead_of_gating_on_the_sign_in(monkeypat
     assert kinds.index("tool_calls") < kinds.index("mcp_auth_required")
     # The blocked server's tools were still advertised, so the model reached for
     # the tool rather than answering from memory.
-    assert provider.advertised[0] == ["workiq__search"]
+    # (Beside the built-in wakeup tools every turn gets.)
+    assert [n for n in provider.advertised[0] if not n.endswith("_wakeup")] == ["workiq__search"]
 
 
 async def test_stream_reports_a_tool_error_when_the_sign_in_never_lands(monkeypatch) -> None:  # type: ignore[no-untyped-def]

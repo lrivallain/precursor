@@ -18,6 +18,7 @@ import { StepPlanTrace } from "./steps/StepPlanTrace";
 import type { PromptRewindActions } from "../lib/useConversation";
 import type { ReplyEditController } from "../lib/useReplyEdit";
 import { messagePermalink } from "../lib/routes";
+import { WakeupBanner } from "./WakeupIndicator";
 
 interface TranscriptMessageProps {
   message: Message;
@@ -274,8 +275,25 @@ export function TranscriptTail({
 function removedLabel(message: Message): string {
   if (message.kind === "compaction") return "Compaction summary";
   if (message.kind === "step_automation") return "Automated plan prompt";
+  if (message.kind === "wakeup") return "Wake-up prompt";
   if (message.role === "user") return "Your message";
   return message.role === "assistant" ? "Assistant reply" : "Message";
+}
+
+/** What sits above the composer: the paused banner and the undo-delete rows. */
+export function ComposerNotices({
+  deletion,
+  conversation,
+}: {
+  deletion: Pick<MessageDeletion, "pendingDeletes" | "undoDelete">;
+  conversation: { kind: "topic" | "chat"; id: number };
+}) {
+  return (
+    <>
+      <WakeupBanner kind={conversation.kind} id={conversation.id} />
+      <UndoDeleteToasts deletion={deletion} />
+    </>
+  );
 }
 
 /** One undo row per message awaiting its delete-grace timeout. */

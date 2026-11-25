@@ -18,6 +18,7 @@ import { AgentPaneTabs, AgentResultView } from "../AgentResults";
 import { TimelineRail } from "../TimelineRail";
 import { AgentAttention, MissionStrip, RunFilterNotice } from "./AgentAttention";
 import { AgentFollowUpComposer } from "./AgentFollowUpComposer";
+import { WakeupBanner } from "../WakeupIndicator";
 import { AgentRuntimeStrip } from "./AgentGates";
 import { AgentInsightsPanel } from "./AgentInsightsPanel";
 import { AgentTimelineView, usePublishedRenderer, type RowContext } from "./AgentTimelineView";
@@ -331,6 +332,7 @@ export function AgentCockpit(p: AgentCockpitProps) {
         ) : (
           <ActivityPane state={state} p={p} rowCtx={rowCtx} errorLine={errorLine} attention={attention} />
         )}
+        <div className="px-4 pb-1 empty:hidden"><WakeupBanner kind="agent" id={agent.id} /></div>
         <AgentFollowUpComposer
           wrapRef={composerWrapRef}
           pane={pane}

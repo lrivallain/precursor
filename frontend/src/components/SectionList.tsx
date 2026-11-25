@@ -12,6 +12,8 @@ export interface SectionListItem {
   group?: string;
   /** Extra chips/badges rendered under the detail line. */
   extra?: ReactNode;
+  /** Icons shown at the end of the row, before the unread count. */
+  trailing?: ReactNode;
 }
 
 interface Props {
@@ -125,6 +127,7 @@ export function SectionList({
                         <span className="block truncate text-xs text-muted">{item.detail}</span>
                         {item.extra}
                       </span>
+                      {item.trailing}
                       {!!item.unread && item.id !== activeId && (
                         <span aria-label={`${item.unread} unread`} className="shrink-0 rounded-full bg-accent px-1.5 text-xs text-white">
                           {item.unread}

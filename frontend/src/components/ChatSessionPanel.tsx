@@ -5,7 +5,7 @@ import { ComposerApprovalControl } from "./ComposerApprovalControl";
 import { ComposerModelControls } from "./ComposerModelControls";
 import { ChatStatsPanel } from "./ChatStatsPanel";
 import { ConversationNotes, NotesConfirmModal } from "./ConversationNotes";
-import { TranscriptMessage, TranscriptTail, UndoDeleteToasts } from "./ConversationTranscript";
+import { ComposerNotices, TranscriptMessage, TranscriptTail } from "./ConversationTranscript";
 import { ResizeHandle } from "./ResizeHandle";
 import { RewindBar } from "./RewindBar";
 import { SelectionActions } from "./SelectionActions";
@@ -283,7 +283,7 @@ export function ChatSessionPanel({
               streaming={streaming}
               scrollRef={conv.scrollRef}
             />
-            <UndoDeleteToasts deletion={conv.deletion} />
+            <ComposerNotices deletion={conv.deletion} conversation={{ kind: "chat", id: chat.id }} />
             <ConversationNotes
               notes={conv.notes}
               container="chat"

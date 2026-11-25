@@ -200,6 +200,9 @@ class Settings(BaseSettings):
     # One-shot reminders (services/reminder_ticker.py) — how often to poll for
     # due reminders. Gated by the same ``scheduler_enabled`` flag.
     reminder_poll_seconds: int = 30
+    # Self wakeups (services/wakeup_ticker.py) — how often to poll for paused
+    # conversations due to wake up. Gated by ``scheduler_enabled`` too.
+    wakeup_poll_seconds: int = 10
 
     # Tool-result retention (services/tool_result_retention.py) — how often the
     # sweep that trims full TOOL-result content runs. Gated by

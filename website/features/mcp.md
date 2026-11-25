@@ -242,6 +242,7 @@ Only the tools of exposed sections are advertised.
 | [Side chats](/features/chats#side-chats) (`side_chats`) | `create_side_chat` from a topic, a reply or a quote. |
 | [Step plans](/features/step-by-step) (`step_plans`) | `create_step_plan`, `list_step_plans`, `get_step_plan`, `amend_step_plan`, `edit_step_plan`, `run_step_plan`, `pause_step_plan`. |
 | Skills, memory (`memory_write`), schedules, reminders | Read and manage them. |
+| [Self wakeups](/features/scheduler#self-wakeups) (`wakeups`) | `schedule_wakeup`, `cancel_wakeup`: pause a topic, chat or agent (named by its id) and wake it up later with a prompt. Precursor's own agents always have them. |
 | [Agent](/features/agents-mode/artifacts-state#durable-state-the-private-scratchpad) and [workflow](/features/workflows/steps#pipeline-state-what-a-workflow-remembers) state | Durable key/value state. |
 | [Workspaces](/features/workspaces) / Edit workspaces | `list_workspaces`, `list_workspace_files`, `read_workspace_file`; edit adds `create_workspace` (empty or git clone), `create_workspace_file`, `write_workspace_file`, `create_workspace_folder`. Agents still ask before each write. |
 | [Canvases](/features/canvas) (`canvas`, on by default) | `canvas_guide`, `list_canvases`, `read_canvas`, `write_canvas`, `edit_canvas`: visuals shown inline in a reply, kept in the built-in Canvas workspace. |

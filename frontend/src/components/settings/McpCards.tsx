@@ -94,6 +94,12 @@ export const EXPOSE_SECTIONS: ReadonlyArray<{
     danger: true,
   },
   {
+    key: "wakeups",
+    label: "Self wakeups",
+    hint: "Pause a conversation and wake it up later with a prompt (runs a turn unattended).",
+    danger: true,
+  },
+  {
     key: "workspaces",
     label: "Workspaces",
     hint: "List workspaces and read their files.",

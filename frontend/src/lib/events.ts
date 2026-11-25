@@ -28,6 +28,7 @@ export type BusEvent =
       expires_at: string | null;
     }
   | { type: "reminder.changed"; topic_id?: number | null; chat_id?: number | null }
+  | { type: "wakeup.changed" }
   | {
       type: "read.changed";
       topic_id?: number | null;
@@ -124,6 +125,9 @@ function connect(): void {
   );
   source.addEventListener("reminder.changed", (e) =>
     dispatch("reminder.changed", (e as MessageEvent).data),
+  );
+  source.addEventListener("wakeup.changed", (e) =>
+    dispatch("wakeup.changed", (e as MessageEvent).data),
   );
   source.addEventListener("read.changed", (e) =>
     dispatch("read.changed", (e as MessageEvent).data),

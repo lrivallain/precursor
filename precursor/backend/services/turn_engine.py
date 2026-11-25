@@ -35,7 +35,7 @@ from precursor.backend.models.tool_approval import APPROVAL_KIND_TOOL
 from precursor.backend.services import approval_rules as approval_rules_service
 from precursor.backend.services import approvals as approval_service
 from precursor.backend.services import memories as memory_service
-from precursor.backend.services import side_chats, step_plans, turn_steering
+from precursor.backend.services import side_chats, step_plans, turn_steering, wakeup_tools
 from precursor.backend.services import skills as skills_service
 from precursor.backend.services.app_settings import (
     DEFAULT_LLM_MAX_ATTACHMENT_CHARS,
@@ -287,9 +287,8 @@ async def build_chat_system_context(session: AsyncSession, chat: Chat) -> str:
 
     parts.append(f"Chat title: {chat.title}")
     # In system-prompt mode the description is enforced per user turn (see
-    # apply_chat_system_prompt), so we omit the soft context line here to avoid
-    # duplicating it. In context mode (default) it rides along as standing
-    # discussion-level context.
+    # apply_chat_system_prompt), so it is left out here; in context mode (the
+    # default) it rides along as standing discussion-level context.
     if chat.description and not chat.description_as_system_prompt:
         description = await skills_service.expand_references(session, chat.description)
         parts.append(f"Chat description: {description}")
@@ -1662,6 +1661,7 @@ async def run_message_stream(
                 else None,
                 tool_policy=tool_policy,
                 steer=steer,
+                **wakeup_tools.loop_kwargs(kind, container_id),
             ):
                 async for sse in relay.relay(ev):
                     yield sse

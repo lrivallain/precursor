@@ -146,6 +146,7 @@ reminders. Each schedule's recurrence is stored in the database.
 | `PRECURSOR_SCHEDULER_POLL_SECONDS` | `30` | Scheduler poll interval. |
 | `PRECURSOR_SCHEDULER_CONCURRENCY` | `2` | Scheduled runs executing at once. |
 | `PRECURSOR_REMINDER_POLL_SECONDS` | `30` | Reminder poll interval. |
+| `PRECURSOR_WAKEUP_POLL_SECONDS` | `10` | How often paused conversations are checked for a due [self wakeup](/features/scheduler#self-wakeups). |
 
 The per-run timeout is **Settings → System → Scheduled run timeout** (default `600` s).
 

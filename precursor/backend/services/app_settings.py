@@ -59,9 +59,8 @@ DEFAULT_CHAT_AUTONAME_ENABLED = True
 
 # Sections of Precursor's *own* capabilities that the built-in "precursor" MCP
 # server can expose to callers (the in-app agent and external MCP hosts). Each
-# is opt-in (default False) — serving conversation history / write actions
-# outbound is a deliberate disclosure, so nothing is exposed until the user
-# turns it on in Settings.
+# is opt-in (default False): serving conversation history / write actions
+# outbound is a deliberate disclosure, exposed only once turned on in Settings.
 MCP_EXPOSE_SECTIONS: tuple[str, ...] = (
     "topics",
     "messages",
@@ -86,6 +85,7 @@ MCP_EXPOSE_SECTIONS: tuple[str, ...] = (
     "step_plans",
     "schedules",
     "reminders",
+    "wakeups",  # self wakeups: a later prompt runs an unattended turn (spends quota)
     # Sandboxed file access to workspace working trees; writes (and creating a
     # workspace, which can clone a repo) are a separate, riskier toggle.
     "workspaces",

@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { AGENT_STATUS_DOT, AGENT_STATUS_LABEL, groupAgentsByWorkflow } from "../lib/agents";
 import type { AgentSession } from "../lib/types";
 import { SectionList } from "./SectionList";
+import { WakeupIcon } from "./WakeupIndicator";
 import { WorkflowAgentFilter } from "./WorkflowAgentFilter";
 
 interface Props {
@@ -33,6 +34,7 @@ export function AgentList({
         detail: AGENT_STATUS_LABEL[agent.status],
         dot: AGENT_STATUS_DOT[agent.status],
         unread: agent.unread_count,
+        trailing: <WakeupIcon kind="agent" id={agent.id} />,
         group: group.label,
       })),
     ),

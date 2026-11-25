@@ -25,6 +25,7 @@ from precursor.backend.db import SessionLocal
 from precursor.backend.models import Chat, Message, MessageRole, Topic
 from precursor.backend.services import approvals as approval_service
 from precursor.backend.services import skills as skills_service
+from precursor.backend.services import wakeup_tools
 from precursor.backend.services.conversation_turn import (
     clear_container_messages,
     persist_user_message,
@@ -233,6 +234,8 @@ async def _run(
             auth_wait_timeout=0.0,
             gate=settings.gate,
             tool_policy=settings.tool_policy,
+            # A woken-up turn can pause itself again while it still waits.
+            **wakeup_tools.loop_kwargs(kind, container_id),
         ):
             if isinstance(ev, AssistantTextDelta):
                 # Headless runs don't stream deltas; they persist whole turns.

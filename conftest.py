@@ -277,6 +277,8 @@ def _shared_db_stays_consistent() -> Iterator[None]:
             "UPDATE topic_schedule SET enabled = 0 WHERE enabled = 1",
             "UPDATE agent_schedule SET enabled = 0 WHERE enabled = 1",
             "UPDATE workflows SET schedule_enabled = 0 WHERE schedule_enabled = 1",
+            # A due wakeup would run a turn in the next test's app.
+            "DELETE FROM wakeups",
         ):
             try:
                 con.execute(statement)
