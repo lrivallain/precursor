@@ -205,7 +205,12 @@ class SessionPool:
             references = prompting.message_references(agent, m._events.get(agent.id, []), run.id)
             return {"additionalContext": references} if references else None
 
-        kwargs["hooks"] = {"handlers": {"on_user_prompt_submitted": message_reference_context}}
+        kwargs["hooks"] = {
+            "handlers": {
+                "on_user_prompt_submitted": message_reference_context,
+                "on_pre_tool_use": m._permissions.make_pre_tool_hook(run.id),
+            }
+        }
 
         attempted_models: set[tuple[str, str | None, str]] = set()
         for choice in model_choices:

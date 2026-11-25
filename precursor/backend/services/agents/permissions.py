@@ -49,6 +49,24 @@ def permission_signature(info: dict[str, Any]) -> tuple[str, str | None]:
     return (str(info.get("type", "tool")), str(target) if target else None)
 
 
+# The runtime's shell tools. Since runtime 1.0.106 it runs commands it judges
+# read-only (``date``, ``whoami``...) without asking the host at all, so the
+# ``manual`` and ``balanced`` policies, which gate every command, would silently
+# not apply. A ``preToolUse`` hook answering ``ask`` routes each call back to the
+# permission handler as a ``PermissionRequestHook`` instead.
+SHELL_TOOLS = frozenset({"bash", "powershell"})
+
+
+def shell_hook_decision(tool_name: str | None, policy: str) -> dict[str, str] | None:
+    """The ``preToolUse`` answer for one tool call; ``None`` leaves it to the runtime."""
+    if tool_name in SHELL_TOOLS and policy != "autonomous":
+        return {
+            "permissionDecision": "ask",
+            "permissionDecisionReason": "Precursor asks before every shell command",
+        }
+    return None
+
+
 def should_auto_approve(request: Any) -> bool:
     name = type(request).__name__
     if name in ("PermissionRequestRead", "PermissionRequestUrl"):
@@ -73,7 +91,18 @@ def describe_permission(request: Any) -> dict[str, Any]:
 
     name = type(request).__name__.replace("PermissionRequest", "") or "Tool"
     info: dict[str, Any] = {"type": name.lower(), "title": f"{name} permission"}
-    if name == "Shell":
+    if name == "Hook" and g("tool_name") in SHELL_TOOLS:
+        # A shell call our ``preToolUse`` hook sent back for approval. Described
+        # as a shell request so the UI and "approve for session" treat it alike.
+        args = g("tool_args")
+        args = args if isinstance(args, dict) else {}
+        info.update(
+            type="shell",
+            title="Run a shell command",
+            command=args.get("command") or None,
+            intention=args.get("description") or None,
+        )
+    elif name == "Shell":
         info.update(
             title="Run a shell command",
             command=g("full_command_text"),
@@ -177,6 +206,20 @@ class PermissionBroker:
                 return self._manager._reject("permission handler error")
 
         return handler
+
+    def make_pre_tool_hook(self, run_id: int) -> Any:
+        """A ``preToolUse`` hook that keeps shell commands under the run's policy."""
+
+        async def hook(hook_input: Any, _context: Any) -> dict[str, str] | None:
+            if isinstance(hook_input, dict):
+                tool = hook_input.get("toolName")
+            else:
+                tool = getattr(hook_input, "toolName", None)
+            live = self._manager._live.get(run_id)
+            policy = (live.approval_policy if live else None) or DEFAULT_AGENTS_APPROVAL_POLICY
+            return shell_hook_decision(tool, policy)
+
+        return hook
 
     async def park(self, run_id: int, request: Any, info: dict[str, Any] | None = None) -> Any:
         live = self._manager._live.get(run_id)
