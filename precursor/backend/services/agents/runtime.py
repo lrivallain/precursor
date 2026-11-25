@@ -1,6 +1,6 @@
 """Agents-mode runtime probe and lazy SDK access.
 
-Agents mode depends on ``github-copilot-sdk``, a normal dependency. This module
+Agents mode depends on ``microsoft-copilot-sdk``, a normal dependency. This module
 is still the single seam between Precursor and it: everything here is safe to
 import even when the SDK is absent, so a broken or stripped install degrades
 gracefully to "Agents unavailable" instead of failing to start.
@@ -16,7 +16,7 @@ opt-in, provisioned on an explicit click from Settings → Agents
 
 Resolution here is deliberately **read-only** — it reports what is already on
 disk and never triggers the SDK's on-demand download. A capability probe runs on
-every Settings render, and pulling a ~90 MB binary as a side effect of drawing a
+every Settings render, and pulling a ~100 MB runtime as a side effect of drawing a
 toggle would be indefensible; provisioning belongs behind an explicit user
 action.
 """
@@ -30,7 +30,7 @@ import os
 import shutil
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, get_args
+from typing import Any
 
 from precursor.backend.config import get_settings
 
@@ -61,13 +61,9 @@ def runtime_binary_path() -> str | None:
     3. A ``copilot`` executable on ``PATH`` — a system-wide CLI install (Homebrew,
        npm, the official installer) is a perfectly good runtime, and ignoring it
        is what made a working machine report "unavailable".
-    4. The binary bundled inside pre-1.0.4 platform-specific wheels. Our own
-       floor excludes that line, so this only fires for an install that resolved
-       the SDK some other way (a shared environment, a stale pin).
 
-    Only steps 2 and 4 reach into SDK internals, and each is independently
-    guarded — the env var and ``PATH`` paths keep working even if the SDK moves
-    its private symbols again.
+    Only step 2 reaches into SDK internals, and it is guarded: the env var and
+    ``PATH`` steps keep working even if the SDK moves its private symbols again.
     """
     explicit = _existing(os.environ.get("COPILOT_CLI_PATH"))
     if explicit:
@@ -80,10 +76,7 @@ def runtime_binary_path() -> str | None:
     # `which` already screens for an executable file. A same-named binary that
     # isn't the Copilot CLI would fail loudly when the manager starts the client,
     # which is a better outcome than declaring the runtime missing outright.
-    on_path = shutil.which(_CLI_EXECUTABLE)
-    if on_path:
-        return on_path
-    return _legacy_bundled_cli_path()
+    return shutil.which(_CLI_EXECUTABLE)
 
 
 def _existing(path: str | None) -> str | None:
@@ -106,16 +99,6 @@ def _sdk_cached_cli_path() -> str | None:
         return None
 
 
-def _legacy_bundled_cli_path() -> str | None:
-    """Path of the CLI bundled inside pre-1.0.4 SDK wheels, if that line is installed."""
-    try:
-        client_mod = importlib.import_module("copilot.client")
-        return _existing(client_mod._get_bundled_cli_path())
-    except Exception:  # pragma: no cover - absent on every current SDK release
-        logger.debug("Could not resolve a bundled Copilot CLI path", exc_info=True)
-        return None
-
-
 def agents_available() -> tuple[bool, str]:
     """Return ``(ok, detail)`` — whether the Agents runtime is usable right now.
 
@@ -130,7 +113,7 @@ def agents_available() -> tuple[bool, str]:
     """
     if not sdk_installed():
         return False, (
-            "github-copilot-sdk is missing from this installation — reinstall "
+            "microsoft-copilot-sdk is missing from this installation — reinstall "
             "Precursor (it is a required dependency, not an extra)"
         )
     binary = runtime_binary_path()
@@ -166,7 +149,7 @@ def load_sdk() -> Any:
     """
     if not sdk_installed():
         raise RuntimeError(
-            "Agents mode requires 'github-copilot-sdk', which is a required "
+            "Agents mode requires 'microsoft-copilot-sdk', which is a required "
             "dependency but is missing from this installation — reinstall Precursor."
         )
     return _import_sdk()
@@ -174,25 +157,58 @@ def load_sdk() -> Any:
 
 @lru_cache(maxsize=1)
 def load_rpc() -> Any:
-    """Return the SDK's RPC types module (permission decisions, history requests).
+    """Return ``copilot.rpc`` (permission decisions, history requests).
 
     These classes are *not* re-exported on the top-level ``copilot`` module.
-    ``copilot.rpc`` is the public home in 1.0.11+ and the only one in 2.0, where
-    ``copilot.generated`` became private; older 1.x only had the generated path.
     """
     load_sdk()
-    try:
-        return importlib.import_module("copilot.rpc")
-    except ImportError:
-        return importlib.import_module("copilot.generated.rpc")
+    return importlib.import_module("copilot.rpc")
 
 
-# 1.x calls the CLI-backed mode "copilot-cli"; 2.0 renamed it "coding-agent" and
-# made ``mode`` a required argument of ``CopilotClient``.
-_CLIENT_MODES = ("coding-agent", "copilot-cli")
+# The SDK's own levels; anything else in ``PRECURSOR_LOG_LEVEL`` maps onto them.
+_SDK_LOG_LEVELS = {"none", "error", "warning", "info", "debug", "all"}
+_LOG_LEVEL_ALIASES = {"warn": "warning", "critical": "error", "fatal": "error", "trace": "all"}
 
 
-def client_mode(sdk: Any) -> str:
-    """The ``CopilotClient`` mode that runs the full coding agent on this SDK."""
-    supported = get_args(getattr(sdk, "CopilotClientMode", None))
-    return next((m for m in _CLIENT_MODES if m in supported), _CLIENT_MODES[-1])
+def sdk_log_level(level: str) -> str:
+    """Map Precursor's log level onto one the SDK's runtime accepts."""
+    level = level.strip().lower()
+    level = _LOG_LEVEL_ALIASES.get(level, level)
+    return level if level in _SDK_LOG_LEVELS else "info"
+
+
+def runtime_env() -> dict[str, str]:
+    """Environment for the spawned CLI, pinned to the binary the probe resolved.
+
+    Left to itself the SDK resolves ``COPILOT_CLI_PATH`` and then *downloads* the
+    CLI when its cache is empty, so a machine whose only Copilot CLI is on
+    ``PATH`` would pass the capability probe and then pull the runtime at
+    startup, and could even drive a different binary than the one Settings
+    reported. Handing the probe's answer back keeps the two in agreement and
+    keeps startup off the network.
+    """
+    env = dict(os.environ)
+    resolved = runtime_binary_path()
+    if resolved:
+        env["COPILOT_CLI_PATH"] = resolved
+    return env
+
+
+def build_client(sdk: Any) -> Any:
+    """A ``CopilotClient`` that spawns the probed CLI over stdio.
+
+    Spawned rather than in-process on purpose: in-process hosting needs the
+    SDK's own ``runtime.node`` next to the binary, which a ``COPILOT_CLI_PATH``
+    or ``PATH`` install doesn't have. Session state lives in the managed
+    :func:`agents_home_dir`.
+    """
+    env = runtime_env()
+    return sdk.CopilotClient(
+        mode="coding-agent",
+        runtime=sdk.RuntimeConnection.for_spawned_stdio(
+            path=env.get("COPILOT_CLI_PATH"),
+            env=env,
+            base_directory=agents_home_dir(),
+        ),
+        observability={"log_level": sdk_log_level(get_settings().log_level)},
+    )

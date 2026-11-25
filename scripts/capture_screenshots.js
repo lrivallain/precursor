@@ -688,7 +688,7 @@ const scenes = {
     async go(page) {
       await mockAgentRuntime(page);
       await page.goto(`${BASE}/agents`, { waitUntil: "networkidle" });
-      await page.getByRole("button", { name: "Install the Copilot CLI (~90 MB)", exact: true }).waitFor();
+      await page.getByRole("button", { name: "Install the Copilot CLI (~100 MB)", exact: true }).waitFor();
       await page.locator('[data-tooltip^="Guest"][data-tooltip*="GitHub not connected"]').waitFor();
       return clipOf(page, "main .max-w-xl", 16);
     },

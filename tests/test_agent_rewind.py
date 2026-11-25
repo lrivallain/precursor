@@ -604,10 +604,9 @@ async def test_new_sessions_track_file_changes_per_the_setting() -> None:
         def __init__(self) -> None:
             self.kwargs: dict[str, Any] = {}
 
-        async def create_session(
-            self, *, enable_file_change_tracking: bool = False, **kw: Any
-        ) -> Any:
-            self.kwargs = {**kw, "enable_file_change_tracking": enable_file_change_tracking}
+        async def create_session(self, **kw: Any) -> Any:
+            tracked = kw.get("filesystem", {}).get("track_file_changes", False)
+            self.kwargs = {**kw, "enable_file_change_tracking": tracked}
             raise _Stop
 
     async def _create(tracking: bool | None) -> dict[str, Any]:

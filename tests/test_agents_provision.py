@@ -7,7 +7,7 @@ install it: the runtime endpoint reports *why* it's unavailable and *what can be
 done*, the download runs as a job rather than a blocking request, and neither
 route hides behind the very runtime it exists to provision.
 
-The download itself is always faked. Actually fetching ~90 MB from GitHub is not
+The download itself is always faked. Actually fetching ~100 MB from GitHub is not
 a unit test, and the point here is the surrounding machinery.
 """
 
@@ -164,7 +164,7 @@ def test_download_unsupported_without_the_sdk(monkeypatch) -> None:
 
     ok, detail = provision.download_supported()
     assert ok is False
-    assert "github-copilot-sdk" in detail
+    assert "microsoft-copilot-sdk" in detail
 
 
 # --- the job ---------------------------------------------------------------
@@ -244,7 +244,7 @@ def test_failed_download_surfaces_the_sdk_error(monkeypatch) -> None:
 
 
 def test_starting_twice_reuses_the_running_job(monkeypatch) -> None:
-    """A double-clicked button must not fetch the same 90 MB twice."""
+    """A double-clicked button must not fetch the same 100 MB twice."""
     calls = {"n": 0}
     module = types.ModuleType("copilot._cli_download")
 
@@ -348,24 +348,26 @@ def test_restart_hands_off_to_a_detached_child(monkeypatch) -> None:
 # --- the dependency that makes all of this possible ------------------------
 
 
-def test_sdk_is_a_default_dependency_floored_above_the_bundled_wheels() -> None:
+def test_sdk_is_a_default_dependency_on_the_2x_line() -> None:
     """Guards the reason Agents mode can ship on by default.
 
-    ``github-copilot-sdk`` up to 1.0.2 published six platform-specific wheels
-    that each bundled the native CLI (~145 MB unpacked); 1.0.4 replaced them with
-    a single ~0.5 MB pure-Python wheel that downloads it on demand. Only the
-    latter is defensible in a default install, and the difference is invisible
-    in a diff — hence a test.
+    The SDK wheel is a ~1 MB pure-Python package that downloads the native
+    runtime on demand (the old 1.0.2-and-earlier ``github-copilot-sdk`` wheels
+    bundled ~145 MB each). It moved to ``microsoft-copilot-sdk`` at 2.0; the
+    difference is invisible in a diff, hence a test.
     """
     root = Path(__file__).resolve().parents[1]
     with (root / "pyproject.toml").open("rb") as handle:
         manifest = tomllib.load(handle)
 
     requirements = manifest["project"]["dependencies"]
-    sdk = [r for r in requirements if r.startswith("github-copilot-sdk")]
+    assert not [r for r in requirements if r.startswith("github-copilot-sdk")], (
+        "the 1.x package installs the same `copilot` module and can't coexist"
+    )
+    sdk = [r for r in requirements if r.startswith("microsoft-copilot-sdk")]
     assert sdk, "the Copilot SDK must be a default dependency, not an extra"
-    assert ">=1.0.4" in sdk[0], "a lower floor would resolve a wheel bundling ~145 MB"
-    assert "<2" in sdk[0], "we depend on private SDK internals; keep the major cap"
+    assert ">=2.0.1" in sdk[0], "the client and session options are 2.0-shaped"
+    assert "<3" in sdk[0], "we depend on private SDK internals; keep the major cap"
 
     # The retired extra stays declared but empty, so an install that still names
     # it — including one rebuilt from uv's receipt — keeps resolving.

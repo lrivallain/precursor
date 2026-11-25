@@ -320,7 +320,7 @@ def test_agent_hook_supplies_fresh_links_without_modifying_the_prompt() -> None:
             with pytest.raises(Stop):
                 await manager._ensure_live_locked(agent, run)
             assert MESSAGE_LINK_INSTRUCTION in captured["system_message"]["content"]
-            hook = captured["hooks"]["on_user_prompt_submitted"]
+            hook = captured["hooks"]["handlers"]["on_user_prompt_submitted"]
             request = {"prompt": "Refer to an earlier reply."}
             assert await hook(request, {}) is None
             event = AgentEvent(

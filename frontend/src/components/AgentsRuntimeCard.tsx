@@ -35,7 +35,7 @@ export function AgentsRuntimeCard({
       !(await confirmAction({
         title: "Install the Copilot CLI",
         message:
-          "This downloads the native Copilot CLI (~90 MB, ~145 MB on disk) from " +
+          "This downloads the native Copilot CLI (~100 MB, ~180 MB on disk) from " +
           "GitHub into the SDK's cache. It runs in the background - you can keep " +
           "using Precursor while it does. Your Agents enable/disable preference is preserved.",
         confirmLabel: "Download",
@@ -150,7 +150,7 @@ export function AgentsRuntimeCard({
             className="flex items-center gap-1.5 rounded border border-violet-500/30 bg-violet-500/15 px-2.5 py-1.5 text-[12px] font-medium text-violet-700 hover:bg-violet-500/25 disabled:opacity-40 dark:text-violet-300"
           >
             {running ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
-            Install the Copilot CLI (~90 MB)
+            Install the Copilot CLI (~100 MB)
           </button>
         )}
         {(needsRestart || awaitingRestart) && status?.can_restart && (

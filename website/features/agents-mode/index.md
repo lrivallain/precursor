@@ -43,8 +43,8 @@ How the on/off switch behaves:
   [Timeline retention](/features/storage) stays visible while archived events
   exist, because its sweep keeps running.
 
-::: warning ~90 MB native runtime
-The CLI is ~90 MB (~145 MB on disk), so Precursor never downloads it on its own.
+::: warning ~100 MB native runtime
+The CLI is a ~100 MB download (~180 MB on disk), so Precursor never downloads it on its own.
 A system-wide `copilot` (Homebrew, npm, official installer) works as-is.
 :::
 
@@ -53,8 +53,8 @@ A system-wide `copilot` (Homebrew, npm, official installer) works as-is.
 Precursor resolves the runtime read-only, taking the first of:
 
 1. `COPILOT_CLI_PATH`, if it points at an existing file.
-2. The SDK download cache (`~/Library/Caches/github-copilot-sdk` on macOS,
-   `~/.cache/github-copilot-sdk` on Linux).
+2. The SDK download cache (`~/Library/Caches/copilot-sdk` on macOS,
+   `~/.cache/copilot-sdk` on Linux).
 3. A `copilot` executable on `PATH`.
 
 **Settings → Agents** shows which binary is in use. If none resolves, install the

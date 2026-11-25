@@ -119,11 +119,7 @@ def _rpc() -> Any:
     try:
         rpc = runtime.load_rpc()
     except (ImportError, RuntimeError) as exc:  # pragma: no cover - depends on the installed SDK
-        raise RewindError(
-            "Rewind needs github-copilot-sdk 1.0.11 or newer.", status_code=501
-        ) from exc
-    if not hasattr(rpc, "HistoryRewindRequest"):  # pragma: no cover - older SDK
-        raise RewindError("Rewind needs github-copilot-sdk 1.0.11 or newer.", status_code=501)
+        raise RewindError("Rewind needs the Copilot SDK.", status_code=501) from exc
     return rpc
 
 

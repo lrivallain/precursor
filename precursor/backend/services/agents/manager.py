@@ -147,23 +147,6 @@ logger = logging.getLogger(__name__)
 _START_TIMEOUT_SECONDS = 30.0
 
 
-def _runtime_env() -> dict[str, str]:
-    """Environment for the spawned CLI, pinned to the binary the probe resolved.
-
-    Left to itself the SDK resolves ``COPILOT_CLI_PATH`` and then *downloads* the
-    CLI when its cache is empty — so a machine whose only Copilot CLI is on
-    ``PATH`` would pass the capability probe and then pull ~90 MB at startup, and
-    could even end up driving a different binary than the one Settings reported.
-    Handing the probe's answer back over the SDK's own env contract keeps the two
-    in agreement and keeps startup off the network.
-    """
-    env = dict(os.environ)
-    resolved = runtime.runtime_binary_path()
-    if resolved:
-        env["COPILOT_CLI_PATH"] = resolved
-    return env
-
-
 class AgentManager:
     def __init__(self) -> None:
         self._client: Any | None = None
@@ -281,12 +264,7 @@ class AgentManager:
         """Spawn the CLI server and connect to it; ``False`` if it won't come up."""
         try:
             sdk = runtime.load_sdk()
-            self._client = sdk.CopilotClient(
-                mode=runtime.client_mode(sdk),
-                base_directory=runtime.agents_home_dir(),
-                env=_runtime_env(),
-                log_level=get_settings().log_level,
-            )
+            self._client = runtime.build_client(sdk)
             await asyncio.wait_for(self._client.start(), timeout=_START_TIMEOUT_SECONDS)
         except Exception:
             logger.exception("Failed to start Copilot SDK client")

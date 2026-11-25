@@ -37,7 +37,7 @@
     "tests/test_definitions_files_mode.py": 1581,
     "tests/test_definitions_migration.py": 840,
     "tests/test_live_sessions.py": 1624,
-    "tests/test_model_fallbacks.py": 1159,
+    "tests/test_model_fallbacks.py": 1158,
     "tests/test_plugins.py": 1310,
     "tests/test_step_assessor_tools.py": 916,
     "tests/test_step_plans.py": 4859,

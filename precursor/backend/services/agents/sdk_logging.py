@@ -23,6 +23,11 @@ _TEARDOWN_PIPE_ERRORS = (
     EOFError,
 )
 
+# SDK 2.0 reports the same race as its own error once the child has exited:
+# ``ProcessExitedError: CLI process exited with code 0``. Matched by name so this
+# leaf module never imports the SDK.
+_TEARDOWN_SDK_ERRORS = frozenset({"ProcessExitedError"})
+
 # copilot SDK loggers that emit those teardown write failures.
 _SDK_PIPE_LOGGERS = ("copilot._jsonrpc", "copilot.client")
 
@@ -34,6 +39,8 @@ class _TeardownPipeNoiseFilter(logging.Filter):
         exc: BaseException | None = record.exc_info[1] if record.exc_info else None
         while exc is not None:
             if isinstance(exc, _TEARDOWN_PIPE_ERRORS):
+                return False
+            if type(exc).__name__ in _TEARDOWN_SDK_ERRORS:
                 return False
             # Walk the chain — the SDK may wrap/chain the underlying pipe error.
             exc = exc.__cause__ or exc.__context__

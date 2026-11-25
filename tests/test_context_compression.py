@@ -405,6 +405,37 @@ async def test_agent_compact_command_calls_the_sdk(monkeypatch) -> None:
         await mgr.run_command(1, "compact", "")
 
 
+async def test_agent_compact_reports_a_runtime_refusal(monkeypatch) -> None:
+    """SDK 2.0 raises a JSON-RPC error where 1.x returned ``success: false``."""
+    from copilot import JsonRpcError
+
+    from precursor.backend.services.agents.manager import AgentManager
+
+    class _History:
+        async def compact(self, params, *, timeout=None):
+            raise JsonRpcError(-32603, "Nothing to compact.")
+
+    live = SimpleNamespace(sdk_session=SimpleNamespace(rpc=SimpleNamespace(history=_History())))
+    run = SimpleNamespace(id=7, status="idle", copilot_session_id="sid")
+    mgr = AgentManager()
+
+    async def _load(_agent_id):
+        return SimpleNamespace(id=1)
+
+    async def _resolve_run(_agent_id):
+        return run
+
+    async def _ensure_live(_agent, _run):
+        return live
+
+    monkeypatch.setattr(mgr, "_load", _load)
+    monkeypatch.setattr(mgr, "_resolve_run", _resolve_run)
+    monkeypatch.setattr(mgr, "_ensure_live", _ensure_live)
+
+    with pytest.raises(ValueError, match="Nothing to compact"):
+        await mgr.run_command(1, "compact", "")
+
+
 def test_compaction_events_are_normalised_for_the_timeline() -> None:
     from copilot.session_events import CompactionTrigger, SessionCompactionCompleteData
 

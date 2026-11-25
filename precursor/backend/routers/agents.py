@@ -284,7 +284,7 @@ async def get_agent_runtime(
 async def install_agent_cli(
     session: AsyncSession = Depends(get_session),
 ) -> AgentRuntimeStatus:
-    """Start downloading the native Copilot CLI (~90 MB).
+    """Start downloading the native Copilot CLI (~100 MB).
 
     Returns immediately: the download outlives a request, so progress is read
     back from ``GET /runtime``. Starting twice is a no-op.
