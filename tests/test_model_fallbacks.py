@@ -484,8 +484,8 @@ async def test_agent_creation_and_sync_keep_working_fallback_not_original_effort
     agent, run = await _agent(manager)
     live = await manager._ensure_live_locked(agent, run)
     assert create.await_count == 2
-    assert create.call_args_list[0].kwargs["reasoning_effort"] == "high"
-    assert "reasoning_effort" not in create.call_args_list[1].kwargs
+    assert create.call_args_list[0].kwargs["inference"]["reasoning_effort"] == "high"
+    assert "inference" not in create.call_args_list[1].kwargs
     assert live.model_signature == ("haiku", None, "default")
     await manager._model_selection.sync_selected_model(agent, run)
     sdk.set_model.assert_not_awaited()
@@ -1054,8 +1054,7 @@ async def test_sdk_category_selection_chooses_models_without_pinning_them(stored
     agent.model = run.model = None
     live = await manager._ensure_live_locked(agent, run)
     assert create.call_args.kwargs["model"] == "available"
-    assert create.call_args.kwargs["reasoning_effort"] == "low"
-    assert "context_tier" not in create.call_args.kwargs
+    assert create.call_args.kwargs["inference"] == {"reasoning_effort": "low"}
     assert live.requested_model_category == "efficiency"
     await manager._model_selection.sync_selected_model(agent, run)
     sdk.set_model.assert_not_awaited()

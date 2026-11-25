@@ -1,7 +1,7 @@
 """Provision the native Copilot CLI that the Agents runtime drives.
 
 The Copilot SDK is a normal dependency, so the Python side of Agents mode is
-always present. What can be missing is the **native CLI** (~90 MB) that the SDK
+always present. What can be missing is the **native CLI** (~100 MB) that the SDK
 downloads on demand — and that is the one thing standing between a fresh install
 and a working Agents mode.
 
@@ -12,7 +12,7 @@ instead of a command to go type somewhere else.
 
 Two shapes to accommodate:
 
-* **A download outlives its request.** ~90 MB over a slow link takes minutes, so
+* **A download outlives its request.** ~100 MB over a slow link takes minutes, so
   the HTTP handler starts a job and returns; the panel polls the runtime status,
   which carries the job. One job at a time — there is nothing to reconcile
   between two concurrent downloads of the same file.
@@ -86,7 +86,7 @@ def job_running() -> bool:
 def download_supported() -> tuple[bool, str]:
     """Whether this SDK can fetch a CLI for us, and why not when it can't."""
     if not runtime.sdk_installed():
-        return False, "github-copilot-sdk is missing from this installation."
+        return False, "microsoft-copilot-sdk is missing from this installation."
     try:
         module = importlib.import_module(_DOWNLOAD_MODULE)
     except Exception:  # pragma: no cover - only on the pre-1.0.4 bundled line

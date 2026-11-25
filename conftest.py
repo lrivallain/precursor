@@ -325,7 +325,7 @@ def _no_agents_runtime():
     """Keep app startup from spawning the real Copilot CLI child process.
 
     ``lifespan`` calls ``AgentManager.start()``, which spawns the native Copilot
-    CLI the optional ``github-copilot-sdk`` package drives whenever that package
+    CLI the ``microsoft-copilot-sdk`` package drives whenever that package
     is importable *and* the persisted ``agents_enabled`` flag is on. Both hold in
     a developer venv that ever ran ``make dev``: exercising Agents mode means
     turning that flag on (~40 call sites across the suite), and it is written to

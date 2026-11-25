@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import inspect
 import logging
 import time
 from datetime import datetime
@@ -47,15 +46,6 @@ if TYPE_CHECKING:
     from precursor.backend.services.agents.manager import AgentManager
 
 logger = logging.getLogger(__name__)
-
-
-def _accepts_kwarg(func: Any, name: str) -> bool:
-    """Whether ``func`` takes keyword ``name`` (an older SDK may not)."""
-    try:
-        params = inspect.signature(func).parameters
-    except (TypeError, ValueError):
-        return False
-    return name in params or any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
 
 
 class SessionPool:
@@ -158,7 +148,7 @@ class SessionPool:
         catalog, oauth_expires_at, auth_required = await m._catalog_mcp_configs(scope)
         mcp.update(catalog)
         if mcp:
-            kwargs["mcp_servers"] = mcp
+            kwargs["mcp"] = {"servers": mcp}
         return oauth_expires_at, auth_required
 
     async def ensure_live_locked(self, agent: AgentSession, run: AgentRun) -> _LiveSession:
@@ -169,7 +159,7 @@ class SessionPool:
 
         assert m._client is not None
         kwargs: dict[str, Any] = {
-            "on_permission_request": m._permissions.make_handler(run.id),
+            "permissions": {"on_request": m._permissions.make_handler(run.id)},
         }
         # Reasoning effort + context tier are global agent prefs (Settings →
         # Agents / composer toolbar). Applied at session creation, mirroring how
@@ -197,8 +187,8 @@ class SessionPool:
         # Lets a rewind put back the files the dropped turns changed. Only a
         # session tracked from its first turn can, so a resumed untracked one
         # stays conversation-only (the SDK reports that).
-        if track_files and _accepts_kwarg(m._client.create_session, "enable_file_change_tracking"):
-            kwargs["enable_file_change_tracking"] = True
+        if track_files:
+            kwargs["filesystem"] = {"track_file_changes": True}
         oauth_expires_at, auth_required = await self._attach_mcp(agent, run, kwargs)
         # Snapshot what this session carries so a later toggle — or a rebuilt run
         # with a different scope — rebuilds it. Computed by the same method the
@@ -215,20 +205,28 @@ class SessionPool:
             references = prompting.message_references(agent, m._events.get(agent.id, []), run.id)
             return {"additionalContext": references} if references else None
 
-        kwargs["hooks"] = {"on_user_prompt_submitted": message_reference_context}
+        kwargs["hooks"] = {
+            "handlers": {
+                "on_user_prompt_submitted": message_reference_context,
+                "on_pre_tool_use": m._permissions.make_pre_tool_hook(run.id),
+            }
+        }
 
         attempted_models: set[tuple[str, str | None, str]] = set()
         for choice in model_choices:
             model, selected_effort, tier = choice
             attempted_models.add(choice)
-            kwargs.pop("reasoning_effort", None)
-            kwargs.pop("context_tier", None)
+            inference: dict[str, Any] = {}
             if model:
                 kwargs["model"] = model
             if selected_effort:
-                kwargs["reasoning_effort"] = selected_effort
+                inference["reasoning_effort"] = selected_effort
             if tier != "default":
-                kwargs["context_tier"] = tier
+                inference["context_tier"] = tier
+            if inference:
+                kwargs["inference"] = inference
+            else:
+                kwargs.pop("inference", None)
             try:
                 sdk_session = await m._client.create_session(**kwargs)
                 break

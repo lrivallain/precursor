@@ -189,7 +189,7 @@ async def test_catalog_mcp_configs_attaches_enabled_servers() -> None:
     from precursor.backend.services.mcp.client import get_mcp_client_manager
 
     if not runtime.sdk_installed():
-        pytest.skip("github-copilot-sdk not installed")
+        pytest.skip("microsoft-copilot-sdk not installed")
 
     # Initialise the schema (alembic upgrade runs on app startup).
     await _ensure_schema()
@@ -342,7 +342,7 @@ async def test_catalog_mcp_configs_honours_a_server_scope() -> None:
     from precursor.backend.services.mcp.client import get_mcp_client_manager
 
     if not runtime.sdk_installed():
-        pytest.skip("github-copilot-sdk not installed")
+        pytest.skip("microsoft-copilot-sdk not installed")
 
     await _ensure_schema()
 
@@ -645,7 +645,7 @@ async def test_catalog_mcp_configs_authenticates_workiq_preview(monkeypatch) -> 
     from precursor.backend.services.mcp.client import get_mcp_client_manager
 
     if not runtime.sdk_installed():
-        pytest.skip("github-copilot-sdk not installed")
+        pytest.skip("microsoft-copilot-sdk not installed")
 
     await _ensure_schema()
 

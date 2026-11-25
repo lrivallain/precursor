@@ -21,7 +21,7 @@ async function testAgentRuntimeSetup(browser) {
   }
 
   const card = (page) => page.locator("main").getByRole("region", { name: "Copilot runtime", exact: true });
-  const install = (page) => card(page).getByRole("button", { name: "Install the Copilot CLI (~90 MB)", exact: true });
+  const install = (page) => card(page).getByRole("button", { name: "Install the Copilot CLI (~100 MB)", exact: true });
   const settingsPanel = (page) => page.getByRole("heading", { name: "Agents mode", exact: true }).locator("..");
   const confirmInstall = async (page) => {
     await install(page).click();
@@ -83,9 +83,9 @@ async function testAgentRuntimeSetup(browser) {
     await page.locator("main").getByRole("button", { name: "New agent", exact: true }).click();
     await install(page).waitFor();
     await page.locator("main").getByRole("button", { name: "Open Settings", exact: true }).click();
-    await settingsPanel(page).getByRole("button", { name: "Install the Copilot CLI (~90 MB)", exact: true }).waitFor();
+    await settingsPanel(page).getByRole("button", { name: "Install the Copilot CLI (~100 MB)", exact: true }).waitFor();
     assert.equal(await settingsPanel(page).getByRole("checkbox", { name: /^Enable Agents mode/ }).isChecked(), false);
-    await settingsPanel(page).getByRole("button", { name: "Install the Copilot CLI (~90 MB)", exact: true }).click();
+    await settingsPanel(page).getByRole("button", { name: "Install the Copilot CLI (~100 MB)", exact: true }).click();
     await page.getByRole("alertdialog").getByRole("button", { name: "Download", exact: true }).click();
     await settingsPanel(page).getByRole("status").filter({ hasText: "Downloading" }).waitFor();
     await page.keyboard.press("Escape");
@@ -116,7 +116,7 @@ async function testAgentRuntimeSetup(browser) {
     assert.equal(await toggle().isDisabled(), true, "A missing runtime must not be enablable");
     await settingsPanel(page).getByText("Install the Copilot CLI below to turn this on", { exact: false }).waitFor();
     await toggle().click({ force: true });
-    await settingsPanel(page).getByRole("button", { name: "Install the Copilot CLI (~90 MB)", exact: true }).click();
+    await settingsPanel(page).getByRole("button", { name: "Install the Copilot CLI (~100 MB)", exact: true }).click();
     await page.getByRole("alertdialog").getByRole("button", { name: "Download", exact: true }).click();
     await settingsPanel(page).getByRole("status").filter({ hasText: "Downloading" }).waitFor();
     finish(state);

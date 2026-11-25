@@ -63,7 +63,7 @@ def _fake_sdk(monkeypatch, *, cached: str | object | None = _MISSING) -> None:
     pkg.__path__ = []  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "copilot", pkg)
     # The probe must resolve without ever reaching the downloader, so leave a
-    # landmine on the symbol that would fetch ~90 MB.
+    # landmine on the symbol that would fetch ~100 MB.
     monkeypatch.setitem(sys.modules, "copilot.client", types.ModuleType("copilot.client"))
     if cached is _MISSING:
         monkeypatch.setitem(sys.modules, "copilot._cli_download", None)
@@ -117,7 +117,7 @@ def test_no_sdk_means_no_binary(monkeypatch, tmp_path) -> None:
     assert runtime.runtime_binary_path() is None
     ok, detail = runtime.agents_available()
     assert ok is False
-    assert "github-copilot-sdk" in detail
+    assert "microsoft-copilot-sdk" in detail
     assert "reinstall" in detail.lower()
     assert "--extra agents" not in detail
 
@@ -159,15 +159,6 @@ def test_missing_download_module_still_resolves(monkeypatch, tmp_path) -> None:
     assert runtime.runtime_binary_path() == on_path
 
 
-def test_legacy_bundled_binary_is_last_resort(monkeypatch, tmp_path) -> None:
-    bundled = _executable(tmp_path / "wheel" / "copilot")
-    _fake_sdk(monkeypatch, cached=None)
-    client_mod = sys.modules["copilot.client"]
-    client_mod._get_bundled_cli_path = lambda: bundled  # type: ignore[attr-defined]
-
-    assert runtime.runtime_binary_path() == bundled
-
-
 def test_nothing_resolves_reports_actionable_detail(monkeypatch) -> None:
     _fake_sdk(monkeypatch, cached=None)
 
@@ -183,19 +174,80 @@ def test_runtime_env_pins_the_resolved_binary(monkeypatch, tmp_path) -> None:
     Otherwise the SDK re-resolves on its own — and its last step *downloads*, so
     a PATH-only machine would pass the probe and then pull the CLI at startup.
     """
-    from precursor.backend.services.agents import manager
-
     resolved = _executable(tmp_path / "bin" / "copilot")
     monkeypatch.setattr(runtime, "runtime_binary_path", lambda: resolved)
 
-    env = manager._runtime_env()
+    env = runtime.runtime_env()
     assert env["COPILOT_CLI_PATH"] == resolved
     assert env["PATH"] == os.environ["PATH"]
 
 
 def test_runtime_env_omits_the_pin_when_unresolved(monkeypatch) -> None:
-    from precursor.backend.services.agents import manager
-
     monkeypatch.setattr(runtime, "runtime_binary_path", lambda: None)
 
-    assert "COPILOT_CLI_PATH" not in manager._runtime_env()
+    assert "COPILOT_CLI_PATH" not in runtime.runtime_env()
+
+
+# --- The 2.0 client (issue #509) -------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("level", "expected"),
+    [
+        ("INFO", "info"),
+        ("warn", "warning"),
+        ("CRITICAL", "error"),
+        ("debug", "debug"),
+        ("x", "info"),
+    ],
+)
+def test_sdk_log_level_maps_onto_the_runtime_levels(level, expected) -> None:
+    assert runtime.sdk_log_level(level) == expected
+
+
+def test_build_client_spawns_the_probed_binary(monkeypatch, tmp_path) -> None:
+    """The client drives the exact binary Settings reported, over stdio."""
+    resolved = _executable(tmp_path / "bin" / "copilot")
+    monkeypatch.setattr(runtime, "runtime_binary_path", lambda: resolved)
+    monkeypatch.setattr(runtime, "agents_home_dir", lambda: str(tmp_path / "home"))
+    calls: dict[str, dict] = {}
+
+    def _spawned(**kwargs):
+        calls["runtime"] = kwargs
+        return "connection"
+
+    def _client(**kwargs):
+        calls["client"] = kwargs
+        return "client"
+
+    sdk = types.SimpleNamespace(
+        CopilotClient=_client,
+        RuntimeConnection=types.SimpleNamespace(for_spawned_stdio=_spawned),
+    )
+
+    assert runtime.build_client(sdk) == "client"
+    assert calls["client"]["mode"] == "coding-agent"
+    assert calls["client"]["runtime"] == "connection"
+    assert calls["client"]["observability"]["log_level"] in {"info", "debug", "warning", "error"}
+    assert calls["runtime"]["path"] == resolved
+    assert calls["runtime"]["env"]["COPILOT_CLI_PATH"] == resolved
+    assert calls["runtime"]["base_directory"] == str(tmp_path / "home")
+
+
+@pytest.fixture
+def _fresh_rpc_cache():
+    runtime.load_rpc.cache_clear()
+    runtime._import_sdk.cache_clear()
+    yield
+    runtime.load_rpc.cache_clear()
+    runtime._import_sdk.cache_clear()
+
+
+@pytest.mark.usefixtures("_fresh_rpc_cache")
+def test_load_rpc_returns_the_public_module(monkeypatch) -> None:
+    """``copilot.generated`` is private in 2.0; ``copilot.rpc`` is its public home."""
+    _fake_sdk(monkeypatch)
+    public = types.ModuleType("copilot.rpc")
+    monkeypatch.setitem(sys.modules, "copilot.rpc", public)
+
+    assert runtime.load_rpc() is public

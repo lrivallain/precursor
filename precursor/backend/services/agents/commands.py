@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 from precursor.backend.clock import utcnow
 from precursor.backend.db import SessionLocal
 from precursor.backend.services import roles as roles_service
+from precursor.backend.services.agents import runtime
 
 if TYPE_CHECKING:
     from precursor.backend.services.agents.manager import AgentManager
@@ -154,15 +155,19 @@ async def compact(manager: AgentManager, agent_id: int, instructions: str = "") 
         raise ValueError("Nothing to compact yet: this agent has no conversation.")
     if run.status in ("running", "needs_approval"):
         raise ValueError("The agent is busy. Wait for it to finish, or stop it, first.")
-    from copilot.generated.rpc import SessionHistoryCompactRequest, Trigger
-
+    sdk, rpc = runtime.load_sdk(), runtime.load_rpc()
     live = await manager._ensure_live(agent, run)
-    result = await live.sdk_session.rpc.history.compact(
-        SessionHistoryCompactRequest(
-            custom_instructions=instructions.strip() or None, trigger=Trigger.MANUAL
-        ),
-        timeout=_COMPACT_TIMEOUT_SECONDS,
-    )
+    try:
+        result = await live.sdk_session.rpc.history.compact(
+            rpc.SessionHistoryCompactRequest(
+                custom_instructions=instructions.strip() or None, trigger=rpc.Trigger.MANUAL
+            ),
+            timeout=_COMPACT_TIMEOUT_SECONDS,
+        )
+    except sdk.JsonRpcError as exc:
+        # SDK 2.0 raises where 1.x returned ``success: false`` (e.g. "Nothing to
+        # compact." on a short conversation); either way it's the user's answer.
+        raise ValueError(f"Compaction failed: {getattr(exc, 'message', None) or exc}") from exc
     if not result.success:
         raise ValueError("Compaction failed; the conversation was left as it was.")
     await manager._publish(agent_id, agent_run_id=run.id)

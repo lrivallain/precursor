@@ -8,7 +8,7 @@ title: Quick start — Agents
 
 ## Enable them
 
-Agents drive the Copilot CLI runtime (~90 MB, opt-in download). Open **Agents**
+Agents drive the Copilot CLI runtime (~100 MB, opt-in download). Open **Agents**
 and click **Install the Copilot CLI** (also offered in **Settings → Agents** and
 the Home launcher's **New agent**). A `copilot` already on your `PATH` is used
 as is.
