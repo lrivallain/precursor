@@ -261,3 +261,123 @@ async def test_wakeup_changed_reaches_the_window_whose_turn_paused() -> None:
         events.set_current_client_id(None)
     assert event["type"] == "wakeup.changed"
     assert not event.get("client_id")
+
+
+# -- review fixes ------------------------------------------------------------------
+
+
+async def _paused_target(kind: wakeups.WakeupKind) -> int:
+    async with SessionLocal() as session:
+        stamp = datetime.now(UTC).timestamp()
+        row: Any = {
+            "topic": lambda: Topic(title="Doomed", slug=f"doomed-{stamp}"),
+            "chat": lambda: Chat(title="Doomed", slug=f"doomed-{stamp}"),
+            "agent": lambda: AgentSession(title="Doomed", task_prompt="x", status="idle"),
+        }[kind]()
+        session.add(row)
+        await session.commit()
+        await wakeups.schedule(
+            session, kind, row.id, wake_at=NOW + timedelta(days=1), prompt="Stale"
+        )
+        return int(row.id)
+
+
+@pytest.mark.parametrize("kind", ["topic", "chat", "agent"])
+async def test_deleting_a_paused_conversation_drops_its_wakeup(kind: wakeups.WakeupKind) -> None:
+    """SQLite doesn't enforce the FK: without the ORM cascade a stale wakeup would
+    outlive its conversation and reach whichever row reuses the id."""
+    target_id = await _paused_target(kind)
+    model = {"topic": Topic, "chat": Chat, "agent": AgentSession}[kind]
+    async with SessionLocal() as session:
+        await session.delete(await session.get(model, target_id))
+        await session.commit()
+    async with SessionLocal() as session:
+        assert await wakeups.get_wakeup(session, kind, target_id) is None
+
+
+@pytest.mark.parametrize("paused", [True, False])
+async def test_a_paused_autonomous_agent_rests_instead_of_continuing(paused: bool) -> None:
+    from precursor.backend.models import AgentRun
+    from precursor.backend.services.agents.manager import AgentManager, _LiveSession
+    from tests.test_agents import _current_run_id, _ensure_schema, _make_agent
+
+    await _ensure_schema()
+    agent_id = await _make_agent(task_prompt="Ship it", autonomy_enabled=True, status="running")
+    if paused:
+        async with SessionLocal() as session:
+            await wakeups.schedule(
+                session, "agent", agent_id, wake_at=NOW + timedelta(days=1), prompt="Check CI"
+            )
+    mgr = AgentManager()
+    enqueued: list[Any] = []
+    mgr.enqueue = lambda coro: (enqueued.append(coro), coro.close())  # type: ignore[method-assign]
+    run_id = await _current_run_id(agent_id)
+    assert run_id is not None
+    live = _LiveSession(sdk_session=None)
+    live.pending_answer = "Waiting for the CI run; I'll check back."
+    mgr._live[run_id] = live
+
+    patch: dict[str, object] = {}
+    async with SessionLocal() as session:
+        agent = await session.get(AgentSession, agent_id)
+        run = await session.get(AgentRun, run_id)
+        assert agent is not None and run is not None
+        await mgr._on_idle(agent, run, patch)
+
+    if paused:
+        assert patch["status"] == "idle"
+        assert enqueued == []
+    else:
+        assert patch["status"] == "running"
+        assert len(enqueued) == 1
+
+
+async def test_overlapping_scans_wake_a_conversation_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+
+    topic_id = await _topic()
+    async with SessionLocal() as session:
+        await wakeups.schedule(
+            session, "topic", topic_id, wake_at=NOW + timedelta(days=1), prompt="Once"
+        )
+    await _make_due("topic", topic_id)
+    started: list[int] = []
+
+    async def fake_turn(_kind: str, container_id: int, *_a: Any, **_kw: Any) -> None:
+        started.append(container_id)
+
+    monkeypatch.setattr("precursor.backend.services.turn.run_container_turn", fake_turn)
+    ticker = WakeupTicker()
+    # A periodic tick and a Wake now nudge landing together.
+    await asyncio.gather(ticker.run_once(), ticker.run_once())
+    for task in list(ticker._turns):
+        await task
+    assert started == [topic_id]
+
+
+async def test_a_wake_now_turn_is_not_tagged_with_the_clicking_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    topic_id = await _topic()
+    async with SessionLocal() as session:
+        await wakeups.schedule(
+            session, "topic", topic_id, wake_at=NOW + timedelta(days=1), prompt="Now"
+        )
+    await _make_due("topic", topic_id)
+    seen: list[str | None] = []
+
+    async def fake_turn(*_a: Any, **_kw: Any) -> None:
+        seen.append(events.get_current_client_id())
+
+    monkeypatch.setattr("precursor.backend.services.turn.run_container_turn", fake_turn)
+    ticker = WakeupTicker()
+    events.set_current_client_id("the-window")
+    try:
+        await ticker.run_once()
+    finally:
+        events.set_current_client_id(None)
+    for task in list(ticker._turns):
+        await task
+    assert seen == [None]

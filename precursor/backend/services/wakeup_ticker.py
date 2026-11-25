@@ -19,7 +19,11 @@ from precursor.backend.db import SessionLocal
 from precursor.backend.models import AgentSession, Wakeup
 from precursor.backend.services import wakeups
 from precursor.backend.services.background_poll import BackgroundPoll
-from precursor.backend.services.events import is_streaming, publish_wakeup_changed
+from precursor.backend.services.events import (
+    broadcast_events,
+    is_streaming,
+    publish_wakeup_changed,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -37,12 +41,19 @@ class WakeupTicker(BackgroundPoll):
         super().__init__(settings)
         # Held so the turns a tick starts are not garbage-collected mid-run.
         self._turns: set[asyncio.Task[object]] = set()
+        # A Wake now nudge can land during a periodic tick: one scan at a time,
+        # so a due wakeup is consumed (and dispatched) exactly once.
+        self._scan = asyncio.Lock()
 
     @property
     def poll_seconds(self) -> int:
         return self._settings.wakeup_poll_seconds
 
     async def run_once(self) -> None:
+        async with self._scan:
+            await self._scan_due()
+
+    async def _scan_due(self) -> None:
         async with SessionLocal() as session:
             due = await wakeups.due(session)
             woken = []
@@ -55,8 +66,11 @@ class WakeupTicker(BackgroundPoll):
                 return
             await session.commit()
         await publish_wakeup_changed()
-        for (kind, target_id), message in woken:
-            self._wake(kind, target_id, message)
+        # The turns may start inside a Wake now request: untag them from its
+        # window, or that window would drop their events as its own echoes.
+        with broadcast_events():
+            for (kind, target_id), message in woken:
+                self._wake(kind, target_id, message)
 
     def _wake(self, kind: str, target_id: int, message: str) -> None:
         if kind == "agent":

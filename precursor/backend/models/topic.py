@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from precursor.backend.models.tool_approval import ToolApproval
     from precursor.backend.models.topic_schedule import TopicSchedule
     from precursor.backend.models.topic_summary import TopicSummary
+    from precursor.backend.models.wakeup import Wakeup
 
 
 class Topic(Base, TimestampMixin):
@@ -148,6 +149,11 @@ class Topic(Base, TimestampMixin):
         back_populates="topic",
         cascade="all, delete-orphan",
         uselist=False,
+    )
+    # A pending self wakeup (services/wakeups.py). SQLite doesn't enforce the FK,
+    # so this cascade is what keeps a stale one from reaching a reused id.
+    wakeup: Mapped[Wakeup | None] = relationship(
+        "Wakeup", cascade="all, delete-orphan", uselist=False
     )
 
     # Optional editable status brief shown above the transcript. Created on

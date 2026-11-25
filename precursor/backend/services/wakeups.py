@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute
 
 from precursor.backend.clock import utcnow
+from precursor.backend.db import SessionLocal
 from precursor.backend.models import AgentSession, Chat, Topic, Wakeup
 from precursor.backend.schemas.wakeup import WakeupKind, WakeupRead
 from precursor.backend.services.events import publish_wakeup_changed
@@ -93,6 +94,12 @@ def resolve_wake_at(
 async def get_wakeup(session: AsyncSession, kind: WakeupKind, target_id: int) -> Wakeup | None:
     result = await session.execute(select(Wakeup).where(_column(kind) == target_id))
     return result.scalar_one_or_none()
+
+
+async def is_paused(kind: WakeupKind, target_id: int) -> bool:
+    """Whether a conversation holds a pending wakeup (opens its own session)."""
+    async with SessionLocal() as session:
+        return await get_wakeup(session, kind, target_id) is not None
 
 
 async def schedule(

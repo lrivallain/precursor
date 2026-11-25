@@ -287,7 +287,7 @@
     "frontend/src/lib/workflows.ts::eslint(complexity)": 2
   },
   "duplication": {
-    "duplicated-lines": 2530
+    "duplicated-lines": 2528
   },
   "untyped-responses": {
     "DELETE /api/plugins/installed/{plugin_id}": 1,

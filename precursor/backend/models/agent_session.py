@@ -53,6 +53,7 @@ if TYPE_CHECKING:
     from precursor.backend.models.agent_trigger import AgentTrigger
     from precursor.backend.models.chat import Chat
     from precursor.backend.models.topic import Topic
+    from precursor.backend.models.wakeup import Wakeup
 
 
 # Lifecycle of an agent session. Kept in sync from the SDK event stream.
@@ -299,6 +300,11 @@ class AgentSession(Base, TimestampMixin):
         cascade="all, delete-orphan",
         uselist=False,
         lazy="selectin",
+    )
+    # A pending self wakeup (services/wakeups.py). SQLite doesn't enforce the FK,
+    # so this cascade is what keeps a stale one from reaching a reused id.
+    wakeup: Mapped[Wakeup | None] = relationship(
+        "Wakeup", cascade="all, delete-orphan", uselist=False
     )
 
     # External event triggers (webhooks) that can start this agent.
