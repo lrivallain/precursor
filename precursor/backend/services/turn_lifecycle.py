@@ -11,7 +11,7 @@ import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator
-from typing import Literal
+from typing import Any, Literal
 
 from precursor.backend.services import turn_steering
 from precursor.backend.services.events import (
@@ -31,7 +31,7 @@ ContainerKind = Literal["topic", "chat"]
 # request that started it: closing or reloading the page only stops the relay of
 # its events, while the turn itself runs on and persists its result. Stopping
 # one is explicit (``cancel_running_turns``).
-_RUNNING_TURNS: dict[tuple[str, int], set[asyncio.Task[None]]] = {}
+_RUNNING_TURNS: dict[tuple[str, int], set[asyncio.Task[Any]]] = {}
 _END_OF_TURN: dict[str, str] = {"event": "__end__"}
 
 
@@ -54,6 +54,27 @@ async def cancel_running_turns(kind: ContainerKind, container_id: int) -> bool:
     return bool(tasks)
 
 
+def track(kind: ContainerKind, container_id: int, task: asyncio.Task[Any]) -> None:
+    """Count ``task`` as a turn running in this conversation until it ends.
+
+    Stop and clear-history cancel what is tracked here (``cancel_running_turns``),
+    so a turn started outside a request (a self wakeup) registers too.
+    """
+    key = (kind, container_id)
+    _RUNNING_TURNS.setdefault(key, set()).add(task)
+
+    def forget(done: asyncio.Task[Any]) -> None:
+        tasks = _RUNNING_TURNS.get(key)
+        if tasks is not None:
+            tasks.discard(done)
+            if not tasks:
+                _RUNNING_TURNS.pop(key, None)
+        if not done.cancelled() and done.exception() is not None:
+            logger.error("Turn in %s %s failed", kind, container_id, exc_info=done.exception())
+
+    task.add_done_callback(forget)
+
+
 def lifecycle_stream(
     kind: ContainerKind,
     container_id: int,
@@ -73,7 +94,6 @@ def lifecycle_stream(
     names the turn (``turn`` with its ``turn_id``), so the client addresses its
     messages to this turn and no other.
     """
-    key = (kind, container_id)
 
     async def run(
         queue: asyncio.Queue[dict[str, str]],
@@ -106,22 +126,12 @@ def lifecycle_stream(
                 await publish_stream_ended_chat(container_id)
             queue.put_nowait(_END_OF_TURN)
 
-    def forget(task: asyncio.Task[None]) -> None:
-        tasks = _RUNNING_TURNS.get(key)
-        if tasks is not None:
-            tasks.discard(task)
-            if not tasks:
-                _RUNNING_TURNS.pop(key, None)
-        if not task.cancelled() and task.exception() is not None:
-            logger.error("Turn in %s %s failed", kind, container_id, exc_info=task.exception())
-
     async def relay() -> AsyncIterator[dict[str, str]]:
         queue: asyncio.Queue[dict[str, str]] = asyncio.Queue()
         listener = {"detached": False}
         steer = turn_steering.open_queue(kind, container_id)
         task = asyncio.create_task(run(queue, listener, steer), name=f"turn-{kind}-{container_id}")
-        _RUNNING_TURNS.setdefault(key, set()).add(task)
-        task.add_done_callback(forget)
+        track(kind, container_id, task)
         try:
             yield {"event": "turn", "data": json.dumps({"turn_id": steer.turn_id})}
             while True:

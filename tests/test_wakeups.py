@@ -381,3 +381,47 @@ async def test_a_wake_now_turn_is_not_tagged_with_the_clicking_window(
     for task in list(ticker._turns):
         await task
     assert seen == [None]
+
+
+async def _start_endless_wakeup_turn(monkeypatch: pytest.MonkeyPatch) -> tuple[WakeupTicker, int]:
+    import asyncio
+
+    topic_id = await _topic()
+    async with SessionLocal() as session:
+        await wakeups.schedule(
+            session, "topic", topic_id, wake_at=NOW + timedelta(days=1), prompt="Long"
+        )
+    await _make_due("topic", topic_id)
+
+    async def endless_turn(*_a: Any, **_kw: Any) -> None:
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr("precursor.backend.services.turn.run_container_turn", endless_turn)
+    ticker = WakeupTicker()
+    await ticker.run_once()
+    return ticker, topic_id
+
+
+async def test_stop_and_clear_history_cancel_a_wakeup_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from precursor.backend.services import turn_lifecycle
+
+    ticker, topic_id = await _start_endless_wakeup_turn(monkeypatch)
+    (task,) = ticker._turns
+    assert ("topic", topic_id) in turn_lifecycle.running_turns()
+
+    assert await turn_lifecycle.cancel_running_turns("topic", topic_id) is True
+    assert task.cancelled()
+    assert ("topic", topic_id) not in turn_lifecycle.running_turns()
+
+
+async def test_stopping_the_ticker_cancels_its_wakeup_turns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ticker, _topic_id = await _start_endless_wakeup_turn(monkeypatch)
+    (task,) = ticker._turns
+
+    await ticker.stop()
+    assert task.cancelled()
+    assert not ticker._turns

@@ -10,22 +10,19 @@ running turn.
 from __future__ import annotations
 
 import asyncio
-import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.config import Settings
 from precursor.backend.db import SessionLocal
 from precursor.backend.models import AgentSession, Wakeup
-from precursor.backend.services import wakeups
+from precursor.backend.services import turn_lifecycle, wakeups
 from precursor.backend.services.background_poll import BackgroundPoll
 from precursor.backend.services.events import (
     broadcast_events,
     is_streaming,
     publish_wakeup_changed,
 )
-
-logger = logging.getLogger(__name__)
 
 # Agent states a wakeup waits out. ``blocked`` is not one: the agent asked a
 # question and stopped, and its own wakeup is a fine answer.
@@ -90,13 +87,21 @@ class WakeupTicker(BackgroundPoll):
             ),
             name=f"wakeup-{kind}-{target_id}",
         )
+        # Registered as the conversation's running turn, so Stop and clear-history
+        # cancel it like any other; also kept here for shutdown.
+        turn_lifecycle.track(kind, target_id, task)  # type: ignore[arg-type]
         self._turns.add(task)
-        task.add_done_callback(self._done)
+        task.add_done_callback(self._turns.discard)
 
-    def _done(self, task: asyncio.Task[object]) -> None:
-        self._turns.discard(task)
-        if not task.cancelled() and task.exception() is not None:
-            logger.error("Wakeup turn %s failed", task.get_name(), exc_info=task.exception())
+    async def stop(self) -> None:
+        """Stop polling, then cancel the turns still running: the MCP clients and
+        agent services they use are closed right after."""
+        await super().stop()
+        turns = [t for t in self._turns if not t.done()]
+        for task in turns:
+            task.cancel()
+        if turns:
+            await asyncio.wait(turns, timeout=10)
 
 
 async def _busy(session: AsyncSession, wakeup: Wakeup) -> bool:
