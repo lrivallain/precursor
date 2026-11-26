@@ -27,17 +27,22 @@ endpoint, the plugin installer): they look at the **bind address** and the
 3. **Remote requests need a tunnel session once remote access is on.** A pure
    ASGI gate in front of the app answers `401` to a remote request without a
    valid `__Host-precursor_remote` cookie, except the pairing link and the
-   files the home-screen install needs. With remote access off, the gate
+   files the home-screen install needs. The OpenAI-compatible endpoint is
+   exempt too: it checks its own bearer key, and its clients are not browsers. With remote access off, the gate
    lets remote requests through as before, so a deployment behind the user's
    own authenticating reverse proxy keeps working.
 4. **Pairing by a one-time code.** Only a local request can mint the code
    (128 bits, single use, 30 minutes, burned after 10 wrong guesses). The
    phone exchanges it, through the tunnel, for a session token. Only the
-   token's SHA-256 is stored; sessions expire after 30 days unused and can be
-   revoked from the PC.
+   token's SHA-256 is stored; sessions expire after 30 days unused (the
+   cookie is renewed as the session is used) and can be revoked from the PC.
+   Every change to this state is one serialized read-modify-write, so a stale
+   read can't bring a revoked device back.
 5. **Some features are local-only.** A route marked with
-   `Depends(require_local)` answers `404` to remote requests, session or not:
-   tunnel control, pairing and paired devices to start with. The MCP HTTP
+   `Depends(require_local)` answers `404` to remote requests, session or not,
+   and to local requests addressed to a non-loopback `Host` (DNS rebinding) or
+   sent from a foreign `Origin`: tunnel control, pairing and paired devices to
+   start with. The MCP HTTP
    endpoint and the plugin installer check `is_remote` in their own guards.
    Anything awkward to drive from a phone can join this list later rather
    than be made to work remotely.

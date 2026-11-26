@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from precursor.backend.db import get_session
 from precursor.backend.lookups import get_or_404
 from precursor.backend.models import Chat, Topic
-from precursor.backend.services.remote_access import is_remote
+from precursor.backend.services.remote_access.classify import is_local_caller
 
 
 async def get_topic_or_404(
@@ -34,11 +34,12 @@ async def get_chat_or_404(
 
 
 async def require_local(request: Request) -> None:
-    """Mark a route local-only: a request that came through a tunnel gets 404.
+    """Mark a route local-only: only a caller on this machine gets an answer.
 
-    Some features are not meant to be driven from a paired phone (installing
-    plugins, controlling the tunnel itself...). 404 rather than 403 so the
-    feature simply looks absent from there.
+    Some features are not meant to be driven from a paired phone (controlling
+    the tunnel itself...). A request through a tunnel, one addressed to another
+    host (a DNS-rebinding page) or one from a foreign ``Origin`` gets 404, so
+    the feature simply looks absent from there.
     """
-    if is_remote(request.scope):
+    if not is_local_caller(request.scope):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Not Found")

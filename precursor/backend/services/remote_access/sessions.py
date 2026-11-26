@@ -6,9 +6,12 @@ kept, so a copy of the database doesn't let anyone in.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import secrets
+import weakref
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 
@@ -71,7 +74,7 @@ async def load(session: AsyncSession) -> RemoteAccessState:
         return RemoteAccessState()
 
 
-async def save(session: AsyncSession, state: RemoteAccessState) -> None:
+async def _save(session: AsyncSession, state: RemoteAccessState) -> None:
     """Persist ``state``, dropping expired sessions; the caller commits."""
     now = utcnow()
     state.sessions = [s for s in state.sessions if not s.expired(now)]
@@ -119,3 +122,43 @@ def revoke(state: RemoteAccessState, session_id: str | None = None) -> bool:
     before = len(state.sessions)
     state.sessions = [] if session_id is None else [s for s in state.sessions if s.id != session_id]
     return len(state.sessions) != before
+
+
+# One writer at a time: every change is a read-modify-write of the whole row,
+# so two interleaved writers would undo each other (a revoked device coming
+# back, a new pairing lost). One lock per event loop: tests run several.
+_locks: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _lock() -> asyncio.Lock:
+    loop = asyncio.get_running_loop()
+    lock = _locks.get(loop)
+    if lock is None:
+        lock = _locks[loop] = asyncio.Lock()
+    return lock
+
+
+async def update[T](mutate: Callable[[RemoteAccessState], T]) -> tuple[RemoteAccessState, T]:
+    """Load, change and commit the state as one serialized step.
+
+    ``mutate`` changes the state it is given in place and returns a result.
+    Uses its own database session so the commit can't be mixed with a request's.
+    """
+    from precursor.backend.db import SessionLocal
+
+    async with _lock(), SessionLocal() as db:
+        state = await load(db)
+        result = mutate(state)
+        await _save(db, state)
+        await db.commit()
+        return state, result
+
+
+def touch(state: RemoteAccessState, token: str | None) -> RemoteSession | None:
+    """Mark the session ``token`` as used now; ``None`` if it is gone."""
+    entry = find(state, token)
+    if entry is not None:
+        entry.last_used_at = utcnow().isoformat()
+    return entry

@@ -24,7 +24,7 @@ from precursor.backend.schemas.remote import (
 )
 from precursor.backend.services.remote_access import is_remote
 from precursor.backend.services.remote_access import sessions as store
-from precursor.backend.services.remote_access.gate import COOKIE_NAME, PAIR_PATH
+from precursor.backend.services.remote_access.gate import PAIR_PATH, session_cookie
 from precursor.backend.services.remote_access.pairing import pairing_codes
 
 router = APIRouter(prefix="/api/remote", tags=["remote"], dependencies=[Depends(require_local)])
@@ -59,15 +59,13 @@ async def get_access(session: AsyncSession = Depends(get_session)) -> RemoteAcce
 
 
 @router.put("/access", response_model=RemoteAccessRead)
-async def update_access(
-    body: RemoteAccessUpdate, session: AsyncSession = Depends(get_session)
-) -> RemoteAccessRead:
-    state = await store.load(session)
-    state.enabled = body.enabled
+async def update_access(body: RemoteAccessUpdate) -> RemoteAccessRead:
+    def switch(state: store.RemoteAccessState) -> None:
+        state.enabled = body.enabled
+
+    state, _ = await store.update(switch)
     if not body.enabled:
         pairing_codes.cancel()
-    await store.save(session, state)
-    await session.commit()
     return _read(state)
 
 
@@ -80,20 +78,15 @@ async def mint_pairing(session: AsyncSession = Depends(get_session)) -> PairingC
 
 
 @router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def revoke_session(session_id: str, session: AsyncSession = Depends(get_session)) -> None:
-    state = await store.load(session)
-    if not store.revoke(state, session_id):
+async def revoke_session(session_id: str) -> None:
+    _state, revoked = await store.update(lambda state: store.revoke(state, session_id))
+    if not revoked:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
-    await store.save(session, state)
-    await session.commit()
 
 
 @router.delete("/sessions", status_code=status.HTTP_204_NO_CONTENT)
-async def revoke_all_sessions(session: AsyncSession = Depends(get_session)) -> None:
-    state = await store.load(session)
-    store.revoke(state)
-    await store.save(session, state)
-    await session.commit()
+async def revoke_all_sessions() -> None:
+    await store.update(store.revoke)
 
 
 @public_router.get("/context", response_model=RemoteContextRead)
@@ -112,21 +105,8 @@ async def pair(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Not Found")
     if not pairing_codes.consume(code):
         return HTMLResponse(_PAIR_FAILED, status_code=status.HTTP_401_UNAUTHORIZED)
-    token = store.issue(state, request.headers.get("user-agent", ""))
-    await store.save(session, state)
-    await session.commit()
+    label = request.headers.get("user-agent", "")
+    _state, token = await store.update(lambda fresh: store.issue(fresh, label))
     response = RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
-    response.set_cookie(
-        COOKIE_NAME,
-        token,
-        max_age=int(store.SESSION_TTL.total_seconds()),
-        path="/",
-        secure=True,
-        httponly=True,
-        # Lax, not Strict: after the tunnel's own sign-in bounces through
-        # login.microsoftonline.com, the navigation back is cross-site and a
-        # Strict cookie would be withheld. Lax still keeps it off cross-site
-        # POST/PUT/DELETE and subresource requests.
-        samesite="lax",
-    )
+    response.headers.append("set-cookie", session_cookie(token))
     return response

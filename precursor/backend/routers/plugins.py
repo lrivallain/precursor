@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any
-from urllib.parse import urlsplit
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse
@@ -49,8 +48,8 @@ from precursor.backend.plugins.sources import (
 from precursor.backend.plugins.state import disabled_ids, is_enabled, set_enabled
 from precursor.backend.services.app_settings import resolve_plugin_install_enabled
 from precursor.backend.services.github_auth import resolve_github_token
-from precursor.backend.services.mcp.precursor_server import LOOPBACK_HOSTS, is_loopback_host
-from precursor.backend.services.remote_access import is_remote
+from precursor.backend.services.mcp.precursor_server import is_loopback_host
+from precursor.backend.services.remote_access.classify import addresses_loopback, is_local_caller
 
 router = APIRouter(prefix="/api/plugins", tags=["plugins"])
 
@@ -88,49 +87,6 @@ def _require_known_plugin(plugin_id: str) -> None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"No plugin named '{plugin_id}'")
 
 
-def _host_is_local(request: Request) -> bool:
-    """Whether the request's ``Host`` names this instance's loopback bind.
-
-    The bind address alone is not a boundary: a page on an attacker's domain
-    that DNS-rebinds to 127.0.0.1 is same-origin as far as the browser is
-    concerned, so no CORS preflight ever runs. Checking the Host header is what
-    actually pins a request to "someone typed localhost", and it is the same
-    guard the built-in MCP HTTP endpoint uses (see ``precursor_server``).
-
-    A tunnel forwards to loopback and may rewrite ``Host`` to ``localhost``, so
-    a request that came through one is never local, whatever it names.
-    """
-    if is_remote(request.scope):
-        return False
-    raw = (request.headers.get("host") or "").strip()
-    if not raw:
-        return False
-    try:
-        # Parsed as an authority so the port is dropped and a bracketed IPv6
-        # literal ("[::1]:8000") is unwrapped correctly — splitting on ":" is
-        # not enough for the IPv6 form.
-        hostname = urlsplit(f"//{raw}").hostname
-    except ValueError:
-        return False
-    return (hostname or "").lower() in LOOPBACK_HOSTS
-
-
-def _origin_is_local(request: Request) -> bool:
-    """Reject a cross-site caller that reveals itself via ``Origin``.
-
-    A form POST from another site sends `Origin` and needs no preflight, so this
-    closes the one hole the Host check alone leaves.
-    """
-    origin = request.headers.get("origin")
-    if not origin:
-        return True  # same-origin navigations and non-browser clients
-    try:
-        host = urlsplit(origin).hostname or ""
-    except ValueError:
-        return False
-    return host.lower() in LOOPBACK_HOSTS
-
-
 async def _require_local_admin(request: Request, session: AsyncSession) -> None:
     """Guard the mutating installer endpoints.
 
@@ -149,7 +105,7 @@ async def _require_local_admin(request: Request, session: AsyncSession) -> None:
             "Installing plugins is only available when Precursor is bound to "
             "localhost. Install the package yourself and restart.",
         )
-    if not _host_is_local(request) or not _origin_is_local(request):
+    if not is_local_caller(request.scope):
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
             "This endpoint only answers requests addressed to Precursor's own localhost address.",
@@ -175,7 +131,7 @@ async def _github_token(
     """
     if not any(s is not None and s.kind == "github" for s in sources):
         return None
-    if not (_host_is_local(request) and _origin_is_local(request)):
+    if not is_local_caller(request.scope):
         return None
     return await resolve_github_token(session) or None
 
@@ -467,7 +423,7 @@ async def plugin_environment(
     # manifest, which may need fetching.
     env = await asyncio.to_thread(detect_environment)
     opted_in = await resolve_plugin_install_enabled(session)
-    local = is_loopback_host(get_settings().host) and _host_is_local(request)
+    local = is_loopback_host(get_settings().host) and addresses_loopback(request.scope)
     return {
         "installer": env.installer,
         "command_template": env.command_template.format(package="<package>"),

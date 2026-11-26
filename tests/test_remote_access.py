@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Iterator
 from datetime import timedelta
+from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -40,8 +41,10 @@ def _reset() -> Iterator[None]:
 
 
 def _client() -> TestClient:
-    # https: the session cookie is Secure, as it is through the tunnel.
-    return TestClient(create_app(), base_url="https://testserver")
+    # https: the session cookie is Secure, as it is through the tunnel. And
+    # localhost: local-only routes want a loopback Host (dev tunnels rewrite
+    # Host to localhost too).
+    return TestClient(create_app(), base_url="https://localhost")
 
 
 def _pair(client: TestClient) -> None:
@@ -267,3 +270,88 @@ def test_plugin_installer_refuses_tunneled_requests(monkeypatch: pytest.MonkeyPa
             assert "localhost" in r.json()["detail"]
         finally:
             client.put("/api/settings", json={"plugin_install_enabled": False})
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"Host": "attacker.example"},  # a DNS-rebinding page
+        {"Origin": "https://attacker.example"},  # a cross-site form or fetch
+    ],
+)
+def test_local_only_routes_refuse_foreign_host_or_origin(headers: dict[str, str]) -> None:
+    with _client() as client:
+        assert client.get("/api/remote/access", headers=headers).status_code == 404
+        assert (
+            client.put("/api/remote/access", json={"enabled": True}, headers=headers).status_code
+            == 404
+        )
+        assert client.get("/api/remote/access").json()["enabled"] is False
+
+
+def _age_sessions(hours: int) -> None:
+    """Make every stored session look last used ``hours`` ago."""
+
+    async def run() -> None:
+        def age(state: store.RemoteAccessState) -> None:
+            past = (store.utcnow() - timedelta(hours=hours)).isoformat()
+            for entry in state.sessions:
+                entry.last_used_at = past
+
+        await store.update(age)
+
+    asyncio.run(run())
+
+
+def test_using_a_session_renews_its_cookie() -> None:
+    with _client() as client:
+        _pair(client)
+        # Fresh: no renewal on every request.
+        assert "set-cookie" not in client.get("/api/topics", headers=TUNNEL).headers
+        _age_sessions(2)
+        r = client.get("/api/topics", headers=TUNNEL)
+        assert r.status_code == 200
+        cookie = r.headers["set-cookie"]
+        assert cookie.startswith(f"{COOKIE_NAME}=")
+        for attribute in ("Max-Age=2592000", "Secure", "HttpOnly", "SameSite=Lax", "Path=/"):
+            assert attribute in cookie
+        before = store.utcnow() - timedelta(minutes=5)
+        sessions = client.get("/api/remote/access").json()["sessions"]
+        assert sessions[0]["last_used_at"] > before.isoformat()
+
+
+def test_a_stale_read_cannot_bring_a_revoked_device_back(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The gate read the device, then it was revoked before the gate touched it."""
+    with _client() as client:
+        _pair(client)
+        _age_sessions(2)
+
+        async def snapshot() -> store.RemoteAccessState:
+            from precursor.backend.db import SessionLocal
+
+            async with SessionLocal() as db:
+                return await store.load(db)
+
+        stale = asyncio.run(snapshot())
+        assert client.delete("/api/remote/sessions").status_code == 204
+        real_load = store.load
+        calls = 0
+
+        async def load_stale_first(db: Any) -> store.RemoteAccessState:
+            nonlocal calls
+            calls += 1
+            return stale if calls == 1 else await real_load(db)
+
+        monkeypatch.setattr(store, "load", load_stale_first)
+        assert client.get("/api/topics", headers=TUNNEL).status_code == 401
+        monkeypatch.setattr(store, "load", real_load)
+        assert client.get("/api/remote/access").json()["sessions"] == []
+
+
+def test_openai_endpoint_keeps_its_own_auth_when_remote_access_is_on() -> None:
+    with _client() as client:
+        client.put("/api/remote/access", json={"enabled": True})
+        r = client.get("/api/openai/v1/models", headers={**TUNNEL, "Authorization": "Bearer x"})
+        # The endpoint's own answer (off by default), not the pairing 401.
+        assert r.status_code == 404
+        assert "pair" not in r.text.lower()
