@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import stat
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -46,6 +47,8 @@ esac
 
 @pytest.fixture()
 def fake_cli(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    if sys.platform == "win32":
+        pytest.skip("the fake devtunnel is a POSIX shell script")
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     exe = bin_dir / "devtunnel"
