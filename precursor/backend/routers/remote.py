@@ -24,6 +24,7 @@ from precursor.backend.schemas.remote import (
 )
 from precursor.backend.services.remote_access import is_remote
 from precursor.backend.services.remote_access import sessions as store
+from precursor.backend.services.remote_access.devices import sign_out_all_devices
 from precursor.backend.services.remote_access.gate import PAIR_PATH, session_cookie
 from precursor.backend.services.remote_access.pairing import pairing_codes
 
@@ -86,7 +87,7 @@ async def revoke_session(session_id: str) -> None:
 
 @router.delete("/sessions", status_code=status.HTTP_204_NO_CONTENT)
 async def revoke_all_sessions() -> None:
-    await store.update(store.revoke)
+    await sign_out_all_devices()
 
 
 @public_router.get("/context", response_model=RemoteContextRead)

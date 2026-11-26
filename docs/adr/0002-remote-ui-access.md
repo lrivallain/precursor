@@ -53,6 +53,17 @@ endpoint, the plugin installer): they look at the **bind address** and the
    through, after an Entra ID sign-in. That is a second barrier, not the only
    one: the app-level session holds even with a misconfigured tunnel.
 
+7. **A paired device is trusted like the computer.** It gets the whole UI,
+   including agents, workspaces and the command runner, which run on the
+   computer and can read what is stored there (settings, tokens, files). The
+   boundary is therefore pairing itself, not each secret: hiding every
+   credential from a paired phone is not a goal. What the design does
+   guarantee is that a revoked device loses access: the phone can't read the
+   OpenAI-compatible endpoint's key or change it, webhooks need a session
+   through the tunnel, and signing out *every* device also rotates that key,
+   the one credential that works through the tunnel without pairing. Pair
+   only devices you would trust with the computer itself.
+
 ## Consequences
 
 - Every remote request costs one settings read. Local requests pay nothing.
@@ -67,3 +78,8 @@ endpoint, the plugin installer): they look at the **bind address** and the
   requests.
 - Any forwarding proxy is treated as remote, not just dev tunnels; other
   transports can reuse the same boundary.
+- Signing out every device breaks the OpenAI-compatible endpoint's clients
+  until they get the new key from Settings.
+- Workspace files are served by `/raw` on the app's own origin, so an HTML
+  file opened from a paired phone runs with its session. That predates
+  remote access (it already holds locally) and is tracked separately.

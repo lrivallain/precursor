@@ -549,3 +549,29 @@ def test_webhooks_need_pairing_through_the_tunnel(path: str) -> None:
         assert client.post(path, headers=TUNNEL, json={}).status_code == 401
         # Locally they behave as before.
         assert client.post(path, json={}).status_code != 401
+
+
+def test_signing_out_every_device_rotates_the_openai_key() -> None:
+    with _client() as client:
+        _pair(client)
+        client.put("/api/settings", json={"openai_proxy_enabled": True})
+        try:
+            before = client.get("/api/settings").json()["openai_proxy_key"]
+            assert client.delete("/api/remote/sessions").status_code == 204
+            after = client.get("/api/settings").json()["openai_proxy_key"]
+            assert before and after and after != before
+        finally:
+            client.put("/api/settings", json={"openai_proxy_enabled": False})
+
+
+def test_signing_out_one_device_keeps_the_openai_key() -> None:
+    with _client() as client:
+        _pair(client)
+        client.put("/api/settings", json={"openai_proxy_enabled": True})
+        try:
+            before = client.get("/api/settings").json()["openai_proxy_key"]
+            device = client.get("/api/remote/access").json()["sessions"][0]["id"]
+            assert client.delete(f"/api/remote/sessions/{device}").status_code == 204
+            assert client.get("/api/settings").json()["openai_proxy_key"] == before
+        finally:
+            client.put("/api/settings", json={"openai_proxy_enabled": False})
