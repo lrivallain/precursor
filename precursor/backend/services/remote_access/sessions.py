@@ -132,6 +132,15 @@ _locks: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = (
 )
 
 
+# Bumped on every change, so a long-lived response (the event stream) knows
+# when to check its device is still allowed.
+_generation = 0
+
+
+def generation() -> int:
+    return _generation
+
+
 def _lock() -> asyncio.Lock:
     loop = asyncio.get_running_loop()
     lock = _locks.get(loop)
@@ -153,7 +162,9 @@ async def update[T](mutate: Callable[[RemoteAccessState], T]) -> tuple[RemoteAcc
         result = mutate(state)
         await _save(db, state)
         await db.commit()
-        return state, result
+    global _generation
+    _generation += 1
+    return state, result
 
 
 def touch(state: RemoteAccessState, token: str | None) -> RemoteSession | None:

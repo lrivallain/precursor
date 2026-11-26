@@ -396,6 +396,11 @@ def create_app() -> FastAPI:
         openapi_url="/api/openapi.json",
     )
 
+    # A request from a tunnel is checked before any route runs. Added first so
+    # CORS (added next) wraps it: preflights carry no cookie and are answered
+    # by CORS, and the gate's 401s still get CORS headers.
+    app.add_middleware(RemoteAccessGate)
+
     if cfg.cors_origins:
         app.add_middleware(
             CORSMiddleware,
@@ -404,9 +409,6 @@ def create_app() -> FastAPI:
             allow_methods=["*"],
             allow_headers=["*"],
         )
-
-    # Outermost: a request from a tunnel is checked before anything else runs.
-    app.add_middleware(RemoteAccessGate)
 
     @app.exception_handler(LLMCallFailed)
     async def _llm_call_failed(_request: Request, exc: LLMCallFailed) -> JSONResponse:

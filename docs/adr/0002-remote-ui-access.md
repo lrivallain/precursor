@@ -53,6 +53,11 @@ endpoint, the plugin installer): they look at the **bind address** and the
 ## Consequences
 
 - Every remote request costs one settings read. Local requests pay nothing.
+- Access is checked on entry and again, before the next chunk, whenever the
+  access state changes, so an open event stream ends when its device is revoked
+  or enforcement is switched on.
+- CORS wraps the gate: preflights carry no cookie and are answered by CORS;
+  the gate's `401`s still carry CORS headers.
 - The cookie is `SameSite=Lax`, not `Strict`: the relay's sign-in redirects
   back cross-site, and a `Strict` cookie would be withheld on that hop.
   Mutations are `POST`/`PUT`/`DELETE`, which `Lax` keeps off cross-site

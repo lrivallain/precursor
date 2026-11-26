@@ -355,3 +355,113 @@ def test_openai_endpoint_keeps_its_own_auth_when_remote_access_is_on() -> None:
         # The endpoint's own answer (off by default), not the pairing 401.
         assert r.status_code == 404
         assert "pair" not in r.text.lower()
+
+
+async def _paired_token() -> str:
+    def setup(state: store.RemoteAccessState) -> str:
+        state.enabled = True
+        return store.issue(state, "phone")
+
+    _state, token = await store.update(setup)
+    return token
+
+
+def _remote_scope(token: str | None) -> dict[str, Any]:
+    headers = [(b"host", b"localhost"), (b"x-forwarded-for", b"203.0.113.7")]
+    if token:
+        headers.append((b"cookie", f"{COOKIE_NAME}={token}".encode()))
+    return {"type": "http", "method": "GET", "path": "/api/events", "headers": headers}
+
+
+async def _stream_through_gate(token: str, change: Any) -> tuple[list[bytes], dict[str, Any]]:
+    """Run a fake streaming app behind the gate; ``change`` runs between chunks."""
+    from precursor.backend.services.remote_access.gate import RemoteAccessGate
+
+    sent: list[bytes] = []
+    after: dict[str, Any] = {}
+
+    async def app(_scope: Any, receive: Any, send: Any) -> None:
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"one", "more_body": True})
+        await change()
+        await send({"type": "http.response.body", "body": b"two", "more_body": True})
+        after.update(await receive())
+
+    async def receive() -> dict[str, Any]:
+        return {"type": "http.request", "body": b""}
+
+    async def send(message: dict[str, Any]) -> None:
+        if message["type"] == "http.response.body":
+            sent.append(message.get("body", b""))
+
+    await RemoteAccessGate(app)(_remote_scope(token), receive, send)
+    return sent, after
+
+
+def test_revoking_a_device_ends_its_open_stream() -> None:
+    async def run() -> tuple[list[bytes], dict[str, Any]]:
+        token = await _paired_token()
+        return await _stream_through_gate(token, lambda: store.update(store.revoke))
+
+    sent, after = asyncio.run(run())
+    assert sent == [b"one", b""]  # ended, "two" never delivered
+    assert after == {"type": "http.disconnect"}
+
+
+def test_an_unrelated_change_keeps_a_paired_stream_open() -> None:
+    async def run() -> tuple[list[bytes], dict[str, Any]]:
+        token = await _paired_token()
+        return await _stream_through_gate(token, lambda: store.update(lambda _s: None))
+
+    sent, after = asyncio.run(run())
+    assert sent == [b"one", b"two"]
+    assert after["type"] == "http.request"
+
+
+def test_turning_enforcement_on_ends_unpaired_streams() -> None:
+    from precursor.backend.services.remote_access.gate import RemoteAccessGate
+
+    async def run() -> list[bytes]:
+        sent: list[bytes] = []
+
+        async def app(_scope: Any, _receive: Any, send: Any) -> None:
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b"one", "more_body": True})
+            await store.update(lambda state: setattr(state, "enabled", True))
+            await send({"type": "http.response.body", "body": b"two", "more_body": True})
+
+        async def receive() -> dict[str, Any]:
+            return {"type": "http.request", "body": b""}
+
+        async def send(message: dict[str, Any]) -> None:
+            if message["type"] == "http.response.body":
+                sent.append(message.get("body", b""))
+
+        await RemoteAccessGate(app)(_remote_scope(None), receive, send)
+        return sent
+
+    assert asyncio.run(run()) == [b"one", b""]
+
+
+def test_cors_preflights_are_answered_before_the_gate(monkeypatch: pytest.MonkeyPatch) -> None:
+    from precursor.backend.config import get_settings
+
+    monkeypatch.setenv("PRECURSOR_CORS_ORIGINS", "https://app.example")
+    get_settings.cache_clear()
+    try:
+        with _client() as client:
+            client.put("/api/remote/access", json={"enabled": True})
+            headers = {
+                **TUNNEL,
+                "Origin": "https://app.example",
+                "Access-Control-Request-Method": "POST",
+            }
+            r = client.options("/api/topics", headers=headers)
+            assert r.status_code == 200
+            assert r.headers["access-control-allow-origin"] == "https://app.example"
+            # The real request still needs a session, and its 401 carries CORS.
+            denied = client.get("/api/topics", headers={**TUNNEL, "Origin": "https://app.example"})
+            assert denied.status_code == 401
+            assert denied.headers["access-control-allow-origin"] == "https://app.example"
+    finally:
+        get_settings.cache_clear()

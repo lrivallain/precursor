@@ -91,15 +91,51 @@ async def _check(scope: Scope) -> tuple[bool, str | None]:
     return (True, token) if touched is not None else (False, None)
 
 
-def _renewing(send: Any, token: str) -> Any:
-    cookie = session_cookie(token).encode("latin-1")
+class _GuardedResponse:
+    """Wraps a remote request's ``send`` and ``receive`` for as long as it runs.
 
-    async def wrapped(message: dict[str, Any]) -> None:
-        if message["type"] == "http.response.start":
-            message = {**message, "headers": [*message.get("headers", ()), (b"set-cookie", cookie)]}
-        await send(message)
+    Access is checked once on entry, but a response can outlive that: the event
+    stream stays open for hours. When the access state changes (a device
+    revoked, enforcement switched on), the next chunk re-checks first; a
+    request no longer allowed gets its response ended and reads as
+    disconnected, so the stream's generator stops instead of delivering more.
+    """
 
-    return wrapped
+    def __init__(self, scope: Scope, receive: Any, send: Any, renew: str | None) -> None:
+        self._scope = scope
+        self._receive = receive
+        self._send = send
+        self._cookie = session_cookie(renew).encode("latin-1") if renew else None
+        self._generation = store.generation()
+        self._cut = False
+
+    async def _still_allowed(self) -> bool:
+        current = store.generation()
+        if current == self._generation:
+            return True
+        self._generation = current
+        allowed, _renew = await _check(self._scope)
+        return allowed
+
+    async def send(self, message: dict[str, Any]) -> None:
+        if self._cut:
+            return
+        kind = message["type"]
+        if kind == "http.response.start" and self._cookie is not None:
+            message = {
+                **message,
+                "headers": [*message.get("headers", ()), (b"set-cookie", self._cookie)],
+            }
+        elif kind == "http.response.body" and not await self._still_allowed():
+            self._cut = True
+            message = {"type": "http.response.body", "body": b"", "more_body": False}
+        await self._send(message)
+
+    async def receive(self) -> dict[str, Any]:
+        if self._cut:
+            return {"type": "http.disconnect"}
+        message: dict[str, Any] = await self._receive()
+        return message
 
 
 async def _refuse(scope: Scope, send: Any) -> None:
@@ -134,6 +170,8 @@ class RemoteAccessGate:
         if not allowed:
             await _refuse(scope, send)
             return
-        if renew is not None and scope["type"] == "http":
-            send = _renewing(send, renew)
-        await self.app(scope, receive, send)
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        guarded = _GuardedResponse(scope, receive, send, renew)
+        await self.app(scope, guarded.receive, guarded.send)
