@@ -21,7 +21,8 @@ function MobileAccessModal({ onClose }: { onClose: () => void }) {
       access.devices.length > 0 &&
       (await confirm({
         title: "Stop the tunnel",
-        message: "Also sign out the paired devices? They will need a new QR code next time.",
+        message:
+          "Also sign out the paired devices? They will need a new QR code next time, and the OpenAI-compatible endpoint gets a new key.",
         confirmLabel: "Sign them out",
         cancelLabel: "Keep them paired",
       }));
