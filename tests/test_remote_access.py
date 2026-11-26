@@ -373,7 +373,9 @@ def _remote_scope(token: str | None) -> dict[str, Any]:
     return {"type": "http", "method": "GET", "path": "/api/events", "headers": headers}
 
 
-async def _stream_through_gate(token: str, change: Any) -> tuple[list[bytes], dict[str, Any]]:
+async def _stream_through_gate(
+    token: str | None, change: Any
+) -> tuple[list[bytes], dict[str, Any]]:
     """Run a fake streaming app behind the gate; ``change`` runs between chunks."""
     from precursor.backend.services.remote_access.gate import RemoteAccessGate
 
@@ -419,28 +421,14 @@ def test_an_unrelated_change_keeps_a_paired_stream_open() -> None:
 
 
 def test_turning_enforcement_on_ends_unpaired_streams() -> None:
-    from precursor.backend.services.remote_access.gate import RemoteAccessGate
+    async def run() -> tuple[list[bytes], dict[str, Any]]:
+        return await _stream_through_gate(
+            None, lambda: store.update(lambda state: setattr(state, "enabled", True))
+        )
 
-    async def run() -> list[bytes]:
-        sent: list[bytes] = []
-
-        async def app(_scope: Any, _receive: Any, send: Any) -> None:
-            await send({"type": "http.response.start", "status": 200, "headers": []})
-            await send({"type": "http.response.body", "body": b"one", "more_body": True})
-            await store.update(lambda state: setattr(state, "enabled", True))
-            await send({"type": "http.response.body", "body": b"two", "more_body": True})
-
-        async def receive() -> dict[str, Any]:
-            return {"type": "http.request", "body": b""}
-
-        async def send(message: dict[str, Any]) -> None:
-            if message["type"] == "http.response.body":
-                sent.append(message.get("body", b""))
-
-        await RemoteAccessGate(app)(_remote_scope(None), receive, send)
-        return sent
-
-    assert asyncio.run(run()) == [b"one", b""]
+    sent, after = asyncio.run(run())
+    assert sent == [b"one", b""]
+    assert after == {"type": "http.disconnect"}
 
 
 def test_cors_preflights_are_answered_before_the_gate(monkeypatch: pytest.MonkeyPatch) -> None:
