@@ -29,7 +29,13 @@ function MobileAccessModal({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <Modal onClose={onClose} labelledBy="mobile-access-title" panelClassName="w-full max-w-md">
+    <Modal
+      onClose={onClose}
+      closeOnEscape
+      padded
+      labelledBy="mobile-access-title"
+      panelClassName="w-full max-w-md max-h-[85vh] overflow-y-auto rounded-2xl border border-border bg-surface p-5 shadow-xl"
+    >
       <div className="flex items-center gap-2 mb-3">
         <Smartphone size={18} className="text-muted" />
         <h2 id="mobile-access-title" className="text-base font-semibold flex-1">
@@ -52,13 +58,13 @@ function MobileAccessModal({ onClose }: { onClose: () => void }) {
 function Setup({ state }: { state: string | undefined }) {
   if (state === "missing_cli") {
     return (
-      <pre className="text-xs bg-surface rounded p-2 mb-3 whitespace-pre-wrap">
+      <pre className="text-xs bg-bg border border-border rounded p-2 mb-3 whitespace-pre-wrap">
         {"macOS:   brew install --cask devtunnel\nWindows: winget install Microsoft.devtunnel"}
       </pre>
     );
   }
   if (state === "signed_out") {
-    return <pre className="text-xs bg-surface rounded p-2 mb-3">devtunnel user login</pre>;
+    return <pre className="text-xs bg-bg border border-border rounded p-2 mb-3">devtunnel user login</pre>;
   }
   return null;
 }
@@ -119,7 +125,7 @@ function TunnelButton({ access, onStop }: { access: MobileAccess; onStop: () => 
     <div className="flex justify-end">
       <button
         type="button"
-        className="px-3 py-1.5 rounded-md text-sm bg-surface hover:bg-border disabled:opacity-50"
+        className="px-3 py-1.5 rounded-md text-sm border border-border bg-bg hover:bg-border disabled:opacity-50"
         disabled={access.busy}
         onClick={running ? onStop : access.start}
       >

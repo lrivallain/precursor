@@ -11,7 +11,7 @@ import {
 import { api } from "../lib/api";
 import { githubIdentityChanges } from "../lib/githubAccounts";
 import type { CopilotQuota, Me } from "../lib/types";
-import { isRemoteContext, openMobileAccess } from "../lib/mobileAccess";
+import { isRemoteContext, openMobileAccess, remoteContextIfKnown } from "../lib/mobileAccess";
 import { AboutModal } from "./AboutModal";
 import { MobileAccessHost } from "./MobileAccessModal";
 
@@ -457,7 +457,7 @@ function Avatar({
 
 /** False on a page opened through the tunnel, where Mobile access is local-only. */
 function useIsLocal(): boolean {
-  const [local, setLocal] = useState(false);
+  const [local, setLocal] = useState(remoteContextIfKnown() === false);
   useEffect(() => {
     let cancelled = false;
     void isRemoteContext().then((remote) => {

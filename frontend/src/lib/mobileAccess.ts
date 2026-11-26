@@ -51,13 +51,21 @@ export function tunnelSummary(status: TunnelStatus | null): string {
   }
 }
 
-// Whether this page itself was opened through the tunnel. Asked once per load.
+// Whether this page itself was opened through the tunnel. Asked once per load;
+// the answer is kept so a menu opened later knows it at once.
 let remoteContext: Promise<boolean> | null = null;
+let knownRemote: boolean | null = null;
 
 export function isRemoteContext(): Promise<boolean> {
   remoteContext ??= remoteApi
     .context()
     .then((c) => c.remote)
-    .catch(() => false);
+    .catch(() => false)
+    .then((remote) => (knownRemote = remote));
   return remoteContext;
+}
+
+/** The answer if already known, else null. */
+export function remoteContextIfKnown(): boolean | null {
+  return knownRemote;
 }

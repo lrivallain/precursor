@@ -157,7 +157,9 @@ def test_routes_start_the_tunnel_and_hand_out_a_qr_code(fake_cli: Path) -> None:
         assert status["state"] == "active"
         code = client.post("/api/remote/pairing").json()
         assert code["url"].startswith(status["url"] + "/api/remote/pair?code=")
+        # Standalone SVG: shown as an <img> data URI, which needs the namespace.
         assert code["qr_svg"].startswith("<svg")
+        assert 'xmlns="http://www.w3.org/2000/svg"' in code["qr_svg"]
         stopped = client.put("/api/remote/tunnel", json={"running": False, "revoke_sessions": True})
         assert stopped.json()["state"] == "stopped"
 
