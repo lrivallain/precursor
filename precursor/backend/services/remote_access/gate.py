@@ -69,11 +69,13 @@ def _is_open(path: str) -> bool:
     return path in _OPEN_PATHS or path.startswith(_OPEN_PREFIXES)
 
 
-async def _check(scope: Scope) -> tuple[bool, str | None]:
+async def _check(scope: Scope, *, touch: bool = True) -> tuple[bool, str | None]:
     """Whether a remote request may go on, and a token to renew its cookie with.
 
     The token comes back when the session was just touched, so the browser's
-    copy slides along with the stored expiry.
+    copy slides along with the stored expiry. ``touch=False`` only reads: a
+    stream's re-check can't send a cookie any more, so it must not slide the
+    stored expiry either.
     """
     from precursor.backend.db import SessionLocal
 
@@ -89,7 +91,7 @@ async def _check(scope: Scope) -> tuple[bool, str | None]:
     entry = store.find(state, token)
     if entry is None:
         return False, None
-    if not store.needs_touch(entry):
+    if not touch or not store.needs_touch(entry):
         return True, None
     # Re-read under the write lock: the device may have been revoked since.
     _state, touched = await store.update(lambda fresh: store.touch(fresh, token))
@@ -127,7 +129,7 @@ class _GuardedResponse:
             return True
         self._generation = current
         self._checked_at = time.monotonic()
-        allowed, _renew = await _check(self._scope)
+        allowed, _renew = await _check(self._scope, touch=False)
         return allowed
 
     async def send(self, message: dict[str, Any]) -> None:

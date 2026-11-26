@@ -513,3 +513,29 @@ def test_a_paired_phone_cannot_read_or_change_the_openai_key() -> None:
             assert ok.json()["openai_proxy_key"] == ""
         finally:
             client.put("/api/settings", json={"openai_proxy_enabled": False, "theme": "system"})
+
+
+def test_a_stream_recheck_does_not_slide_the_session() -> None:
+    """Only request entry, which can still send Set-Cookie, renews a session."""
+
+    async def run() -> tuple[str, str]:
+        token = await _paired_token()
+
+        async def age() -> None:
+            def back(state: store.RemoteAccessState) -> None:
+                past = (store.utcnow() - timedelta(hours=2)).isoformat()
+                for entry in state.sessions:
+                    entry.last_used_at = past
+
+            await store.update(back)  # also an access change: the stream re-checks
+
+        state, _ = await store.update(lambda _s: None)
+        await _stream_through_gate(token, age)
+        from precursor.backend.db import SessionLocal
+
+        async with SessionLocal() as db:
+            after = await store.load(db)
+        return state.sessions[-1].last_used_at, after.sessions[-1].last_used_at
+
+    before, after = asyncio.run(run())
+    assert after < before  # still the aged value: the re-check didn't touch it
