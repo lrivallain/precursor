@@ -117,20 +117,26 @@ async function readBody(res: Response): Promise<unknown> {
 }
 
 /**
+ * The caller's headers (a record, a `Headers` or `[name, value]` pairs) with
+ * the shared ones: JSON unless the caller set a content type, and always
+ * `X-Client-Id`, which the remote-access gate requires on mutations coming
+ * through the tunnel (a forged cross-site request can't send it).
+ */
+export function requestHeaders(init?: HeadersInit): Headers {
+  const headers = new Headers(init);
+  if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  headers.set("X-Client-Id", CLIENT_ID);
+  return headers;
+}
+
+/**
  * Issue a JSON API request with the shared headers + error unwrapping, for a
  * URL `call()` doesn't know. Re-exported through `@precursor/host` so plugin
  * bundles can call their own backend routes without re-implementing the
  * transport.
  */
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, {
-    headers: {
-      "Content-Type": "application/json",
-      "X-Client-Id": CLIENT_ID,
-      ...(init?.headers ?? {}),
-    },
-    ...init,
-  });
+  const res = await fetch(path, { ...init, headers: requestHeaders(init?.headers) });
   if (!res.ok) {
     throw await httpError(res);
   }
