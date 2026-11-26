@@ -27,10 +27,11 @@ endpoint, the plugin installer): they look at the **bind address** and the
 3. **Remote requests need a tunnel session once remote access is on.** A pure
    ASGI gate in front of the app answers `401` to a remote request without a
    valid `__Host-precursor_remote` cookie, except the pairing link and the
-   files the home-screen install needs. Routes that authenticate their own
-   callers are exempt too, since those callers are not browsers: the
-   OpenAI-compatible endpoint (bearer key) and the agent and workflow webhooks
-   (URL token). With remote access off, the gate
+   files the home-screen install needs. The OpenAI-compatible endpoint is
+   exempt too: it checks its own bearer key, its clients are not browsers, and
+   a phone can't read the key. Webhooks are not exempt: a phone can read their
+   tokens, which must not outlive its revocation. External callers can't pass
+   a private tunnel's relay anyway. With remote access off, the gate
    lets remote requests through as before, so a deployment behind the user's
    own authenticating reverse proxy keeps working.
 4. **Pairing by a one-time code.** Only a local request can mint the code

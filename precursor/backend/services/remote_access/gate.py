@@ -20,15 +20,12 @@ PAIR_PATH = "/api/remote/pair"
 # What a phone needs before it is paired: the pairing link itself, and what
 # lets the home-screen icon install (manifest, icons, service worker).
 _OPEN_PATHS = frozenset({PAIR_PATH, "/manifest.webmanifest", "/sw.js"})
-# Routes that authenticate their own callers, who are not paired browsers and
-# must get the route's own answer, not a pairing 401: the OpenAI-compatible
-# endpoint (bearer key) and the agent and workflow webhooks (URL token).
-_OPEN_PREFIXES = (
-    "/icons/",
-    f"{OPENAI_BASE_PATH}/",
-    "/api/agents/hooks/",
-    "/api/workflows/hooks/",
-)
+# The OpenAI-compatible endpoint checks its own bearer key: its clients are not
+# paired browsers, and must get its error shape, not a pairing 401. A phone
+# can't read that key (settings redact it), so pairing grants nothing that
+# outlives revocation. Webhooks are not exempt: a paired phone can read their
+# tokens, so through the tunnel they need a session like everything else.
+_OPEN_PREFIXES = ("/icons/", f"{OPENAI_BASE_PATH}/")
 
 _PAIR_PAGE = b"""<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
