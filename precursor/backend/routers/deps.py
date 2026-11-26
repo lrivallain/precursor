@@ -8,12 +8,13 @@ request-body ``422`` ahead of the ``404`` the inline guard used to raise.
 
 from __future__ import annotations
 
-from fastapi import Depends
+from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.db import get_session
 from precursor.backend.lookups import get_or_404
 from precursor.backend.models import Chat, Topic
+from precursor.backend.services.remote_access import is_remote
 
 
 async def get_topic_or_404(
@@ -30,3 +31,14 @@ async def get_chat_or_404(
 ) -> Chat:
     chat = await get_or_404(session, Chat, chat_id, "Chat not found")
     return chat
+
+
+async def require_local(request: Request) -> None:
+    """Mark a route local-only: a request that came through a tunnel gets 404.
+
+    Some features are not meant to be driven from a paired phone (installing
+    plugins, controlling the tunnel itself...). 404 rather than 403 so the
+    feature simply looks absent from there.
+    """
+    if is_remote(request.scope):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not Found")

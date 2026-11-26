@@ -1930,6 +1930,11 @@ export interface NotesRephraseResponse {
   text: string;
 }
 
+export interface PairingCodeRead {
+  path: string;
+  expires_at: string;
+}
+
 /**
  * What to install.
  *
@@ -2058,6 +2063,28 @@ export interface ReminderRead {
   fired_at: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface RemoteAccessRead {
+  enabled: boolean;
+  sessions: RemoteSessionRead[];
+  pairing_expires_at: string | null;
+}
+
+export interface RemoteAccessUpdate {
+  enabled: boolean;
+}
+
+export interface RemoteContextRead {
+  /** True when this request came through a tunnel or proxy. */
+  remote: boolean;
+}
+
+export interface RemoteSessionRead {
+  id: string;
+  label: string;
+  created_at: string;
+  last_used_at: string;
 }
 
 export interface ResolveRequest {
@@ -4768,6 +4795,28 @@ export interface Operations {
     path: {
       container: string;
       container_id: number;
+    };
+    response: void;
+  };
+  "GET /api/remote/access": {
+    response: RemoteAccessRead;
+  };
+  "PUT /api/remote/access": {
+    body: RemoteAccessUpdate;
+    response: RemoteAccessRead;
+  };
+  "GET /api/remote/context": {
+    response: RemoteContextRead;
+  };
+  "POST /api/remote/pairing": {
+    response: PairingCodeRead;
+  };
+  "DELETE /api/remote/sessions": {
+    response: void;
+  };
+  "DELETE /api/remote/sessions/{session_id}": {
+    path: {
+      session_id: string;
     };
     response: void;
   };

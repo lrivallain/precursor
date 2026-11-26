@@ -354,6 +354,22 @@ Install, upgrade, uninstall and restart are behind
 uninstall answer with `restart_required` and `host_upgrade` (the nightly
 Precursor moved to when its own build is no longer published, else `null`).
 
+## Remote access
+
+[Remote access](/reference/architecture#security-deployment-model) through a
+tunnel (ADR-0002). A request with forwarding headers is *remote*; once remote
+access is on it needs the session cookie from pairing.
+
+| Route | Behaviour |
+| --- | --- |
+| `GET`/`PUT /api/remote/access` `{enabled}` | the switch, the paired devices, and when a pairing code is pending. Local only |
+| `POST /api/remote/pairing` | mints a one-time code (30 min) and returns the `path` the QR code carries. `409` while remote access is off. Local only |
+| `DELETE /api/remote/sessions/{id}`, `DELETE /api/remote/sessions` | revokes one or every paired device. Local only |
+| `GET /api/remote/pair?code=` | opened by the phone through the tunnel: sets the session cookie and redirects to `/` |
+| `GET /api/remote/context` | `{remote}`: whether this request came through a tunnel or proxy |
+
+Local-only routes answer `404` to remote requests, paired or not.
+
 ## Model settings
 
 `GET`/`PUT /api/settings`:

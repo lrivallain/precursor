@@ -50,6 +50,7 @@ from precursor.backend.plugins.state import disabled_ids, is_enabled, set_enable
 from precursor.backend.services.app_settings import resolve_plugin_install_enabled
 from precursor.backend.services.github_auth import resolve_github_token
 from precursor.backend.services.mcp.precursor_server import LOOPBACK_HOSTS, is_loopback_host
+from precursor.backend.services.remote_access import is_remote
 
 router = APIRouter(prefix="/api/plugins", tags=["plugins"])
 
@@ -95,7 +96,12 @@ def _host_is_local(request: Request) -> bool:
     concerned, so no CORS preflight ever runs. Checking the Host header is what
     actually pins a request to "someone typed localhost", and it is the same
     guard the built-in MCP HTTP endpoint uses (see ``precursor_server``).
+
+    A tunnel forwards to loopback and may rewrite ``Host`` to ``localhost``, so
+    a request that came through one is never local, whatever it names.
     """
+    if is_remote(request.scope):
+        return False
     raw = (request.headers.get("host") or "").strip()
     if not raw:
         return False
