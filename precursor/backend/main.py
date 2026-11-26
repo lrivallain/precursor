@@ -223,6 +223,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from precursor.backend.services.mcp.warmup import get_mcp_warmup
     from precursor.backend.services.mcp.workiq_keepalive import get_workiq_keepalive
     from precursor.backend.services.reminder_ticker import get_reminder_ticker
+    from precursor.backend.services.remote_access.tunnel import get_tunnel
     from precursor.backend.services.scheduler import get_scheduler
     from precursor.backend.services.telemetry.ticker import get_telemetry_ticker
     from precursor.backend.services.tool_result_ticker import get_tool_result_ticker
@@ -242,7 +243,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         get_iq_ticker(),
         get_telemetry_ticker(),
     ]
-    services: list[_Lifecycle] = [get_workiq_keepalive(), get_mcp_warmup(), get_agent_manager()]
+    services: list[_Lifecycle] = [
+        get_workiq_keepalive(),
+        get_mcp_warmup(),
+        get_agent_manager(),
+        get_tunnel(),
+    ]
     for component in (*pollers, *services):
         await component.start()
     try:

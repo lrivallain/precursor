@@ -44,6 +44,30 @@ trackpad is unaffected):
 - The shell uses `100dvh` and safe-area padding, so the composer stays above the
   address bar and the home indicator.
 
+## Open it from your phone
+
+Precursor can open itself to your phone through a **private Microsoft dev
+tunnel**, without changing its bind address: it stays on `127.0.0.1`, and
+everything still runs on your computer.
+
+1. Install the dev tunnels CLI once (`brew install --cask devtunnel` on macOS,
+   `winget install Microsoft.devtunnel` on Windows) and sign in with
+   `devtunnel user login`.
+2. In the persona menu, choose **Mobile access**, then **Start the tunnel**.
+3. Scan the QR code with your phone's camera. Sign in with the account that
+   owns the tunnel: Precursor opens, and the phone stays paired.
+4. Add it to the home screen.
+
+The tunnel is private: only the account that created it gets past the relay.
+On top of that, each phone must be paired with a one-time code (single use,
+30 minutes). Paired devices are listed in the dialog and can be signed out
+one by one, or all at once when you stop the tunnel. The tunnel keeps its
+address across restarts, comes back on when Precursor restarts, and is
+restarted by itself when it drops.
+
+From the phone, some features stay on the computer: Mobile access itself, the
+plugin installer and MCP over HTTP.
+
 ## Installing it to the home screen
 
 **Add to Home Screen** gives a standalone window (web manifest and icons are

@@ -39,6 +39,8 @@ dependencies = [
     "pydantic-settings>=2.14",
     "sse-starlette>=3.4",
     "httpx>=0.28",
+    # Renders the mobile-access pairing link as a QR code (pure Python, no deps).
+    "segno>=1.6",
     "openai>=2.43",
     # MCP 2 only. The 2.x SDK is a different API (``FastMCP`` → ``MCPServer``,
     # ``streamablehttp_client`` → ``streamable_http_client`` over an ``httpx2``

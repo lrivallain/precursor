@@ -20,7 +20,8 @@ COOKIE_NAME = "__Host-precursor_remote"
 PAIR_PATH = "/api/remote/pair"
 # What a phone needs before it is paired: the pairing link itself, and what
 # lets the home-screen icon install (manifest, icons, service worker).
-_OPEN_PATHS = frozenset({PAIR_PATH, "/manifest.webmanifest", "/sw.js"})
+# The health check is what the tunnel's own watchdog probes.
+_OPEN_PATHS = frozenset({PAIR_PATH, "/api/remote/health", "/manifest.webmanifest", "/sw.js"})
 # The OpenAI-compatible endpoint checks its own bearer key: its clients are not
 # paired browsers, and must get its error shape, not a pairing 401. A phone
 # can't read that key (settings redact it), so pairing grants nothing that
