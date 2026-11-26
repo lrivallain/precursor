@@ -109,7 +109,7 @@ async def update_tunnel(body: TunnelUpdate) -> TunnelStatusRead:
         await tunnel.close()
         pairing_codes.cancel()
         if body.revoke_sessions:
-            await store.update(store.revoke)
+            await sign_out_all_devices()
     return _tunnel_status()
 
 
