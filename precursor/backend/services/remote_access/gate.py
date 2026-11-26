@@ -122,7 +122,7 @@ class _GuardedResponse:
     async def _still_allowed(self) -> bool:
         """Re-check on any access change, and at least every minute (expiry)."""
         current = store.generation()
-        stale = time.monotonic() - self._checked_at > _RECHECK_SECONDS
+        stale = time.monotonic() - self._checked_at >= _RECHECK_SECONDS
         if current == self._generation and not stale:
             return True
         self._generation = current
