@@ -453,3 +453,63 @@ def test_cors_preflights_are_answered_before_the_gate(monkeypatch: pytest.Monkey
             assert denied.headers["access-control-allow-origin"] == "https://app.example"
     finally:
         get_settings.cache_clear()
+
+
+def test_a_revocation_during_the_entry_check_is_seen(monkeypatch: pytest.MonkeyPatch) -> None:
+    with _client() as client:
+        _pair(client)
+        real_load = store.load
+        raced = False
+
+        async def load_then_revoke(db: Any) -> store.RemoteAccessState:
+            nonlocal raced
+            state = await real_load(db)
+            if not raced:
+                raced = True
+                await store.update(store.revoke)  # commits while the gate checks
+            return state
+
+        monkeypatch.setattr(store, "load", load_then_revoke)
+        assert client.get("/api/topics", headers=TUNNEL).status_code == 401
+
+
+def test_a_stream_stops_when_its_session_expires(monkeypatch: pytest.MonkeyPatch) -> None:
+    from precursor.backend.services.remote_access import gate
+
+    monkeypatch.setattr(gate, "_RECHECK_SECONDS", 0.0)
+
+    async def expire_quietly() -> None:
+        # Written directly: no access change is announced, only time passes.
+        from precursor.backend.db import SessionLocal
+
+        async with SessionLocal() as db:
+            state = await store.load(db)
+        old = (store.utcnow() - store.SESSION_TTL - timedelta(days=1)).isoformat()
+        sessions = [{**s.__dict__, "last_used_at": old} for s in state.sessions]
+        await set_app_setting(store.SETTING_KEY, {"enabled": True, "sessions": sessions})
+
+    async def run() -> tuple[list[bytes], dict[str, Any]]:
+        token = await _paired_token()
+        return await _stream_through_gate(token, expire_quietly)
+
+    sent, after = asyncio.run(run())
+    assert sent == [b"one", b""]
+    assert after == {"type": "http.disconnect"}
+
+
+def test_a_paired_phone_cannot_read_or_change_the_openai_key() -> None:
+    with _client() as client:
+        _pair(client)
+        client.put("/api/settings", json={"openai_proxy_enabled": True})
+        try:
+            assert client.get("/api/settings").json()["openai_proxy_key"]
+            assert client.get("/api/settings", headers=TUNNEL).json()["openai_proxy_key"] == ""
+            r = client.put("/api/settings", json={"openai_proxy_enabled": False}, headers=TUNNEL)
+            assert r.status_code == 403
+            assert client.post("/api/settings/openai-proxy/key", headers=TUNNEL).status_code == 403
+            # Other settings still save from the phone, without the key.
+            ok = client.put("/api/settings", json={"theme": "dark"}, headers=TUNNEL)
+            assert ok.status_code == 200
+            assert ok.json()["openai_proxy_key"] == ""
+        finally:
+            client.put("/api/settings", json={"openai_proxy_enabled": False, "theme": "system"})

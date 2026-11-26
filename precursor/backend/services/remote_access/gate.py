@@ -7,6 +7,7 @@ break the SSE streams. Local requests pass straight through, untouched.
 from __future__ import annotations
 
 import json
+import time
 from http.cookies import CookieError, SimpleCookie
 from typing import Any
 
@@ -31,6 +32,10 @@ _PAIR_PAGE = b"""<!doctype html><html><head><meta charset="utf-8">
 <p>This Precursor only opens on devices paired with it. On your computer, open
 <strong>Mobile access</strong> from the persona menu and scan the QR code.</p>
 </body></html>"""
+
+# A long-lived response re-checks at least this often, so a session that
+# expires (30 days unused) stops a stream even without any access change.
+_RECHECK_SECONDS = 60.0
 
 Scope = dict[str, Any]
 
@@ -101,19 +106,27 @@ class _GuardedResponse:
     disconnected, so the stream's generator stops instead of delivering more.
     """
 
-    def __init__(self, scope: Scope, receive: Any, send: Any, renew: str | None) -> None:
+    def __init__(
+        self, scope: Scope, receive: Any, send: Any, renew: str | None, generation: int
+    ) -> None:
         self._scope = scope
         self._receive = receive
         self._send = send
         self._cookie = session_cookie(renew).encode("latin-1") if renew else None
-        self._generation = store.generation()
+        # The generation the entry check started from: a change committed while
+        # that check ran is still seen as a change by the first chunk.
+        self._generation = generation
+        self._checked_at = time.monotonic()
         self._cut = False
 
     async def _still_allowed(self) -> bool:
+        """Re-check on any access change, and at least every minute (expiry)."""
         current = store.generation()
-        if current == self._generation:
+        stale = time.monotonic() - self._checked_at > _RECHECK_SECONDS
+        if current == self._generation and not stale:
             return True
         self._generation = current
+        self._checked_at = time.monotonic()
         allowed, _renew = await _check(self._scope)
         return allowed
 
@@ -166,12 +179,18 @@ class RemoteAccessGate:
         if scope["type"] not in ("http", "websocket") or not is_remote(scope):
             await self.app(scope, receive, send)
             return
+        generation = store.generation()
         allowed, renew = await _check(scope)
+        # A change committed while the check ran: check again on fresh state.
+        while allowed and store.generation() != generation:
+            generation = store.generation()
+            allowed, renewed = await _check(scope)
+            renew = renewed or renew
         if not allowed:
             await _refuse(scope, send)
             return
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-        guarded = _GuardedResponse(scope, receive, send, renew)
+        guarded = _GuardedResponse(scope, receive, send, renew, generation)
         await self.app(scope, guarded.receive, guarded.send)
