@@ -68,6 +68,28 @@ def session_cookie(token: str) -> str:
     return f"{COOKIE_NAME}={token}; Max-Age={max_age}; Path=/; Secure; HttpOnly; SameSite=Lax"
 
 
+_UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+# What the app's own pages send on every call. A page on another site can only
+# add a custom header after a CORS preflight, which is never approved for it:
+# so a mutation without one is a forged cross-site request. Needed because
+# every dev tunnel shares the devtunnels.ms site, so SameSite=Lax lets a page
+# on someone else's tunnel send the cookie along.
+_APP_HEADER = b"x-client-id"
+# sendBeacon can't set headers; this one only cancels a pending sign-in.
+_BEACON_SUFFIX = "/reauthenticate/cancel"
+
+
+def _forged(scope: Scope) -> bool:
+    """A mutation that didn't come from one of the app's own pages."""
+    if scope.get("method") not in _UNSAFE_METHODS:
+        return False
+    if scope.get("path", "").endswith(_BEACON_SUFFIX):
+        return False
+    return not any(
+        name.lower() == _APP_HEADER and value for name, value in scope.get("headers") or ()
+    )
+
+
 def _is_open(path: str) -> bool:
     return path in _OPEN_PATHS or path.startswith(_OPEN_PREFIXES)
 
@@ -90,6 +112,8 @@ async def _check(scope: Scope, *, touch: bool = True) -> tuple[bool, str | None]
         return True, None
     if _is_open(scope.get("path", "")):
         return True, None
+    if _forged(scope):
+        return False, None
     token = session_token(scope)
     entry = store.find(state, token)
     if entry is None:

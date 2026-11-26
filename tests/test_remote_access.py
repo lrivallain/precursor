@@ -28,7 +28,12 @@ from precursor.backend.services.remote_access.pairing import (
 )
 from tests.support import set_app_setting
 
-TUNNEL = {"X-Forwarded-For": "203.0.113.7", "X-Forwarded-Host": "abc-8000.euw.devtunnels.ms"}
+TUNNEL = {
+    "X-Forwarded-For": "203.0.113.7",
+    "X-Forwarded-Host": "abc-8000.euw.devtunnels.ms",
+    # What the app's own pages send on every call (see the forgery tests).
+    "X-Client-Id": "test-window",
+}
 
 
 @pytest.fixture(autouse=True)
@@ -575,3 +580,21 @@ def test_signing_out_one_device_keeps_the_openai_key() -> None:
             assert client.get("/api/settings").json()["openai_proxy_key"] == before
         finally:
             client.put("/api/settings", json={"openai_proxy_enabled": False})
+
+
+def test_a_forged_cross_site_mutation_is_refused_even_with_the_cookie() -> None:
+    """Every dev tunnel shares the devtunnels.ms site, so Lax sends the cookie
+    along with a form POST from someone else's tunnel. It has no app header."""
+    forged = {k: v for k, v in TUNNEL.items() if k != "X-Client-Id"}
+    with _client() as client:
+        _pair(client)
+        assert client.post("/api/topics", json={"title": "x"}, headers=forged).status_code == 401
+        # Reads don't need the header, and the app's own calls go through.
+        assert client.get("/api/topics", headers=forged).status_code == 200
+        created = client.post("/api/topics", json={"title": "from the phone"}, headers=TUNNEL)
+        assert created.status_code in (200, 201)
+        # sendBeacon can't set headers: its sign-in cancel stays reachable.
+        beacon = client.post("/api/mcp/servers/x/reauthenticate/cancel", headers=forged)
+        assert beacon.status_code != 401
+        # Locally nothing changes.
+        assert client.post("/api/topics", json={"title": "local"}).status_code in (200, 201)

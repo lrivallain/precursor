@@ -74,8 +74,13 @@ endpoint, the plugin installer): they look at the **bind address** and the
   the gate's `401`s still carry CORS headers.
 - The cookie is `SameSite=Lax`, not `Strict`: the relay's sign-in redirects
   back cross-site, and a `Strict` cookie would be withheld on that hop.
-  Mutations are `POST`/`PUT`/`DELETE`, which `Lax` keeps off cross-site
-  requests.
+  `Lax` is not enough against forgery here, though: `devtunnels.ms` is not a
+  public suffix, so every dev tunnel is the same *site*, and a page on
+  someone else's tunnel gets the cookie sent along. A remote `POST`, `PUT`,
+  `PATCH` or `DELETE` must therefore carry `X-Client-Id`, which the app's own
+  pages always send and a foreign page can't add without a CORS preflight
+  that is never approved for it. (The one `sendBeacon`, which can't set
+  headers, only cancels a pending sign-in and is let through.)
 - Any forwarding proxy is treated as remote, not just dev tunnels; other
   transports can reuse the same boundary.
 - Signing out every device breaks the OpenAI-compatible endpoint's clients
