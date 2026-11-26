@@ -539,3 +539,13 @@ def test_a_stream_recheck_does_not_slide_the_session() -> None:
 
     before, after = asyncio.run(run())
     assert after < before  # still the aged value: the re-check didn't touch it
+
+
+@pytest.mark.parametrize("path", ["/api/agents/hooks/nope", "/api/workflows/hooks/nope"])
+def test_webhooks_keep_their_own_token_auth_when_remote_access_is_on(path: str) -> None:
+    with _client() as client:
+        client.put("/api/remote/access", json={"enabled": True})
+        r = client.post(path, headers=TUNNEL, json={})
+        # The route's own answer to an unknown token, not the pairing 401.
+        assert r.status_code != 401
+        assert "not paired" not in r.text
