@@ -378,21 +378,11 @@ def _remote_scope(token: str | None) -> dict[str, Any]:
     return {"type": "http", "method": "GET", "path": "/api/events", "headers": headers}
 
 
-async def _stream_through_gate(
-    token: str | None, change: Any
-) -> tuple[list[bytes], dict[str, Any]]:
-    """Run a fake streaming app behind the gate; ``change`` runs between chunks."""
+async def _run_behind_gate(token: str | None, app: Any) -> list[bytes]:
+    """Drive ``app`` behind the gate as a tunneled request; the body chunks sent."""
     from precursor.backend.services.remote_access.gate import RemoteAccessGate
 
     sent: list[bytes] = []
-    after: dict[str, Any] = {}
-
-    async def app(_scope: Any, receive: Any, send: Any) -> None:
-        await send({"type": "http.response.start", "status": 200, "headers": []})
-        await send({"type": "http.response.body", "body": b"one", "more_body": True})
-        await change()
-        await send({"type": "http.response.body", "body": b"two", "more_body": True})
-        after.update(await receive())
 
     async def receive() -> dict[str, Any]:
         return {"type": "http.request", "body": b""}
@@ -402,7 +392,23 @@ async def _stream_through_gate(
             sent.append(message.get("body", b""))
 
     await RemoteAccessGate(app)(_remote_scope(token), receive, send)
-    return sent, after
+    return sent
+
+
+async def _stream_through_gate(
+    token: str | None, change: Any
+) -> tuple[list[bytes], dict[str, Any]]:
+    """Run a fake streaming app behind the gate; ``change`` runs between chunks."""
+    after: dict[str, Any] = {}
+
+    async def app(_scope: Any, receive: Any, send: Any) -> None:
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"one", "more_body": True})
+        await change()
+        await send({"type": "http.response.body", "body": b"two", "more_body": True})
+        after.update(await receive())
+
+    return await _run_behind_gate(token, app), after
 
 
 def test_revoking_a_device_ends_its_open_stream() -> None:
@@ -598,3 +604,29 @@ def test_a_forged_cross_site_mutation_is_refused_even_with_the_cookie() -> None:
         assert beacon.status_code != 401
         # Locally nothing changes.
         assert client.post("/api/topics", json={"title": "local"}).status_code in (200, 201)
+
+
+def test_concurrent_sends_wait_for_a_pending_recheck(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A keep-alive sent from another task must not slip out while a re-check runs."""
+    from precursor.backend.services.remote_access import gate
+
+    async def run() -> list[bytes]:
+        token = await _paired_token()
+        real_check = gate._check
+
+        async def slow_check(scope: Any, *, touch: bool = True) -> tuple[bool, str | None]:
+            await asyncio.sleep(0.05)
+            return await real_check(scope, touch=touch)
+
+        async def app(_scope: Any, _receive: Any, send: Any) -> None:
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await store.update(store.revoke)
+            monkeypatch.setattr(gate, "_check", slow_check)
+            await asyncio.gather(
+                send({"type": "http.response.body", "body": b"event", "more_body": True}),
+                send({"type": "http.response.body", "body": b"ping", "more_body": True}),
+            )
+
+        return await _run_behind_gate(token, app)
+
+    assert asyncio.run(run()) == [b""]  # ended once, nothing delivered

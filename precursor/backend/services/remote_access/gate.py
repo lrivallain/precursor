@@ -6,6 +6,7 @@ break the SSE streams. Local requests pass straight through, untouched.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from http.cookies import CookieError, SimpleCookie
@@ -147,17 +148,30 @@ class _GuardedResponse:
         self._generation = generation
         self._checked_at = time.monotonic()
         self._cut = False
+        self._recheck = asyncio.Lock()
+        self._closed = False
 
     async def _still_allowed(self) -> bool:
-        """Re-check on any access change, and at least every minute (expiry)."""
-        current = store.generation()
-        stale = time.monotonic() - self._checked_at >= _RECHECK_SECONDS
-        if current == self._generation and not stale:
+        """Re-check on any access change, and at least every minute (expiry).
+
+        Serialized, and the generation is only recorded once its check passed:
+        a concurrent send (a stream's keep-alive from another task) waits for a
+        pending re-check instead of reading it as already done.
+        """
+        async with self._recheck:
+            if self._cut:
+                return False
+            current = store.generation()
+            stale = time.monotonic() - self._checked_at >= _RECHECK_SECONDS
+            if current == self._generation and not stale:
+                return True
+            allowed, _renew = await _check(self._scope, touch=False)
+            if not allowed:
+                self._cut = True
+                return False
+            self._generation = current
+            self._checked_at = time.monotonic()
             return True
-        self._generation = current
-        self._checked_at = time.monotonic()
-        allowed, _renew = await _check(self._scope, touch=False)
-        return allowed
 
     async def send(self, message: dict[str, Any]) -> None:
         if self._cut:
@@ -169,7 +183,9 @@ class _GuardedResponse:
                 "headers": [*message.get("headers", ()), (b"set-cookie", self._cookie)],
             }
         elif kind == "http.response.body" and not await self._still_allowed():
-            self._cut = True
+            if self._closed:
+                return  # another send already ended the response
+            self._closed = True
             message = {"type": "http.response.body", "body": b"", "more_body": False}
         await self._send(message)
 
