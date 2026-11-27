@@ -82,11 +82,55 @@ async def _save(session: AsyncSession, state: RemoteAccessState) -> None:
     await store_setting(session, SETTING_KEY, payload)
 
 
+_DEVICES = (
+    ("iPhone", "iPhone"),
+    ("iPad", "iPad"),
+    ("Android", "Android"),
+    ("Macintosh", "Mac"),
+    ("Windows", "Windows"),
+    ("Linux", "Linux"),
+)
+# Order matters: Edge and Chrome on iOS also say "Safari"; Edge also says "Chrome".
+_BROWSERS = (
+    ("EdgiOS", "Edge"),
+    ("EdgA", "Edge"),
+    ("Edg/", "Edge"),
+    ("CriOS", "Chrome"),
+    ("FxiOS", "Firefox"),
+    ("Firefox", "Firefox"),
+    ("Chrome", "Chrome"),
+    ("Safari", "Safari"),
+)
+
+
+def device_label(user_agent: str) -> str:
+    """A readable default name for a paired device ("iPhone · Safari"), from its user agent."""
+    device = next((name for token, name in _DEVICES if token in user_agent), "")
+    browser = next((name for token, name in _BROWSERS if token in user_agent), "")
+    return " · ".join(part for part in (device, browser) if part) or clean_label(user_agent)
+
+
+def clean_label(label: str) -> str:
+    """A device name as stored: printable, trimmed, at most 120 characters."""
+    return "".join(ch for ch in label if ch.isprintable()).strip()[:_LABEL_MAX]
+
+
+def rename(state: RemoteAccessState, session_id: str, label: str) -> RemoteSession | None:
+    """Give a paired device a name; ``None`` when there is no such device."""
+    cleaned = clean_label(label)
+    for entry in state.sessions:
+        if entry.id == session_id:
+            if cleaned:
+                entry.label = cleaned
+            return entry
+    return None
+
+
 def issue(state: RemoteAccessState, label: str) -> str:
     """Add a session to ``state`` and return its token (shown once, never stored)."""
     now = utcnow().isoformat()
     token = secrets.token_urlsafe(32)
-    cleaned = "".join(ch for ch in label if ch.isprintable()).strip()[:_LABEL_MAX]
+    cleaned = clean_label(label)
     state.sessions.append(
         RemoteSession(
             id=secrets.token_hex(8),

@@ -2,12 +2,19 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
     <meta name="color-scheme" content="light dark" />
     <meta name="theme-color" content="#0b0b0b" />
     <link rel="icon" type="image/svg+xml" href="/logo.svg" />
-    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
-    <link rel="manifest" href="/manifest.webmanifest" />
+    <!-- PNG fallback for browsers that don't show SVG favicons (some mobile ones). -->
+    <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
+    <!-- iOS home screen: opaque 180x180 (iOS fills transparency with black);
+         inlined behind a tunnel by lib/touchIcon.ts. -->
+    <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png" />
+    <!-- With credentials: behind the private dev tunnel, the relay only serves
+         requests that carry its sign-in cookie, which a manifest fetch omits by
+         default (so "Add to Home Screen" fell back to a generic icon). -->
+    <link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials" />
     <title>Precursor</title>
   </head>
   <body class="bg-bg text-text">

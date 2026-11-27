@@ -4,6 +4,8 @@ import App from "./App";
 import { ConfirmProvider } from "./components/ConfirmDialog";
 import "./index.css";
 import { applyInitialFont } from "./lib/font";
+import { installKeyboardInset } from "./lib/keyboardInset";
+import { inlineTouchIcon } from "./lib/touchIcon";
 import { applyInitialTheme } from "./lib/theme";
 // Side-effect import: registers every bundled plugin's frontend half before
 // the app mounts, so a section is available the moment its backend
@@ -12,6 +14,8 @@ import "./plugins";
 
 applyInitialTheme();
 applyInitialFont();
+installKeyboardInset();
+void inlineTouchIcon();
 
 // Register the PWA service worker in production builds only. It enables
 // "install to home screen" / standalone-window launch; it does no caching, so

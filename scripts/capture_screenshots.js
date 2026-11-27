@@ -1456,6 +1456,8 @@ const scenes = {
       await page.getByRole("button", { name: /^Open user menu/ }).first().click();
       await page.getByRole("menuitem", { name: "Mobile access", exact: true }).click();
       const dialog = page.getByRole("dialog", { name: "Mobile access", exact: true });
+      // With a device already paired, the QR code is on request.
+      await dialog.getByRole("button", { name: "Add a mobile device" }).click();
       await dialog.locator("img").evaluate((image) => image.decode());
       await page.mouse.move(0, 0);
       await sleep(400);

@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class RemoteSessionRead(BaseModel):
@@ -13,6 +13,20 @@ class RemoteSessionRead(BaseModel):
     label: str
     created_at: datetime
     last_used_at: datetime
+
+
+class RemoteSessionRename(BaseModel):
+    label: str = Field(min_length=1, max_length=120)
+
+    @field_validator("label")
+    @classmethod
+    def _not_blank_once_cleaned(cls, value: str) -> str:
+        # The stored name drops non-printable characters and surrounding
+        # spaces: a label with nothing else would silently rename nothing.
+        cleaned = "".join(ch for ch in value if ch.isprintable()).strip()
+        if not cleaned:
+            raise ValueError("The name has no visible characters.")
+        return cleaned
 
 
 class RemoteAccessRead(BaseModel):

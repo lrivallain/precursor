@@ -365,6 +365,7 @@ access is on it needs the session cookie from pairing.
 | `GET`/`PUT /api/remote/access` `{enabled}` | the switch, the paired devices, and when a pairing code is pending. Local only |
 | `POST /api/remote/pairing` | mints a one-time code (30 min): its `path`, and with the tunnel up its full `url` and `qr_svg`. `409` while remote access is off. Local only |
 | `DELETE /api/remote/sessions/{id}`, `DELETE /api/remote/sessions` | revokes one or every paired device. Local only |
+| `PATCH /api/remote/sessions/{id}` `{label}` | renames a paired device (1 to 120 characters, trimmed, non-printable characters dropped) and returns it (`id`, `label`, `created_at`, `last_used_at`). `404` for an unknown device. Local only |
 | `GET /api/remote/pair?code=` | opened by the phone through the tunnel: sets the session cookie and redirects to `/` |
 | `GET /api/remote/context` | `{remote}`: whether this request came through a tunnel or proxy |
 | `GET`/`PUT /api/remote/tunnel` `{running, revoke_sessions?}` | the dev tunnel: `state` (`missing_cli`, `signed_out`, `stopped`, `starting`, `active`, `error`), `url`, `error`. Starting it turns remote access on. Local only |

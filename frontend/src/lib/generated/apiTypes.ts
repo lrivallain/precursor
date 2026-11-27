@@ -2094,6 +2094,10 @@ export interface RemoteSessionRead {
   last_used_at: string;
 }
 
+export interface RemoteSessionRename {
+  label: string;
+}
+
 export interface ResolveRequest {
   path: string;
   side?: ("ours" | "theirs") | null;
@@ -4834,6 +4838,13 @@ export interface Operations {
   };
   "DELETE /api/remote/sessions": {
     response: void;
+  };
+  "PATCH /api/remote/sessions/{session_id}": {
+    path: {
+      session_id: string;
+    };
+    body: RemoteSessionRename;
+    response: RemoteSessionRead;
   };
   "DELETE /api/remote/sessions/{session_id}": {
     path: {

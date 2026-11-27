@@ -43,14 +43,16 @@ trackpad is unaffected):
 - Inputs have a 16px font floor, so Safari doesn't zoom on focus.
 - The shell uses `100dvh` and safe-area padding, so the composer stays above the
   address bar and the home indicator.
+- When the on-screen keyboard opens, the app shrinks to the space left above
+  it, so the composer and the new-chat prompt stay in view.
 
 ## Open it from your phone
 
-Precursor can open itself to your phone through a **private Microsoft dev
+Precursor can open itself to your phone or tablet through a **private Microsoft dev
 tunnel**, without changing its bind address: it stays on `127.0.0.1`, and
 everything still runs on your computer.
 
-<Screenshot src="/screenshots/mobile-access.png" alt="The Mobile access dialog: a drawing of the phone reaching this computer through a private relay, the tunnel on, a QR code to scan with the phone, the code's expiry, a paired iPhone with a Sign out link, and a Stop the tunnel button" caption="Mobile access, from the persona menu. The drawing follows your setup: the missing piece (dev tunnels CLI, sign-in), a tunnel waiting for its first phone, or requests and answers flowing once a phone is paired. Scan the code; paired phones are listed with a way to sign them out." />
+<Screenshot src="/screenshots/mobile-access.png" alt="The Mobile access dialog: a drawing of a mobile device reaching this computer through a private relay, the tunnel on, a QR code to add a device, the code's expiry, a paired iPhone with a Sign out link, and a Stop the tunnel button" caption="Mobile access, from the persona menu. The drawing follows your setup: the missing piece (dev tunnels CLI, sign-in), the tunnel off, waiting for a first device, or requests and answers flowing once a device is paired." />
 
 1. Install the dev tunnels CLI once (`brew install --cask devtunnel` on macOS,
    `winget install Microsoft.devtunnel` on Windows,
@@ -58,12 +60,17 @@ everything still runs on your computer.
    with `devtunnel user login`. Mobile access shows these commands, with a copy
    button, until it finds the CLI and your sign-in.
 2. In the persona menu, choose **Mobile access**, then **Start the tunnel**.
-3. Scan the QR code with your phone's camera. Sign in with the account that
-   owns the tunnel: Precursor opens, and the phone stays paired.
+3. Scan the QR code with the device's camera. Sign in with the account that
+   owns the tunnel: Precursor opens, and the device stays paired.
 4. Add it to the home screen.
 
+The first device's QR code shows on its own. After that, the dialog lists the
+paired devices and shows a code only when you choose **Add a mobile device**.
+A new device is named after its system and browser ("iPhone · Safari");
+double-click a name to rename it.
+
 The tunnel is private: only the account that created it gets past the relay.
-On top of that, each phone must be paired with a one-time code (single use,
+On top of that, each device must be paired with a one-time code (single use,
 30 minutes). Paired devices are listed in the dialog and can be signed out
 one by one, or all at once when you stop the tunnel. The tunnel keeps its
 address across restarts, comes back on when Precursor restarts, and is
@@ -77,7 +84,7 @@ the phone too.
 ## Installing it to the home screen
 
 **Add to Home Screen** gives a standalone window (web manifest and icons are
-included). Your phone must reach the machine running Precursor, which binds to
+included), with the Precursor icon on iOS too, even through Mobile access. Your phone must reach the machine running Precursor, which binds to
 localhost by default — see [configuration](/guide/configuration) to change the
 bind host, and the [security model](/reference/architecture#security-deployment-model)
 before you do.

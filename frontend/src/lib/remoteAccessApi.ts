@@ -14,6 +14,8 @@ export const remoteApi = {
   setTunnel: (running: boolean, revokeSessions = false) =>
     call("PUT /api/remote/tunnel", { body: { running, revoke_sessions: revokeSessions } }),
   pairing: () => call("POST /api/remote/pairing"),
+  rename: (id: string, label: string) =>
+    call("PATCH /api/remote/sessions/{session_id}", { path: { session_id: id }, body: { label } }),
   revoke: (id: string) =>
     call("DELETE /api/remote/sessions/{session_id}", { path: { session_id: id } }),
   context: () => call("GET /api/remote/context"),
