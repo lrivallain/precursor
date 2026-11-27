@@ -3,6 +3,7 @@
 // can't see that gesture by itself; and a swipe must not count as a tap.
 
 export interface LabelSwipe {
+  startX: number;
   startY: number;
   startScroll: number;
   moved: boolean;
@@ -11,14 +12,18 @@ export interface LabelSwipe {
 /** Movement (px) before a press on a label becomes a swipe rather than a tap. */
 export const SWIPE_THRESHOLD = 8;
 
-export function startSwipe(y: number, scrollTop: number): LabelSwipe {
-  return { startY: y, startScroll: scrollTop, moved: false };
+export function startSwipe(x: number, y: number, scrollTop: number): LabelSwipe {
+  return { startX: x, startY: y, startScroll: scrollTop, moved: false };
 }
 
-/** The menu's new scrollTop for a finger now at `y`, or null while it is still a tap. */
-export function swipeScrollTop(swipe: LabelSwipe, y: number): number | null {
+/**
+ * The menu's new scrollTop for a finger now at (x, y), or null while it is
+ * still a tap. Movement in any direction makes it a swipe (so no tap fires);
+ * only the vertical part scrolls.
+ */
+export function swipeScrollTop(swipe: LabelSwipe, x: number, y: number): number | null {
   const dy = y - swipe.startY;
-  if (!swipe.moved && Math.abs(dy) < SWIPE_THRESHOLD) return null;
+  if (!swipe.moved && Math.hypot(x - swipe.startX, dy) < SWIPE_THRESHOLD) return null;
   swipe.moved = true;
   return Math.max(0, swipe.startScroll - dy);
 }

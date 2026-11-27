@@ -495,11 +495,11 @@ export function QuickActions({ agentsEnabled, liveEnabled, current = null, onCre
           // the moves coming from the pill the finger landed on).
           onPointerDown={(event) => {
             if (event.pointerType === "mouse" || !menuRef.current) return;
-            labelSwipe.current = startSwipe(event.clientY, menuRef.current.scrollTop);
+            labelSwipe.current = startSwipe(event.clientX, event.clientY, menuRef.current.scrollTop);
           }}
           onPointerMove={(event) => {
             const swipe = labelSwipe.current;
-            const next = swipe && swipeScrollTop(swipe, event.clientY);
+            const next = swipe && swipeScrollTop(swipe, event.clientX, event.clientY);
             if (next !== null && next !== undefined && menuRef.current) menuRef.current.scrollTop = next;
           }}
           onPointerUp={() => {
