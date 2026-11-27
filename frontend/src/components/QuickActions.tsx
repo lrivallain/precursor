@@ -83,6 +83,12 @@ function restingCentre(index: number): number {
   return PAD + index * (TILE + ITEM_GAP) + TILE / 2;
 }
 
+/** Whether a tile at `top` (from the top of the menu's viewport) is mostly out of view. */
+export function pillClipped(top: number, size: number, viewportHeight: number): boolean {
+  const centre = top + size / 2;
+  return centre < 0 || centre > viewportHeight;
+}
+
 /** How far the launcher must move before a press becomes a drag: a fingertip wobbles more. */
 export function dragThreshold(pointerType: string): number {
   return pointerType === "mouse" ? 6 : 14;
@@ -168,7 +174,9 @@ export function QuickActions({ agentsEnabled, liveEnabled, current = null, onCre
     const edge = `${PAD + shift}px`;
     if (layout.above) menu.style.paddingBottom = edge;
     else menu.style.paddingTop = edge;
-    let top = (layout.above ? 0 : INSET + SIZE + LAUNCHER_GAP) + (layout.above ? PAD : PAD + shift) - menu.scrollTop;
+    // Where the menu's scrolling viewport starts, in the pills' coordinates.
+    const viewportTop = layout.above ? 0 : INSET + SIZE + LAUNCHER_GAP;
+    let top = viewportTop + (layout.above ? PAD : PAD + shift) - menu.scrollTop;
     items.forEach((item, index) => {
       const size = TILE * (scales[outward(index)] ?? 1);
       item.style.width = `${size}px`;
@@ -180,6 +188,9 @@ export function QuickActions({ agentsEnabled, liveEnabled, current = null, onCre
         pill.style.paddingRight = layout.bendsLeft ? `${size + 2}px` : "";
         pill.style.paddingLeft = layout.bendsLeft ? "" : `${size + 2}px`;
         pill.style.setProperty("--qa-size", `${size}px`);
+        // The pills sit outside the scrolling list, so it can't clip them: hide
+        // the one whose tile is scrolled out of view (short screens).
+        pill.dataset.clipped = String(pillClipped(top - viewportTop, size, menu.clientHeight));
       }
       top += size + ITEM_GAP;
     });

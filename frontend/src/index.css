@@ -300,6 +300,12 @@
     transform: none;
   }
 }
+/* A tile scrolled out of the menu's view keeps its label hidden (the pills
+   aren't inside the scrolling list, so it doesn't clip them). */
+.quick-actions-popover .quick-actions-tip[data-clipped="true"] {
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
 .quick-actions-trigger:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 3px;
