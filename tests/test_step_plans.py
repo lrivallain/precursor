@@ -21,6 +21,7 @@ def _run(fn: Any) -> Any:
 
 STEP_REPLY = "Here is a draft.\n<!-- artifact -->\nDrafted artifact\n<!-- /artifact -->\nOK?"
 FINAL_REPLY = "<!-- artifact -->\nFINAL ANSWER\n<!-- /artifact -->"
+_GUARD_S = 60  # Catches a hung run or task; slow Windows runners can take >10s.
 # Every headless discussion turn the fake ran: chat, prompts and the system context.
 TURNS: list[dict[str, Any]] = []
 TURN_REPLIES: dict[str, Any] = {}
@@ -36,6 +37,8 @@ def _fake_turns(monkeypatch: pytest.MonkeyPatch) -> None:
 
     TURNS.clear()
     TURN_REPLIES.clear()
+    # Retries back off in real seconds (5s, then 10s), which could outlast _GUARD_S.
+    monkeypatch.setattr("precursor.backend.services.step_plan_runner._RETRY_DELAY", 0)
 
     async def _turn(
         chat_id: int,
@@ -1129,7 +1132,7 @@ def _await_run(client: TestClient, plan_id: int) -> dict[str, Any]:
 
     async def _join() -> None:
         # Paused is persisted before the in-flight draft and task cleanup finish.
-        async with asyncio.timeout(10):
+        async with asyncio.timeout(_GUARD_S):
             await step_plan_runner.join(plan_id)
 
     assert client.portal is not None
@@ -1144,7 +1147,7 @@ def _await_hand_backs(client: TestClient) -> None:
         tasks = [
             t for t in step_plan_runner._HAND_BACKS if t.get_loop() is asyncio.get_running_loop()
         ]
-        async with asyncio.timeout(5):
+        async with asyncio.timeout(_GUARD_S):
             await asyncio.gather(*tasks)
 
     assert client.portal is not None
@@ -1868,12 +1871,11 @@ def test_final_assessment_findings_trigger_one_repair_or_hold(
 def test_invalid_final_assessment_is_retried_without_rebuilding_the_output(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from precursor.backend.services import step_assessor_tools, step_plan_runner
+    from precursor.backend.services import step_assessor_tools
 
+    final_reviews = 0
     _fake_llm(monkeypatch, GOOD_FINAL_REPLIES)
     review = step_assessor_tools.review_with_chat_tools
-    final_reviews = 0
-    monkeypatch.setattr(step_plan_runner, "_RETRY_DELAY", 0)
 
     async def assess(_session: Any, *, system: str, user: str, **kwargs: Any) -> str:
         nonlocal final_reviews
@@ -2203,7 +2205,7 @@ def test_hand_back_waits_for_an_active_source_and_avoids_duplicate_reviews(
                 await events.publish_stream_ended(source["id"])
             else:
                 await events.publish_stream_ended_chat(source["id"])
-            await asyncio.wait_for(asyncio.gather(*list(step_plan_runner._HAND_BACKS)), timeout=5)
+            await asyncio.wait_for(asyncio.gather(*list(step_plan_runner._HAND_BACKS)), _GUARD_S)
 
         _run(scenario)
         assert len(turns) == (
@@ -2264,7 +2266,7 @@ def test_hand_back_waits_for_a_parked_approval(
                 saved.executed = True
                 await session.commit()
             await events.publish_approval_changed(**container)
-            await asyncio.wait_for(asyncio.gather(*list(step_plan_runner._HAND_BACKS)), timeout=5)
+            await asyncio.wait_for(asyncio.gather(*list(step_plan_runner._HAND_BACKS)), _GUARD_S)
 
         _run(scenario)
         assert len(turns) == 1 and turns[0][0] == source["id"]
@@ -2352,14 +2354,14 @@ def test_hand_back_rechecks_source_activity_after_reading_the_final(
             step_plan_runner.hand_back(
                 source["id"], "Example", reviewed_by_user=False, source_kind=source_kind
             )
-            await asyncio.wait_for(checked.wait(), timeout=5)
+            await asyncio.wait_for(checked.wait(), timeout=_GUARD_S)
             await asyncio.sleep(0.01)
             assert not turns
             if source_kind == "topic":
                 await events.publish_stream_ended(source["id"])
             else:
                 await events.publish_stream_ended_chat(source["id"])
-            await asyncio.wait_for(asyncio.gather(*list(step_plan_runner._HAND_BACKS)), timeout=5)
+            await asyncio.wait_for(asyncio.gather(*list(step_plan_runner._HAND_BACKS)), _GUARD_S)
 
         _run(scenario)
         assert turns == [source["id"]] and calls == 2
@@ -3802,10 +3804,9 @@ def test_an_autonomous_run_preserves_unassessed_work_and_retries_on_resume(
 ) -> None:
     from fastapi import HTTPException
 
-    from precursor.backend.services import step_plan_llm, step_plan_runner
+    from precursor.backend.services import step_plan_llm
 
     _fake_llm(monkeypatch, GOOD_FINAL_REPLIES)
-    monkeypatch.setattr(step_plan_runner, "_RETRY_DELAY", 0)
     real_assess = step_plan_llm.assess_step
     failing = True
 
@@ -3943,7 +3944,6 @@ def test_retrying_assessment_of_existing_drafts_keeps_later_steps_readable(
     from precursor.backend.services import step_plan_llm, step_plan_runner
 
     _fake_llm(monkeypatch, GOOD_FINAL_REPLIES)
-    monkeypatch.setattr(step_plan_runner, "_RETRY_DELAY", 0)
     real_assess = step_plan_llm.assess_step
     failed = False
 
@@ -4184,7 +4184,7 @@ def test_autonomous_filing_serializes_a_concurrent_step_write(
         async def review_and_wait() -> bool:
             result = await step_plan_runner._review(pid, "autonomous")
             assert writer_task is not None
-            await asyncio.wait_for(writer_task, 5)
+            await asyncio.wait_for(writer_task, _GUARD_S)
             return result
 
         assert client.portal is not None
@@ -4226,10 +4226,9 @@ def test_an_autonomous_handback_can_file_to_a_chat(monkeypatch: pytest.MonkeyPat
 def test_an_autonomous_run_retries_a_transient_model_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from precursor.backend.services import step_plan_llm, step_plan_runner
+    from precursor.backend.services import step_plan_llm
 
     _fake_llm(monkeypatch, GOOD_FINAL_REPLIES)
-    monkeypatch.setattr(step_plan_runner, "_RETRY_DELAY", 0)
     real = step_plan_llm.generate_artifact
     failed: list[int] = []
 
