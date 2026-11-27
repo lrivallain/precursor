@@ -493,21 +493,24 @@ export function QuickActions({ agentsEnabled, liveEnabled, current = null, onCre
           className="quick-actions-labels"
           // Touch: a swipe on a label scrolls the menu (implicit capture keeps
           // the moves coming from the pill the finger landed on).
+          // Only the primary finger counts: a second touch can't restart the
+          // gesture or clear the guard that keeps a swipe from acting as a tap.
           onPointerDown={(event) => {
-            if (event.pointerType === "mouse" || !menuRef.current) return;
+            if (event.pointerType === "mouse" || !event.isPrimary || !menuRef.current) return;
             labelSwipe.current = startSwipe(event.clientX, event.clientY, menuRef.current.scrollTop);
           }}
           onPointerMove={(event) => {
-            const swipe = labelSwipe.current;
+            const swipe = event.isPrimary ? labelSwipe.current : null;
             const next = swipe && swipeScrollTop(swipe, event.clientX, event.clientY);
             if (next !== null && next !== undefined && menuRef.current) menuRef.current.scrollTop = next;
           }}
-          onPointerUp={() => {
-            labelSwiped.current = labelSwipe.current?.moved ?? false;
+          onPointerUp={(event) => {
+            if (!event.isPrimary || !labelSwipe.current) return;
+            labelSwiped.current = labelSwipe.current.moved;
             labelSwipe.current = null;
           }}
-          onPointerCancel={() => {
-            labelSwipe.current = null;
+          onPointerCancel={(event) => {
+            if (event.isPrimary) labelSwipe.current = null;
           }}
         >
           {actions.map(({ section, label, colors }, index) => {
