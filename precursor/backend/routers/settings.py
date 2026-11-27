@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from precursor.backend.config import get_settings
@@ -69,6 +69,7 @@ from precursor.backend.services.openai_proxy import (
     proxy_base_url,
     rotate_proxy_key,
 )
+from precursor.backend.services.remote_access import through_enforced_tunnel
 from precursor.backend.services.setting_rows import store_setting
 from precursor.backend.services.settings_update import (
     apply_saved_settings,
@@ -278,17 +279,33 @@ async def _settings_response(session: AsyncSession) -> SettingsRead:
     )
 
 
+async def _for_caller(read: SettingsRead, request: Request) -> SettingsRead:
+    """Hide the OpenAI-compatible endpoint's key from a paired phone.
+
+    That endpoint is exempt from pairing (its clients use the key), so a key
+    copied from a phone would outlive the phone's revocation.
+    """
+    if await through_enforced_tunnel(request.scope):
+        return read.model_copy(update={"openai_proxy_key": ""})
+    return read
+
+
 @router.get("", response_model=SettingsRead)
-async def read_settings(session: AsyncSession = Depends(get_session)) -> SettingsRead:
-    return await _settings_response(session)
+async def read_settings(
+    request: Request, session: AsyncSession = Depends(get_session)
+) -> SettingsRead:
+    return await _for_caller(await _settings_response(session), request)
 
 
 @router.put("", response_model=SettingsRead)
 async def update_settings(
     payload: SettingsPayload,
+    request: Request,
     session: AsyncSession = Depends(get_session),
 ) -> SettingsRead:
     data = payload.model_dump(exclude_unset=True)
+    if "openai_proxy_enabled" in data:
+        await _refuse_proxy_control_from_phone(request)
     await normalise_settings_update(session, data)
     for key, value in data.items():
         await store_setting(session, key, value)
@@ -297,17 +314,27 @@ async def update_settings(
         await ensure_proxy_key(session)
     await session.commit()
     await apply_saved_settings(session, data)
-    return await _settings_response(session)
+    return await _for_caller(await _settings_response(session), request)
+
+
+async def _refuse_proxy_control_from_phone(request: Request) -> None:
+    if await through_enforced_tunnel(request.scope):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "The OpenAI-compatible endpoint is managed on the computer running Precursor.",
+        )
 
 
 @router.post("/openai-proxy/key")
 async def regenerate_openai_proxy_key(
+    request: Request,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, str]:
     """Replace the OpenAI-compatible endpoint's API key.
 
     Clients holding the previous key are refused from the next request on.
     """
+    await _refuse_proxy_control_from_phone(request)
     key = await rotate_proxy_key(session)
     await session.commit()
     return {"key": key}

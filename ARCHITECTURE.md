@@ -48,6 +48,7 @@ scripts/             CI and maintenance scripts (stdlib-only where they run in h
 | The current time (timezone-aware UTC); ruff's `DTZ` rules reject naive datetimes | `utcnow()` | `clock.py` |
 | Fetch a row by id or return 404 | `get_or_404(session, Model, id, "X not found")` | `lookups.py` |
 | Same, as a route dependency | `get_topic_or_404`, `get_chat_or_404` | `routers/deps.py` |
+| Keep a route off a paired phone (local-only), or tell a tunneled request from a local one | `Depends(require_local)`; `is_remote(scope)` | `routers/deps.py`, `services/remote_access/` |
 | DB session in a route | `Depends(get_session)` | `db.py` |
 | DB session outside a request (tasks, streams) | `async with SessionLocal() as session` | `db.py` |
 | A per-user setting stored in the DB | a `resolve_*` function | `services/app_settings.py` |

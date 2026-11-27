@@ -104,7 +104,12 @@
   // ---------------------------------------------------------------- api
   function request(path, options) {
     options = options || {};
-    var init = { method: options.method || "GET", headers: { Accept: "application/json" } };
+    // X-Client-Id marks the call as coming from the app's own pages: through the
+    // remote-access tunnel, a mutation without it is refused as cross-site.
+    var init = {
+      method: options.method || "GET",
+      headers: { Accept: "application/json", "X-Client-Id": "canvas" },
+    };
     if (options.body !== undefined) {
       init.headers["Content-Type"] = "application/json";
       init.body = typeof options.body === "string" ? options.body : JSON.stringify(options.body);

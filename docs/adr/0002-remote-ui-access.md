@@ -1,0 +1,90 @@
+# ADR-0002: Remote access to the UI through a tunnel
+
+- **Status:** accepted (spec approved on issue #521)
+- **Date:** 2026-11-26
+
+## Context
+
+Precursor is single-user and has no authentication: whoever reaches the port
+is trusted, which is safe as long as it binds to `127.0.0.1`. Users want to open
+their own Precursor from their phone. A forwarding tunnel (Microsoft dev
+tunnels) does that without changing the bind: it keeps an outbound connection
+to a relay and forwards requests to `127.0.0.1:<port>`.
+
+That breaks the assumption behind the existing loopback guards (the MCP HTTP
+endpoint, the plugin installer): they look at the **bind address** and the
+`Host` header, and a tunnel satisfies both. Dev tunnels rewrite `Host` to
+`localhost` by default.
+
+## Decision
+
+1. **Two kinds of requests.** A request is *remote* when it carries any
+   forwarding header (`Forwarded`, `X-Forwarded-For`, `-Host`, `-Proto`) or
+   comes from a non-loopback IP. Everything else is *local*. A local browser
+   never sends those headers, and adding one by hand only restricts the
+   request further: the rule fails closed. (`services/remote_access/classify.py`)
+2. **Local requests are unchanged.** No session, no prompt, nothing new.
+3. **Remote requests need a tunnel session once remote access is on.** A pure
+   ASGI gate in front of the app answers `401` to a remote request without a
+   valid `__Host-precursor_remote` cookie, except the pairing link and the
+   files the home-screen install needs. The OpenAI-compatible endpoint is
+   exempt too: it checks its own bearer key, its clients are not browsers, and
+   a phone can't read the key. Webhooks are not exempt: a phone can read their
+   tokens, which must not outlive its revocation. External callers can't pass
+   a private tunnel's relay anyway. With remote access off, the gate
+   lets remote requests through as before, so a deployment behind the user's
+   own authenticating reverse proxy keeps working.
+4. **Pairing by a one-time code.** Only a local request can mint the code
+   (128 bits, single use, 30 minutes, burned after 10 wrong guesses). The
+   phone exchanges it, through the tunnel, for a session token. Only the
+   token's SHA-256 is stored; sessions expire after 30 days unused (the
+   cookie is renewed as the session is used) and can be revoked from the PC.
+   Every change to this state is one serialized read-modify-write, so a stale
+   read can't bring a revoked device back.
+5. **Some features are local-only.** A route marked with
+   `Depends(require_local)` answers `404` to remote requests, session or not,
+   and to local requests addressed to a non-loopback `Host` (DNS rebinding) or
+   sent from a foreign `Origin`: tunnel control, pairing and paired devices to
+   start with. The MCP HTTP
+   endpoint and the plugin installer check `is_remote` in their own guards.
+   Anything awkward to drive from a phone can join this list later rather
+   than be made to work remotely.
+6. **The tunnel is private.** Its relay only lets the account that created it
+   through, after an Entra ID sign-in. That is a second barrier, not the only
+   one: the app-level session holds even with a misconfigured tunnel.
+
+7. **A paired device is trusted like the computer.** It gets the whole UI,
+   including agents, workspaces and the command runner, which run on the
+   computer and can read what is stored there (settings, tokens, files). The
+   boundary is therefore pairing itself, not each secret: hiding every
+   credential from a paired phone is not a goal. What the design does
+   guarantee is that a revoked device loses access: the phone can't read the
+   OpenAI-compatible endpoint's key or change it, webhooks need a session
+   through the tunnel, and signing out *every* device also rotates that key,
+   the one credential that works through the tunnel without pairing. Pair
+   only devices you would trust with the computer itself.
+
+## Consequences
+
+- Every remote request costs one settings read. Local requests pay nothing.
+- Access is checked on entry and again, before the next chunk, whenever the
+  access state changes, so an open event stream ends when its device is revoked
+  or enforcement is switched on.
+- CORS wraps the gate: preflights carry no cookie and are answered by CORS;
+  the gate's `401`s still carry CORS headers.
+- The cookie is `SameSite=Lax`, not `Strict`: the relay's sign-in redirects
+  back cross-site, and a `Strict` cookie would be withheld on that hop.
+  `Lax` is not enough against forgery here, though: `devtunnels.ms` is not a
+  public suffix, so every dev tunnel is the same *site*, and a page on
+  someone else's tunnel gets the cookie sent along. A remote `POST`, `PUT`,
+  `PATCH` or `DELETE` must therefore carry `X-Client-Id`, which the app's own
+  pages always send and a foreign page can't add without a CORS preflight
+  that is never approved for it. (The one `sendBeacon`, which can't set
+  headers, only cancels a pending sign-in and is let through.)
+- Any forwarding proxy is treated as remote, not just dev tunnels; other
+  transports can reuse the same boundary.
+- Signing out every device breaks the OpenAI-compatible endpoint's clients
+  until they get the new key from Settings.
+- Workspace files are served by `/raw` on the app's own origin, so an HTML
+  file opened from a paired phone runs with its session. That predates
+  remote access (it already holds locally) and is tracked separately.

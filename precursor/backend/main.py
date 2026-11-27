@@ -63,6 +63,7 @@ from precursor.backend.routers import (
     raw,
     refine,
     reminders,
+    remote,
     roles,
     search,
     settings,
@@ -87,6 +88,8 @@ from precursor.backend.services.definitions.migration import (
 )
 from precursor.backend.services.llm import ProviderConfigurationError
 from precursor.backend.services.llm.one_shot import LLMCallFailed
+from precursor.backend.services.remote_access import is_remote
+from precursor.backend.services.remote_access.gate import RemoteAccessGate
 from precursor.backend.services.roles import ensure_default_role_file
 
 logger = logging.getLogger(__name__)
@@ -283,7 +286,9 @@ class _McpHttpGate:
         self._loopback = is_loopback_host(host)
 
     async def __call__(self, scope, receive, send):  # type: ignore[no-untyped-def]
-        if scope["type"] == "http" and not await self._open():
+        # Local-only: a tunnel forwards to loopback, so the bind check alone
+        # would let a remote request through.
+        if scope["type"] == "http" and (is_remote(scope) or not await self._open()):
             await send(
                 {
                     "type": "http.response.start",
@@ -391,6 +396,11 @@ def create_app() -> FastAPI:
         openapi_url="/api/openapi.json",
     )
 
+    # A request from a tunnel is checked before any route runs. Added first so
+    # CORS (added next) wraps it: preflights carry no cookie and are answered
+    # by CORS, and the gate's 401s still get CORS headers.
+    app.add_middleware(RemoteAccessGate)
+
     if cfg.cors_origins:
         app.add_middleware(
             CORSMiddleware,
@@ -477,6 +487,8 @@ def create_app() -> FastAPI:
         iq.router,
         refine.router,
         telemetry.router,
+        remote.router,
+        remote.public_router,
     ):
         app.include_router(r)
 

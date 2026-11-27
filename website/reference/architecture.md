@@ -324,6 +324,15 @@ reverse proxy in front.
 - The [command runner](/features/command-runner) executes shell/python/node:
   keep the Docker jail on.
 - [MCP over HTTP](/features/mcp) is off by default and loopback-only.
+- A request that came through a tunnel or proxy (it carries `X-Forwarded-*`
+  headers) is **remote**, even though the tunnel reaches Precursor on
+  `127.0.0.1`. MCP over HTTP, the plugin installer and remote-access control
+  never answer it. Once remote access is on, a remote device must be paired
+  with a one-time code from the PC first
+  ([ADR-0002](https://github.com/lrivallain/precursor/blob/main/docs/adr/0002-remote-ui-access.md)).
+  A paired device is trusted like the computer: pair only devices you would
+  trust with it. Signing out every device also rotates the OpenAI-compatible
+  endpoint's key.
 - Secrets live in the local DB and are **never echoed** (only `*_present`
   booleans), except the [OpenAI-compatible endpoint](/features/openai-endpoint)'s
   own key, shown in clear so it can be pasted into clients (endpoint off by

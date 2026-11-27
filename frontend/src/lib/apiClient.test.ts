@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildPath, buildQuery, call, operationUrl, untyped } from "./apiClient";
+import { buildPath, buildQuery, call, operationUrl, request, requestHeaders, untyped } from "./apiClient";
 
 interface Sent {
   url: string;
@@ -185,5 +185,33 @@ describe("untyped", () => {
     await expect(untyped<{ ok: boolean }>(Promise.resolve({ ok: true }))).resolves.toEqual({
       ok: true,
     });
+  });
+});
+
+describe("request headers", () => {
+  // The remote-access gate refuses tunneled mutations without X-Client-Id, so
+  // a caller's own headers must never drop it, whatever shape they come in.
+  it.each<[string, HeadersInit | undefined]>([
+    ["none", undefined],
+    ["record", { "X-Plugin": "kanban" }],
+    ["Headers", new Headers({ "X-Plugin": "kanban" })],
+    ["pairs", [["X-Plugin", "kanban"]]],
+  ])("keeps X-Client-Id with %s", (_shape, init) => {
+    const headers = requestHeaders(init);
+    expect(headers.get("X-Client-Id")).toBeTruthy();
+    expect(headers.get("Content-Type")).toBe("application/json");
+    if (init) expect(headers.get("X-Plugin")).toBe("kanban");
+  });
+
+  it("keeps a caller's own content type", () => {
+    expect(requestHeaders({ "Content-Type": "text/plain" }).get("Content-Type")).toBe("text/plain");
+  });
+
+  it("sends them when the caller passes headers", async () => {
+    const sent = mockFetch(json({ ok: true }));
+    await request("/api/x", { method: "POST", headers: { "X-Plugin": "kanban" }, body: "{}" });
+    const headers = new Headers(sent[0].init.headers);
+    expect(headers.get("X-Client-Id")).toBeTruthy();
+    expect(headers.get("X-Plugin")).toBe("kanban");
   });
 });
