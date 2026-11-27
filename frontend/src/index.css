@@ -924,3 +924,151 @@ body {
 .monaco-editor .precursor-conflict-marker {
   background: rgba(127, 127, 127, 0.18);
 }
+
+/* Mobile access: the tunnel drawing (components/TunnelAnimation.tsx), one
+   scene per setup state (data-mode). Motion only where something happens, and
+   never for reduced motion. */
+.tunnel-anim {
+  --tunnel-ok: #16a34a;
+  --tunnel-warn: #b45309;
+  --tunnel-error: #dc2626;
+}
+.dark .tunnel-anim {
+  --tunnel-ok: #4ade80;
+  --tunnel-warn: #fbbf24;
+  --tunnel-error: #f87171;
+}
+.tunnel-anim-path {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 1.5;
+  stroke-dasharray: 3 5;
+  opacity: 0.7;
+}
+.tunnel-anim-path.is-faint {
+  opacity: 0.25;
+}
+/* The piece to set up: the relay drawn as an outline to fill in. */
+.tunnel-anim-missing {
+  stroke: var(--tunnel-warn);
+  stroke-dasharray: 2.5 2.5;
+}
+.tunnel-anim-warn-text {
+  color: var(--tunnel-warn);
+}
+/* A phone that isn't there yet: an outline waiting for the scan. */
+.tunnel-anim-ghost {
+  stroke: var(--muted);
+  stroke-dasharray: 2 2.5;
+}
+.tunnel-anim-badge circle {
+  stroke: none;
+}
+.tunnel-anim-badge path,
+.tunnel-anim-badge rect {
+  fill: none;
+  stroke: var(--bg);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.tunnel-anim-badge rect {
+  fill: var(--bg);
+  stroke: none;
+}
+.tunnel-anim-badge.is-warn circle {
+  fill: var(--tunnel-warn);
+}
+.tunnel-anim-badge.is-error circle {
+  fill: var(--tunnel-error);
+}
+.tunnel-anim-badge.is-ok circle {
+  fill: var(--tunnel-ok);
+}
+.tunnel-anim-badge.is-accent circle {
+  fill: var(--accent);
+}
+.tunnel-anim-badge.is-pulse {
+  animation: tunnel-anim-pulse 1.6s ease-in-out infinite;
+}
+.tunnel-anim-ring {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.4;
+  opacity: 0;
+  transform-origin: 180px 44px;
+  animation: tunnel-anim-ring 2.6s ease-out infinite;
+}
+/* Starting: the relay warms up, nothing travels yet. */
+.tunnel-anim[data-mode="starting"] .tunnel-anim-ring {
+  animation-duration: 1.4s;
+}
+.tunnel-anim-req,
+.tunnel-anim-res,
+.tunnel-anim-beat {
+  opacity: 0;
+  animation: tunnel-anim-travel 2.6s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
+}
+.tunnel-anim-req {
+  fill: var(--accent);
+  offset-path: path("M58 78 C 110 78, 128 44, 180 44 S 250 78, 302 78");
+}
+.tunnel-anim-res {
+  fill: var(--tunnel-ok);
+  offset-path: path("M302 78 C 250 78, 232 44, 180 44 S 110 78, 58 78");
+}
+/* Waiting for a first phone: the computer's side of the tunnel is live. */
+.tunnel-anim-beat {
+  fill: var(--accent);
+  offset-path: path("M302 78 C 250 78, 232 44, 180 44");
+  animation-duration: 2.2s;
+}
+.tunnel-anim-beat.is-back {
+  fill: var(--tunnel-ok);
+  offset-path: path("M180 44 C 232 44, 250 78, 302 78");
+}
+@keyframes tunnel-anim-ring {
+  0% {
+    transform: scale(0.35);
+    opacity: 0.7;
+  }
+  100% {
+    transform: scale(1.7);
+    opacity: 0;
+  }
+}
+@keyframes tunnel-anim-travel {
+  0% {
+    offset-distance: 0%;
+    opacity: 0;
+  }
+  8%,
+  92% {
+    opacity: 1;
+  }
+  100% {
+    offset-distance: 100%;
+    opacity: 0;
+  }
+}
+@keyframes tunnel-anim-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tunnel-anim-ring,
+  .tunnel-anim-req,
+  .tunnel-anim-res,
+  .tunnel-anim-beat {
+    animation: none;
+    opacity: 0;
+  }
+  .tunnel-anim-badge.is-pulse {
+    animation: none;
+  }
+}
