@@ -20,7 +20,8 @@ export function OpenInVSCode({
 }) {
   // A vscode:// link to a path on the computer: nothing it can open on a phone
   // that reached Precursor through the remote-access tunnel.
-  if (useRemoteContext()) return null;
+  // Only once this page is known to be local: until then it may be a phone.
+  if (useRemoteContext() !== false) return null;
   return (
     <a
       className="p-1 rounded text-muted hover:text-text hover:bg-surface"

@@ -25,6 +25,10 @@ import { openStepPlan } from "../lib/stepPlans";
 import { makeMarkdownCaretRehype, markdownCaretAtPoint } from "../lib/markdownCaret";
 import { navigate } from "../lib/routes";
 import { localizeAppHref } from "../lib/appLinks";
+import { appOriginIfKnown, isRemoteContext } from "../lib/mobileAccess";
+
+// Learn the app's own origin early, so its loopback links can be localized.
+void isRemoteContext();
 
 interface MarkdownProps {
   children: string;
@@ -272,11 +276,15 @@ const STABLE_COMPONENTS: Components = {
   a({ href: rawHref, children: linkChildren, ...props }) {
     // A tool's absolute loopback link to an app page also resolves on a phone
     // (remote access) once it is a path, and opens in place like other in-app links.
-    const href = localizeAppHref(rawHref);
+    const href = localizeAppHref(rawHref, appOriginIfKnown());
     const messageHref = inAppMessageHref(href);
-    const external = isExternalHref(href) && !messageHref;
     const chatSlug = inAppChatSlug(href);
     const stepPlanId = inAppStepPlanId(href);
+    // A localized link without an in-app handler would replace the page (and
+    // any unsaved edit in it), so it keeps opening in a new tab like before.
+    const localizedOnly =
+      href !== rawHref && !messageHref && !chatSlug && stepPlanId == null;
+    const external = (isExternalHref(href) && !messageHref) || localizedOnly;
     return (
       <a
         href={href}

@@ -166,8 +166,10 @@ def test_paired_device_reaches_the_app() -> None:
     with _client() as client:
         _pair(client)
         assert client.get("/api/topics", headers=TUNNEL).status_code == 200
-        assert client.get("/api/remote/context", headers=TUNNEL).json() == {"remote": True}
-        assert client.get("/api/remote/context").json() == {"remote": False}
+        assert client.get("/api/remote/context", headers=TUNNEL).json()["remote"] is True
+        local = client.get("/api/remote/context").json()
+        assert local["remote"] is False
+        assert local["app_origin"] == app_base_url()
 
 
 def test_a_bad_or_used_code_does_not_pair() -> None:

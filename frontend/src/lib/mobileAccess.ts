@@ -55,14 +55,23 @@ export function tunnelSummary(status: TunnelStatus | null): string {
 // the answer is kept so a menu opened later knows it at once.
 let remoteContext: Promise<boolean> | null = null;
 let knownRemote: boolean | null = null;
+let knownAppOrigin: string | null = null;
 
 export function isRemoteContext(): Promise<boolean> {
   remoteContext ??= remoteApi
     .context()
-    .then((c) => c.remote)
+    .then((c) => {
+      knownAppOrigin = c.app_origin || null;
+      return c.remote;
+    })
     .catch(() => false)
     .then((remote) => (knownRemote = remote));
   return remoteContext;
+}
+
+/** The loopback origin tools use in links to the app's pages, once known. */
+export function appOriginIfKnown(): string | null {
+  return knownAppOrigin;
 }
 
 /** The answer if already known, else null. */
