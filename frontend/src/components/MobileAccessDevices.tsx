@@ -76,8 +76,9 @@ function DeviceName({ device, onRename }: { device: RemoteSession; onRename: (la
         // Enter also confirms an IME candidate (Chinese, Japanese, Korean...).
         if (e.key === "Enter" && !e.nativeEvent.isComposing) save();
         if (e.key === "Escape") {
-          e.stopPropagation();
-          setDraft(null);
+          e.stopPropagation(); // keep the dialog open
+          // Escape also dismisses IME candidates: only cancel once composing ends.
+          if (!e.nativeEvent.isComposing) setDraft(null);
         }
       }}
     />

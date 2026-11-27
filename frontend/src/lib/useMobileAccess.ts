@@ -1,6 +1,7 @@
 // State and actions of the Mobile access dialog: the tunnel, the pairing code
 // shown as a QR code, and the paired devices.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { latestOnly } from "./latestOnly";
 import { remoteApi } from "./remoteAccessApi";
 import { singleFlight } from "./singleFlight";
 import { needsNewCode, newlyPaired, pollDelay, wantsPairingCode } from "./mobileAccess";
@@ -55,8 +56,13 @@ export function useMobileAccess(): MobileAccess {
     if (generation === codeGeneration.current) setCode(fresh);
   }, [mintCode, setCode]);
 
+  // Polls overlap with refreshes after an action: an older answer landing last
+  // must not roll the device list (and the pairing detection) back.
+  const refreshOrder = useMemo(() => latestOnly(), []);
   const refresh = useCallback(async () => {
+    const ticket = refreshOrder.next();
     const [t, access] = await Promise.all([remoteApi.tunnel(), remoteApi.access()]);
+    if (!refreshOrder.accept(ticket)) return t;
     const ids = access.sessions.map((s) => s.id);
     if (newlyPaired(knownIds.current, ids)) {
       addRequested.current = false; // the device it was for has paired
@@ -66,7 +72,7 @@ export function useMobileAccess(): MobileAccess {
     setTunnel(t);
     setDevices(access.sessions);
     return t;
-  }, [dropCode]);
+  }, [dropCode, refreshOrder]);
 
   // Refresh while the dialog is open (a phone pairing shows up), faster while
   // the tunnel comes up; keep a usable QR code once it is active.

@@ -643,7 +643,9 @@ def test_a_paired_device_can_be_renamed_from_the_computer_only() -> None:
         assert r.json()["label"] == "Ludo's iPhone"
         assert client.get("/api/remote/access").json()["sessions"][0]["label"] == "Ludo's iPhone"
         assert client.patch("/api/remote/sessions/nope", json={"label": "x"}).status_code == 404
-        assert client.patch(f"/api/remote/sessions/{device}", json={"label": ""}).status_code == 422
+        for blank in ("", "   ", "\u0007\u0008", " \t "):
+            r = client.patch(f"/api/remote/sessions/{device}", json={"label": blank})
+            assert r.status_code == 422, blank
         # Not from the phone: device management is local-only.
         tunneled = client.patch(
             f"/api/remote/sessions/{device}", json={"label": "x"}, headers=TUNNEL
