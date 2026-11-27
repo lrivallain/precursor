@@ -930,7 +930,7 @@ body {
    never for reduced motion. */
 .tunnel-anim {
   --tunnel-ok: #16a34a;
-  --tunnel-warn: #d97706;
+  --tunnel-warn: #b45309;
   --tunnel-error: #dc2626;
 }
 .dark .tunnel-anim {
