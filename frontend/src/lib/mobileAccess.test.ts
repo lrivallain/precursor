@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { needsNewCode, pollDelay, tunnelSummary } from "./mobileAccess";
+import { needsNewCode, pollDelay, tunnelScene, tunnelSummary } from "./mobileAccess";
 import type { PairingCode } from "./remoteAccessApi";
 
 const NOW = Date.parse("2026-11-26T10:00:00Z");
@@ -80,5 +80,23 @@ describe("remote context", () => {
     expect(await ctx.loadRemoteContext()).toBe(false);
     expect(spy).toHaveBeenCalledTimes(2);
     spy.mockRestore();
+  });
+});
+
+describe("tunnelScene", () => {
+  it("shows the missing piece", () => {
+    expect(tunnelScene("missing_cli", 0)).toMatchObject({ mode: "missing", relay: "devtunnel not installed" });
+    expect(tunnelScene("signed_out", 0)).toMatchObject({ mode: "missing", relay: "Not signed in" });
+  });
+  it("waits for a first phone, then shows the paired ones", () => {
+    expect(tunnelScene("active", 0)).toMatchObject({ mode: "waiting", phone: "Scan to pair" });
+    expect(tunnelScene("active", 1)).toMatchObject({ mode: "live", phone: "1 paired phone" });
+    expect(tunnelScene("active", 3)).toMatchObject({ mode: "live", phone: "3 paired phones" });
+  });
+  it("stays still when off, starting or broken", () => {
+    expect(tunnelScene("stopped", 2).mode).toBe("off");
+    expect(tunnelScene(undefined, 0).mode).toBe("off");
+    expect(tunnelScene("starting", 0).mode).toBe("starting");
+    expect(tunnelScene("error", 1).mode).toBe("error");
   });
 });
