@@ -1,3 +1,4 @@
+import { Pencil } from "lucide-react";
 import { useState } from "react";
 import type { RemoteSession } from "../lib/remoteAccessApi";
 
@@ -8,7 +9,7 @@ interface Props {
   onRename: (id: string, label: string) => void;
 }
 
-/** The paired mobile devices: double-click a name to rename it, Sign out to revoke it. */
+/** The paired mobile devices: rename (pencil, or double-click the name), or sign out. */
 export function MobileAccessDevices({ devices, busy, onRevoke, onRename }: Props) {
   if (devices.length === 0) return null;
   return (
@@ -33,13 +34,25 @@ function DeviceName({ device, onRename }: { device: RemoteSession; onRename: (la
   const [draft, setDraft] = useState<string | null>(null);
   if (draft === null) {
     return (
-      <span
-        className="flex-1 truncate cursor-text"
-        data-tooltip={`${device.label}\nDouble-click to rename`}
-        onDoubleClick={() => setDraft(device.label)}
-      >
-        {device.label}
-      </span>
+      <>
+        <span
+          className="flex-1 min-w-0 truncate cursor-text"
+          data-tooltip={`${device.label}\nDouble-click to rename`}
+          onDoubleClick={() => setDraft(device.label)}
+        >
+          {device.label}
+        </span>
+        {/* The keyboard and screen-reader way in (double-click is a shortcut). */}
+        <button
+          type="button"
+          className="shrink-0 rounded p-1 text-muted hover:bg-surface hover:text-text"
+          aria-label={`Rename ${device.label}`}
+          data-tooltip="Rename"
+          onClick={() => setDraft(device.label)}
+        >
+          <Pencil size={13} />
+        </button>
+      </>
     );
   }
   const save = () => {

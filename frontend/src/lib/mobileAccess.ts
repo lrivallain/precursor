@@ -171,3 +171,12 @@ export const SIGN_IN_COMMAND: SetupCommand = { os: "Any OS", command: "devtunnel
 export function wantsPairingCode(pairedDevices: number, addRequested: boolean): boolean {
   return pairedDevices === 0 || addRequested;
 }
+
+/**
+ * Whether a device paired since the last look: a session id that wasn't there
+ * before. The count alone misses it once the list is full (the oldest session
+ * makes room for the new one).
+ */
+export function newlyPaired(previous: ReadonlySet<string> | null, ids: readonly string[]): boolean {
+  return previous !== null && ids.some((id) => !previous.has(id));
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { installCommands, needsNewCode, wantsPairingCode, pollDelay, tunnelScene, tunnelSummary } from "./mobileAccess";
+import { installCommands, needsNewCode, newlyPaired, wantsPairingCode, pollDelay, tunnelScene, tunnelSummary } from "./mobileAccess";
 import type { PairingCode } from "./remoteAccessApi";
 
 const NOW = Date.parse("2026-11-26T10:00:00Z");
@@ -124,5 +124,17 @@ describe("wantsPairingCode", () => {
     expect(wantsPairingCode(0, false)).toBe(true);
     expect(wantsPairingCode(1, false)).toBe(false);
     expect(wantsPairingCode(2, true)).toBe(true);
+  });
+});
+
+describe("newlyPaired", () => {
+  it("sees a new session id, even when the list is full and kept its size", () => {
+    const full = new Set(["a", "b", "c"]);
+    expect(newlyPaired(full, ["b", "c", "d"])).toBe(true); // "a" made room for "d"
+    expect(newlyPaired(full, ["a", "b", "c"])).toBe(false);
+    expect(newlyPaired(full, ["b", "c"])).toBe(false); // a sign-out
+  });
+  it("says nothing on the first look", () => {
+    expect(newlyPaired(null, ["a"])).toBe(false);
   });
 });
