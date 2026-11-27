@@ -1,5 +1,5 @@
 // The Mobile access dialog's open flag and the pure rules behind it (issue #521).
-import { useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { remoteApi } from "./remoteAccessApi";
 import { Emitter } from "./externalStore";
 import type { PairingCode, TunnelStatus } from "./remoteAccessApi";
@@ -51,21 +51,52 @@ export function tunnelSummary(status: TunnelStatus | null): string {
   }
 }
 
-// Whether this page itself was opened through the tunnel. Asked once per load;
-// the answer is kept so a menu opened later knows it at once.
-let remoteContext: Promise<boolean> | null = null;
+// Whether this page itself was opened through the tunnel, and the loopback
+// origin tools use in links to the app's pages. Asked once per load; unknown
+// (null) until a request succeeds. A failed request stays unknown and is asked
+// again on the next mount, so a hiccup never passes a phone off as local.
+const contextChanged = new Emitter();
+let pending: Promise<boolean | null> | null = null;
 let knownRemote: boolean | null = null;
+let knownAppOrigin: string | null = null;
 
-export function isRemoteContext(): Promise<boolean> {
-  remoteContext ??= remoteApi
-    .context()
-    .then((c) => c.remote)
-    .catch(() => false)
-    .then((remote) => (knownRemote = remote));
-  return remoteContext;
+export function loadRemoteContext(): Promise<boolean | null> {
+  pending ??= remoteApi.context().then(
+    (c) => {
+      knownRemote = c.remote;
+      knownAppOrigin = c.app_origin || null;
+      contextChanged.emit();
+      return c.remote;
+    },
+    () => {
+      pending = null;
+      return null;
+    },
+  );
+  return pending;
 }
 
-/** The answer if already known, else null. */
-export function remoteContextIfKnown(): boolean | null {
-  return knownRemote;
+/** Whether this page came through the tunnel: null until known. */
+export function useRemoteContext(): boolean | null {
+  useEffect(() => void loadRemoteContext(), []);
+  return useSyncExternalStore(contextChanged.subscribe, () => knownRemote, () => null);
 }
+
+/** The app's own loopback origin, once known; re-renders when it arrives. */
+export function useAppOrigin(): string | null {
+  useEffect(() => void loadRemoteContext(), []);
+  return useSyncExternalStore(contextChanged.subscribe, () => knownAppOrigin, () => null);
+}
+
+/** Test hook: forget what was learned. */
+export function resetRemoteContext(): void {
+  pending = null;
+  knownRemote = null;
+  knownAppOrigin = null;
+}
+
+export function remoteContextSnapshot(): { remote: boolean | null; appOrigin: string | null } {
+  return { remote: knownRemote, appOrigin: knownAppOrigin };
+}
+
+export const remoteContextChanges = contextChanged;

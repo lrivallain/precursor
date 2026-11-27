@@ -24,6 +24,8 @@ import { openChatBySlug } from "../lib/sideChats";
 import { openStepPlan } from "../lib/stepPlans";
 import { makeMarkdownCaretRehype, markdownCaretAtPoint } from "../lib/markdownCaret";
 import { navigate } from "../lib/routes";
+import { localizeAppHref } from "../lib/appLinks";
+import { useAppOrigin } from "../lib/mobileAccess";
 
 interface MarkdownProps {
   children: string;
@@ -258,6 +260,61 @@ function CodeBlock({ children, ...props }: { children?: ReactNode }) {
  * is a new component type on every render, so React would remount its subtree
  * on each streamed token (reloading a canvas iframe, re-running Mermaid).
  */
+const MarkdownLink: NonNullable<Components["a"]> = ({ href: rawHref, children: linkChildren, ...props }) => {
+  // A tool's absolute loopback link to an app page only resolves on a phone
+  // (remote access) as a path, so that is where it points. How it opens is
+  // decided from the link as written, exactly as before: an absolute link
+  // opens in a new tab, so following it can't unmount an editor holding
+  // unsaved edits. Re-renders once the app's origin is known.
+  const href = localizeAppHref(rawHref, useAppOrigin());
+  const messageHref = inAppMessageHref(rawHref);
+  const chatSlug = inAppChatSlug(rawHref);
+  const stepPlanId = inAppStepPlanId(rawHref);
+  const external = isExternalHref(rawHref) && !messageHref;
+  return (
+    <a
+      href={href}
+      {...props}
+      {...(external
+        ? { target: "_blank", rel: "noopener noreferrer" }
+        : {})}
+      {...(chatSlug
+        ? {
+            onClick: (e: React.MouseEvent<HTMLAnchorElement>) => {
+              if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+              e.preventDefault();
+              void openChatBySlug(chatSlug).catch(() => {
+                window.location.assign(href ?? "/chats");
+              });
+            },
+          }
+        : {})}
+      {...(stepPlanId != null
+        ? {
+            onClick: (e: React.MouseEvent<HTMLAnchorElement>) => {
+              if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+              e.preventDefault();
+              openStepPlan(stepPlanId);
+            },
+          }
+        : {})}
+      {...(messageHref
+        ? {
+            onClick: (e: React.MouseEvent<HTMLAnchorElement>) => {
+              if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+              e.preventDefault();
+              navigate(messageHref);
+              window.dispatchEvent(new PopStateEvent("popstate"));
+              window.dispatchEvent(new Event("precursor:message-jump"));
+            },
+          }
+        : {})}
+    >
+      {linkChildren}
+    </a>
+  );
+};
+
 const STABLE_COMPONENTS: Components = {
   pre({ children: preChildren, ...props }) {
     const canvas = parseCanvasRef(fenceFromPre(preChildren, "canvas") ?? "");
@@ -268,54 +325,7 @@ const STABLE_COMPONENTS: Components = {
     if (svg) return <SvgBlock code={svg} />;
     return <CodeBlock {...props}>{preChildren}</CodeBlock>;
   },
-  a({ href, children: linkChildren, ...props }) {
-    const messageHref = inAppMessageHref(href);
-    const external = isExternalHref(href) && !messageHref;
-    const chatSlug = inAppChatSlug(href);
-    const stepPlanId = inAppStepPlanId(href);
-    return (
-      <a
-        href={href}
-        {...props}
-        {...(external
-          ? { target: "_blank", rel: "noopener noreferrer" }
-          : {})}
-        {...(chatSlug
-          ? {
-              onClick: (e: React.MouseEvent<HTMLAnchorElement>) => {
-                if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
-                e.preventDefault();
-                void openChatBySlug(chatSlug).catch(() => {
-                  window.location.assign(href ?? "/chats");
-                });
-              },
-            }
-          : {})}
-        {...(stepPlanId != null
-          ? {
-              onClick: (e: React.MouseEvent<HTMLAnchorElement>) => {
-                if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
-                e.preventDefault();
-                openStepPlan(stepPlanId);
-              },
-            }
-          : {})}
-        {...(messageHref
-          ? {
-              onClick: (e: React.MouseEvent<HTMLAnchorElement>) => {
-                if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
-                e.preventDefault();
-                navigate(messageHref);
-                window.dispatchEvent(new PopStateEvent("popstate"));
-                window.dispatchEvent(new Event("precursor:message-jump"));
-              },
-            }
-          : {})}
-      >
-        {linkChildren}
-      </a>
-    );
-  },
+  a: MarkdownLink,
   blockquote({ children: quoteChildren, ...props }) {
     const text = flattenText(quoteChildren);
     if (!WARNING_MARKER.test(text)) {

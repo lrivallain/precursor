@@ -25,6 +25,7 @@ from precursor.backend.schemas.remote import (
     TunnelStatusRead,
     TunnelUpdate,
 )
+from precursor.backend.services.links import app_base_url
 from precursor.backend.services.remote_access import is_remote
 from precursor.backend.services.remote_access import sessions as store
 from precursor.backend.services.remote_access.devices import sign_out_all_devices
@@ -133,7 +134,7 @@ async def health() -> RemoteHealthRead:
 
 @public_router.get("/context", response_model=RemoteContextRead)
 async def get_context(request: Request) -> RemoteContextRead:
-    return RemoteContextRead(remote=is_remote(request.scope))
+    return RemoteContextRead(remote=is_remote(request.scope), app_origin=app_base_url())
 
 
 @public_router.get("/pair", response_model=None, include_in_schema=False)

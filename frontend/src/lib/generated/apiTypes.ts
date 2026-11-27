@@ -2080,6 +2080,7 @@ export interface RemoteAccessUpdate {
 export interface RemoteContextRead {
   /** True when this request came through a tunnel or proxy. */
   remote: boolean;
+  app_origin: string;
 }
 
 export interface RemoteHealthRead {

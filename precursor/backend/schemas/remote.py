@@ -37,6 +37,9 @@ class PairingCodeRead(BaseModel):
 
 class RemoteContextRead(BaseModel):
     remote: bool = Field(description="True when this request came through a tunnel or proxy.")
+    # The absolute origin tools use in links to the app's pages (loopback bind),
+    # so the UI can tell those links from other local services.
+    app_origin: str = ""
 
 
 class TunnelStatusRead(BaseModel):
