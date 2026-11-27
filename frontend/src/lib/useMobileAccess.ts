@@ -106,6 +106,9 @@ export function useMobileAccess(): MobileAccess {
         addRequested.current = false;
         dropCode();
         setTunnel(await remoteApi.setTunnel(false, signOutDevices));
+        // Again once stopped: a code minted while the stop was on its way
+        // belongs to a tunnel that is gone.
+        dropCode();
         await refresh();
       }),
     newCode: () => void run(fetchCode),

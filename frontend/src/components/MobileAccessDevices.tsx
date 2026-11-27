@@ -18,7 +18,7 @@ export function MobileAccessDevices({ devices, busy, onRevoke, onRename }: Props
       <ul className="text-sm divide-y divide-border">
         {devices.map((d) => (
           <li key={d.id} className="flex items-center gap-2 py-1">
-            <DeviceName device={d} onRename={(label) => onRename(d.id, label)} />
+            <DeviceName device={d} busy={busy} onRename={(label) => onRename(d.id, label)} />
             <span className="text-xs text-muted">{new Date(d.last_used_at).toLocaleDateString()}</span>
             <button type="button" className="text-xs underline" disabled={busy} onClick={() => onRevoke(d.id)}>
               Sign out
@@ -30,7 +30,11 @@ export function MobileAccessDevices({ devices, busy, onRevoke, onRename }: Props
   );
 }
 
-function DeviceName({ device, onRename }: { device: RemoteSession; onRename: (label: string) => void }) {
+function DeviceName({ device, busy, onRename }: {
+  device: RemoteSession;
+  busy: boolean;
+  onRename: (label: string) => void;
+}) {
   const [draft, setDraft] = useState<string | null>(null);
   if (draft === null) {
     return (
@@ -38,7 +42,8 @@ function DeviceName({ device, onRename }: { device: RemoteSession; onRename: (la
         <span
           className="flex-1 min-w-0 truncate cursor-text"
           data-tooltip={`${device.label}\nDouble-click to rename`}
-          onDoubleClick={() => setDraft(device.label)}
+          // One change at a time: no new rename while another is being saved.
+          onDoubleClick={() => !busy && setDraft(device.label)}
         >
           {device.label}
         </span>
@@ -48,6 +53,7 @@ function DeviceName({ device, onRename }: { device: RemoteSession; onRename: (la
           className="shrink-0 rounded p-1 text-muted hover:bg-surface hover:text-text"
           aria-label={`Rename ${device.label}`}
           data-tooltip="Rename"
+          disabled={busy}
           onClick={() => setDraft(device.label)}
         >
           <Pencil size={13} />
