@@ -295,6 +295,10 @@
     clip-path: inset(0 0 0 0 round 999px);
     transition: clip-path var(--qa-roll), visibility 0s;
   }
+  /* The app scrolls the menu when a swipe starts on a label (labelSwipe.ts). */
+  .quick-actions-popover .quick-actions-tip {
+    touch-action: none;
+  }
   .quick-actions[data-open="true"] .quick-actions-popover .quick-actions-tip .quick-actions-label {
     opacity: 1;
     transform: none;

@@ -4,6 +4,7 @@ import { Bot, FolderGit2, ListChecks, MessageSquare, MessagesSquare, Plus, Radio
 import type { CoreSidebarMode } from "./Sidebar";
 import { Z_INDEX } from "../lib/constants";
 import { beginDrag } from "../lib/dragGuard";
+import { type LabelSwipe, startSwipe, swipeScrollTop } from "../lib/labelSwipe";
 
 type CreateSection = Exclude<CoreSidebarMode, "iq">;
 type Position = { right: number; bottom: number };
@@ -133,6 +134,8 @@ export function QuickActions({ agentsEnabled, liveEnabled, current = null, onCre
   const popoverRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const labelsRef = useRef<HTMLSpanElement>(null);
+  const labelSwipe = useRef<LabelSwipe | null>(null);
+  const labelSwiped = useRef(false);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const drag = useRef<{ x: number; y: number; position: Position; current: Position; moved: boolean } | null>(null);
   const endDrag = useRef<(() => void) | null>(null);
@@ -485,7 +488,28 @@ export function QuickActions({ agentsEnabled, liveEnabled, current = null, onCre
         {/* One pill per tile, outside the scrolling list so it is never clipped. Each sits behind its
             tile (the magnification loop keeps its size and position in step) and rolls out of it, or
             back in, as the tile becomes active. */}
-        <span ref={labelsRef} className="quick-actions-labels">
+        <span
+          ref={labelsRef}
+          className="quick-actions-labels"
+          // Touch: a swipe on a label scrolls the menu (implicit capture keeps
+          // the moves coming from the pill the finger landed on).
+          onPointerDown={(event) => {
+            if (event.pointerType === "mouse" || !menuRef.current) return;
+            labelSwipe.current = startSwipe(event.clientY, menuRef.current.scrollTop);
+          }}
+          onPointerMove={(event) => {
+            const swipe = labelSwipe.current;
+            const next = swipe && swipeScrollTop(swipe, event.clientY);
+            if (next !== null && next !== undefined && menuRef.current) menuRef.current.scrollTop = next;
+          }}
+          onPointerUp={() => {
+            labelSwiped.current = labelSwipe.current?.moved ?? false;
+            labelSwipe.current = null;
+          }}
+          onPointerCancel={() => {
+            labelSwipe.current = null;
+          }}
+        >
           {actions.map(({ section, label, colors }, index) => {
             return (
               <span
@@ -502,6 +526,10 @@ export function QuickActions({ agentsEnabled, liveEnabled, current = null, onCre
                 // Keep focus where it is: a blur to <body> would close the menu before the click lands.
                 onPointerDown={(event) => event.preventDefault()}
                 onClick={() => {
+                  if (labelSwiped.current) {
+                    labelSwiped.current = false;
+                    return;
+                  }
                   setOpen(false);
                   onCreate(section);
                 }}
