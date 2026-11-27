@@ -35,6 +35,7 @@ const path = require("path");
 const fs = require("fs");
 const { BASE, prepareDemoPage, mockAgentRuntime } = require("./demo_browser");
 const { mockAttachmentPreviews } = require("./attachment_preview_fixture");
+const { mockMobileAccess } = require("./mobile_access_fixture");
 
 const OUT = path.resolve(__dirname, "..", "website", "public", "screenshots");
 
@@ -1445,6 +1446,23 @@ const scenes = {
   },
 
   // The same screen with the navigation drawer pulled out over it.
+  // Persona menu > Mobile access, with the tunnel up: the QR code to scan and
+  // a paired phone. Tunnel, device and QR are mocked (mobile_access_fixture).
+  "mobile-access": {
+    viewport: { width: 1440, height: 900 },
+    async go(page) {
+      await mockMobileAccess(page);
+      await page.goto(`${BASE}/`, { waitUntil: "networkidle" });
+      await page.getByRole("button", { name: /^Open user menu/ }).first().click();
+      await page.getByRole("menuitem", { name: "Mobile access", exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: "Mobile access", exact: true });
+      await dialog.locator("img").evaluate((image) => image.decode());
+      await page.mouse.move(0, 0);
+      await sleep(400);
+      return clipOf(page, "[role=dialog]", 16);
+    },
+  },
+
   "mobile-drawer": {
     viewport: { width: 390, height: 844 },
     context: { isMobile: true, hasTouch: true },

@@ -20,7 +20,6 @@ import {
   Pencil,
   RefreshCw,
   Save,
-  SquareCode,
   Trash2,
   Upload,
   Workflow,
@@ -29,7 +28,7 @@ import { api, workspaceRawUrl } from "../lib/api";
 import { useBusyAction } from "../lib/useBusyAction";
 import { useSaveShortcut } from "../lib/useSaveShortcut";
 import { useWorkspaceRootPath } from "../lib/useWorkspaceRootPath";
-import { vscodeUrl, workspaceAbsolutePath } from "../lib/localPath";
+import { workspaceAbsolutePath } from "../lib/localPath";
 import { useResizableWidth } from "../lib/useResizableWidth";
 import { useIsNarrow } from "../lib/useMediaQuery";
 import { useConfirm } from "./ConfirmDialog";
@@ -70,6 +69,7 @@ import type {
   Workspace,
   WorkspaceFileNode,
 } from "../lib/types";
+import { OpenInVSCode } from "./OpenInVSCode";
 
 // Monaco is its own chunk, fetched the first time a file is edited.
 const CodeEditor = lazy(() =>
@@ -105,39 +105,6 @@ function PaneTab({
 const LEFT_TAB_KEY = "precursor:workspace:leftTab";
 type LeftTab = "files" | "changes" | "history";
 const LEFT_TABS: LeftTab[] = ["files", "changes", "history"];
-
-const VSCODE_HINT =
-  "\nOpens the server's copy, so VS Code must run on the same computer.";
-
-function OpenInVSCode({
-  path,
-  label,
-  size,
-  position,
-}: {
-  /** Absolute path on the server. */
-  path: string;
-  label: string;
-  size: number;
-  /** Where the cursor is, read at click time so the link lands on that line. */
-  position?: () => { line: number; column: number } | null;
-}) {
-  return (
-    <a
-      className="p-1 rounded text-muted hover:text-text hover:bg-surface"
-      href={vscodeUrl(path)}
-      aria-label={label}
-      data-tooltip={label + VSCODE_HINT}
-      onClick={(e) => {
-        // The link follows its href after this handler, so it lands on the line.
-        const at = position?.();
-        e.currentTarget.href = vscodeUrl(path, at?.line, at?.column);
-      }}
-    >
-      <SquareCode size={size} />
-    </a>
-  );
-}
 
 // --------------------------------------------------------------------------
 // Workspace: file tree + editor + chat for one workspace

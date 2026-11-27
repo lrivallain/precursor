@@ -50,6 +50,8 @@ Precursor can open itself to your phone through a **private Microsoft dev
 tunnel**, without changing its bind address: it stays on `127.0.0.1`, and
 everything still runs on your computer.
 
+<Screenshot src="/screenshots/mobile-access.png" alt="The Mobile access dialog: the tunnel is on, a QR code to scan with the phone, the code's expiry, a paired iPhone with a Sign out link, and a Stop the tunnel button" caption="Mobile access, from the persona menu: scan the code, and paired phones are listed with a way to sign them out." />
+
 1. Install the dev tunnels CLI once (`brew install --cask devtunnel` on macOS,
    `winget install Microsoft.devtunnel` on Windows) and sign in with
    `devtunnel user login`.
@@ -66,7 +68,9 @@ address across restarts, comes back on when Precursor restarts, and is
 restarted by itself when it drops.
 
 From the phone, some features stay on the computer: Mobile access itself, the
-plugin installer and MCP over HTTP.
+plugin installer, MCP over HTTP and the **Open in VS Code** links (they open a
+path on the computer). Links that tools write to Precursor's own pages work on
+the phone too.
 
 ## Installing it to the home screen
 

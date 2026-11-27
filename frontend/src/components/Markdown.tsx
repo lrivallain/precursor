@@ -24,6 +24,7 @@ import { openChatBySlug } from "../lib/sideChats";
 import { openStepPlan } from "../lib/stepPlans";
 import { makeMarkdownCaretRehype, markdownCaretAtPoint } from "../lib/markdownCaret";
 import { navigate } from "../lib/routes";
+import { localizeAppHref } from "../lib/appLinks";
 
 interface MarkdownProps {
   children: string;
@@ -268,7 +269,10 @@ const STABLE_COMPONENTS: Components = {
     if (svg) return <SvgBlock code={svg} />;
     return <CodeBlock {...props}>{preChildren}</CodeBlock>;
   },
-  a({ href, children: linkChildren, ...props }) {
+  a({ href: rawHref, children: linkChildren, ...props }) {
+    // A tool's absolute loopback link to an app page also resolves on a phone
+    // (remote access) once it is a path, and opens in place like other in-app links.
+    const href = localizeAppHref(rawHref);
     const messageHref = inAppMessageHref(href);
     const external = isExternalHref(href) && !messageHref;
     const chatSlug = inAppChatSlug(href);

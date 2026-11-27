@@ -1,5 +1,5 @@
 // The Mobile access dialog's open flag and the pure rules behind it (issue #521).
-import { useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { remoteApi } from "./remoteAccessApi";
 import { Emitter } from "./externalStore";
 import type { PairingCode, TunnelStatus } from "./remoteAccessApi";
@@ -68,4 +68,20 @@ export function isRemoteContext(): Promise<boolean> {
 /** The answer if already known, else null. */
 export function remoteContextIfKnown(): boolean | null {
   return knownRemote;
+}
+
+/** Whether this page came through the tunnel: null until known (asked once per load). */
+export function useRemoteContext(): boolean | null {
+  const [remote, setRemote] = useState(remoteContextIfKnown);
+  useEffect(() => {
+    if (remote !== null) return;
+    let cancelled = false;
+    void isRemoteContext().then((value) => {
+      if (!cancelled) setRemote(value);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [remote]);
+  return remote;
 }

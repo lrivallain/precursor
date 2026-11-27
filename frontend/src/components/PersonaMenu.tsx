@@ -11,7 +11,7 @@ import {
 import { api } from "../lib/api";
 import { githubIdentityChanges } from "../lib/githubAccounts";
 import type { CopilotQuota, Me } from "../lib/types";
-import { isRemoteContext, openMobileAccess, remoteContextIfKnown } from "../lib/mobileAccess";
+import { openMobileAccess, useRemoteContext } from "../lib/mobileAccess";
 import { AboutModal } from "./AboutModal";
 import { MobileAccessHost } from "./MobileAccessModal";
 
@@ -276,7 +276,8 @@ function PersonaMenuPopover({
   onAbout,
   onMobileAccess,
 }: PopoverProps) {
-  const local = useIsLocal();
+  // Hidden on a page opened through the tunnel: Mobile access is local-only.
+  const local = useRemoteContext() === false;
   // Expanded sidebar: popover floats above the persona row, anchored to its
   // left edge. Collapsed sidebar: it sits to the right of the rail so it does
   // not get clipped by the narrow column.
@@ -455,17 +456,3 @@ function Avatar({
   );
 }
 
-/** False on a page opened through the tunnel, where Mobile access is local-only. */
-function useIsLocal(): boolean {
-  const [local, setLocal] = useState(remoteContextIfKnown() === false);
-  useEffect(() => {
-    let cancelled = false;
-    void isRemoteContext().then((remote) => {
-      if (!cancelled) setLocal(!remote);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-  return local;
-}
