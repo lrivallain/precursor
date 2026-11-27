@@ -286,6 +286,30 @@
   opacity: 1;
   transform: none;
 }
+/* Touch screens have no hover to reveal a tile's name: show every label while
+   the menu is open. */
+@media (hover: none) and (pointer: coarse) {
+  .quick-actions[data-open="true"] .quick-actions-popover .quick-actions-tip {
+    visibility: visible;
+    pointer-events: auto;
+    clip-path: inset(0 0 0 0 round 999px);
+    transition: clip-path var(--qa-roll), visibility 0s;
+  }
+  /* The app scrolls the menu when a swipe starts on a label (labelSwipe.ts). */
+  .quick-actions-popover .quick-actions-tip {
+    touch-action: none;
+  }
+  .quick-actions[data-open="true"] .quick-actions-popover .quick-actions-tip .quick-actions-label {
+    opacity: 1;
+    transform: none;
+  }
+}
+/* A tile scrolled out of the menu's view keeps its label hidden (the pills
+   aren't inside the scrolling list, so it doesn't clip them). */
+.quick-actions-popover .quick-actions-tip[data-clipped="true"] {
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
 .quick-actions-trigger:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 3px;

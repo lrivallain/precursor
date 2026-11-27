@@ -1,0 +1,1 @@
+- **The floating quick-actions button works on touch screens.** A tap opens it and it stays open (it used to close as the finger lifted), a slightly moving finger no longer turns the tap into a drag, and every tile shows its label, since there is no hover to reveal them.

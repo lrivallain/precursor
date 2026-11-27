@@ -4,6 +4,7 @@ import { Bot, FolderGit2, ListChecks, MessageSquare, MessagesSquare, Plus, Radio
 import type { CoreSidebarMode } from "./Sidebar";
 import { Z_INDEX } from "../lib/constants";
 import { beginDrag } from "../lib/dragGuard";
+import { type LabelSwipe, startSwipe, swipeOf, swipeScrollTop } from "../lib/labelSwipe";
 
 type CreateSection = Exclude<CoreSidebarMode, "iq">;
 type Position = { right: number; bottom: number };
@@ -83,6 +84,17 @@ function restingCentre(index: number): number {
   return PAD + index * (TILE + ITEM_GAP) + TILE / 2;
 }
 
+/** Whether a tile at `top` (from the top of the menu's viewport) is mostly out of view. */
+export function pillClipped(top: number, size: number, viewportHeight: number): boolean {
+  const centre = top + size / 2;
+  return centre < 0 || centre > viewportHeight;
+}
+
+/** How far the launcher must move before a press becomes a drag: a fingertip wobbles more. */
+export function dragThreshold(pointerType: string): number {
+  return pointerType === "mouse" ? 6 : 14;
+}
+
 /** Tile scales, indexed outward from the launcher, for a pointer at `point` (resting coordinates). */
 function magnifiedScales(point: number, strength: number, count: number): number[] {
   return Array.from({ length: count }, (_, index) => {
@@ -122,6 +134,8 @@ export function QuickActions({ agentsEnabled, liveEnabled, current = null, onCre
   const popoverRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const labelsRef = useRef<HTMLSpanElement>(null);
+  const labelSwipe = useRef<LabelSwipe | null>(null);
+  const labelSwiped = useRef(false);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const drag = useRef<{ x: number; y: number; position: Position; current: Position; moved: boolean } | null>(null);
   const endDrag = useRef<(() => void) | null>(null);
@@ -163,7 +177,9 @@ export function QuickActions({ agentsEnabled, liveEnabled, current = null, onCre
     const edge = `${PAD + shift}px`;
     if (layout.above) menu.style.paddingBottom = edge;
     else menu.style.paddingTop = edge;
-    let top = (layout.above ? 0 : INSET + SIZE + LAUNCHER_GAP) + (layout.above ? PAD : PAD + shift) - menu.scrollTop;
+    // Where the menu's scrolling viewport starts, in the pills' coordinates.
+    const viewportTop = layout.above ? 0 : INSET + SIZE + LAUNCHER_GAP;
+    let top = viewportTop + (layout.above ? PAD : PAD + shift) - menu.scrollTop;
     items.forEach((item, index) => {
       const size = TILE * (scales[outward(index)] ?? 1);
       item.style.width = `${size}px`;
@@ -175,6 +191,9 @@ export function QuickActions({ agentsEnabled, liveEnabled, current = null, onCre
         pill.style.paddingRight = layout.bendsLeft ? `${size + 2}px` : "";
         pill.style.paddingLeft = layout.bendsLeft ? "" : `${size + 2}px`;
         pill.style.setProperty("--qa-size", `${size}px`);
+        // The pills sit outside the scrolling list, so it can't clip them: hide
+        // the one whose tile is scrolled out of view (short screens).
+        pill.dataset.clipped = String(pillClipped(top - viewportTop, size, menu.clientHeight));
       }
       top += size + ITEM_GAP;
     });
@@ -312,7 +331,7 @@ export function QuickActions({ agentsEnabled, liveEnabled, current = null, onCre
     if (!current) return;
     const dx = event.clientX - current.x;
     const dy = event.clientY - current.y;
-    if (!current.moved && Math.hypot(dx, dy) < 6) return;
+    if (!current.moved && Math.hypot(dx, dy) < dragThreshold(event.pointerType)) return;
     if (!current.moved) {
       current.moved = true;
       endDrag.current = beginDrag();
@@ -384,7 +403,9 @@ export function QuickActions({ agentsEnabled, liveEnabled, current = null, onCre
         cancelClose();
         if (event.pointerType === "mouse" && !drag.current && !suppressClick.current) setOpen(true);
       }}
-      onPointerLeave={() => {
+      onPointerLeave={(event) => {
+        // A finger "leaves" as it lifts: only a mouse moving away closes the menu.
+        if (event.pointerType !== "mouse") return;
         cancelClose();
         closeTimer.current = setTimeout(() => {
           if (!rootRef.current?.contains(document.activeElement)) setOpen(false);
@@ -467,7 +488,40 @@ export function QuickActions({ agentsEnabled, liveEnabled, current = null, onCre
         {/* One pill per tile, outside the scrolling list so it is never clipped. Each sits behind its
             tile (the magnification loop keeps its size and position in step) and rolls out of it, or
             back in, as the tile becomes active. */}
-        <span ref={labelsRef} className="quick-actions-labels">
+        <span
+          ref={labelsRef}
+          className="quick-actions-labels"
+          // Touch: a swipe on a label scrolls the menu (implicit capture keeps
+          // the moves coming from the pill the finger landed on).
+          // Only the finger that started the swipe counts: a second touch or a
+          // mouse can't restart it or clear the guard that keeps it from acting
+          // as a tap.
+          onPointerDown={(event) => {
+            // A primary touch means no other finger is down: it may replace a
+            // swipe whose lift was lost.
+            if (event.pointerType === "mouse" || !event.isPrimary || !menuRef.current) return;
+            labelSwipe.current = startSwipe(
+              event.pointerId,
+              event.clientX,
+              event.clientY,
+              menuRef.current.scrollTop,
+            );
+          }}
+          onPointerMove={(event) => {
+            const swipe = swipeOf(labelSwipe.current, event.pointerId);
+            const next = swipe && swipeScrollTop(swipe, event.clientX, event.clientY);
+            if (next !== null && next !== undefined && menuRef.current) menuRef.current.scrollTop = next;
+          }}
+          onPointerUp={(event) => {
+            const swipe = swipeOf(labelSwipe.current, event.pointerId);
+            if (!swipe) return;
+            labelSwiped.current = swipe.moved;
+            labelSwipe.current = null;
+          }}
+          onPointerCancel={(event) => {
+            if (swipeOf(labelSwipe.current, event.pointerId)) labelSwipe.current = null;
+          }}
+        >
           {actions.map(({ section, label, colors }, index) => {
             return (
               <span
@@ -484,6 +538,10 @@ export function QuickActions({ agentsEnabled, liveEnabled, current = null, onCre
                 // Keep focus where it is: a blur to <body> would close the menu before the click lands.
                 onPointerDown={(event) => event.preventDefault()}
                 onClick={() => {
+                  if (labelSwiped.current) {
+                    labelSwiped.current = false;
+                    return;
+                  }
                   setOpen(false);
                   onCreate(section);
                 }}
@@ -520,7 +578,7 @@ export function QuickActions({ agentsEnabled, liveEnabled, current = null, onCre
         <span className="quick-actions-badge" aria-hidden="true"><Plus size={11} strokeWidth={2.5} /></span>
       </button>
       <span id={helpId} className="sr-only">
-        Hover or click to create. Drag to move, or use Alt and arrow keys. Alt and Home resets the position.
+        Hover, click or tap to create. Drag to move, or use Alt and arrow keys. Alt and Home resets the position.
       </span>
     </div>
   );
