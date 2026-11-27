@@ -72,6 +72,7 @@ import { streamStore, useStreamVersion } from "./lib/streamStore";
 import { useGlobalShortcuts } from "./lib/useGlobalShortcuts";
 import { ShortcutsHelp } from "./components/ShortcutsHelp";
 import { useIsNarrow } from "./lib/useMediaQuery";
+import { useMobileNav } from "./lib/useMobileNav";
 import { useSidebarNavStyle } from "./lib/useSidebarNavStyle";
 import { useAgentsController } from "./lib/useAgentsController";
 import { useChatsController } from "./lib/useChatsController";
@@ -124,16 +125,9 @@ export default function App() {
   const [navStyle] = useSidebarNavStyle();
   // Phone-sized viewports can't afford a permanent sidebar column, so the whole
   // navigation surface moves into an off-canvas drawer that overlays the main
-  // pane. `narrow` drives every layout branch that differs; `mobileNavOpen` is
-  // the drawer's state and is meaningless when the sidebar is in-flow.
+  // pane. `narrow` drives every layout branch that differs.
   const narrow = useIsNarrow();
-  const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const closeMobileNav = useCallback(() => setMobileNavOpen(false), []);
-  // Growing past the breakpoint puts the sidebar back in the flow; drop the
-  // drawer state so returning to a narrow viewport doesn't reopen it.
-  useEffect(() => {
-    if (!narrow) setMobileNavOpen(false);
-  }, [narrow]);
+  const { mobileNavOpen, setMobileNavOpen, closeMobileNav, openNavToBrowse } = useMobileNav(narrow);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   // What ⌘⇧K hands the IQ section: the selected text, and a counter so a
@@ -899,7 +893,7 @@ export default function App() {
               liveEnabled={liveEnabled}
               showPersona={narrow || navStyle === "tabs"}
               pluginSections={enabledSections}
-              onNavigate={changeMode}
+              onNavigate={(mode) => void changeMode(mode).then(() => openNavToBrowse(mode))}
               onOpenSettings={() => setGlobalSettingsOpen(true)}
               onOpenArchive={() => setArchiveOpen(true)}
               topicSurface={<TopicsHomeSurface controller={topicsCtl} />}

@@ -152,3 +152,15 @@ export function sectionColor(mode: SidebarMode): SectionColor {
     FALLBACK_COLOR
   );
 }
+
+/**
+ * Sections whose list lives in the sidebar tree rather than in the main pane.
+ * On a narrow screen the sidebar is a closed drawer, so browsing one of these
+ * from the home launcher opens the drawer; otherwise the user lands on the
+ * section's empty "new" pane, as if they had asked to create one.
+ */
+const TREE_SECTIONS: ReadonlySet<SidebarMode> = new Set(["topics", "chats", "live", "workspaces"]);
+
+export function browseOpensDrawer(mode: SidebarMode): boolean {
+  return TREE_SECTIONS.has(mode);
+}

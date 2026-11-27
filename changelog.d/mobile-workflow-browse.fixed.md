@@ -1,0 +1,1 @@
+- **Workflows and browsing on a phone.** A workflow's header wraps instead of piling its title, badges and buttons on top of each other, and "Browse topics", "Browse chats", "Browse sessions" and "Browse files" on the home page open the side drawer with the list instead of landing on an empty "new" pane.

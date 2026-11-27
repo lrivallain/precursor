@@ -646,7 +646,7 @@ export function WorkflowView({
     <div className="flex h-full flex-col overflow-hidden">
       {/* Header */}
       <div className="border-b border-border px-5 py-3">
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
           <button
             type="button"
             onClick={onBack}
@@ -659,9 +659,9 @@ export function WorkflowView({
           ) : (
             <WorkflowIcon size={22} className="text-muted" />
           )}
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <h1 className="truncate text-lg font-semibold text-fg">{workflow.name}</h1>
+          <div className="min-w-0 flex-1 basis-48">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <h1 className="min-w-0 max-w-full truncate text-lg font-semibold text-fg">{workflow.name}</h1>
               <span
                 className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium ${
                   WORKFLOW_STATUS_BADGE[workflow.status]
@@ -695,7 +695,7 @@ export function WorkflowView({
                 ? "Stop the run before editing its steps"
                 : "Reorder, add and edit steps in place"
             }
-            className={`flex items-center gap-1 rounded-lg border px-2 py-1.5 text-xs transition disabled:opacity-40 ${
+            className={`ml-auto flex items-center gap-1 rounded-lg border px-2 py-1.5 text-xs transition disabled:opacity-40 ${
               editingSteps
                 ? "border-indigo-500/50 bg-indigo-500/10 text-indigo-500"
                 : "border-border text-muted hover:border-indigo-500/50 hover:text-indigo-500"
