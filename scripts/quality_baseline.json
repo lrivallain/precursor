@@ -1,6 +1,6 @@
 {
   "file-size": {
-    "frontend/src/App.tsx": 1031,
+    "frontend/src/App.tsx": 1025,
     "frontend/src/components/AgentDashboard.tsx": 834,
     "frontend/src/components/ChatPanel.tsx": 899,
     "frontend/src/components/CommandPalette.tsx": 830,
