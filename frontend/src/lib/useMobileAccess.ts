@@ -2,7 +2,7 @@
 // shown as a QR code, and the paired devices.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { remoteApi } from "./remoteAccessApi";
-import { needsNewCode, pollDelay } from "./mobileAccess";
+import { needsNewCode, pollDelay, wantsPairingCode } from "./mobileAccess";
 import { useBusyAction } from "./useBusyAction";
 import type { PairingCode, RemoteSession, TunnelStatus } from "./remoteAccessApi";
 
@@ -15,7 +15,11 @@ export interface MobileAccess {
   start: () => void;
   stop: (signOutDevices: boolean) => void;
   newCode: () => void;
+  /** Show a QR code to pair one more device (after the first, it is on request). */
+  addDevice: () => void;
+  cancelAdd: () => void;
   revoke: (id: string) => void;
+  rename: (id: string, label: string) => void;
 }
 
 export function useMobileAccess(): MobileAccess {
@@ -29,13 +33,23 @@ export function useMobileAccess(): MobileAccess {
     setCodeState(next);
   }, []);
   const { busy, error, run } = useBusyAction();
+  // After the first device, a code is only made when the user asks for one,
+  // and put away once that device has paired.
+  const addRequested = useRef(false);
+  const pairedCount = useRef<number | null>(null);
 
   const refresh = useCallback(async () => {
     const [t, access] = await Promise.all([remoteApi.tunnel(), remoteApi.access()]);
+    const count = access.sessions.length;
+    if (pairedCount.current !== null && count > pairedCount.current) {
+      addRequested.current = false; // the device it was for has paired
+      setCode(null);
+    }
+    pairedCount.current = count;
     setTunnel(t);
     setDevices(access.sessions);
     return t;
-  }, []);
+  }, [setCode]);
 
   // Refresh while the dialog is open (a phone pairing shows up), faster while
   // the tunnel comes up; keep a usable QR code once it is active.
@@ -44,7 +58,9 @@ export function useMobileAccess(): MobileAccess {
     let cancelled = false;
     async function tick() {
       const t = await refresh().catch(() => null);
-      if (cancelled || t?.state !== "active" || !needsNewCode(codeRef.current, Date.now())) return;
+      if (cancelled || t?.state !== "active") return;
+      if (!wantsPairingCode(pairedCount.current ?? 0, addRequested.current)) return;
+      if (!needsNewCode(codeRef.current, Date.now())) return;
       const fresh = await remoteApi.pairing().catch(() => null);
       if (!cancelled && fresh) setCode(fresh);
     }
@@ -70,6 +86,19 @@ export function useMobileAccess(): MobileAccess {
         await refresh();
       }),
     newCode: () => void run(async () => setCode(await remoteApi.pairing())),
+    addDevice: () => {
+      addRequested.current = true;
+      void run(async () => setCode(await remoteApi.pairing()));
+    },
+    cancelAdd: () => {
+      addRequested.current = false;
+      setCode(null);
+    },
+    rename: (id, label) =>
+      void run(async () => {
+        await remoteApi.rename(id, label);
+        await refresh();
+      }),
     revoke: (id) =>
       void run(async () => {
         await remoteApi.revoke(id);

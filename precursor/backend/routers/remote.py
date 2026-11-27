@@ -22,6 +22,7 @@ from precursor.backend.schemas.remote import (
     RemoteContextRead,
     RemoteHealthRead,
     RemoteSessionRead,
+    RemoteSessionRename,
     TunnelStatusRead,
     TunnelUpdate,
 )
@@ -44,18 +45,19 @@ _PAIR_FAILED = """<!doctype html><html><head><meta charset="utf-8">
 open <strong>Mobile access</strong> again for a new QR code.</p></body></html>"""
 
 
+def _session_read(entry: store.RemoteSession) -> RemoteSessionRead:
+    return RemoteSessionRead(
+        id=entry.id,
+        label=entry.label,
+        created_at=datetime.fromisoformat(entry.created_at),
+        last_used_at=datetime.fromisoformat(entry.last_used_at),
+    )
+
+
 def _read(state: store.RemoteAccessState) -> RemoteAccessRead:
     return RemoteAccessRead(
         enabled=state.enabled,
-        sessions=[
-            RemoteSessionRead(
-                id=s.id,
-                label=s.label,
-                created_at=datetime.fromisoformat(s.created_at),
-                last_used_at=datetime.fromisoformat(s.last_used_at),
-            )
-            for s in state.sessions
-        ],
+        sessions=[_session_read(s) for s in state.sessions],
         pairing_expires_at=pairing_codes.pending_until() if state.enabled else None,
     )
 
@@ -121,6 +123,15 @@ async def revoke_session(session_id: str) -> None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
 
 
+@router.patch("/sessions/{session_id}", response_model=RemoteSessionRead)
+async def rename_session(session_id: str, body: RemoteSessionRename) -> RemoteSessionRead:
+    """Name a paired device so it can be told apart from the others."""
+    _state, entry = await store.update(lambda state: store.rename(state, session_id, body.label))
+    if entry is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
+    return _session_read(entry)
+
+
 @router.delete("/sessions", status_code=status.HTTP_204_NO_CONTENT)
 async def revoke_all_sessions() -> None:
     await sign_out_all_devices()
@@ -148,7 +159,7 @@ async def pair(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Not Found")
     if not pairing_codes.consume(code):
         return HTMLResponse(_PAIR_FAILED, status_code=status.HTTP_401_UNAUTHORIZED)
-    label = request.headers.get("user-agent", "")
+    label = store.device_label(request.headers.get("user-agent", ""))
     _state, token = await store.update(lambda fresh: store.issue(fresh, label))
     response = RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
     response.headers.append("set-cookie", session_cookie(token))

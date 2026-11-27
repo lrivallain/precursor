@@ -449,6 +449,13 @@ body,
     height: 100dvh;
   }
 }
+/* While an on-screen keyboard is up on iOS (which doesn't resize the page for
+   it), the shell follows the visible area: lib/keyboardInset.ts. */
+html,
+body,
+#root {
+  height: var(--app-height, 100dvh);
+}
 
 /* Set by lib/dragGuard.ts while a panel is being resized, so an iframe under
    the cursor can't swallow the drag. */

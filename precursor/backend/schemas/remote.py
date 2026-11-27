@@ -15,6 +15,10 @@ class RemoteSessionRead(BaseModel):
     last_used_at: datetime
 
 
+class RemoteSessionRename(BaseModel):
+    label: str = Field(min_length=1, max_length=120)
+
+
 class RemoteAccessRead(BaseModel):
     enabled: bool
     sessions: list[RemoteSessionRead]

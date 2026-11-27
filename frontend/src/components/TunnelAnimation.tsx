@@ -39,7 +39,7 @@ function Badge({ x, y, tone, glyph, pulse = false }: {
   x: number;
   y: number;
   tone: "warn" | "error" | "ok" | "accent";
-  glyph: "!" | "qr" | "check";
+  glyph: "!" | "qr" | "check" | "stop";
   pulse?: boolean;
 }) {
   return (
@@ -52,6 +52,7 @@ function Badge({ x, y, tone, glyph, pulse = false }: {
         </>
       )}
       {glyph === "check" && <path d="M-3.5 0.5 l2.5 2.5 4.5-5" />}
+      {glyph === "stop" && <rect x="-3" y="-3" width="6" height="6" rx="1" />}
       {glyph === "qr" && (
         <>
           <rect x="-4" y="-4" width="3" height="3" />
@@ -84,6 +85,7 @@ function Relay({ mode }: { mode: TunnelSceneMode }) {
       )}
       {missing && <Badge x={196} y={26} tone="warn" glyph="!" pulse />}
       {mode === "error" && <Badge x={196} y={26} tone="error" glyph="!" />}
+      {mode === "off" && <Badge x={196} y={26} tone="error" glyph="stop" />}
     </>
   );
 }

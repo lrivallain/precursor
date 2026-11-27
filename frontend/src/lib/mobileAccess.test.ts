@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { installCommands, needsNewCode, pollDelay, tunnelScene, tunnelSummary } from "./mobileAccess";
+import { installCommands, needsNewCode, wantsPairingCode, pollDelay, tunnelScene, tunnelSummary } from "./mobileAccess";
 import type { PairingCode } from "./remoteAccessApi";
 
 const NOW = Date.parse("2026-11-26T10:00:00Z");
@@ -32,6 +32,11 @@ describe("pollDelay", () => {
 });
 
 describe("tunnelSummary", () => {
+  it("only asks for a scan while no device is paired", () => {
+    const active = { state: "active" as const, url: null, error: null };
+    expect(tunnelSummary(active, 0)).toContain("Scan");
+    expect(tunnelSummary(active, 2)).not.toContain("Scan");
+  });
   it("shows the tunnel's own error", () => {
     expect(tunnelSummary({ state: "error", url: null, error: "boom" })).toBe("boom");
   });
@@ -90,8 +95,8 @@ describe("tunnelScene", () => {
   });
   it("waits for a first phone, then shows the paired ones", () => {
     expect(tunnelScene("active", 0)).toMatchObject({ mode: "waiting", phone: "Scan to pair" });
-    expect(tunnelScene("active", 1)).toMatchObject({ mode: "live", phone: "1 paired phone" });
-    expect(tunnelScene("active", 3)).toMatchObject({ mode: "live", phone: "3 paired phones" });
+    expect(tunnelScene("active", 1)).toMatchObject({ mode: "live", phone: "1 paired device" });
+    expect(tunnelScene("active", 3)).toMatchObject({ mode: "live", phone: "3 paired devices" });
   });
   it("stays still when off, starting or broken", () => {
     expect(tunnelScene("stopped", 2).mode).toBe("off");
@@ -111,5 +116,13 @@ describe("installCommands", () => {
   });
   it("keeps the usual order when the OS is unknown", () => {
     expect(installCommands("curl/8").map((c) => c.os)).toEqual(["macOS", "Windows", "Linux"]);
+  });
+});
+
+describe("wantsPairingCode", () => {
+  it("shows a code on its own for the first device only", () => {
+    expect(wantsPairingCode(0, false)).toBe(true);
+    expect(wantsPairingCode(1, false)).toBe(false);
+    expect(wantsPairingCode(2, true)).toBe(true);
   });
 });

@@ -32,7 +32,7 @@ export function needsNewCode(code: PairingCode | null, now: number): boolean {
   return Date.parse(code.expires_at) - now < 60_000;
 }
 
-export function tunnelSummary(status: TunnelStatus | null): string {
+export function tunnelSummary(status: TunnelStatus | null, pairedDevices = 0): string {
   switch (status?.state) {
     case undefined:
       return "Checking…";
@@ -41,11 +41,13 @@ export function tunnelSummary(status: TunnelStatus | null): string {
     case "signed_out":
       return "Sign in to dev tunnels on this computer first.";
     case "stopped":
-      return "Off. Start it to open Precursor from your phone.";
+      return "Off. Start it to open Precursor from a mobile device.";
     case "starting":
       return "Starting the tunnel…";
     case "active":
-      return "On. Scan the code with your phone's camera.";
+      return pairedDevices > 0
+        ? "On. Your paired devices can open Precursor."
+        : "On. Scan the code with your mobile device's camera.";
     case "error":
       return status.error ?? "The tunnel stopped.";
   }
@@ -119,7 +121,7 @@ export function tunnelScene(
   state: TunnelStatus["state"] | undefined,
   pairedDevices: number,
 ): TunnelScene {
-  const base = { phone: "Your phone", relay: "Private relay", computer: "This computer" };
+  const base = { phone: "Your mobile device", relay: "Private relay", computer: "This computer" };
   switch (state) {
     case "missing_cli":
       return { ...base, mode: "missing", relay: "devtunnel not installed" };
@@ -134,7 +136,7 @@ export function tunnelScene(
         ? {
             ...base,
             mode: "live",
-            phone: pairedDevices === 1 ? "1 paired phone" : `${pairedDevices} paired phones`,
+            phone: pairedDevices === 1 ? "1 paired device" : `${pairedDevices} paired devices`,
           }
         : { ...base, mode: "waiting", phone: "Scan to pair" };
     default:
@@ -161,3 +163,11 @@ export function installCommands(userAgent: string): SetupCommand[] {
 }
 
 export const SIGN_IN_COMMAND: SetupCommand = { os: "Any OS", command: "devtunnel user login" };
+
+/**
+ * Whether to show a pairing QR code: on its own for the very first device,
+ * afterwards only once the user asks to add one.
+ */
+export function wantsPairingCode(pairedDevices: number, addRequested: boolean): boolean {
+  return pairedDevices === 0 || addRequested;
+}

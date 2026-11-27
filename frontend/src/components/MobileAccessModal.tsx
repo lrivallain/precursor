@@ -1,4 +1,4 @@
-import { Check, Copy, Smartphone, X } from "lucide-react";
+import { Check, Copy, Play, Plus, Smartphone, Square, X } from "lucide-react";
 import {
   closeMobileAccess,
   installCommands,
@@ -10,8 +10,9 @@ import {
 } from "../lib/mobileAccess";
 import { useFlash } from "../lib/useFlash";
 import { useMobileAccess, type MobileAccess } from "../lib/useMobileAccess";
-import type { PairingCode, RemoteSession } from "../lib/remoteAccessApi";
+import type { PairingCode } from "../lib/remoteAccessApi";
 import { useConfirm } from "./ConfirmDialog";
+import { MobileAccessDevices } from "./MobileAccessDevices";
 import { Modal } from "./Modal";
 import { TunnelAnimation } from "./TunnelAnimation";
 
@@ -57,10 +58,15 @@ function MobileAccessModal({ onClose }: { onClose: () => void }) {
         </button>
       </div>
       <TunnelAnimation scene={tunnelScene(state, access.devices.length)} />
-      <p className="text-sm text-muted mb-3">{tunnelSummary(access.tunnel)}</p>
+      <p className="text-sm text-muted mb-3">{tunnelSummary(access.tunnel, access.devices.length)}</p>
       <Setup state={state} />
-      {state === "active" && <Pairing code={access.code} onNewCode={access.newCode} />}
-      <Devices devices={access.devices} onRevoke={access.revoke} busy={access.busy} />
+      {state === "active" && <PairingArea access={access} />}
+      <MobileAccessDevices
+        devices={access.devices}
+        busy={access.busy}
+        onRevoke={access.revoke}
+        onRename={access.rename}
+      />
       {access.error && <p className="text-sm text-red-500 mt-2">{access.error}</p>}
       <TunnelButton access={access} onStop={() => void stop()} />
     </Modal>
@@ -105,53 +111,59 @@ function Commands({ commands }: { commands: SetupCommand[] }) {
   );
 }
 
-function Pairing({ code, onNewCode }: { code: PairingCode | null; onNewCode: () => void }) {
+/** The QR code: on its own for the first device, then on "Add a mobile device". */
+function PairingArea({ access }: { access: MobileAccess }) {
+  const first = access.devices.length === 0;
+  if (!first && !access.code) {
+    return (
+      <div className="flex justify-center mb-3">
+        <button
+          type="button"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm border border-border bg-bg hover:bg-border disabled:opacity-50"
+          disabled={access.busy}
+          onClick={access.addDevice}
+        >
+          <Plus size={14} />
+          Add a mobile device
+        </button>
+      </div>
+    );
+  }
+  return <Pairing code={access.code} onNewCode={access.newCode} onCancel={first ? undefined : access.cancelAdd} />;
+}
+
+function Pairing({ code, onNewCode, onCancel }: {
+  code: PairingCode | null;
+  onNewCode: () => void;
+  onCancel?: () => void;
+}) {
   if (!code?.qr_svg || !code.url) return <p className="text-sm text-muted mb-3">Preparing a code…</p>;
   const expires = new Date(code.expires_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   return (
     <div className="flex flex-col items-center gap-2 mb-3">
       <img
         src={`data:image/svg+xml;utf8,${encodeURIComponent(code.qr_svg)}`}
-        alt="QR code to pair your phone"
+        alt="QR code to pair a mobile device"
         className="w-48 h-48 rounded bg-white p-1"
       />
       <p className="text-xs text-muted text-center">
-        Works once, until {expires}. Your phone asks you to sign in with the Microsoft account that
+        Works once, until {expires}. Your device asks you to sign in with the Microsoft account that
         owns the tunnel, then opens Precursor.
       </p>
-      <button type="button" className="text-xs underline" onClick={onNewCode}>
-        New code
-      </button>
+      <div className="flex gap-4">
+        <button type="button" className="text-xs underline" onClick={onNewCode}>
+          New code
+        </button>
+        {onCancel && (
+          <button type="button" className="text-xs underline" onClick={onCancel}>
+            Cancel
+          </button>
+        )}
+      </div>
     </div>
   );
 }
 
-function Devices(props: { devices: RemoteSession[]; onRevoke: (id: string) => void; busy: boolean }) {
-  if (props.devices.length === 0) return null;
-  return (
-    <div className="mb-3">
-      <h3 className="text-xs uppercase tracking-wide text-muted mb-1">Paired devices</h3>
-      <ul className="text-sm divide-y divide-border">
-        {props.devices.map((d) => (
-          <li key={d.id} className="flex items-center gap-2 py-1">
-            <span className="flex-1 truncate" data-tooltip={d.label}>
-              {d.label}
-            </span>
-            <span className="text-xs text-muted">{new Date(d.last_used_at).toLocaleDateString()}</span>
-            <button
-              type="button"
-              className="text-xs underline"
-              disabled={props.busy}
-              onClick={() => props.onRevoke(d.id)}
-            >
-              Sign out
-            </button>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
 
 function TunnelButton({ access, onStop }: { access: MobileAccess; onStop: () => void }) {
   const state = access.tunnel?.state;
@@ -161,10 +173,15 @@ function TunnelButton({ access, onStop }: { access: MobileAccess; onStop: () => 
     <div className="flex justify-end">
       <button
         type="button"
-        className="px-3 py-1.5 rounded-md text-sm border border-border bg-bg hover:bg-border disabled:opacity-50"
+        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm border border-border bg-bg hover:bg-border disabled:opacity-50"
         disabled={access.busy}
         onClick={running ? onStop : access.start}
       >
+        {running ? (
+          <Square size={13} className="fill-current text-red-600 dark:text-red-400" />
+        ) : (
+          <Play size={13} className="fill-current text-green-600 dark:text-green-400" />
+        )}
         {running ? "Stop the tunnel" : "Start the tunnel"}
       </button>
     </div>

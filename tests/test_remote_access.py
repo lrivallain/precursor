@@ -632,3 +632,46 @@ def test_concurrent_sends_wait_for_a_pending_recheck(monkeypatch: pytest.MonkeyP
         return await _run_behind_gate(token, app)
 
     assert asyncio.run(run()) == [b""]  # ended once, nothing delivered
+
+
+def test_a_paired_device_can_be_renamed_from_the_computer_only() -> None:
+    with _client() as client:
+        _pair(client)
+        device = client.get("/api/remote/access").json()["sessions"][0]["id"]
+        r = client.patch(f"/api/remote/sessions/{device}", json={"label": "  Ludo's iPhone\u0007 "})
+        assert r.status_code == 200
+        assert r.json()["label"] == "Ludo's iPhone"
+        assert client.get("/api/remote/access").json()["sessions"][0]["label"] == "Ludo's iPhone"
+        assert client.patch("/api/remote/sessions/nope", json={"label": "x"}).status_code == 404
+        assert client.patch(f"/api/remote/sessions/{device}", json={"label": ""}).status_code == 422
+        # Not from the phone: device management is local-only.
+        tunneled = client.patch(
+            f"/api/remote/sessions/{device}", json={"label": "x"}, headers=TUNNEL
+        )
+        assert tunneled.status_code == 404
+
+
+@pytest.mark.parametrize(
+    ("user_agent", "label"),
+    [
+        (
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 27_2 like Mac OS X) AppleWebKit/605.1.15 "
+            "(KHTML, like Gecko) Version/27.2 Mobile/15E148 Safari/604.1",
+            "iPhone · Safari",
+        ),
+        (
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 27_2 like Mac OS X) AppleWebKit/605.1.15 "
+            "(KHTML, like Gecko) EdgiOS/140.0 Version/27.0 Mobile/15E148 Safari/604.1",
+            "iPhone · Edge",
+        ),
+        (
+            "Mozilla/5.0 (Linux; Android 16; Pixel 10) AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/140.0 Mobile Safari/537.36 EdgA/140.0",
+            "Android · Edge",
+        ),
+        ("Mozilla/5.0 (Linux; Android 16) Chrome/140.0 Mobile Safari/537.36", "Android · Chrome"),
+        ("curl/8.7", "curl/8.7"),
+    ],
+)
+def test_a_new_device_gets_a_readable_name(user_agent: str, label: str) -> None:
+    assert store.device_label(user_agent) == label
