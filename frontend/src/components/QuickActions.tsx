@@ -83,6 +83,11 @@ function restingCentre(index: number): number {
   return PAD + index * (TILE + ITEM_GAP) + TILE / 2;
 }
 
+/** How far the launcher must move before a press becomes a drag: a fingertip wobbles more. */
+export function dragThreshold(pointerType: string): number {
+  return pointerType === "mouse" ? 6 : 14;
+}
+
 /** Tile scales, indexed outward from the launcher, for a pointer at `point` (resting coordinates). */
 function magnifiedScales(point: number, strength: number, count: number): number[] {
   return Array.from({ length: count }, (_, index) => {
@@ -312,7 +317,7 @@ export function QuickActions({ agentsEnabled, liveEnabled, current = null, onCre
     if (!current) return;
     const dx = event.clientX - current.x;
     const dy = event.clientY - current.y;
-    if (!current.moved && Math.hypot(dx, dy) < 6) return;
+    if (!current.moved && Math.hypot(dx, dy) < dragThreshold(event.pointerType)) return;
     if (!current.moved) {
       current.moved = true;
       endDrag.current = beginDrag();
@@ -384,7 +389,9 @@ export function QuickActions({ agentsEnabled, liveEnabled, current = null, onCre
         cancelClose();
         if (event.pointerType === "mouse" && !drag.current && !suppressClick.current) setOpen(true);
       }}
-      onPointerLeave={() => {
+      onPointerLeave={(event) => {
+        // A finger "leaves" as it lifts: only a mouse moving away closes the menu.
+        if (event.pointerType !== "mouse") return;
         cancelClose();
         closeTimer.current = setTimeout(() => {
           if (!rootRef.current?.contains(document.activeElement)) setOpen(false);
@@ -520,7 +527,7 @@ export function QuickActions({ agentsEnabled, liveEnabled, current = null, onCre
         <span className="quick-actions-badge" aria-hidden="true"><Plus size={11} strokeWidth={2.5} /></span>
       </button>
       <span id={helpId} className="sr-only">
-        Hover or click to create. Drag to move, or use Alt and arrow keys. Alt and Home resets the position.
+        Hover, click or tap to create. Drag to move, or use Alt and arrow keys. Alt and Home resets the position.
       </span>
     </div>
   );

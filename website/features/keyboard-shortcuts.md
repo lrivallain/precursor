@@ -43,6 +43,7 @@ hidden). Each opens its usual creation form; nothing is created and no
 recording is interrupted without confirmation.
 
 Hover or click it to open the dock; the current section is marked with a dot.
+On a touch screen, tap it: every tile shows its label, since there is no hover.
 Hide the button with **Show the floating quick-actions button** in **Settings →
 Appearance**.
 
