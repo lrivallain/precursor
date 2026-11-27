@@ -1,10 +1,14 @@
-import { Smartphone, X } from "lucide-react";
+import { Check, Copy, Smartphone, X } from "lucide-react";
 import {
   closeMobileAccess,
+  installCommands,
+  SIGN_IN_COMMAND,
+  type SetupCommand,
   tunnelScene,
   tunnelSummary,
   useMobileAccessOpen,
 } from "../lib/mobileAccess";
+import { useFlash } from "../lib/useFlash";
 import { useMobileAccess, type MobileAccess } from "../lib/useMobileAccess";
 import type { PairingCode, RemoteSession } from "../lib/remoteAccessApi";
 import { useConfirm } from "./ConfirmDialog";
@@ -64,17 +68,41 @@ function MobileAccessModal({ onClose }: { onClose: () => void }) {
 }
 
 function Setup({ state }: { state: string | undefined }) {
-  if (state === "missing_cli") {
-    return (
-      <pre className="text-xs bg-bg border border-border rounded p-2 mb-3 whitespace-pre-wrap">
-        {"macOS:   brew install --cask devtunnel\nWindows: winget install Microsoft.devtunnel"}
-      </pre>
-    );
-  }
-  if (state === "signed_out") {
-    return <pre className="text-xs bg-bg border border-border rounded p-2 mb-3">devtunnel user login</pre>;
-  }
+  if (state === "missing_cli") return <Commands commands={installCommands(navigator.userAgent)} />;
+  if (state === "signed_out") return <Commands commands={[SIGN_IN_COMMAND]} />;
   return null;
+}
+
+/** Commands to run on this computer: the OS in the UI font, the command in mono, a copy button. */
+function Commands({ commands }: { commands: SetupCommand[] }) {
+  const [copied, flash] = useFlash<string>(1500);
+  async function copy(command: string) {
+    try {
+      await navigator.clipboard.writeText(command);
+      flash(command);
+    } catch {
+      // Clipboard unavailable (insecure context, permission): the command stays selectable.
+    }
+  }
+  return (
+    <ul className="mb-3 divide-y divide-border rounded border border-border bg-bg">
+      {commands.map(({ os, command }) => (
+        <li key={os} className="flex items-center gap-2 px-2 py-1.5">
+          <span className="w-16 shrink-0 text-xs text-muted">{os}</span>
+          <code className="min-w-0 flex-1 select-all break-all font-mono text-xs">{command}</code>
+          <button
+            type="button"
+            className="shrink-0 rounded p-1 text-muted hover:bg-surface hover:text-text"
+            aria-label={`Copy the ${os} command`}
+            data-tooltip={copied === command ? "Copied!" : "Copy"}
+            onClick={() => void copy(command)}
+          >
+            {copied === command ? <Check size={14} className="text-green-500" /> : <Copy size={14} />}
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 function Pairing({ code, onNewCode }: { code: PairingCode | null; onNewCode: () => void }) {

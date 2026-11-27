@@ -53,8 +53,10 @@ everything still runs on your computer.
 <Screenshot src="/screenshots/mobile-access.png" alt="The Mobile access dialog: a drawing of the phone reaching this computer through a private relay, the tunnel on, a QR code to scan with the phone, the code's expiry, a paired iPhone with a Sign out link, and a Stop the tunnel button" caption="Mobile access, from the persona menu. The drawing follows your setup: the missing piece (dev tunnels CLI, sign-in), a tunnel waiting for its first phone, or requests and answers flowing once a phone is paired. Scan the code; paired phones are listed with a way to sign them out." />
 
 1. Install the dev tunnels CLI once (`brew install --cask devtunnel` on macOS,
-   `winget install Microsoft.devtunnel` on Windows) and sign in with
-   `devtunnel user login`.
+   `winget install Microsoft.devtunnel` on Windows,
+   `curl -sL https://aka.ms/DevTunnelCliInstall | bash` on Linux) and sign in
+   with `devtunnel user login`. Mobile access shows these commands, with a copy
+   button, until it finds the CLI and your sign-in.
 2. In the persona menu, choose **Mobile access**, then **Start the tunnel**.
 3. Scan the QR code with your phone's camera. Sign in with the account that
    owns the tunnel: Precursor opens, and the phone stays paired.

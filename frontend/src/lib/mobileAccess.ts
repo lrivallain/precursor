@@ -141,3 +141,23 @@ export function tunnelScene(
       return { ...base, mode: "off", relay: "Tunnel off" };
   }
 }
+
+export interface SetupCommand {
+  os: string;
+  command: string;
+}
+
+const INSTALL_COMMANDS: (SetupCommand & { match: RegExp })[] = [
+  { os: "macOS", command: "brew install --cask devtunnel", match: /Mac/i },
+  { os: "Windows", command: "winget install Microsoft.devtunnel", match: /Win/i },
+  { os: "Linux", command: "curl -sL https://aka.ms/DevTunnelCliInstall | bash", match: /Linux|X11/i },
+];
+
+/** How to install the dev tunnels CLI, this computer's OS first. */
+export function installCommands(userAgent: string): SetupCommand[] {
+  const mine = INSTALL_COMMANDS.findIndex(({ match }) => match.test(userAgent));
+  const ordered = mine > 0 ? [INSTALL_COMMANDS[mine], ...INSTALL_COMMANDS.filter((_, i) => i !== mine)] : INSTALL_COMMANDS;
+  return ordered.map(({ os, command }) => ({ os, command }));
+}
+
+export const SIGN_IN_COMMAND: SetupCommand = { os: "Any OS", command: "devtunnel user login" };
