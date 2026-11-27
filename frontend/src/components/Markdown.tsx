@@ -261,19 +261,16 @@ function CodeBlock({ children, ...props }: { children?: ReactNode }) {
  * on each streamed token (reloading a canvas iframe, re-running Mermaid).
  */
 const MarkdownLink: NonNullable<Components["a"]> = ({ href: rawHref, children: linkChildren, ...props }) => {
-  // A tool's absolute loopback link to an app page also resolves on a phone
-  // (remote access) once it is a path, and opens in place like other in-app links.
-  // Re-renders once the app's origin is known, so links mounted before that
-  // are localized too.
+  // A tool's absolute loopback link to an app page only resolves on a phone
+  // (remote access) as a path, so that is where it points. How it opens is
+  // decided from the link as written, exactly as before: an absolute link
+  // opens in a new tab, so following it can't unmount an editor holding
+  // unsaved edits. Re-renders once the app's origin is known.
   const href = localizeAppHref(rawHref, useAppOrigin());
-  const messageHref = inAppMessageHref(href);
-  const chatSlug = inAppChatSlug(href);
-  const stepPlanId = inAppStepPlanId(href);
-  // A localized link without an in-app handler would replace the page (and
-  // any unsaved edit in it), so it keeps opening in a new tab like before.
-  const localizedOnly =
-    href !== rawHref && !messageHref && !chatSlug && stepPlanId == null;
-  const external = (isExternalHref(href) && !messageHref) || localizedOnly;
+  const messageHref = inAppMessageHref(rawHref);
+  const chatSlug = inAppChatSlug(rawHref);
+  const stepPlanId = inAppStepPlanId(rawHref);
+  const external = isExternalHref(rawHref) && !messageHref;
   return (
     <a
       href={href}

@@ -1,1 +1,1 @@
-- **Precursor on your phone, polished.** Links that tools write to Precursor's own pages (`http://127.0.0.1:…/topics/…`) now open from a phone reached through Mobile access, and in place on the computer; **Open in VS Code** is hidden on the phone, where it can't open anything.
+- **Precursor on your phone, polished.** Links that tools write to Precursor's own pages (`http://127.0.0.1:…/topics/…`) now open from a phone reached through Mobile access; **Open in VS Code** is hidden on the phone, where it can't open anything.
