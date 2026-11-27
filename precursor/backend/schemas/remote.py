@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -26,11 +27,29 @@ class RemoteAccessUpdate(BaseModel):
 
 
 class PairingCodeRead(BaseModel):
-    # Path (no origin) of the link the QR code carries; the tunnel's address
-    # goes in front of it.
+    # Path (no origin) of the pairing link.
     path: str
     expires_at: datetime
+    # The full link and its QR code, when the tunnel is up and its address known.
+    url: str | None = None
+    qr_svg: str | None = None
 
 
 class RemoteContextRead(BaseModel):
     remote: bool = Field(description="True when this request came through a tunnel or proxy.")
+
+
+class TunnelStatusRead(BaseModel):
+    state: Literal["missing_cli", "signed_out", "stopped", "starting", "active", "error"]
+    url: str | None = None
+    error: str | None = None
+
+
+class TunnelUpdate(BaseModel):
+    running: bool
+    # On stop: also sign out every paired device.
+    revoke_sessions: bool = False
+
+
+class RemoteHealthRead(BaseModel):
+    ok: bool = True

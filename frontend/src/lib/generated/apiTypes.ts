@@ -1933,6 +1933,8 @@ export interface NotesRephraseResponse {
 export interface PairingCodeRead {
   path: string;
   expires_at: string;
+  url: string | null;
+  qr_svg: string | null;
 }
 
 /**
@@ -2078,6 +2080,10 @@ export interface RemoteAccessUpdate {
 export interface RemoteContextRead {
   /** True when this request came through a tunnel or proxy. */
   remote: boolean;
+}
+
+export interface RemoteHealthRead {
+  ok: boolean;
 }
 
 export interface RemoteSessionRead {
@@ -3047,6 +3053,17 @@ export interface TranslateResult {
   lines: string[];
   target_lang: string;
   model: string;
+}
+
+export interface TunnelStatusRead {
+  state: "missing_cli" | "signed_out" | "stopped" | "starting" | "active" | "error";
+  url: string | null;
+  error: string | null;
+}
+
+export interface TunnelUpdate {
+  running: boolean;
+  revoke_sessions?: boolean;
 }
 
 /** One turn of the transcript timeline (see ``list_container_turns``). */
@@ -4808,6 +4825,9 @@ export interface Operations {
   "GET /api/remote/context": {
     response: RemoteContextRead;
   };
+  "GET /api/remote/health": {
+    response: RemoteHealthRead;
+  };
   "POST /api/remote/pairing": {
     response: PairingCodeRead;
   };
@@ -4819,6 +4839,13 @@ export interface Operations {
       session_id: string;
     };
     response: void;
+  };
+  "GET /api/remote/tunnel": {
+    response: TunnelStatusRead;
+  };
+  "PUT /api/remote/tunnel": {
+    body: TunnelUpdate;
+    response: TunnelStatusRead;
   };
   "GET /api/roles": {
     response: RoleRead[];

@@ -20,13 +20,18 @@ from precursor.backend.schemas.remote import (
     RemoteAccessRead,
     RemoteAccessUpdate,
     RemoteContextRead,
+    RemoteHealthRead,
     RemoteSessionRead,
+    TunnelStatusRead,
+    TunnelUpdate,
 )
 from precursor.backend.services.remote_access import is_remote
 from precursor.backend.services.remote_access import sessions as store
 from precursor.backend.services.remote_access.devices import sign_out_all_devices
 from precursor.backend.services.remote_access.gate import PAIR_PATH, session_cookie
 from precursor.backend.services.remote_access.pairing import pairing_codes
+from precursor.backend.services.remote_access.qr import qr_svg
+from precursor.backend.services.remote_access.tunnel import get_tunnel
 
 router = APIRouter(prefix="/api/remote", tags=["remote"], dependencies=[Depends(require_local)])
 public_router = APIRouter(prefix="/api/remote", tags=["remote"])
@@ -75,7 +80,37 @@ async def mint_pairing(session: AsyncSession = Depends(get_session)) -> PairingC
     if not (await store.load(session)).enabled:
         raise HTTPException(status.HTTP_409_CONFLICT, "Remote access is off.")
     code, expires_at = pairing_codes.mint()
-    return PairingCodeRead(path=f"{PAIR_PATH}?code={quote(code)}", expires_at=expires_at)
+    path = f"{PAIR_PATH}?code={quote(code)}"
+    base = get_tunnel().url
+    url = f"{base}{path}" if base else None
+    return PairingCodeRead(
+        path=path, expires_at=expires_at, url=url, qr_svg=qr_svg(url) if url else None
+    )
+
+
+def _tunnel_status() -> TunnelStatusRead:
+    tunnel = get_tunnel()
+    return TunnelStatusRead(state=tunnel.state(), url=tunnel.url, error=tunnel.error)
+
+
+@router.get("/tunnel", response_model=TunnelStatusRead)
+async def get_tunnel_status() -> TunnelStatusRead:
+    return _tunnel_status()
+
+
+@router.put("/tunnel", response_model=TunnelStatusRead)
+async def update_tunnel(body: TunnelUpdate) -> TunnelStatusRead:
+    tunnel = get_tunnel()
+    if body.running:
+        # Opening the tunnel always turns enforcement on: a phone must pair.
+        await store.update(lambda state: setattr(state, "enabled", True))
+        await tunnel.open()
+    else:
+        await tunnel.close()
+        pairing_codes.cancel()
+        if body.revoke_sessions:
+            await sign_out_all_devices()
+    return _tunnel_status()
 
 
 @router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -88,6 +123,12 @@ async def revoke_session(session_id: str) -> None:
 @router.delete("/sessions", status_code=status.HTTP_204_NO_CONTENT)
 async def revoke_all_sessions() -> None:
     await sign_out_all_devices()
+
+
+@public_router.get("/health", response_model=RemoteHealthRead)
+async def health() -> RemoteHealthRead:
+    """What the tunnel watchdog probes through the public address."""
+    return RemoteHealthRead()
 
 
 @public_router.get("/context", response_model=RemoteContextRead)

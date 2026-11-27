@@ -4,13 +4,16 @@ import {
   Info,
   Settings as SettingsIcon,
   ShieldCheck,
+  Smartphone,
   Sparkles,
   User,
 } from "lucide-react";
 import { api } from "../lib/api";
 import { githubIdentityChanges } from "../lib/githubAccounts";
 import type { CopilotQuota, Me } from "../lib/types";
+import { isRemoteContext, openMobileAccess, remoteContextIfKnown } from "../lib/mobileAccess";
 import { AboutModal } from "./AboutModal";
+import { MobileAccessHost } from "./MobileAccessModal";
 
 interface Props {
   collapsed?: boolean;
@@ -162,6 +165,11 @@ export function PersonaMenu({ collapsed = false, onOpenSettings, onOpenArchive }
     setAboutOpen(true);
   }
 
+  function chooseMobileAccess() {
+    setMenuOpen(false);
+    openMobileAccess();
+  }
+
   if (collapsed) {
     return (
       <div ref={rootRef} className="relative flex flex-col items-center gap-1">
@@ -194,9 +202,11 @@ export function PersonaMenu({ collapsed = false, onOpenSettings, onOpenArchive }
             connected={connected}
             onArchive={chooseArchive}
             onAbout={chooseAbout}
+            onMobileAccess={chooseMobileAccess}
           />
         )}
         {aboutOpen && <AboutModal onClose={() => setAboutOpen(false)} />}
+        <MobileAccessHost />
       </div>
     );
   }
@@ -238,9 +248,11 @@ export function PersonaMenu({ collapsed = false, onOpenSettings, onOpenArchive }
           connected={connected}
           onArchive={chooseArchive}
           onAbout={chooseAbout}
+          onMobileAccess={chooseMobileAccess}
         />
       )}
       {aboutOpen && <AboutModal onClose={() => setAboutOpen(false)} />}
+      <MobileAccessHost />
     </div>
   );
 }
@@ -252,6 +264,7 @@ interface PopoverProps {
   connected: boolean;
   onArchive: () => void;
   onAbout: () => void;
+  onMobileAccess: () => void;
 }
 
 function PersonaMenuPopover({
@@ -261,7 +274,9 @@ function PersonaMenuPopover({
   connected,
   onArchive,
   onAbout,
+  onMobileAccess,
 }: PopoverProps) {
+  const local = useIsLocal();
   // Expanded sidebar: popover floats above the persona row, anchored to its
   // left edge. Collapsed sidebar: it sits to the right of the rail so it does
   // not get clipped by the narrow column.
@@ -287,6 +302,17 @@ function PersonaMenuPopover({
         <Archive size={14} className="text-muted" />
         <span>Archives</span>
       </button>
+      {local && (
+        <button
+          type="button"
+          role="menuitem"
+          onClick={onMobileAccess}
+          className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-surface"
+        >
+          <Smartphone size={14} className="text-muted" />
+          <span>Mobile access</span>
+        </button>
+      )}
       <button
         type="button"
         role="menuitem"
@@ -427,4 +453,19 @@ function Avatar({
       <User size={14} />
     </span>
   );
+}
+
+/** False on a page opened through the tunnel, where Mobile access is local-only. */
+function useIsLocal(): boolean {
+  const [local, setLocal] = useState(remoteContextIfKnown() === false);
+  useEffect(() => {
+    let cancelled = false;
+    void isRemoteContext().then((remote) => {
+      if (!cancelled) setLocal(!remote);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  return local;
 }
