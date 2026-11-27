@@ -43,18 +43,20 @@ export function useMobileAccess(): MobileAccess {
   // a code request still in flight then lands on a stale generation and is
   // dropped instead of bringing the QR code back.
   const codeGeneration = useRef(0);
+  // Single-flight: polling and a click never mint two codes at once (each new
+  // code invalidates the previous one, so the older could end up shown). A new
+  // one per generation, so a request from before a drop is never shared after it.
+  const mintCode = useRef(singleFlight(() => remoteApi.pairing()));
   const dropCode = useCallback(() => {
     codeGeneration.current += 1;
+    mintCode.current = singleFlight(() => remoteApi.pairing());
     setCode(null);
   }, [setCode]);
-  // Single-flight: polling and a click never mint two codes at once (each new
-  // code invalidates the previous one, so the older could end up shown).
-  const mintCode = useMemo(() => singleFlight(() => remoteApi.pairing()), []);
   const fetchCode = useCallback(async () => {
     const generation = codeGeneration.current;
-    const fresh = await mintCode();
+    const fresh = await mintCode.current();
     if (generation === codeGeneration.current) setCode(fresh);
-  }, [mintCode, setCode]);
+  }, [setCode]);
 
   // Polls overlap with refreshes after an action: an older answer landing last
   // must not roll the device list (and the pairing detection) back.
