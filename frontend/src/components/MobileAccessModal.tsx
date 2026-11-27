@@ -4,6 +4,7 @@ import { useMobileAccess, type MobileAccess } from "../lib/useMobileAccess";
 import type { PairingCode, RemoteSession } from "../lib/remoteAccessApi";
 import { useConfirm } from "./ConfirmDialog";
 import { Modal } from "./Modal";
+import { TunnelAnimation } from "./TunnelAnimation";
 
 /** Mounted once by the persona menu; shows the dialog while it is open. */
 export function MobileAccessHost() {
@@ -46,6 +47,7 @@ function MobileAccessModal({ onClose }: { onClose: () => void }) {
           <X size={16} />
         </button>
       </div>
+      <TunnelAnimation running={state === "active" || state === "starting"} />
       <p className="text-sm text-muted mb-3">{tunnelSummary(access.tunnel)}</p>
       <Setup state={state} />
       {state === "active" && <Pairing code={access.code} onNewCode={access.newCode} />}
