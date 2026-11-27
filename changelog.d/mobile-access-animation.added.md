@@ -1,0 +1,1 @@
+- **See where Mobile access stands.** The Mobile access dialog draws your phone, the private relay and this computer, and the drawing follows your setup: the missing piece (dev tunnels CLI, sign-in), a tunnel waiting for its first phone, or requests and answers flowing once a phone is paired. It stays still for reduced motion.
