@@ -4,7 +4,7 @@ import { Bot, FolderGit2, ListChecks, MessageSquare, MessagesSquare, Plus, Radio
 import type { CoreSidebarMode } from "./Sidebar";
 import { Z_INDEX } from "../lib/constants";
 import { beginDrag } from "../lib/dragGuard";
-import { type LabelSwipe, startSwipe, swipeScrollTop } from "../lib/labelSwipe";
+import { type LabelSwipe, startSwipe, swipeOf, swipeScrollTop } from "../lib/labelSwipe";
 
 type CreateSection = Exclude<CoreSidebarMode, "iq">;
 type Position = { right: number; bottom: number };
@@ -493,24 +493,33 @@ export function QuickActions({ agentsEnabled, liveEnabled, current = null, onCre
           className="quick-actions-labels"
           // Touch: a swipe on a label scrolls the menu (implicit capture keeps
           // the moves coming from the pill the finger landed on).
-          // Only the primary finger counts: a second touch can't restart the
-          // gesture or clear the guard that keeps a swipe from acting as a tap.
+          // Only the finger that started the swipe counts: a second touch or a
+          // mouse can't restart it or clear the guard that keeps it from acting
+          // as a tap.
           onPointerDown={(event) => {
+            // A primary touch means no other finger is down: it may replace a
+            // swipe whose lift was lost.
             if (event.pointerType === "mouse" || !event.isPrimary || !menuRef.current) return;
-            labelSwipe.current = startSwipe(event.clientX, event.clientY, menuRef.current.scrollTop);
+            labelSwipe.current = startSwipe(
+              event.pointerId,
+              event.clientX,
+              event.clientY,
+              menuRef.current.scrollTop,
+            );
           }}
           onPointerMove={(event) => {
-            const swipe = event.isPrimary ? labelSwipe.current : null;
+            const swipe = swipeOf(labelSwipe.current, event.pointerId);
             const next = swipe && swipeScrollTop(swipe, event.clientX, event.clientY);
             if (next !== null && next !== undefined && menuRef.current) menuRef.current.scrollTop = next;
           }}
           onPointerUp={(event) => {
-            if (!event.isPrimary || !labelSwipe.current) return;
-            labelSwiped.current = labelSwipe.current.moved;
+            const swipe = swipeOf(labelSwipe.current, event.pointerId);
+            if (!swipe) return;
+            labelSwiped.current = swipe.moved;
             labelSwipe.current = null;
           }}
           onPointerCancel={(event) => {
-            if (event.isPrimary) labelSwipe.current = null;
+            if (swipeOf(labelSwipe.current, event.pointerId)) labelSwipe.current = null;
           }}
         >
           {actions.map(({ section, label, colors }, index) => {
