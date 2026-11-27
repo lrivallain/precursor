@@ -25,10 +25,7 @@ import { openStepPlan } from "../lib/stepPlans";
 import { makeMarkdownCaretRehype, markdownCaretAtPoint } from "../lib/markdownCaret";
 import { navigate } from "../lib/routes";
 import { localizeAppHref } from "../lib/appLinks";
-import { appOriginIfKnown, isRemoteContext } from "../lib/mobileAccess";
-
-// Learn the app's own origin early, so its loopback links can be localized.
-void isRemoteContext();
+import { useAppOrigin } from "../lib/mobileAccess";
 
 interface MarkdownProps {
   children: string;
@@ -263,6 +260,64 @@ function CodeBlock({ children, ...props }: { children?: ReactNode }) {
  * is a new component type on every render, so React would remount its subtree
  * on each streamed token (reloading a canvas iframe, re-running Mermaid).
  */
+const MarkdownLink: NonNullable<Components["a"]> = ({ href: rawHref, children: linkChildren, ...props }) => {
+  // A tool's absolute loopback link to an app page also resolves on a phone
+  // (remote access) once it is a path, and opens in place like other in-app links.
+  // Re-renders once the app's origin is known, so links mounted before that
+  // are localized too.
+  const href = localizeAppHref(rawHref, useAppOrigin());
+  const messageHref = inAppMessageHref(href);
+  const chatSlug = inAppChatSlug(href);
+  const stepPlanId = inAppStepPlanId(href);
+  // A localized link without an in-app handler would replace the page (and
+  // any unsaved edit in it), so it keeps opening in a new tab like before.
+  const localizedOnly =
+    href !== rawHref && !messageHref && !chatSlug && stepPlanId == null;
+  const external = (isExternalHref(href) && !messageHref) || localizedOnly;
+  return (
+    <a
+      href={href}
+      {...props}
+      {...(external
+        ? { target: "_blank", rel: "noopener noreferrer" }
+        : {})}
+      {...(chatSlug
+        ? {
+            onClick: (e: React.MouseEvent<HTMLAnchorElement>) => {
+              if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+              e.preventDefault();
+              void openChatBySlug(chatSlug).catch(() => {
+                window.location.assign(href ?? "/chats");
+              });
+            },
+          }
+        : {})}
+      {...(stepPlanId != null
+        ? {
+            onClick: (e: React.MouseEvent<HTMLAnchorElement>) => {
+              if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+              e.preventDefault();
+              openStepPlan(stepPlanId);
+            },
+          }
+        : {})}
+      {...(messageHref
+        ? {
+            onClick: (e: React.MouseEvent<HTMLAnchorElement>) => {
+              if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+              e.preventDefault();
+              navigate(messageHref);
+              window.dispatchEvent(new PopStateEvent("popstate"));
+              window.dispatchEvent(new Event("precursor:message-jump"));
+            },
+          }
+        : {})}
+    >
+      {linkChildren}
+    </a>
+  );
+};
+
 const STABLE_COMPONENTS: Components = {
   pre({ children: preChildren, ...props }) {
     const canvas = parseCanvasRef(fenceFromPre(preChildren, "canvas") ?? "");
@@ -273,61 +328,7 @@ const STABLE_COMPONENTS: Components = {
     if (svg) return <SvgBlock code={svg} />;
     return <CodeBlock {...props}>{preChildren}</CodeBlock>;
   },
-  a({ href: rawHref, children: linkChildren, ...props }) {
-    // A tool's absolute loopback link to an app page also resolves on a phone
-    // (remote access) once it is a path, and opens in place like other in-app links.
-    const href = localizeAppHref(rawHref, appOriginIfKnown());
-    const messageHref = inAppMessageHref(href);
-    const chatSlug = inAppChatSlug(href);
-    const stepPlanId = inAppStepPlanId(href);
-    // A localized link without an in-app handler would replace the page (and
-    // any unsaved edit in it), so it keeps opening in a new tab like before.
-    const localizedOnly =
-      href !== rawHref && !messageHref && !chatSlug && stepPlanId == null;
-    const external = (isExternalHref(href) && !messageHref) || localizedOnly;
-    return (
-      <a
-        href={href}
-        {...props}
-        {...(external
-          ? { target: "_blank", rel: "noopener noreferrer" }
-          : {})}
-        {...(chatSlug
-          ? {
-              onClick: (e: React.MouseEvent<HTMLAnchorElement>) => {
-                if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
-                e.preventDefault();
-                void openChatBySlug(chatSlug).catch(() => {
-                  window.location.assign(href ?? "/chats");
-                });
-              },
-            }
-          : {})}
-        {...(stepPlanId != null
-          ? {
-              onClick: (e: React.MouseEvent<HTMLAnchorElement>) => {
-                if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
-                e.preventDefault();
-                openStepPlan(stepPlanId);
-              },
-            }
-          : {})}
-        {...(messageHref
-          ? {
-              onClick: (e: React.MouseEvent<HTMLAnchorElement>) => {
-                if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
-                e.preventDefault();
-                navigate(messageHref);
-                window.dispatchEvent(new PopStateEvent("popstate"));
-                window.dispatchEvent(new Event("precursor:message-jump"));
-              },
-            }
-          : {})}
-      >
-        {linkChildren}
-      </a>
-    );
-  },
+  a: MarkdownLink,
   blockquote({ children: quoteChildren, ...props }) {
     const text = flattenText(quoteChildren);
     if (!WARNING_MARKER.test(text)) {
