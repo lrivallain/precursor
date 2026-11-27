@@ -73,7 +73,8 @@ function DeviceName({ device, onRename }: { device: RemoteSession; onRename: (la
       onFocus={(e) => e.currentTarget.select()}
       onBlur={save}
       onKeyDown={(e) => {
-        if (e.key === "Enter") save();
+        // Enter also confirms an IME candidate (Chinese, Japanese, Korean...).
+        if (e.key === "Enter" && !e.nativeEvent.isComposing) save();
         if (e.key === "Escape") {
           e.stopPropagation();
           setDraft(null);

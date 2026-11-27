@@ -442,19 +442,15 @@ body,
    (`100%` / `100vh`) is taller than what's actually on screen — which parks the
    composer underneath the URL bar. The dynamic viewport unit tracks the visible
    area instead, keeping the shell exactly one screen tall. */
+/* While an on-screen keyboard is up on iOS (which doesn't resize the page for
+   it), the shell follows the visible area: lib/keyboardInset.ts sets
+   --app-height. Inside @supports so browsers without dvh keep height: 100%. */
 @supports (height: 100dvh) {
   html,
   body,
   #root {
-    height: 100dvh;
+    height: var(--app-height, 100dvh);
   }
-}
-/* While an on-screen keyboard is up on iOS (which doesn't resize the page for
-   it), the shell follows the visible area: lib/keyboardInset.ts. */
-html,
-body,
-#root {
-  height: var(--app-height, 100dvh);
 }
 
 /* Set by lib/dragGuard.ts while a panel is being resized, so an iframe under

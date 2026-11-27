@@ -1,7 +1,8 @@
 // State and actions of the Mobile access dialog: the tunnel, the pairing code
 // shown as a QR code, and the paired devices.
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { remoteApi } from "./remoteAccessApi";
+import { singleFlight } from "./singleFlight";
 import { needsNewCode, newlyPaired, pollDelay, wantsPairingCode } from "./mobileAccess";
 import { useBusyAction } from "./useBusyAction";
 import type { PairingCode, RemoteSession, TunnelStatus } from "./remoteAccessApi";
@@ -45,11 +46,14 @@ export function useMobileAccess(): MobileAccess {
     codeGeneration.current += 1;
     setCode(null);
   }, [setCode]);
+  // Single-flight: polling and a click never mint two codes at once (each new
+  // code invalidates the previous one, so the older could end up shown).
+  const mintCode = useMemo(() => singleFlight(() => remoteApi.pairing()), []);
   const fetchCode = useCallback(async () => {
     const generation = codeGeneration.current;
-    const fresh = await remoteApi.pairing();
+    const fresh = await mintCode();
     if (generation === codeGeneration.current) setCode(fresh);
-  }, [setCode]);
+  }, [mintCode, setCode]);
 
   const refresh = useCallback(async () => {
     const [t, access] = await Promise.all([remoteApi.tunnel(), remoteApi.access()]);
@@ -93,6 +97,7 @@ export function useMobileAccess(): MobileAccess {
     start: () => void run(async () => setTunnel(await remoteApi.setTunnel(true))),
     stop: (signOutDevices) =>
       void run(async () => {
+        addRequested.current = false;
         dropCode();
         setTunnel(await remoteApi.setTunnel(false, signOutDevices));
         await refresh();
