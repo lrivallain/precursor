@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { needsNewCode, pollDelay, tunnelScene, tunnelSummary } from "./mobileAccess";
+import { installCommands, needsNewCode, pollDelay, tunnelScene, tunnelSummary } from "./mobileAccess";
 import type { PairingCode } from "./remoteAccessApi";
 
 const NOW = Date.parse("2026-11-26T10:00:00Z");
@@ -98,5 +98,18 @@ describe("tunnelScene", () => {
     expect(tunnelScene(undefined, 0).mode).toBe("off");
     expect(tunnelScene("starting", 0).mode).toBe("starting");
     expect(tunnelScene("error", 1).mode).toBe("error");
+  });
+});
+
+describe("installCommands", () => {
+  it("puts this computer's OS first", () => {
+    const win = installCommands("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
+    expect(win[0]).toEqual({ os: "Windows", command: "winget install Microsoft.devtunnel" });
+    expect(win.map((c) => c.os)).toEqual(["Windows", "macOS", "Linux"]);
+    expect(installCommands("Mozilla/5.0 (X11; Linux x86_64)")[0].os).toBe("Linux");
+    expect(installCommands("Mozilla/5.0 (Macintosh; Intel Mac OS X 15_0)")[0].os).toBe("macOS");
+  });
+  it("keeps the usual order when the OS is unknown", () => {
+    expect(installCommands("curl/8").map((c) => c.os)).toEqual(["macOS", "Windows", "Linux"]);
   });
 });
