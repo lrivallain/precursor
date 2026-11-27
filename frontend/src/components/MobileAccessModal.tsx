@@ -1,5 +1,10 @@
 import { Smartphone, X } from "lucide-react";
-import { closeMobileAccess, tunnelSummary, useMobileAccessOpen } from "../lib/mobileAccess";
+import {
+  closeMobileAccess,
+  tunnelScene,
+  tunnelSummary,
+  useMobileAccessOpen,
+} from "../lib/mobileAccess";
 import { useMobileAccess, type MobileAccess } from "../lib/useMobileAccess";
 import type { PairingCode, RemoteSession } from "../lib/remoteAccessApi";
 import { useConfirm } from "./ConfirmDialog";
@@ -47,7 +52,7 @@ function MobileAccessModal({ onClose }: { onClose: () => void }) {
           <X size={16} />
         </button>
       </div>
-      <TunnelAnimation running={state === "active" || state === "starting"} />
+      <TunnelAnimation scene={tunnelScene(state, access.devices.length)} />
       <p className="text-sm text-muted mb-3">{tunnelSummary(access.tunnel)}</p>
       <Setup state={state} />
       {state === "active" && <Pairing code={access.code} onNewCode={access.newCode} />}

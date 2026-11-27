@@ -100,3 +100,44 @@ export function remoteContextSnapshot(): { remote: boolean | null; appOrigin: st
 }
 
 export const remoteContextChanges = contextChanged;
+
+export type TunnelSceneMode = "missing" | "off" | "starting" | "waiting" | "live" | "error";
+
+export interface TunnelScene {
+  mode: TunnelSceneMode;
+  phone: string;
+  relay: string;
+  computer: string;
+}
+
+/**
+ * What the tunnel drawing shows for the current setup: the missing piece
+ * (no CLI, not signed in), a tunnel ready for its first phone, or a working
+ * tunnel with paired phones.
+ */
+export function tunnelScene(
+  state: TunnelStatus["state"] | undefined,
+  pairedDevices: number,
+): TunnelScene {
+  const base = { phone: "Your phone", relay: "Private relay", computer: "This computer" };
+  switch (state) {
+    case "missing_cli":
+      return { ...base, mode: "missing", relay: "devtunnel not installed" };
+    case "signed_out":
+      return { ...base, mode: "missing", relay: "Not signed in" };
+    case "error":
+      return { ...base, mode: "error", relay: "Tunnel stopped" };
+    case "starting":
+      return { ...base, mode: "starting", relay: "Opening…" };
+    case "active":
+      return pairedDevices > 0
+        ? {
+            ...base,
+            mode: "live",
+            phone: pairedDevices === 1 ? "1 paired phone" : `${pairedDevices} paired phones`,
+          }
+        : { ...base, mode: "waiting", phone: "Scan to pair" };
+    default:
+      return { ...base, mode: "off", relay: "Tunnel off" };
+  }
+}
